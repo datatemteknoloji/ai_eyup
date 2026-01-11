@@ -143,7 +143,7 @@ const Servers: React.FC = () => {
             onChange={(e) => setAiReadyFilter(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="all">Tüm Sunucular</option>
+            <option value="all">Tümü</option>
             <option value="true">🤖 AI Ready</option>
             <option value="false">AI Ready Değil</option>
           </select>
