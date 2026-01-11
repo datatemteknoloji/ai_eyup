@@ -22,6 +22,8 @@ const Servers: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
+  const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
   const [formData, setFormData] = useState({
     name: '',
     hostname: '',
@@ -83,7 +85,10 @@ const Servers: React.FC = () => {
       server.ip_address?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       server.hostname?.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesStatus = statusFilter === 'all' || server.status === statusFilter
-    return matchesSearch && matchesStatus
+    const matchesAiReady = aiReadyFilter === 'all' || 
+      (aiReadyFilter === 'true' && server.ai_ready) ||
+      (aiReadyFilter === 'false' && !server.ai_ready)
+    return matchesSearch && matchesStatus && matchesAiReady
   })
 
   const getStatusBadge = (status: string) => {
@@ -131,6 +136,16 @@ const Servers: React.FC = () => {
             <option value="OFFLINE">Çevrimdışı</option>
             <option value="WARNING">Uyarı</option>
             <option value="CRITICAL">Kritik</option>
+          </select>
+          {/* AI Ready Filter */}
+          <select
+            value={aiReadyFilter}
+            onChange={(e) => setAiReadyFilter(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Tüm Sunucular</option>
+            <option value="true">🤖 AI Ready</option>
+            <option value="false">AI Ready Değil</option>
           </select>
         </div>
         <button
@@ -224,7 +239,7 @@ const Servers: React.FC = () => {
         </div>
         {filteredServers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
-            {searchTerm || statusFilter !== 'all' 
+            {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all'
               ? 'Filtreye uygun sunucu bulunamadı' 
               : 'Henüz sunucu eklenmemiş'}
           </div>
