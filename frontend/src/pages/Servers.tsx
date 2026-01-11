@@ -23,7 +23,6 @@ const Servers: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
-  const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
   const [formData, setFormData] = useState({
     name: '',
     hostname: '',
