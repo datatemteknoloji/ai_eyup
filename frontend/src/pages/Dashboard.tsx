@@ -7,10 +7,13 @@ const API_BASE_URL = 'http://192.168.1.166:8000/api/v1'
 interface Server {
   id: number
   name: string
+  hostname: string
+  ip_address: string
   status: string
   ai_ready: boolean
   cpu_cores: number
   memory_gb: number
+  os_type: string
   created_at?: string
 }
 
@@ -18,6 +21,7 @@ interface Hypervisor {
   id: number
   name: string
   type: string
+  ip_address: string
 }
 
 const Dashboard: React.FC = () => {
@@ -40,256 +44,177 @@ const Dashboard: React.FC = () => {
   })
 
   if (serversLoading || hypervisorsLoading) {
-    return <div className="text-center py-8">Yükleniyor...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    )
   }
 
-  // İstatistikleri hesapla
+  // İstatistikler
   const totalServers = servers.length
   const onlineServers = servers.filter(s => s.status === 'ONLINE').length
   const offlineServers = servers.filter(s => s.status === 'OFFLINE').length
   const warningServers = servers.filter(s => s.status === 'WARNING').length
   const criticalServers = servers.filter(s => s.status === 'CRITICAL').length
   const aiReadyServers = servers.filter(s => s.ai_ready).length
-  const totalHypervisors = hypervisors.length
-  const totalCpuCores = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
-  const totalMemory = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+  const totalCpu = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
+  const totalRam = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
 
   const stats = [
-    {
-      name: 'Toplam Sunucu',
-      value: totalServers,
-      icon: '🖥️',
-      color: 'bg-blue-500',
-      link: '/servers'
-    },
-    {
-      name: 'Çevrimiçi',
-      value: onlineServers,
-      icon: '✅',
-      color: 'bg-green-500',
-      link: '/servers'
-    },
-    {
-      name: 'Çevrimdışı',
-      value: offlineServers,
-      icon: '❌',
-      color: 'bg-gray-500',
-      link: '/servers'
-    },
-    {
-      name: 'AI Ready',
-      value: aiReadyServers,
-      icon: '🤖',
-      color: 'bg-purple-500',
-      link: '/servers'
-    },
-    {
-      name: 'Hypervisor',
-      value: totalHypervisors,
-      icon: '☁️',
-      color: 'bg-indigo-500',
-      link: '/hypervisors'
-    },
-    {
-      name: 'Toplam CPU',
-      value: `${totalCpuCores} Core`,
-      icon: '⚙️',
-      color: 'bg-yellow-500',
-      link: '/servers'
-    },
-    {
-      name: 'Toplam RAM',
-      value: `${totalMemory} GB`,
-      icon: '💾',
-      color: 'bg-pink-500',
-      link: '/servers'
-    },
-    {
-      name: 'Uyarı',
-      value: warningServers,
-      icon: '⚠️',
-      color: 'bg-yellow-500',
-      link: '/servers'
-    }
+    { label: 'Toplam Sunucu', value: totalServers, icon: '🖥️', color: 'from-blue-500 to-blue-600' },
+    { label: 'Çevrimiçi', value: onlineServers, icon: '✅', color: 'from-green-500 to-green-600' },
+    { label: 'Çevrimdışı', value: offlineServers, icon: '⭕', color: 'from-slate-500 to-slate-600' },
+    { label: 'AI Ready', value: aiReadyServers, icon: '🤖', color: 'from-purple-500 to-purple-600' },
+    { label: 'Hypervisor', value: hypervisors.length, icon: '☁️', color: 'from-indigo-500 to-indigo-600' },
+    { label: 'Toplam CPU', value: `${totalCpu}`, icon: '⚙️', color: 'from-orange-500 to-orange-600' },
+    { label: 'Toplam RAM', value: `${totalRam} GB`, icon: '💾', color: 'from-pink-500 to-pink-600' },
+    { label: 'Uyarı', value: warningServers + criticalServers, icon: '⚠️', color: 'from-yellow-500 to-yellow-600' },
   ]
 
-  // Son eklenen sunucular (ID'ye göre sırala - yeni eklenenler genelde daha yüksek ID'ye sahip)
-  const recentServers = [...servers]
-    .sort((a, b) => {
-      // created_at varsa ona göre, yoksa ID'ye göre sırala
-      if (a.created_at && b.created_at) {
-        const dateA = new Date(a.created_at).getTime()
-        const dateB = new Date(b.created_at).getTime()
-        return dateB - dateA
-      }
-      return b.id - a.id
-    })
+  // Son online sunucular
+  const recentOnline = servers
+    .filter(s => s.status === 'ONLINE')
     .slice(0, 5)
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <p className="mt-2 text-sm text-gray-700">Sistem genel bakış ve istatistikler</p>
-      </div>
-
-      {/* İstatistik Kartları */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-        {stats.map((stat) => (
-          <Link
-            key={stat.name}
-            to={stat.link}
-            className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow"
+    <div className="space-y-6">
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {stats.map((stat, index) => (
+          <div
+            key={index}
+            className="bg-slate-800 rounded-xl p-5 border border-slate-700 hover:border-slate-600 transition-all duration-200 hover:shadow-lg hover:shadow-slate-900/50"
           >
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className={`${stat.color} rounded-md p-3`}>
-                  <span className="text-2xl">{stat.icon}</span>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">{stat.name}</dt>
-                    <dd className="text-lg font-semibold text-gray-900">{stat.value}</dd>
-                  </dl>
-                </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-slate-400 text-sm">{stat.label}</p>
+                <p className="text-2xl font-bold text-white mt-1">{stat.value}</p>
+              </div>
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center shadow-lg`}>
+                <span className="text-2xl">{stat.icon}</span>
               </div>
             </div>
-          </Link>
+          </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Durum Dağılımı */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Sunucu Durum Dağılımı</h2>
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-700">
+            <h2 className="text-lg font-semibold text-white">Sunucu Durumu</h2>
           </div>
-          <div className="p-6">
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-gray-600">Çevrimiçi</span>
-                  <span className="font-medium">{onlineServers} / {totalServers}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-green-500 h-2 rounded-full"
-                    style={{ width: `${totalServers > 0 ? (onlineServers / totalServers) * 100 : 0}%` }}
-                  />
-                </div>
+          <div className="p-6 space-y-4">
+            {/* Progress Bars */}
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-slate-400">Çevrimiçi</span>
+                <span className="text-green-400 font-medium">{onlineServers} / {totalServers}</span>
               </div>
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-gray-600">Çevrimdışı</span>
-                  <span className="font-medium">{offlineServers} / {totalServers}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-gray-500 h-2 rounded-full"
-                    style={{ width: `${totalServers > 0 ? (offlineServers / totalServers) * 100 : 0}%` }}
-                  />
-                </div>
+              <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full transition-all duration-500"
+                  style={{ width: `${totalServers > 0 ? (onlineServers / totalServers) * 100 : 0}%` }}
+                />
               </div>
-              {warningServers > 0 && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-gray-600">Uyarı</span>
-                    <span className="font-medium">{warningServers} / {totalServers}</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-yellow-500 h-2 rounded-full"
-                      style={{ width: `${totalServers > 0 ? (warningServers / totalServers) * 100 : 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {criticalServers > 0 && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-gray-600">Kritik</span>
-                    <span className="font-medium">{criticalServers} / {totalServers}</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-red-500 h-2 rounded-full"
-                      style={{ width: `${totalServers > 0 ? (criticalServers / totalServers) * 100 : 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-slate-400">Çevrimdışı</span>
+                <span className="text-slate-400 font-medium">{offlineServers} / {totalServers}</span>
+              </div>
+              <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-slate-500 to-slate-400 rounded-full transition-all duration-500"
+                  style={{ width: `${totalServers > 0 ? (offlineServers / totalServers) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+            {(warningServers > 0 || criticalServers > 0) && (
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-slate-400">Uyarı/Kritik</span>
+                  <span className="text-yellow-400 font-medium">{warningServers + criticalServers} / {totalServers}</span>
+                </div>
+                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-yellow-500 to-red-500 rounded-full transition-all duration-500"
+                    style={{ width: `${totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Son Eklenen Sunucular */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Son Eklenen Sunucular</h2>
-          </div>
-          <div className="p-6">
-            {recentServers.length > 0 ? (
-              <ul className="divide-y divide-gray-200">
-                {recentServers.map((server) => (
-                  <li key={server.id} className="py-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-gray-900">{server.name}</p>
-                        <p className="text-sm text-gray-500">
-                          {server.cpu_cores > 0 && `${server.cpu_cores} CPU`}
-                          {server.memory_gb > 0 && ` • ${server.memory_gb}GB RAM`}
-                        </p>
-                      </div>
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        server.status === 'ONLINE' ? 'bg-green-100 text-green-800' :
-                        server.status === 'OFFLINE' ? 'bg-gray-100 text-gray-800' :
-                        server.status === 'WARNING' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {server.status}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-500">Henüz sunucu eklenmemiş</p>
-            )}
-          </div>
-          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
-            <Link
-              to="/servers"
-              className="text-sm font-medium text-blue-600 hover:text-blue-500"
-            >
-              Tüm sunucuları görüntüle →
+        {/* Çevrimiçi Sunucular */}
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">Çevrimiçi Sunucular</h2>
+            <Link to="/servers" className="text-blue-400 hover:text-blue-300 text-sm">
+              Tümünü Gör →
             </Link>
+          </div>
+          <div className="divide-y divide-slate-700">
+            {recentOnline.length > 0 ? (
+              recentOnline.map((server) => (
+                <div key={server.id} className="px-6 py-4 hover:bg-slate-700/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
+                        <span className="text-white text-lg">🖥️</span>
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{server.name}</p>
+                        <p className="text-slate-400 text-sm">{server.ip_address || server.hostname}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                        ● ONLINE
+                      </span>
+                      {server.ai_ready && (
+                        <span className="ml-2 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                          AI
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="px-6 py-8 text-center text-slate-500">
+                Çevrimiçi sunucu bulunamadı
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Hypervisor Listesi */}
-      {totalHypervisors > 0 && (
-        <div className="mt-6 bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Hypervisor'lar</h2>
-          </div>
-          <div className="p-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {hypervisors.map((hypervisor) => (
-                <div key={hypervisor.id} className="border rounded-lg p-4">
-                  <h3 className="text-sm font-medium text-gray-900">{hypervisor.name}</h3>
-                  <p className="mt-1 text-sm text-gray-500">{hypervisor.type.toUpperCase()}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
-            <Link
-              to="/hypervisors"
-              className="text-sm font-medium text-blue-600 hover:text-blue-500"
-            >
-              Tüm hypervisor'ları görüntüle →
+      {/* Hypervisors */}
+      {hypervisors.length > 0 && (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">Hypervisor'lar</h2>
+            <Link to="/hypervisors" className="text-blue-400 hover:text-blue-300 text-sm">
+              Tümünü Gör →
             </Link>
+          </div>
+          <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {hypervisors.map((hv) => (
+              <div key={hv.id} className="bg-slate-700/50 rounded-lg p-4 border border-slate-600 hover:border-slate-500 transition-colors">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center">
+                    <span className="text-white text-lg">☁️</span>
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">{hv.name}</p>
+                    <p className="text-slate-400 text-sm">{hv.type.toUpperCase()} • {hv.ip_address}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

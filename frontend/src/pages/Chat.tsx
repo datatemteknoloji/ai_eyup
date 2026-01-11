@@ -66,10 +66,6 @@ const Chat: React.FC = () => {
         })
       })
 
-      if (!response.ok) {
-        throw new Error('Chat request failed')
-      }
-
       const data = await response.json()
 
       const assistantMessage: Message = {
@@ -93,150 +89,171 @@ const Chat: React.FC = () => {
     }
   }
 
-  const toggleServerSelection = (serverId: number) => {
-    setSelectedServers(prev => 
-      prev.includes(serverId)
-        ? prev.filter(id => id !== serverId)
-        : [...prev, serverId]
-    )
-  }
+  const quickActions = [
+    { icon: '📊', text: 'Sunucu durumlarını göster' },
+    { icon: '⚡', text: 'Son 1 saatlik performans analizi yap' },
+    { icon: '💾', text: 'Disk kullanımı yüksek sunucuları bul' },
+    { icon: '🔥', text: 'CPU kullanımı kritik olan sunucular' },
+    { icon: '🔍', text: 'Tüm sunucularda uptime kontrolü yap' },
+    { icon: '📈', text: 'Memory kullanımı analizi' },
+  ]
 
   const aiReadyServers = servers.filter(s => s.ai_ready)
 
   return (
-    <div className="flex h-[calc(100vh-120px)]">
+    <div className="flex h-[calc(100vh-140px)] gap-6">
       {/* Sol Panel - Sunucu Seçimi */}
-      <div className="w-64 bg-white border-r border-gray-200 p-4 overflow-y-auto">
-        <h3 className="text-sm font-medium text-gray-900 mb-3">AI Ready Sunucular</h3>
-        {aiReadyServers.length === 0 ? (
-          <p className="text-sm text-gray-500">AI Ready sunucu bulunamadı</p>
-        ) : (
-          <div className="space-y-2">
-            {aiReadyServers.map(server => (
-              <label
-                key={server.id}
-                className="flex items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedServers.includes(server.id)}
-                  onChange={() => toggleServerSelection(server.id)}
-                  className="h-4 w-4 text-blue-600 rounded border-gray-300"
-                />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-gray-900">{server.name}</p>
-                  <p className="text-xs text-gray-500">{server.ip_address}</p>
-                </div>
-              </label>
-            ))}
-          </div>
-        )}
+      <div className="w-72 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-700">
+          <h3 className="text-sm font-semibold text-white">AI Ready Sunucular</h3>
+          <p className="text-xs text-slate-400 mt-1">{aiReadyServers.length} sunucu</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {aiReadyServers.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 text-sm">
+              <span className="text-2xl block mb-2">🤖</span>
+              AI Ready sunucu bulunamadı
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {aiReadyServers.map(server => (
+                <label
+                  key={server.id}
+                  className={`flex items-center p-3 rounded-lg cursor-pointer transition-all ${
+                    selectedServers.includes(server.id)
+                      ? 'bg-blue-600/20 border border-blue-500/50'
+                      : 'bg-slate-700/50 border border-transparent hover:bg-slate-700'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedServers.includes(server.id)}
+                    onChange={() => {
+                      setSelectedServers(prev =>
+                        prev.includes(server.id)
+                          ? prev.filter(id => id !== server.id)
+                          : [...prev, server.id]
+                      )
+                    }}
+                    className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
+                  />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-white">{server.name}</p>
+                    <p className="text-xs text-slate-400 font-mono">{server.ip_address}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         {selectedServers.length > 0 && (
-          <div className="mt-4 pt-4 border-t">
-            <p className="text-xs text-gray-500">
-              {selectedServers.length} sunucu seçili
-            </p>
-            <button
-              onClick={() => setSelectedServers([])}
-              className="mt-2 text-xs text-blue-600 hover:text-blue-800"
-            >
-              Seçimi Temizle
-            </button>
+          <div className="px-4 py-3 border-t border-slate-700 bg-slate-900/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">{selectedServers.length} seçili</span>
+              <button
+                onClick={() => setSelectedServers([])}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                Temizle
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       {/* Sağ Panel - Chat */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
         {/* Mesajlar */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6">
           {messages.length === 0 ? (
-            <div className="text-center py-12">
-              <h2 className="text-xl font-semibold text-gray-900 mb-2">AI Asistan</h2>
-              <p className="text-gray-500 mb-4">
+            <div className="h-full flex flex-col items-center justify-center">
+              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
+                <span className="text-4xl">🤖</span>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">AI Asistan</h2>
+              <p className="text-slate-400 text-center max-w-md mb-8">
                 Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
-                <button
-                  onClick={() => setInput('Sunucuların genel durumu nedir?')}
-                  className="p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg text-sm"
-                >
-                  🖥️ Sunucuların genel durumu nedir?
-                </button>
-                <button
-                  onClick={() => setInput('Son 1 saatlik performans kontrolü yap')}
-                  className="p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg text-sm"
-                >
-                  📊 Son 1 saatlik performans kontrolü yap
-                </button>
-                <button
-                  onClick={() => setInput('Disk kullanımı yüksek olan sunucuları bul')}
-                  className="p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg text-sm"
-                >
-                  💾 Disk kullanımı yüksek sunucuları bul
-                </button>
-                <button
-                  onClick={() => setInput('CPU kullanımı analiz et')}
-                  className="p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg text-sm"
-                >
-                  ⚙️ CPU kullanımı analiz et
-                </button>
+              <div className="grid grid-cols-2 gap-3 max-w-lg">
+                {quickActions.map((action, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setInput(action.text)}
+                    className="flex items-center space-x-2 p-3 bg-slate-700/50 hover:bg-slate-700 rounded-lg text-left transition-colors border border-slate-600 hover:border-slate-500"
+                  >
+                    <span className="text-xl">{action.icon}</span>
+                    <span className="text-sm text-slate-300">{action.text}</span>
+                  </button>
+                ))}
               </div>
             </div>
           ) : (
-            messages.map(message => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+            <div className="space-y-4">
+              {messages.map(message => (
                 <div
-                  className={`max-w-3xl rounded-lg px-4 py-2 ${
-                    message.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-900'
-                  }`}
+                  key={message.id}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className="whitespace-pre-wrap text-sm">{message.content}</div>
-                  <div className={`text-xs mt-1 ${
-                    message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
-                  }`}>
-                    {message.timestamp.toLocaleTimeString('tr-TR')}
+                  <div
+                    className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                      message.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
+                        : 'bg-slate-700 text-slate-200'
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
+                    <div className={`text-xs mt-2 ${
+                      message.role === 'user' ? 'text-blue-200' : 'text-slate-500'
+                    }`}>
+                      {message.timestamp.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
-          )}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 rounded-lg px-4 py-2">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+              ))}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-slate-700 rounded-2xl px-4 py-3">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
           )}
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}
-        <div className="border-t border-gray-200 p-4 bg-white">
-          <form onSubmit={handleSubmit} className="flex space-x-4">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Mesajınızı yazın..."
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoading}
-            />
+        <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/50">
+          <form onSubmit={handleSubmit} className="flex items-center space-x-4">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Mesajınızı yazın..."
+                className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={isLoading}
+              />
+            </div>
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25"
             >
-              Gönder
+              <span className="flex items-center">
+                {isLoading ? (
+                  <span className="animate-spin">⏳</span>
+                ) : (
+                  <>
+                    <span>Gönder</span>
+                    <span className="ml-2">→</span>
+                  </>
+                )}
+              </span>
             </button>
           </form>
         </div>
