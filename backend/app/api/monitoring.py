@@ -251,20 +251,22 @@ async def sync_ai_ready_targets(db: Session = Depends(get_db)):
             
             instance = f"{server.ip_address}:9100"
             
-            # Node Exporter kurulu mu kontrol et
+            # Node Exporter kurulu mu kontrol et (ZORUNLU - sadece kurulu olanlar eklenir)
             try:
                 installer = NodeExporterInstaller(server)
                 status = installer.check_status()
                 installer.connector.close()
                 
-                # Node Exporter kurulu değilse atla
+                # Node Exporter kurulu değilse kesinlikle atla
                 if not status.get("installed", False):
                     skipped_count += 1
-                    logger.info(f"Server {server.name} ({server.ip_address}) Node Exporter kurulu değil, atlanıyor")
+                    logger.info(f"Server {server.name} ({server.ip_address}) Node Exporter kurulu değil, atlanıyor (AI Ready ama Node Exporter yok)")
                     continue
             except Exception as e:
-                logger.warning(f"Server {server.name} Node Exporter durum kontrolü hatası: {e}")
-                # Hata olsa bile eklemeyi dene (belki Node Exporter çalışıyordur)
+                # Hata durumunda da ekleme (Node Exporter kurulu değil demektir)
+                skipped_count += 1
+                logger.warning(f"Server {server.name} ({server.ip_address}) Node Exporter durum kontrolü hatası: {e} - Atlanıyor")
+                continue
             
             # Target oluştur
             labels = {

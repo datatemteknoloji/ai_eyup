@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "targets": [
+      "192.168.1.62:9100"
+    ],
+    "labels": {
+      "server_id": "2",
+      "server_name": "enesapp-clone",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.67:9100"
+    ],
+    "labels": {
+      "server_id": "31",
+      "server_name": "enesapp",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.106:9100"
+    ],
+    "labels": {
+      "server_id": "82",
+      "server_name": "gorkem",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.45:9100"
+    ],
+    "labels": {
+      "server_id": "99",
+      "server_name": "rhel94-awx-test",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.129:9100"
+    ],
+    "labels": {
+      "server_id": "111",
+      "server_name": "datatemengine",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.46:9100"
+    ],
+    "labels": {
+      "server_id": "115",
+      "server_name": "ahmet-test2",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.44:9100"
+    ],
+    "labels": {
+      "server_id": "123",
+      "server_name": "Zabbix01",
+      "job": "node-exporter"
+    }
+  }
+]
