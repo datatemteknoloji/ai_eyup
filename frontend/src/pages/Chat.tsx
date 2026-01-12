@@ -178,146 +178,130 @@ const Chat: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
-      {/* Üst Panel - Chat Session'ları */}
+      {/* Üst Panel - AI Ready Sunucular */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 mb-4 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">Chat Session'ları</h3>
-          <button
-            onClick={() => createSessionMutation.mutate()}
-            disabled={createSessionMutation.isPending}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-          >
-            {createSessionMutation.isPending ? 'Oluşturuluyor...' : '+ Yeni Chat'}
-          </button>
+          <div>
+            <h3 className="text-sm font-semibold text-white">AI Ready Sunucular</h3>
+            <p className="text-xs text-slate-400 mt-1">{aiReadyServers.length} sunucu</p>
+          </div>
+          {selectedServers.length > 0 && (
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-slate-400">{selectedServers.length} seçili</span>
+              <button
+                onClick={() => setSelectedServers([])}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 bg-slate-700 rounded"
+              >
+                Temizle
+              </button>
+            </div>
+          )}
         </div>
         <div className="overflow-x-auto">
           <div className="flex space-x-2 p-3">
-            {sessions.length === 0 ? (
+            {aiReadyServers.length === 0 ? (
               <div className="text-center py-4 text-slate-500 text-sm w-full">
-                Henüz chat session'ı yok
+                <span className="text-2xl block mb-2">🤖</span>
+                AI Ready sunucu bulunamadı
               </div>
             ) : (
-              sessions.map(session => (
-                <div
-                  key={session.id}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg cursor-pointer transition-all min-w-[200px] ${
-                    selectedSessionId === session.id
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-700/50 hover:bg-slate-700 text-slate-300'
+              aiReadyServers.map(server => (
+                <label
+                  key={server.id}
+                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg cursor-pointer transition-all min-w-[180px] ${
+                    selectedServers.includes(server.id)
+                      ? 'bg-blue-600/20 border border-blue-500/50'
+                      : 'bg-slate-700/50 border border-transparent hover:bg-slate-700'
                   }`}
-                  onClick={() => setSelectedSessionId(session.id)}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{session.title}</div>
-                    <div className={`text-xs ${selectedSessionId === session.id ? 'text-blue-100' : 'text-slate-400'}`}>
-                      {session.message_count} mesaj • {formatSessionDate(session.updated_at || session.created_at)}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (confirm('Bu chat session\'ını silmek istediğinize emin misiniz?')) {
-                        deleteSessionMutation.mutate(session.id)
-                      }
+                  <input
+                    type="checkbox"
+                    checked={selectedServers.includes(server.id)}
+                    onChange={() => {
+                      setSelectedServers(prev =>
+                        prev.includes(server.id)
+                          ? prev.filter(id => id !== server.id)
+                          : [...prev, server.id]
+                      )
                     }}
-                    className={`p-1 rounded hover:bg-opacity-20 ${
-                      selectedSessionId === session.id ? 'hover:bg-white' : 'hover:bg-slate-600'
-                    }`}
-                    title="Sil"
-                  >
-                    <span className="text-xs">✕</span>
-                  </button>
-                </div>
+                    className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{server.name}</p>
+                    <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
+                  </div>
+                </label>
               ))
             )}
           </div>
         </div>
       </div>
 
-      {/* Ana Panel - Chat ve Sunucular */}
+      {/* Ana Panel - Chat Sessions ve Mesajlar */}
       <div className="flex-1 flex gap-4">
-        {/* Sol Panel - AI Ready Sunucular */}
-        {showServerPanel && (
-          <div className="w-72 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-white">AI Ready Sunucular</h3>
-                <p className="text-xs text-slate-400 mt-1">{aiReadyServers.length} sunucu</p>
+        {/* Sol Panel - Chat Session'ları */}
+        <div className="w-64 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Chat Session'ları</h3>
+            <button
+              onClick={() => createSessionMutation.mutate()}
+              disabled={createSessionMutation.isPending}
+              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors disabled:opacity-50"
+              title="Yeni Chat"
+            >
+              +
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            {sessions.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 text-sm">
+                <span className="text-2xl block mb-2">💬</span>
+                Henüz chat session'ı yok
               </div>
-              <button
-                onClick={() => setShowServerPanel(false)}
-                className="text-slate-400 hover:text-white transition-colors"
-                title="Gizle"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {aiReadyServers.length === 0 ? (
-                <div className="text-center py-8 text-slate-500 text-sm">
-                  <span className="text-2xl block mb-2">🤖</span>
-                  AI Ready sunucu bulunamadı
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {aiReadyServers.map(server => (
-                    <label
-                      key={server.id}
-                      className={`flex items-center p-3 rounded-lg cursor-pointer transition-all ${
-                        selectedServers.includes(server.id)
-                          ? 'bg-blue-600/20 border border-blue-500/50'
-                          : 'bg-slate-700/50 border border-transparent hover:bg-slate-700'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedServers.includes(server.id)}
-                        onChange={() => {
-                          setSelectedServers(prev =>
-                            prev.includes(server.id)
-                              ? prev.filter(id => id !== server.id)
-                              : [...prev, server.id]
-                          )
-                        }}
-                        className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
-                      />
-                      <div className="ml-3 flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{server.name}</p>
-                        <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            {selectedServers.length > 0 && (
-              <div className="px-4 py-3 border-t border-slate-700 bg-slate-900/50">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">{selectedServers.length} seçili</span>
-                  <button
-                    onClick={() => setSelectedServers([])}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            ) : (
+              <div className="space-y-2">
+                {sessions.map(session => (
+                  <div
+                    key={session.id}
+                    className={`relative flex items-start space-x-2 p-3 rounded-lg cursor-pointer transition-all group ${
+                      selectedSessionId === session.id
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-700/50 hover:bg-slate-700 text-slate-300'
+                    }`}
+                    onClick={() => setSelectedSessionId(session.id)}
                   >
-                    Temizle
-                  </button>
-                </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{session.title}</div>
+                      <div className={`text-xs mt-1 ${selectedSessionId === session.id ? 'text-blue-100' : 'text-slate-400'}`}>
+                        {session.message_count} mesaj
+                      </div>
+                      <div className={`text-xs ${selectedSessionId === session.id ? 'text-blue-100' : 'text-slate-500'}`}>
+                        {formatSessionDate(session.updated_at || session.created_at)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm('Bu chat session\'ını silmek istediğinize emin misiniz?')) {
+                          deleteSessionMutation.mutate(session.id)
+                        }
+                      }}
+                      className={`opacity-0 group-hover:opacity-100 p-1 rounded transition-opacity ${
+                        selectedSessionId === session.id ? 'hover:bg-white/20' : 'hover:bg-slate-600'
+                      }`}
+                      title="Sil"
+                    >
+                      <span className="text-xs">✕</span>
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        )}
+        </div>
 
         {/* Sağ Panel - Chat Mesajları */}
-        <div className={`flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden ${!showServerPanel ? 'w-full' : ''}`}>
-          {!showServerPanel && (
-            <div className="px-4 py-2 border-b border-slate-700">
-              <button
-                onClick={() => setShowServerPanel(true)}
-                className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                ← Sunucuları Göster
-              </button>
-            </div>
-          )}
+        <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
         {/* Mesajlar */}
         <div className="flex-1 overflow-y-auto p-6">
           {selectedSessionId === null ? (
