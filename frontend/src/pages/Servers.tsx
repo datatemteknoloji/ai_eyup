@@ -153,6 +153,11 @@ const Servers: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    console.log('Form submit edildi:', formData)
+    if (!formData.name || formData.name.trim() === '') {
+      alert('Sunucu adı gereklidir!')
+      return
+    }
     createMutation.mutate(formData)
   }
 
