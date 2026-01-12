@@ -58,7 +58,7 @@ class PrometheusMetricsService:
         
         try:
             # CPU metrikleri
-            cpu_query = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
+            cpu_query = "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[15m])) * 100)"
             cpu_data = await self.query_metric(cpu_query)
             if cpu_data and cpu_data.get("status") == "success":
                 results = cpu_data.get("data", {}).get("result", [])
@@ -103,7 +103,7 @@ class PrometheusMetricsService:
             instance_filter = f'{{instance="{server_ip}:9100"}}' if server_ip else ""
             
             # CPU
-            cpu_query = f'100 - (avg(rate(node_cpu_seconds_total{mode="idle"}{instance_filter}[15m])) * 100)'
+            cpu_query = f'100 - (avg(rate(node_cpu_seconds_total{{mode="idle"}}{instance_filter}[15m])) * 100)'
             cpu_data = await self.query_metric(cpu_query)
             if cpu_data and cpu_data.get("status") == "success":
                 results = cpu_data.get("data", {}).get("result", [])
