@@ -36,52 +36,29 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
             }
             
             # Node Exporter durumunu ekle (eğer istenirse ve sunucu credential'lı ise)
-            # Sadece ONLINE sunucular için kontrol et (OFFLINE sunucular timeout olur)
-            if include_node_exporter_status and s.connection_config and s.connection_config.get("username") and s.status == "ONLINE":
-                try:
-                    import signal
-                    import threading
-                    
-                    # Timeout ile kontrol et (5 saniye)
-                    result = {"installed": False, "running": False}
-                    timeout_occurred = threading.Event()
-                    
-                    def check_with_timeout():
-                        try:
-                            installer = NodeExporterInstaller(s)
-                            status = installer.check_status()
-                            installer.connector.close()
-                            result["installed"] = status.get("installed", False)
-                            result["running"] = status.get("running", False)
-                        except Exception:
-                            pass
-                        finally:
-                            timeout_occurred.set()
-                    
-                    thread = threading.Thread(target=check_with_timeout)
-                    thread.daemon = True
-                    thread.start()
-                    thread.join(timeout=5)  # 5 saniye timeout
-                    
-                    if thread.is_alive():
-                        # Timeout oldu, varsayılan değerleri kullan
+            # Sadece ONLINE sunucular için kontrol et (OFFLINE sunucular timeout olur ve çok uzun sürer)
+            if include_node_exporter_status:
+                if s.status == "ONLINE" and s.connection_config and s.connection_config.get("username"):
+                    try:
+                        installer = NodeExporterInstaller(s)
+                        node_exporter_status = installer.check_status()
+                        installer.connector.close()
+                        server_data["node_exporter"] = {
+                            "installed": node_exporter_status.get("installed", False),
+                            "running": node_exporter_status.get("running", False)
+                        }
+                    except Exception:
+                        # Hata durumunda varsayılan değerler
                         server_data["node_exporter"] = {
                             "installed": False,
                             "running": False
                         }
-                    else:
-                        server_data["node_exporter"] = result
-                except Exception:
+                else:
+                    # OFFLINE veya credential'sız sunucular için varsayılan değer
                     server_data["node_exporter"] = {
                         "installed": False,
                         "running": False
                     }
-            elif include_node_exporter_status:
-                # OFFLINE veya credential'sız sunucular için varsayılan değer
-                server_data["node_exporter"] = {
-                    "installed": False,
-                    "running": False
-                }
             
             result.append(server_data)
         
