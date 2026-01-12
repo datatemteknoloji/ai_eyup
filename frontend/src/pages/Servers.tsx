@@ -40,14 +40,61 @@ const Servers: React.FC = () => {
 
   const queryClient = useQueryClient()
 
+  // Önce sunucu listesini al (Node Exporter durumu olmadan)
   const { data: servers = [], isLoading } = useQuery<Server[]>({
     queryKey: ['servers'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/servers/?include_node_exporter_status=true`)
+      const response = await fetch(`${API_BASE_URL}/servers/`)
       if (!response.ok) throw new Error('Failed to fetch servers')
       return response.json()
     },
     refetchInterval: 30000 // 30 saniyede bir yenile
+  })
+
+  // Node Exporter durumlarını ayrı bir query ile al (sadece ONLINE sunucular için)
+  const { data: nodeExporterStatuses = {} } = useQuery<Record<number, { installed: boolean; running: boolean }>>({
+    queryKey: ['nodeExporterStatuses'],
+    queryFn: async () => {
+      // Sadece ONLINE ve credential'lı sunucular için durum kontrolü yap
+      const onlineServers = servers.filter(s => 
+        s.status === 'ONLINE' && 
+        s.connection_config?.username
+      )
+      
+      if (onlineServers.length === 0) return {}
+      
+      // Her sunucu için ayrı ayrı kontrol et (paralel)
+      const statusPromises = onlineServers.map(async (server) => {
+        try {
+          const response = await fetch(`${API_BASE_URL}/monitoring/node-exporter/status/${server.id}`)
+          if (response.ok) {
+            const data = await response.json()
+            return {
+              serverId: server.id,
+              status: {
+                installed: data.installed || false,
+                running: data.running || false
+              }
+            }
+          }
+        } catch (error) {
+          // Hata durumunda varsayılan değerler
+        }
+        return {
+          serverId: server.id,
+          status: { installed: false, running: false }
+        }
+      })
+      
+      const results = await Promise.all(statusPromises)
+      const statusMap: Record<number, { installed: boolean; running: boolean }> = {}
+      results.forEach(result => {
+        statusMap[result.serverId] = result.status
+      })
+      return statusMap
+    },
+    enabled: servers.length > 0, // Sunucular yüklendikten sonra çalış
+    refetchInterval: 60000 // 60 saniyede bir yenile
   })
 
   const createMutation = useMutation({
@@ -105,8 +152,17 @@ const Servers: React.FC = () => {
     createMutation.mutate(formData)
   }
 
+  // Sunuculara Node Exporter durumunu ekle
+  const serversWithNodeExporter = servers.map(server => ({
+    ...server,
+    node_exporter: nodeExporterStatuses[server.id] || {
+      installed: false,
+      running: false
+    }
+  }))
+
   // Filtreleme
-  const filteredServers = servers.filter(server => {
+  const filteredServers = serversWithNodeExporter.filter(server => {
     const matchesSearch = server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       server.ip_address?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       server.hostname?.toLowerCase().includes(searchTerm.toLowerCase())
