@@ -186,6 +186,79 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         elif ai_ready_servers:
             server_context = f"Toplam {len(ai_ready_servers)} AI Ready sunucu mevcut.\n"
         
+        # Prometheus'tan performans metriklerini çek (eğer performans sorusu ise)
+        performance_context = ""
+        if any(keyword in message.lower() for keyword in ['performans', 'performance', 'cpu', 'memory', 'disk', 'kullanım', 'metrik', 'metric', '15 dakika', 'son']):
+            try:
+                prometheus_url = settings.PROMETHEUS_URL
+                
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    # CPU metrikleri - son değerler
+                    try:
+                        # CPU kullanımı: 100 - idle
+                        cpu_query = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
+                        cpu_response = await client.get(
+                            f"{prometheus_url}/api/v1/query",
+                            params={"query": cpu_query}
+                        )
+                        if cpu_response.status_code == 200:
+                            cpu_data = cpu_response.json()
+                            if cpu_data.get("status") == "success" and cpu_data.get("data", {}).get("result"):
+                                results = cpu_data["data"]["result"]
+                                if results:
+                                    cpu_values = [float(r["value"][1]) for r in results]
+                                    avg_cpu = sum(cpu_values) / len(cpu_values) if cpu_values else 0
+                                    performance_context += f"\n📊 Son 15 dakikalık ortalama CPU kullanımı: {avg_cpu:.2f}%\n"
+                                    # Sunucu bazında detay
+                                    for r in results[:5]:  # İlk 5 sunucu
+                                        instance = r.get("metric", {}).get("instance", "unknown")
+                                        cpu_val = float(r["value"][1])
+                                        performance_context += f"  - {instance}: {cpu_val:.2f}%\n"
+                    except Exception as e:
+                        logger.warning(f"CPU metrik çekme hatası: {e}")
+                    
+                    # Memory metrikleri
+                    try:
+                        memory_query = '(1 - (avg(node_memory_MemAvailable_bytes) / avg(node_memory_MemTotal_bytes))) * 100'
+                        memory_response = await client.get(
+                            f"{prometheus_url}/api/v1/query",
+                            params={"query": memory_query}
+                        )
+                        if memory_response.status_code == 200:
+                            memory_data = memory_response.json()
+                            if memory_data.get("status") == "success" and memory_data.get("data", {}).get("result"):
+                                results = memory_data["data"]["result"]
+                                if results:
+                                    memory_values = [float(r["value"][1]) for r in results]
+                                    avg_memory = sum(memory_values) / len(memory_values) if memory_values else 0
+                                    performance_context += f"\n💾 Son 15 dakikalık ortalama Memory kullanımı: {avg_memory:.2f}%\n"
+                    except Exception as e:
+                        logger.warning(f"Memory metrik çekme hatası: {e}")
+                    
+                    # Disk metrikleri
+                    try:
+                        disk_query = '(1 - (avg(node_filesystem_avail_bytes{mountpoint="/"}) / avg(node_filesystem_size_bytes{mountpoint="/"}))) * 100'
+                        disk_response = await client.get(
+                            f"{prometheus_url}/api/v1/query",
+                            params={"query": disk_query}
+                        )
+                        if disk_response.status_code == 200:
+                            disk_data = disk_response.json()
+                            if disk_data.get("status") == "success" and disk_data.get("data", {}).get("result"):
+                                results = disk_data["data"]["result"]
+                                if results:
+                                    disk_values = [float(r["value"][1]) for r in results]
+                                    avg_disk = sum(disk_values) / len(disk_values) if disk_values else 0
+                                    performance_context += f"\n💿 Son 15 dakikalık ortalama Disk kullanımı: {avg_disk:.2f}%\n"
+                    except Exception as e:
+                        logger.warning(f"Disk metrik çekme hatası: {e}")
+                
+                if not performance_context:
+                    performance_context = "\n⚠️ Prometheus'tan metrik çekilemedi. Node Exporter'ların kurulu ve çalışır durumda olduğundan emin olun.\n"
+            except Exception as e:
+                logger.warning(f"Prometheus metrik çekme hatası: {e}")
+                performance_context = "\n⚠️ Prometheus metrikleri şu anda kullanılamıyor.\n"
+        
         # User mesajını kaydet
         from datetime import datetime
         user_msg = {
@@ -204,10 +277,11 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             prompt = f"""Sen bir sunucu yönetim asistanısın. Türkçe yanıt ver.
 
 {server_context}
+{performance_context}
 
 Kullanıcı sorusu: {message}
 
-Lütfen net, kısa ve yardımcı bir yanıt ver. Gerekirse komut önerileri de sun."""
+Lütfen net, kısa ve yardımcı bir yanıt ver. Performans soruları için yukarıdaki metrikleri kullan. Gerekirse komut önerileri de sun."""
 
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
