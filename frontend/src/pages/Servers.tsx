@@ -112,8 +112,12 @@ const Servers: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
+      queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] })
       setShowAddModal(false)
       setFormData({ name: '', hostname: '', ip_address: '', status: 'OFFLINE', server_type: 'VIRTUAL', os_type: 'linux' })
+    },
+    onError: (error) => {
+      console.error('Sunucu ekleme hatası:', error)
     }
   })
 
