@@ -195,8 +195,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     # CPU metrikleri - son değerler
                     try:
-                        # CPU kullanımı: 100 - idle (instance bazında)
-                        cpu_query = '100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
+                        # CPU kullanımı: 100 - idle (basit ortalama) - parantezlerle
+                        cpu_query = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
                         cpu_response = await client.get(
                             f"{prometheus_url}/api/v1/query",
                             params={"query": cpu_query}
