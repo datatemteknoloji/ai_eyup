@@ -218,3 +218,94 @@ async def check_node_exporter_status(server_id: int, db: Session = Depends(get_d
     except Exception as e:
         logger.error(f"Node Exporter durum kontrolü hatası (Server ID: {server_id}): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Durum kontrolü hatası: {str(e)}")
+
+@router.post("/prometheus/sync-ai-ready-targets")
+async def sync_ai_ready_targets(db: Session = Depends(get_db)):
+    """AI Ready sunucuları Prometheus target dosyasına ekle/güncelle"""
+    try:
+        # AI Ready ve ONLINE sunucuları bul
+        servers = db.query(Server).filter(
+            Server.ai_ready == True,
+            Server.status == "ONLINE",
+            Server.ip_address.isnot(None),
+            Server.connection_config.isnot(None)
+        ).all()
+        
+        target_manager = PrometheusTargetManager()
+        added_count = 0
+        updated_count = 0
+        skipped_count = 0
+        errors = []
+        
+        for server in servers:
+            if not server.ip_address:
+                skipped_count += 1
+                continue
+            
+            instance = f"{server.ip_address}:9100"
+            
+            # Node Exporter kurulu mu kontrol et (hızlı kontrol için sadece ONLINE sunucular)
+            try:
+                installer = NodeExporterInstaller(server)
+                status = installer.check_status()
+                installer.connector.close()
+                
+                # Node Exporter kurulu değilse atla
+                if not status.get("installed", False):
+                    skipped_count += 1
+                    logger.info(f"Server {server.name} ({server.ip_address}) Node Exporter kurulu değil, atlanıyor")
+                    continue
+            except Exception as e:
+                logger.warning(f"Server {server.name} Node Exporter durum kontrolü hatası: {e}")
+                # Hata olsa bile eklemeyi dene (belki Node Exporter çalışıyordur)
+            
+            # Target ekle veya güncelle
+            labels = {
+                "server_id": str(server.id),
+                "server_name": server.name,
+                "job": "node-exporter"
+            }
+            
+            # Mevcut target'ları kontrol et
+            existing_targets = target_manager.load_targets()
+            existing = next((t for t in existing_targets if t.get("targets") and t.get("targets", [])[0] == instance), None)
+            
+            if existing:
+                # Mevcut target'ı güncelle (labels güncellenebilir)
+                existing["labels"] = labels
+                updated_count += 1
+            else:
+                # Yeni target ekle
+                if target_manager.add_target(instance=instance, labels=labels):
+                    added_count += 1
+                else:
+                    errors.append(f"Target eklenemedi: {server.name} ({instance})")
+        
+        # Target dosyasını kaydet
+        if added_count > 0 or updated_count > 0:
+            # Mevcut target'ları yeniden yükle ve kaydet
+            all_targets = target_manager.load_targets()
+            target_manager.save_targets(all_targets)
+            
+            # Prometheus'u reload et
+            try:
+                await target_manager.reload_prometheus_async()
+            except:
+                try:
+                    target_manager.reload_prometheus_sync()
+                except:
+                    pass
+        
+        return {
+            "success": True,
+            "message": "AI Ready sunucular Prometheus target dosyasına eklendi",
+            "added": added_count,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "total_ai_ready": len(servers),
+            "errors": errors if errors else None
+        }
+        
+    except Exception as e:
+        logger.error(f"AI Ready target sync hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Sync hatası: {str(e)}")
