@@ -30,9 +30,21 @@ const Chat: React.FC = () => {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedServers, setSelectedServers] = useState<number[]>([])
+  const [showServerPanel, setShowServerPanel] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const queryClient = useQueryClient()
+
+  // AI Ready sunucuları getir
+  const { data: servers = [] } = useQuery<Server[]>({
+    queryKey: ['ai-ready-servers'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
+      if (!response.ok) throw new Error('Failed to fetch servers')
+      return response.json()
+    }
+  })
 
   // Chat session'larını getir
   const { data: sessions = [], refetch: refetchSessions } = useQuery<ChatSession[]>({
@@ -119,7 +131,8 @@ const Chat: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: messageText,
-          session_id: selectedSessionId
+          session_id: selectedSessionId,
+          server_ids: selectedServers.length > 0 ? selectedServers : undefined
         })
       })
 
@@ -160,6 +173,8 @@ const Chat: React.FC = () => {
       return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
     }
   }
+
+  const aiReadyServers = servers.filter(s => s.ai_ready)
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
@@ -219,8 +234,90 @@ const Chat: React.FC = () => {
         </div>
       </div>
 
-      {/* Sağ Panel - Chat Mesajları */}
-      <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+      {/* Ana Panel - Chat ve Sunucular */}
+      <div className="flex-1 flex gap-4">
+        {/* Sol Panel - AI Ready Sunucular */}
+        {showServerPanel && (
+          <div className="w-72 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">AI Ready Sunucular</h3>
+                <p className="text-xs text-slate-400 mt-1">{aiReadyServers.length} sunucu</p>
+              </div>
+              <button
+                onClick={() => setShowServerPanel(false)}
+                className="text-slate-400 hover:text-white transition-colors"
+                title="Gizle"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {aiReadyServers.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 text-sm">
+                  <span className="text-2xl block mb-2">🤖</span>
+                  AI Ready sunucu bulunamadı
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {aiReadyServers.map(server => (
+                    <label
+                      key={server.id}
+                      className={`flex items-center p-3 rounded-lg cursor-pointer transition-all ${
+                        selectedServers.includes(server.id)
+                          ? 'bg-blue-600/20 border border-blue-500/50'
+                          : 'bg-slate-700/50 border border-transparent hover:bg-slate-700'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedServers.includes(server.id)}
+                        onChange={() => {
+                          setSelectedServers(prev =>
+                            prev.includes(server.id)
+                              ? prev.filter(id => id !== server.id)
+                              : [...prev, server.id]
+                          )
+                        }}
+                        className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
+                      />
+                      <div className="ml-3 flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{server.name}</p>
+                        <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selectedServers.length > 0 && (
+              <div className="px-4 py-3 border-t border-slate-700 bg-slate-900/50">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400">{selectedServers.length} seçili</span>
+                  <button
+                    onClick={() => setSelectedServers([])}
+                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    Temizle
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Sağ Panel - Chat Mesajları */}
+        <div className={`flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden ${!showServerPanel ? 'w-full' : ''}`}>
+          {!showServerPanel && (
+            <div className="px-4 py-2 border-b border-slate-700">
+              <button
+                onClick={() => setShowServerPanel(true)}
+                className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                ← Sunucuları Göster
+              </button>
+            </div>
+          )}
         {/* Mesajlar */}
         <div className="flex-1 overflow-y-auto p-6">
           {selectedSessionId === null ? (
@@ -284,6 +381,28 @@ const Chat: React.FC = () => {
 
         {/* Input */}
         <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/50">
+          {selectedServers.length > 0 && (
+            <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
+              <span className="text-xs text-slate-400">Seçili sunucular:</span>
+              {selectedServers.map(serverId => {
+                const server = aiReadyServers.find(s => s.id === serverId)
+                return server ? (
+                  <span
+                    key={serverId}
+                    className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded border border-blue-500/30"
+                  >
+                    {server.name}
+                    <button
+                      onClick={() => setSelectedServers(prev => prev.filter(id => id !== serverId))}
+                      className="ml-1 hover:text-blue-300"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ) : null
+              })}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="flex items-center space-x-4">
             <div className="flex-1 relative">
               <input
@@ -312,6 +431,7 @@ const Chat: React.FC = () => {
               </span>
             </button>
           </form>
+        </div>
         </div>
       </div>
     </div>
