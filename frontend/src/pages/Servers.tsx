@@ -16,13 +16,19 @@ interface Server {
   memory_gb: number
   ai_ready: boolean
   connection_config: any
+  node_exporter?: {
+    installed: boolean
+    running: boolean
+  }
 }
 
 const Servers: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('ONLINE') // Varsayılan olarak sadece online
+  const [showOffline, setShowOffline] = useState(false) // Offline sunucuları göstermek için toggle
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
+  const [installingNodeExporter, setInstallingNodeExporter] = useState<number | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     hostname: '',
@@ -37,10 +43,11 @@ const Servers: React.FC = () => {
   const { data: servers = [], isLoading } = useQuery<Server[]>({
     queryKey: ['servers'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/servers/`)
+      const response = await fetch(`${API_BASE_URL}/servers/?include_node_exporter_status=true`)
       if (!response.ok) throw new Error('Failed to fetch servers')
       return response.json()
-    }
+    },
+    refetchInterval: 30000 // 30 saniyede bir yenile
   })
 
   const createMutation = useMutation({
@@ -73,6 +80,26 @@ const Servers: React.FC = () => {
     }
   })
 
+  const installNodeExporterMutation = useMutation({
+    mutationFn: async (serverId: number) => {
+      const response = await fetch(`${API_BASE_URL}/monitoring/node-exporter/install/${serverId}`, {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to install Node Exporter')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      setInstallingNodeExporter(null)
+    },
+    onError: () => {
+      setInstallingNodeExporter(null)
+    }
+  })
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     createMutation.mutate(formData)
@@ -83,7 +110,12 @@ const Servers: React.FC = () => {
     const matchesSearch = server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       server.ip_address?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       server.hostname?.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || server.status === statusFilter
+    
+    // Status filtresi: showOffline true ise tümü, false ise sadece ONLINE
+    const matchesStatus = showOffline 
+      ? (statusFilter === 'all' || server.status === statusFilter)
+      : (server.status === 'ONLINE' || (statusFilter !== 'all' && server.status === statusFilter))
+    
     const matchesAiReady = aiReadyFilter === 'all' || 
       (aiReadyFilter === 'true' && server.ai_ready) ||
       (aiReadyFilter === 'false' && !server.ai_ready)
@@ -124,18 +156,30 @@ const Servers: React.FC = () => {
             />
             <span className="absolute left-3 top-2.5 text-slate-500">🔍</span>
           </div>
+          {/* Show Offline Toggle */}
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOffline}
+              onChange={(e) => setShowOffline(e.target.checked)}
+              className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
+            />
+            <span className="text-sm text-slate-300">Çevrimdışıları Göster</span>
+          </label>
           {/* Status Filter */}
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">Tüm Durumlar</option>
-            <option value="ONLINE">Çevrimiçi</option>
-            <option value="OFFLINE">Çevrimdışı</option>
-            <option value="WARNING">Uyarı</option>
-            <option value="CRITICAL">Kritik</option>
-          </select>
+          {showOffline && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Tüm Durumlar</option>
+              <option value="ONLINE">Çevrimiçi</option>
+              <option value="OFFLINE">Çevrimdışı</option>
+              <option value="WARNING">Uyarı</option>
+              <option value="CRITICAL">Kritik</option>
+            </select>
+          )}
           {/* AI Ready Filter */}
           <select
             value={aiReadyFilter}
@@ -168,6 +212,7 @@ const Servers: React.FC = () => {
                 <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Tip</th>
                 <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Kaynaklar</th>
                 <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">AI</th>
+                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Node Exporter</th>
                 <th className="px-6 py-4 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">İşlemler</th>
               </tr>
             </thead>
@@ -218,18 +263,56 @@ const Servers: React.FC = () => {
                       <span className="text-slate-500 text-sm">-</span>
                     )}
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {server.connection_config?.username ? (
+                      server.node_exporter?.installed ? (
+                        server.node_exporter?.running ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                            ✅ Çalışıyor
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                            ⚠️ Kurulu (Durdurulmuş)
+                          </span>
+                        )
+                      ) : (
+                        <button
+                          onClick={() => {
+                            if (confirm(`${server.name} sunucusuna Node Exporter kurmak istediğinize emin misiniz?`)) {
+                              setInstallingNodeExporter(server.id)
+                              installNodeExporterMutation.mutate(server.id)
+                            }
+                          }}
+                          disabled={installingNodeExporter === server.id}
+                          className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Node Exporter Kur"
+                        >
+                          {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
+                        </button>
+                      )
+                    ) : (
+                      <span className="text-slate-500 text-sm">-</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <button
-                      onClick={() => {
-                        if (confirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
-                          deleteMutation.mutate(server.id)
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-300 transition-colors p-2"
-                      title="Sil"
-                    >
-                      🗑️
-                    </button>
+                    <div className="flex items-center justify-end space-x-2">
+                      {installNodeExporterMutation.isError && installingNodeExporter === server.id && (
+                        <span className="text-red-400 text-xs" title={installNodeExporterMutation.error?.message}>
+                          ❌
+                        </span>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (confirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
+                            deleteMutation.mutate(server.id)
+                          }
+                        }}
+                        className="text-red-400 hover:text-red-300 transition-colors p-2"
+                        title="Sil"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

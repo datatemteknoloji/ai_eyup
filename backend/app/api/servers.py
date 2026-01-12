@@ -7,30 +7,53 @@ from typing import List
 from app.core.database import get_db
 from app.models.server import Server
 from app.schemas.server import ServerCreate, ServerUpdate, ServerResponse
+from app.services.monitoring.node_exporter_installer import NodeExporterInstaller
 
 router = APIRouter()
 
 @router.get("/")
-async def list_servers(db: Session = Depends(get_db)):
+async def list_servers(db: Session = Depends(get_db), include_node_exporter_status: bool = False):
     """Tüm sunucuları listele"""
     try:
         servers = db.query(Server).all()
-        return [{
-            "id": s.id,
-            "name": s.name,
-            "hostname": s.hostname,
-            "ip_address": s.ip_address,
-            "status": s.status,
-            "os_type": s.os_type,
-            "os_version": s.os_version,
-            "server_type": s.server_type,
-            "cpu_cores": s.cpu_cores,
-            "memory_gb": s.memory_gb,
-            "ai_ready": s.ai_ready,
-            "connection_config": s.connection_config,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "updated_at": s.updated_at.isoformat() if s.updated_at else None
-        } for s in servers]
+        result = []
+        for s in servers:
+            server_data = {
+                "id": s.id,
+                "name": s.name,
+                "hostname": s.hostname,
+                "ip_address": s.ip_address,
+                "status": s.status,
+                "os_type": s.os_type,
+                "os_version": s.os_version,
+                "server_type": s.server_type,
+                "cpu_cores": s.cpu_cores,
+                "memory_gb": s.memory_gb,
+                "ai_ready": s.ai_ready,
+                "connection_config": s.connection_config,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None
+            }
+            
+            # Node Exporter durumunu ekle (eğer istenirse ve sunucu credential'lı ise)
+            if include_node_exporter_status and s.connection_config and s.connection_config.get("username"):
+                try:
+                    installer = NodeExporterInstaller(s)
+                    node_exporter_status = installer.check_status()
+                    installer.connector.close()
+                    server_data["node_exporter"] = {
+                        "installed": node_exporter_status.get("installed", False),
+                        "running": node_exporter_status.get("running", False)
+                    }
+                except Exception:
+                    server_data["node_exporter"] = {
+                        "installed": False,
+                        "running": False
+                    }
+            
+            result.append(server_data)
+        
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing servers: {str(e)}")
 
