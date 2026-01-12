@@ -474,9 +474,21 @@ const Servers: React.FC = () => {
                 </button>
               </div>
               {createMutation.isError && (
-                <p className="text-red-400 text-sm">
-                  Hata: {createMutation.error instanceof Error ? createMutation.error.message : 'Bilinmeyen hata'}
-                </p>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                  <p className="text-red-400 text-sm font-medium">Hata:</p>
+                  <p className="text-red-300 text-sm mt-1">
+                    {createMutation.error instanceof Error 
+                      ? createMutation.error.message 
+                      : typeof createMutation.error === 'string'
+                      ? createMutation.error
+                      : 'Bilinmeyen hata'}
+                  </p>
+                </div>
+              )}
+              {createMutation.isSuccess && (
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                  <p className="text-green-400 text-sm">✓ Sunucu başarıyla eklendi!</p>
+                </div>
               )}
             </form>
           </div>
