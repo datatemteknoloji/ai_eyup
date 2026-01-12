@@ -195,8 +195,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     # CPU metrikleri - son değerler
                     try:
-                        # CPU kullanımı: 100 - idle
-                        cpu_query = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
+                        # CPU kullanımı: 100 - idle (instance bazında)
+                        cpu_query = '100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[15m])) * 100)'
                         cpu_response = await client.get(
                             f"{prometheus_url}/api/v1/query",
                             params={"query": cpu_query}
@@ -212,8 +212,9 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                                     # Sunucu bazında detay
                                     for r in results[:5]:  # İlk 5 sunucu
                                         instance = r.get("metric", {}).get("instance", "unknown")
+                                        server_name = r.get("metric", {}).get("server_name", instance)
                                         cpu_val = float(r["value"][1])
-                                        performance_context += f"  - {instance}: {cpu_val:.2f}%\n"
+                                        performance_context += f"  - {server_name} ({instance}): {cpu_val:.2f}%\n"
                     except Exception as e:
                         logger.warning(f"CPU metrik çekme hatası: {e}")
                     
