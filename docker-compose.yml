@@ -51,6 +51,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
       - ./prometheus/targets:/prometheus/targets
+      - ./prometheus/targets:/etc/prometheus/targets
     depends_on:
       db:
         condition: service_healthy

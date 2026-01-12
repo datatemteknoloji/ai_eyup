@@ -17,7 +17,18 @@ logger = logging.getLogger(__name__)
 class PrometheusTargetManager:
     """Prometheus file-based service discovery için target yönetimi"""
     
-    def __init__(self, targets_file: str = "/etc/prometheus/targets/node_exporter_targets.json"):
+    def __init__(self, targets_file: str = None):
+        import os
+        # Backend container'da /prometheus/targets mount edilmiş
+        # Prometheus container'da /etc/prometheus/targets kullanılıyor
+        if targets_file is None:
+            # Önce /prometheus/targets'i dene (backend container)
+            if os.path.exists("/prometheus/targets"):
+                targets_file = "/prometheus/targets/node_exporter_targets.json"
+            else:
+                # Fallback: /etc/prometheus/targets (prometheus container veya host)
+                targets_file = "/etc/prometheus/targets/node_exporter_targets.json"
+        
         self.targets_file = Path(targets_file)
         self.targets_file.parent.mkdir(parents=True, exist_ok=True)
         self.reload_url = "http://prometheus:9090/-/reload"

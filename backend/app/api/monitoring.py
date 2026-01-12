@@ -232,11 +232,18 @@ async def sync_ai_ready_targets(db: Session = Depends(get_db)):
         ).all()
         
         target_manager = PrometheusTargetManager()
+        
+        # Mevcut target'ları yükle
+        all_targets = target_manager.load_targets()
+        existing_instances = {t.get("targets", [])[0]: t for t in all_targets if t.get("targets")}
+        
         added_count = 0
         updated_count = 0
         skipped_count = 0
         errors = []
         
+        # AI Ready sunucular için target'ları oluştur
+        new_targets = []
         for server in servers:
             if not server.ip_address:
                 skipped_count += 1
@@ -244,7 +251,7 @@ async def sync_ai_ready_targets(db: Session = Depends(get_db)):
             
             instance = f"{server.ip_address}:9100"
             
-            # Node Exporter kurulu mu kontrol et (hızlı kontrol için sadece ONLINE sunucular)
+            # Node Exporter kurulu mu kontrol et
             try:
                 installer = NodeExporterInstaller(server)
                 status = installer.check_status()
@@ -259,33 +266,31 @@ async def sync_ai_ready_targets(db: Session = Depends(get_db)):
                 logger.warning(f"Server {server.name} Node Exporter durum kontrolü hatası: {e}")
                 # Hata olsa bile eklemeyi dene (belki Node Exporter çalışıyordur)
             
-            # Target ekle veya güncelle
+            # Target oluştur
             labels = {
                 "server_id": str(server.id),
                 "server_name": server.name,
                 "job": "node-exporter"
             }
             
-            # Mevcut target'ları kontrol et
-            existing_targets = target_manager.load_targets()
-            existing = next((t for t in existing_targets if t.get("targets") and t.get("targets", [])[0] == instance), None)
-            
-            if existing:
-                # Mevcut target'ı güncelle (labels güncellenebilir)
-                existing["labels"] = labels
+            if instance in existing_instances:
+                # Mevcut target'ı güncelle
+                existing_instances[instance]["labels"] = labels
                 updated_count += 1
             else:
                 # Yeni target ekle
-                if target_manager.add_target(instance=instance, labels=labels):
-                    added_count += 1
-                else:
-                    errors.append(f"Target eklenemedi: {server.name} ({instance})")
+                new_target = {
+                    "targets": [instance],
+                    "labels": labels
+                }
+                new_targets.append(new_target)
+                added_count += 1
         
-        # Target dosyasını kaydet
+        # Tüm target'ları birleştir ve kaydet
         if added_count > 0 or updated_count > 0:
-            # Mevcut target'ları yeniden yükle ve kaydet
-            all_targets = target_manager.load_targets()
-            target_manager.save_targets(all_targets)
+            # Mevcut target'ları güncelle
+            final_targets = list(existing_instances.values()) + new_targets
+            target_manager.save_targets(final_targets)
             
             # Prometheus'u reload et
             try:
