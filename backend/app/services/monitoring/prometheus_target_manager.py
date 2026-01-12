@@ -19,15 +19,18 @@ class PrometheusTargetManager:
     
     def __init__(self, targets_file: str = None):
         import os
-        # Backend container'da /prometheus/targets mount edilmiş
+        # Backend container'da /prometheus/targets mount edilmiş (docker-compose'da)
         # Prometheus container'da /etc/prometheus/targets kullanılıyor
         if targets_file is None:
-            # Önce /prometheus/targets'i dene (backend container)
+            # Önce /prometheus/targets'i dene (backend container - mount edilmiş)
             if os.path.exists("/prometheus/targets"):
                 targets_file = "/prometheus/targets/node_exporter_targets.json"
-            else:
-                # Fallback: /etc/prometheus/targets (prometheus container veya host)
+            elif os.path.exists("/etc/prometheus/targets"):
+                # Prometheus container veya host
                 targets_file = "/etc/prometheus/targets/node_exporter_targets.json"
+            else:
+                # Varsayılan: /prometheus/targets (backend container)
+                targets_file = "/prometheus/targets/node_exporter_targets.json"
         
         self.targets_file = Path(targets_file)
         self.targets_file.parent.mkdir(parents=True, exist_ok=True)
