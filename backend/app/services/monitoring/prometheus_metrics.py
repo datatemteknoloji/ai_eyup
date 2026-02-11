@@ -8,6 +8,37 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def node_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str]) -> bool:
+    """Prometheus'tan bu sunucuda node-exporter'ın up olup olmadığını kontrol et (sync)."""
+    if not server_ip and not hostname:
+        return False
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                params={"query": 'up{job="node-exporter"}'}
+            )
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            if data.get("status") != "success":
+                return False
+            for r in data.get("data", {}).get("result", []):
+                instance = (r.get("metric") or {}).get("instance", "")
+                value = r.get("value")
+                if value is None or len(value) < 2:
+                    continue
+                if str(value[1]) != "1":
+                    continue
+                if server_ip and (instance == f"{server_ip}:9100" or instance.startswith(server_ip + ":")):
+                    return True
+                if hostname and (instance.startswith(hostname) or hostname in instance):
+                    return True
+    except Exception as e:
+        logger.debug(f"Prometheus node_exporter up check hatası: {e}")
+    return False
+
 class PrometheusMetricsService:
     """Prometheus metriklerini çekmek ve analiz etmek için servis"""
     

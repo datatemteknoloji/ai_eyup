@@ -131,6 +131,96 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error updating hypervisor: {str(e)}")
 
+@router.post("/{hypervisor_id}/sync-vms")
+async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db)):
+    """Hypervisor'dan VM'leri senkronize et"""
+    from app.models.server import Server
+    try:
+        hypervisor = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+        if not hypervisor:
+            raise HTTPException(status_code=404, detail="Hypervisor not found")
+
+        synced = 0
+        errors = []
+        vms = []
+
+        htype = hypervisor.hypervisor_type.value if hypervisor.hypervisor_type else ""
+        
+        if htype == "vmware":
+            try:
+                from app.services.vmware.vcenter_client import VCenterClient
+                client = VCenterClient(
+                    host=hypervisor.ip_address or hypervisor.hostname,
+                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
+                    password=hypervisor.password or hypervisor.connection_config.get("password", "")
+                )
+                client.login()
+                vms = client.list_vms()
+                client.logout()
+            except ImportError:
+                errors.append("VMware client modülü bulunamadı")
+            except Exception as e:
+                errors.append(f"vCenter bağlantı hatası: {str(e)}")
+        elif htype == "kvm":
+            try:
+                from app.services.ovirt.ovirt_client import OVirtClient
+                client = OVirtClient(
+                    host=hypervisor.ip_address or hypervisor.hostname,
+                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
+                    password=hypervisor.password or hypervisor.connection_config.get("password", "")
+                )
+                vms = client.list_vms()
+            except ImportError:
+                errors.append("oVirt client modülü bulunamadı")
+            except Exception as e:
+                errors.append(f"oVirt bağlantı hatası: {str(e)}")
+        else:
+            errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
+
+        for vm in vms:
+            vm_name = vm.get("name", "Unknown")
+            existing = db.query(Server).filter(Server.name == vm_name).first()
+            if not existing:
+                new_server = Server(
+                    name=vm_name,
+                    hostname=vm_name,
+                    ip_address=vm.get("ip_address", ""),
+                    status="OFFLINE",
+                    os_type=vm.get("os_type", ""),
+                    server_type="VIRTUAL",
+                    cpu_cores=vm.get("cpu_cores", 0),
+                    memory_gb=vm.get("memory_gb", 0),
+                    connection_config={}
+                )
+                db.add(new_server)
+                synced += 1
+            else:
+                # Mevcut sunucuyu güncelle
+                if vm.get("ip_address"):
+                    existing.ip_address = vm["ip_address"]
+                if vm.get("cpu_cores"):
+                    existing.cpu_cores = vm["cpu_cores"]
+                if vm.get("memory_gb"):
+                    existing.memory_gb = vm["memory_gb"]
+                if vm.get("os_type"):
+                    existing.os_type = vm["os_type"]
+
+        db.commit()
+
+        return {
+            "success": len(errors) == 0,
+            "hypervisor": hypervisor.name,
+            "synced_count": synced,
+            "total_vms": len(vms),
+            "errors": errors
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
+
+
 @router.delete("/{hypervisor_id}", status_code=204)
 async def delete_hypervisor(hypervisor_id: int, db: Session = Depends(get_db)):
     """Hypervisor sil"""

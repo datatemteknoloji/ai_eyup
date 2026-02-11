@@ -8,7 +8,7 @@ import subprocess
 import platform
 import paramiko
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 from app.services.monitoring.server_connector import ServerConnector
 from app.core.config import settings
 
@@ -50,57 +50,101 @@ class NodeExporterInstaller:
             logger.warning(f"Architecture detection failed: {e}")
         return "amd64"  # Default
     
+    INSTALL_STEPS = [
+        {"id": "connection", "label": "SSH bağlantı testi"},
+        {"id": "status_check", "label": "Node Exporter durum kontrolü"},
+        {"id": "download", "label": "Binary indirme / dağıtım"},
+        {"id": "install", "label": "Sunucuya kurulum"},
+        {"id": "systemd_service", "label": "Systemd servisi oluşturma"},
+        {"id": "start_service", "label": "Servisi başlatma"},
+        {"id": "final_check", "label": "Son durum kontrolü"},
+    ]
+
     def install(self) -> Dict[str, Any]:
-        """Node Exporter kurulumu"""
+        """Node Exporter kurulumu. Sonuçta steps listesi döner (UI'da ilerleme göstermek için)."""
+        steps: List[Dict[str, Any]] = []
+        def add_step(step_id: str, status: str, message: Optional[str] = None):
+            step = next((s for s in self.INSTALL_STEPS if s["id"] == step_id), {"id": step_id, "label": step_id})
+            steps.append({"id": step_id, "label": step["label"], "status": status, "message": message})
+
         try:
             if self.os_type == "windows":
-                return {"success": False, "error": "Windows için Node Exporter kurulumu henüz desteklenmiyor"}
-            
+                return {"success": False, "error": "Windows için Node Exporter kurulumu henüz desteklenmiyor", "steps": []}
+
             # 1. Bağlantı testi
             connection_test = self.connector.test_connection()
             if not connection_test.get("success"):
-                return {"success": False, "error": f"SSH bağlantı hatası: {connection_test.get('error')}"}
-            
+                add_step("connection", "failed", connection_test.get("error"))
+                return {"success": False, "error": f"SSH bağlantı hatası: {connection_test.get('error')}", "steps": steps}
+            add_step("connection", "success")
+
             # 2. Node Exporter zaten kurulu mu kontrol et
             status_check = self.check_status()
             if status_check.get("installed") and status_check.get("running"):
-                return {"success": True, "message": "Node Exporter zaten kurulu ve çalışıyor", "installed": True, "running": True}
-            
+                add_step("status_check", "success", "Zaten kurulu ve çalışıyor")
+                for s in self.INSTALL_STEPS[2:]:
+                    add_step(s["id"], "skipped")
+                return {
+                    "success": True,
+                    "message": "Node Exporter zaten kurulu ve çalışıyor",
+                    "installed": True,
+                    "running": True,
+                    "steps": steps,
+                }
+
+            add_step("status_check", "success")
+
             # 3. Node Exporter'ı indir
             download_result = self._download_node_exporter()
             if not download_result.get("success"):
-                return download_result
-            
+                add_step("download", "failed", download_result.get("error"))
+                return {**download_result, "steps": steps}
+            add_step("download", "success")
+
             # 4. Node Exporter'ı kur
             install_result = self._install_node_exporter(download_result.get("path"))
             if not install_result.get("success"):
-                return install_result
-            
+                add_step("install", "failed", install_result.get("error"))
+                return {**install_result, "steps": steps}
+            add_step("install", "success")
+
             # 5. Systemd servisi oluştur
             service_result = self._create_systemd_service()
             if not service_result.get("success"):
-                return service_result
-            
+                add_step("systemd_service", "failed", service_result.get("error"))
+                return {**service_result, "steps": steps}
+            add_step("systemd_service", "success")
+
             # 6. Servisi başlat
             start_result = self._start_service()
             if not start_result.get("success"):
-                return start_result
-            
+                add_step("start_service", "failed", start_result.get("error"))
+                return {**start_result, "steps": steps}
+            add_step("start_service", "success")
+
             # 7. Durumu kontrol et
             final_check = self.check_status()
-            
+            add_step("final_check", "success" if final_check.get("running") else "success")
+
             return {
                 "success": True,
                 "message": "Node Exporter başarıyla kuruldu ve başlatıldı",
                 "installed": True,
                 "running": final_check.get("running", False),
                 "port": self.NODE_EXPORTER_PORT,
-                "version": self.NODE_EXPORTER_VERSION
+                "version": self.NODE_EXPORTER_VERSION,
+                "steps": steps,
             }
-            
+
         except Exception as e:
             logger.error(f"Node Exporter kurulum hatası: {e}", exc_info=True)
-            return {"success": False, "error": f"Kurulum hatası: {str(e)}"}
+            err_msg = str(e)
+            if steps:
+                steps[-1]["status"] = "failed"
+                steps[-1]["message"] = err_msg
+            else:
+                steps = [{"id": "connection", "label": "Kurulum", "status": "failed", "message": err_msg}]
+            return {"success": False, "error": f"Kurulum hatası: {err_msg}", "steps": steps}
     
     def _get_local_binary_path(self) -> Optional[str]:
         """Backend sunucusundaki binary dosya yolunu al"""

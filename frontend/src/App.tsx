@@ -1,11 +1,13 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Dashboard from './pages/Dashboard'
 import Servers from './pages/Servers'
 import Hypervisors from './pages/Hypervisors'
 import Chat from './pages/Chat'
+import LiveMetrics from './pages/LiveMetrics'
 import Settings from './pages/Settings'
+import Events from './pages/Events'
+import Incidents from './pages/Incidents'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient()
@@ -21,6 +23,9 @@ function App() {
             <Route path="/servers" element={<Servers />} />
             <Route path="/hypervisors" element={<Hypervisors />} />
             <Route path="/chat" element={<Chat />} />
+            <Route path="/metrics" element={<LiveMetrics />} />
+            <Route path="/events" element={<Events />} />
+            <Route path="/incidents" element={<Incidents />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

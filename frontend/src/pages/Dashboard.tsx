@@ -1,8 +1,7 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-
-const API_BASE_URL = 'http://192.168.1.166:8000/api/v1'
+import { API_BASE_URL } from '../config/api'
 
 interface Server {
   id: number

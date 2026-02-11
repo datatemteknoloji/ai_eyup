@@ -1,14 +1,15 @@
 """
 Monitoring API endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.server import Server
 from app.services.monitoring.node_exporter_installer import NodeExporterInstaller
 from app.services.monitoring.prometheus_target_manager import PrometheusTargetManager
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,15 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
             if added:
                 result["prometheus_target_added"] = True
                 result["prometheus_instance"] = instance
+                steps = result.get("steps", [])
+                steps.append({"id": "prometheus", "label": "Prometheus hedefi ekleme", "status": "success", "message": instance})
+                result["steps"] = steps
             else:
                 result["prometheus_target_warning"] = "Target eklenemedi, manuel olarak eklenmeli"
-            
+                steps = result.get("steps", [])
+                steps.append({"id": "prometheus", "label": "Prometheus hedefi ekleme", "status": "failed", "message": "Target eklenemedi"})
+                result["steps"] = steps
+
             # Async reload (opsiyonel) - fallback to sync
             try:
                 await target_manager.reload_prometheus_async()
@@ -66,7 +73,10 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
         
     except Exception as e:
         logger.error(f"Node Exporter kurulum hatası (Server ID: {server_id}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Kurulum hatası: {str(e)}")
+        # Frontend'de adımların görünmesi için steps varsa 200 ile dön (success: false)
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/node-exporter/uninstall/{server_id}")
 async def uninstall_node_exporter(server_id: int, db: Session = Depends(get_db)):
@@ -191,33 +201,73 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
         logger.error(f"AI Ready sunucular listesi hatası: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Liste hatası: {str(e)}")
 
+def _prometheus_node_exporter_up(server_ip: Optional[str], hostname: Optional[str]) -> bool:
+    """Prometheus'tan bu sunucuda node-exporter'ın up olup olmadığını kontrol et"""
+    if not server_ip and not hostname:
+        return False
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                params={"query": 'up{job="node-exporter"}'}
+            )
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            if data.get("status") != "success":
+                return False
+            for r in data.get("data", {}).get("result", []):
+                instance = (r.get("metric") or {}).get("instance", "")
+                value = r.get("value")
+                if value is None or len(value) < 2:
+                    continue
+                if str(value[1]) != "1":
+                    continue
+                if server_ip and (instance == f"{server_ip}:9100" or instance.startswith(server_ip + ":")):
+                    return True
+                if hostname and (instance.startswith(hostname) or hostname in instance):
+                    return True
+    except Exception as e:
+        logger.debug(f"Prometheus fallback hatası: {e}")
+    return False
+
+
 @router.get("/node-exporter/status/{server_id}")
 async def check_node_exporter_status(server_id: int, db: Session = Depends(get_db)):
-    """Node Exporter durumunu kontrol et"""
+    """Node Exporter durumunu kontrol et. Önce Prometheus (up ise çalışıyor); yoksa SSH."""
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    
-    if not server.connection_config or not server.connection_config.get("username"):
-        raise HTTPException(status_code=400, detail="Server must have SSH credentials to check Node Exporter status")
-    
-    try:
-        installer = NodeExporterInstaller(server)
-        result = installer.check_status()
-        
-        # Bağlantıyı kapat
-        installer.connector.close()
-        
-        return {
-            "server_id": server_id,
-            "server_name": server.name,
-            "server_ip": server.ip_address,
-            **result
-        }
-        
-    except Exception as e:
-        logger.error(f"Node Exporter durum kontrolü hatası (Server ID: {server_id}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Durum kontrolü hatası: {str(e)}")
+
+    result = {"installed": False, "running": False}
+
+    # Önce Prometheus'a bak: SSH olsa bile Prometheus'ta up ise "çalışıyor" kabul et
+    # (Node Exporter sunucuda farklı yolda kurulu olabilir veya SSH gecikme/hatası olabilir)
+    if server.ip_address or server.hostname:
+        if _prometheus_node_exporter_up(server.ip_address, server.hostname):
+            return {
+                "server_id": server_id,
+                "server_name": server.name,
+                "server_ip": server.ip_address,
+                "installed": True,
+                "running": True
+            }
+
+    # Prometheus'ta yoksa SSH ile kontrol et (AI Ready ise zaten SSH var)
+    if server.connection_config and server.connection_config.get("username"):
+        try:
+            installer = NodeExporterInstaller(server)
+            result = installer.check_status()
+            installer.connector.close()
+        except Exception as e:
+            logger.warning(f"Node Exporter SSH durum kontrolü hatası (Server ID: {server_id}): {e}")
+
+    return {
+        "server_id": server_id,
+        "server_name": server.name,
+        "server_ip": server.ip_address,
+        **result
+    }
 
 @router.post("/prometheus/sync-ai-ready-targets")
 async def sync_ai_ready_targets(db: Session = Depends(get_db)):

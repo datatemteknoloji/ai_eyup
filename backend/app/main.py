@@ -44,6 +44,34 @@ except Exception as e:
     
     app.include_router(fallback_router, prefix="/api/v1")
 
+@app.on_event("startup")
+async def startup_tasks():
+    """Uygulama başlangıcında yapılacak işlemler"""
+    # Tabloları oluştur
+    from app.core.database import engine, Base
+    import app.models  # noqa: F401 - modelleri Base.metadata'ya kaydetmek için
+    Base.metadata.create_all(bind=engine)
+    
+    # TimescaleDB hypertable'ları oluştur
+    try:
+        from app.core.init_timescale import init_timescaledb
+        init_timescaledb()
+        logger.info("✅ TimescaleDB initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ TimescaleDB initialization failed (will continue without time-series optimization): {e}")
+    
+    # Background task'ları başlat (her 5 dakikada ping kontrolü)
+    from app.background_tasks import background_task_manager
+    await background_task_manager.start()
+    logger.info("Background tasks started (health checks every 5 minutes)")
+
+@app.on_event("shutdown")
+async def shutdown_tasks():
+    """Uygulama kapanırken background task'ları durdur"""
+    from app.background_tasks import background_task_manager
+    await background_task_manager.stop()
+    logger.info("Background tasks stopped")
+
 @app.get("/")
 async def root():
     return {"message": "Server Management API", "version": "1.0.0"}

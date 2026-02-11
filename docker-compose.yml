@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - /var/lib/server_management/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -26,7 +26,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - /var/lib/server_management/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -39,14 +39,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: server_management_backend
-    ports:
-      - "8000:8000"
+    network_mode: "host"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/server_management
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@localhost:5432/server_management
+      - REDIS_URL=redis://localhost:6379/0
       - OLLAMA_URL=http://192.168.1.166:11434
-      - PROMETHEUS_URL=http://prometheus:9090
-      - PUSHGATEWAY_URL=http://pushgateway:9091
+      - PROMETHEUS_URL=http://localhost:9090
+      - PUSHGATEWAY_URL=http://localhost:9091
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
@@ -85,7 +84,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./prometheus/targets:/etc/prometheus/targets
-      - prometheus_data:/prometheus
+      - /var/lib/server_management/prometheus:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -117,8 +116,5 @@ services:
   #   volumes:
   #     - ollama_data:/root/.ollama
 
-volumes:
-  postgres_data:
-  redis_data:
-  prometheus_data:
-  # ollama_data:
+# Volumes artık host path'lerde: /var/lib/server_management/
+# Bu sayede Podman/Docker karışımında veri kaybı olmaz

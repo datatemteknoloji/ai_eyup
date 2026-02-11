@@ -1,6 +1,7 @@
 """
 Servers API endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
@@ -8,7 +9,10 @@ from app.core.database import get_db
 from app.models.server import Server
 from app.schemas.server import ServerCreate, ServerUpdate, ServerResponse
 from app.services.monitoring.node_exporter_installer import NodeExporterInstaller
+from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
+from app.services.monitoring.server_health_checker import ServerHealthChecker
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/")
@@ -35,30 +39,33 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None
             }
             
-            # Node Exporter durumunu ekle (eğer istenirse ve sunucu credential'lı ise)
-            # Sadece ONLINE sunucular için kontrol et (OFFLINE sunucular timeout olur ve çok uzun sürer)
+            # Node Exporter durumunu ekle (ONLINE sunucular: SSH varsa SSH, yoksa/hatada Prometheus)
             if include_node_exporter_status:
-                if s.status == "ONLINE" and s.connection_config and s.connection_config.get("username"):
-                    try:
-                        installer = NodeExporterInstaller(s)
-                        node_exporter_status = installer.check_status()
-                        installer.connector.close()
-                        server_data["node_exporter"] = {
-                            "installed": node_exporter_status.get("installed", False),
-                            "running": node_exporter_status.get("running", False)
-                        }
-                    except Exception:
-                        # Hata durumunda varsayılan değerler
-                        server_data["node_exporter"] = {
-                            "installed": False,
-                            "running": False
-                        }
+                if s.status == "ONLINE":
+                    if s.connection_config and s.connection_config.get("username"):
+                        try:
+                            installer = NodeExporterInstaller(s)
+                            node_exporter_status = installer.check_status()
+                            installer.connector.close()
+                            server_data["node_exporter"] = {
+                                "installed": node_exporter_status.get("installed", False),
+                                "running": node_exporter_status.get("running", False)
+                            }
+                        except Exception:
+                            server_data["node_exporter"] = {"installed": False, "running": False}
+                        # SSH sonucu kurulu/çalışır göstermiyorsa Prometheus fallback
+                        if not server_data["node_exporter"]["installed"]:
+                            if node_exporter_up_for_server(s.ip_address, s.hostname):
+                                server_data["node_exporter"] = {"installed": True, "running": True}
+                    else:
+                        # Credential yok ama ONLINE: sadece Prometheus'tan bak (sunucuda node_exporter çalışıyor olabilir)
+                        if s.ip_address or s.hostname:
+                            up = node_exporter_up_for_server(s.ip_address, s.hostname)
+                            server_data["node_exporter"] = {"installed": up, "running": up}
+                        else:
+                            server_data["node_exporter"] = {"installed": False, "running": False}
                 else:
-                    # OFFLINE veya credential'sız sunucular için varsayılan değer
-                    server_data["node_exporter"] = {
-                        "installed": False,
-                        "running": False
-                    }
+                    server_data["node_exporter"] = {"installed": False, "running": False}
             
             result.append(server_data)
         
@@ -206,3 +213,83 @@ async def delete_server(server_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting server: {str(e)}")
+
+@router.post("/{server_id}/credentials")
+async def update_server_credentials(server_id: int, credentials: dict, db: Session = Depends(get_db)):
+    """Sunucu SSH credential'larını güncelle"""
+    try:
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        if not server.connection_config:
+            server.connection_config = {}
+
+        for field in ["username", "password", "private_key", "sudo_password", "port"]:
+            if field in credentials and credentials[field]:
+                server.connection_config[field] = credentials[field]
+
+        if "ai_ready" in credentials:
+            server.ai_ready = credentials["ai_ready"]
+        elif server.connection_config.get("username"):
+            server.ai_ready = True
+
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(server, "connection_config")
+        db.commit()
+        db.refresh(server)
+
+        return {
+            "success": True,
+            "server_id": server.id,
+            "ai_ready": server.ai_ready,
+            "has_credentials": bool(server.connection_config.get("username"))
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/check-health")
+async def check_all_servers_health(db: Session = Depends(get_db)):
+    """Tüm sunucuların durumlarını kontrol et ve güncelle (ping + SSH)"""
+    try:
+        stats = await ServerHealthChecker.update_server_statuses_async(db)
+        return {
+            "success": True,
+            "message": "Sunucu durumları güncellendi",
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Health check error: {str(e)}")
+
+@router.post("/{server_id}/check-health")
+async def check_server_health(server_id: int, db: Session = Depends(get_db)):
+    """Tek bir sunucunun durumunu kontrol et ve güncelle"""
+    try:
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+        
+        old_status = server.status
+        new_status = ServerHealthChecker.check_server_status(server)
+        server.status = new_status
+        db.commit()
+        
+        return {
+            "success": True,
+            "server_id": server_id,
+            "server_name": server.name,
+            "old_status": old_status,
+            "new_status": new_status,
+            "changed": old_status != new_status
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Health check failed for server {server_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Health check error: {str(e)}")

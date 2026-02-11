@@ -17,7 +17,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/dashboard', name: 'Dashboard', icon: '📊' },
     { path: '/servers', name: 'Sunucular', icon: '🖥️' },
     { path: '/hypervisors', name: 'Hypervisor\'lar', icon: '☁️' },
+    { path: '/events', name: 'Events', icon: '📋' },
+    { path: '/incidents', name: 'Incidents', icon: '🚨' },
     { path: '/chat', name: 'AI Chat', icon: '🤖' },
+    { path: '/metrics', name: 'Canlı Metrikler', icon: '📈' },
     { path: '/settings', name: 'Ayarlar', icon: '⚙️' },
   ]
 

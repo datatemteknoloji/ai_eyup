@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-
-const API_BASE_URL = 'http://192.168.1.166:8000/api/v1'
+import { API_BASE_URL } from '../config/api'
 
 interface Hypervisor {
   id: number
@@ -25,6 +24,13 @@ const Hypervisors: React.FC = () => {
     username: '',
     password: ''
   })
+  const [connectionTest, setConnectionTest] = useState<{
+    tested: boolean
+    success: boolean
+    message: string
+    details: string
+  } | null>(null)
+  const [testing, setTesting] = useState(false)
 
   const queryClient = useQueryClient()
 
@@ -67,9 +73,84 @@ const Hypervisors: React.FC = () => {
     }
   })
 
+  const syncVMsMutation = useMutation({
+    mutationFn: async (hypervisorId: number) => {
+      const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisorId}/sync-vms`, {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Sync failed')
+      }
+      return response.json()
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      alert(`✅ ${data.synced_count} VM senkronize edildi!\n\nToplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
+    },
+    onError: (error: Error) => {
+      alert(`❌ Sync hatası: ${error.message}`)
+    }
+  })
+
+  const testConnection = async () => {
+    setTesting(true)
+    setConnectionTest(null)
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/hypervisors/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: formData.type,
+          hostname: formData.hostname || formData.ip_address,
+          ip_address: formData.ip_address,
+          port: formData.port,
+          username: formData.username,
+          password: formData.password
+        })
+      })
+      
+      const result = await response.json()
+      setConnectionTest({
+        tested: true,
+        success: result.success,
+        message: result.message,
+        details: result.details || ''
+      })
+    } catch (error: any) {
+      setConnectionTest({
+        tested: true,
+        success: false,
+        message: '❌ Test başarısız',
+        details: error.message || 'Bağlantı hatası'
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Bağlantı testi yapılmadıysa veya başarısız olduysa uyar
+    if (!connectionTest?.tested) {
+      alert('⚠️ Lütfen önce "Bağlantıyı Test Et" butonuna basarak credential\'ları doğrulayın!')
+      return
+    }
+    
+    if (!connectionTest.success) {
+      alert('❌ Bağlantı testi başarısız! Kullanıcı adı ve şifreyi kontrol edin.')
+      return
+    }
+    
     createMutation.mutate(formData)
+  }
+  
+  // Form değiştiğinde test sonucunu sıfırla
+  const handleFormChange = (field: string, value: any) => {
+    setFormData({ ...formData, [field]: value })
+    setConnectionTest(null) // Form değişince test sonucunu sıfırla
   }
 
   const getTypeIcon = (type: string) => {
@@ -167,12 +248,26 @@ const Hypervisors: React.FC = () => {
                   )}
                 </div>
                 <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between">
-                  <button className="text-blue-400 hover:text-blue-300 text-sm transition-colors">
-                    🔄 Sync
+                  <button 
+                    onClick={() => syncVMsMutation.mutate(hv.id)}
+                    disabled={syncVMsMutation.isPending}
+                    className="text-blue-400 hover:text-blue-300 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    {syncVMsMutation.isPending ? (
+                      <>
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400"></div>
+                        <span>Syncing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>🔄</span>
+                        <span>Sync VMs</span>
+                      </>
+                    )}
                   </button>
-                  <button className="text-slate-400 hover:text-white text-sm transition-colors">
-                    ⚙️ Ayarlar
-                  </button>
+                  <span className="text-slate-500 text-xs">
+                    {hv.type.toUpperCase()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -215,7 +310,7 @@ const Hypervisors: React.FC = () => {
                   type="text"
                   required
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => handleFormChange('name', e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="örn: vCenter Production"
                 />
@@ -224,12 +319,12 @@ const Hypervisors: React.FC = () => {
                 <label className="block text-sm font-medium text-slate-300 mb-2">Tip *</label>
                 <select
                   value={formData.type}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                  onChange={(e) => handleFormChange('type', e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="vmware">VMware vCenter / ESXi</option>
                   <option value="hyperv">Microsoft Hyper-V</option>
-                  <option value="kvm">KVM / OLVM</option>
+                  <option value="kvm">KVM / oVirt</option>
                   <option value="xen">Xen</option>
                   <option value="proxmox">Proxmox VE</option>
                 </select>
@@ -241,7 +336,7 @@ const Hypervisors: React.FC = () => {
                     type="text"
                     required
                     value={formData.ip_address}
-                    onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
+                    onChange={(e) => handleFormChange('ip_address', e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="192.168.1.100"
                   />
@@ -251,31 +346,79 @@ const Hypervisors: React.FC = () => {
                   <input
                     type="number"
                     value={formData.port}
-                    onChange={(e) => setFormData({ ...formData, port: parseInt(e.target.value) || 443 })}
+                    onChange={(e) => handleFormChange('port', parseInt(e.target.value) || 443)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Kullanıcı Adı</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Kullanıcı Adı *</label>
                 <input
                   type="text"
+                  required
                   value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  onChange={(e) => handleFormChange('username', e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="administrator@vsphere.local"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Şifre</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Şifre *</label>
                 <input
                   type="password"
+                  required
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  onChange={(e) => handleFormChange('password', e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="••••••••"
                 />
               </div>
+              
+              {/* Test Connection Button */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={testConnection}
+                  disabled={testing || !formData.username || !formData.password}
+                  className="w-full py-2.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-lg hover:bg-purple-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
+                >
+                  {testing ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-400"></div>
+                      <span>Test Ediliyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>🔌</span>
+                      <span>Bağlantıyı Test Et</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Test Result */}
+              {connectionTest && (
+                <div className={`p-4 rounded-lg border ${
+                  connectionTest.success 
+                    ? 'bg-green-500/10 border-green-500/30' 
+                    : 'bg-red-500/10 border-red-500/30'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{connectionTest.success ? '✅' : '❌'}</span>
+                    <div className="flex-1">
+                      <p className={`font-medium ${
+                        connectionTest.success ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {connectionTest.message}
+                      </p>
+                      {connectionTest.details && (
+                        <p className="text-sm text-slate-400 mt-1">{connectionTest.details}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
@@ -286,10 +429,11 @@ const Hypervisors: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={createMutation.isPending}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50"
+                  disabled={createMutation.isPending || !connectionTest?.success}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!connectionTest?.success ? 'Önce bağlantıyı test edin' : ''}
                 >
-                  {createMutation.isPending ? 'Ekleniyor...' : 'Ekle'}
+                  {createMutation.isPending ? 'Ekleniyor...' : '➕ Hypervisor Ekle'}
                 </button>
               </div>
               {createMutation.isError && (

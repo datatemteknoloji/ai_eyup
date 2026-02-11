@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-
-const API_BASE_URL = 'http://192.168.1.166:8000/api/v1'
+import { API_BASE_URL } from '../config/api'
 
 interface Server {
   id: number
@@ -26,13 +25,34 @@ interface ChatSession {
   message_count: number
 }
 
+interface AIModel {
+  name: string
+  size: number
+  parameter_size: string
+  family: string
+}
+
 const Chat: React.FC = () => {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [selectedServers, setSelectedServers] = useState<number[]>([])
-  const [showServerPanel, setShowServerPanel] = useState(true)
+  const [serverSearch, setServerSearch] = useState('')
+  const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
+  const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<string>('llama3.2:3b')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const serverDropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (serverDropdownRef.current && !serverDropdownRef.current.contains(e.target as Node)) {
+        setServerDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const queryClient = useQueryClient()
 
@@ -44,6 +64,42 @@ const Chat: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch servers')
       return response.json()
     }
+  })
+
+  // Ollama modellerini getir (hata olursa default kullan)
+  const { data: _modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+    queryKey: ['ai-models'],
+    queryFn: async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/chat/models`, { timeout: 5000 } as any)
+        if (!response.ok) {
+          console.warn('Model API failed, using defaults')
+          return {
+            success: false,
+            models: [
+              { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
+              { name: 'llama3.1:8b', size: 0, parameter_size: '8B', family: 'llama' },
+              { name: 'llama3.1:70b', size: 0, parameter_size: '70B', family: 'llama' }
+            ],
+            default: 'llama3.2:3b'
+          }
+        }
+        return response.json()
+      } catch (error) {
+        console.error('Model fetch error:', error)
+        return {
+          success: false,
+          models: [
+            { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
+            { name: 'llama3.1:8b', size: 0, parameter_size: '8B', family: 'llama' },
+            { name: 'llama3.1:70b', size: 0, parameter_size: '70B', family: 'llama' }
+          ],
+          default: 'llama3.2:3b'
+        }
+      }
+    },
+    retry: false,
+    staleTime: 60000 // 1 dakika cache
   })
 
   // Chat session'larını getir
@@ -81,6 +137,7 @@ const Chat: React.FC = () => {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
       setSelectedSessionId(data.id)
+      setSuppressAutoCreate(false)
     }
   })
 
@@ -92,11 +149,31 @@ const Chat: React.FC = () => {
       })
       if (!response.ok) throw new Error('Failed to delete session')
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
-      if (selectedSessionId && sessions.find(s => s.id === selectedSessionId) === undefined) {
+    onSuccess: (_: unknown, sessionId: number) => {
+      // Listeden silinen session'ı hemen kaldır; refetch yapma, geri gelmesin
+      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], (prev: ChatSession[] | undefined) =>
+        (prev ?? []).filter((s: ChatSession) => s.id !== sessionId)
+      )
+      queryClient.removeQueries({ queryKey: ['chat-messages', sessionId] })
+      if (selectedSessionId === sessionId) {
         setSelectedSessionId(null)
       }
+    }
+  })
+
+  const clearAllSessionsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) throw new Error('Failed to clear sessions')
+    },
+    onSuccess: () => {
+      // Sadece cache güncelle; refetch yapma, silinenler geri gelmesin
+      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], [])
+      queryClient.removeQueries({ queryKey: ['chat-messages'] })
+      setSelectedSessionId(null)
+      setSuppressAutoCreate(true)
     }
   })
 
@@ -108,14 +185,14 @@ const Chat: React.FC = () => {
     scrollToBottom()
   }, [messages])
 
-  // İlk session yoksa oluştur
+  // İlk session'ı otomatik seç
   useEffect(() => {
-    if (sessions.length === 0 && !createSessionMutation.isPending) {
-      createSessionMutation.mutate()
-    } else if (sessions.length > 0 && selectedSessionId === null) {
+    if (sessions.length > 0 && selectedSessionId === null) {
+      console.log('Auto-selecting first session:', sessions[0].id)
       setSelectedSessionId(sessions[0].id)
+      setSuppressAutoCreate(true)
     }
-  }, [sessions.length, selectedSessionId])
+  }, [sessions, selectedSessionId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -132,19 +209,25 @@ const Chat: React.FC = () => {
         body: JSON.stringify({
           message: messageText,
           session_id: selectedSessionId,
-          server_ids: selectedServers.length > 0 ? selectedServers : undefined
+          server_ids: selectedServers.length > 0 ? selectedServers : undefined,
+          model: selectedModel
         })
       })
 
       const data = await response.json()
 
-      if (data.session_id && data.session_id !== selectedSessionId) {
-        setSelectedSessionId(data.session_id)
-      }
+      if (response.ok) {
+        if (data.session_id && data.session_id !== selectedSessionId) {
+          setSelectedSessionId(data.session_id)
+        }
 
-      // Mesajları yenile
-      await refetchMessages()
-      await refetchSessions()
+        // Mesajları yenile
+        await refetchMessages()
+        await refetchSessions()
+      } else {
+        console.error('Chat error:', data)
+        alert(`Chat hatası: ${data.response || data.detail || 'Bilinmeyen hata'}`)
+      }
     } catch (error) {
       console.error('Chat error:', error)
     } finally {
@@ -175,82 +258,159 @@ const Chat: React.FC = () => {
   }
 
   const aiReadyServers = servers.filter(s => s.ai_ready)
+  const filteredAiReadyServers = aiReadyServers.filter(server => {
+    if (!serverSearch) return true
+    const search = serverSearch.toLowerCase()
+    return server.name.toLowerCase().includes(search) || server.ip_address.toLowerCase().includes(search)
+  })
+  
+  // Debug: Sunucu listesini konsola yazdır
+  console.log('🔍 AI Ready Sunucular:', aiReadyServers.length, aiReadyServers.map(s => s.name))
+  console.log('🔍 Filtered Sunucular:', filteredAiReadyServers.length)
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)]">
-      {/* Üst Panel - AI Ready Sunucular */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 mb-4 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-white">AI Ready Sunucular</h3>
-            <p className="text-xs text-slate-400 mt-1">{aiReadyServers.length} sunucu</p>
-          </div>
-          {selectedServers.length > 0 && (
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-slate-400">{selectedServers.length} seçili</span>
-              <button
-                onClick={() => setSelectedServers([])}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 bg-slate-700 rounded"
-              >
-                Temizle
-              </button>
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Sunucu ve Model seçimi */}
+      <div className="flex-shrink-0 p-4 bg-slate-900 border-b border-slate-700">
+        <div className="flex items-center gap-3 flex-wrap">
+        {/* Model Seçimi */}
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 text-sm font-medium">🤖 Model:</span>
+          <select
+            value={selectedModel}
+            onChange={(e) => {
+              const newModel = e.target.value
+              console.log('Model seçildi:', newModel)
+              setSelectedModel(newModel)
+            }}
+            className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 border border-purple-500 rounded-xl text-white text-sm font-medium hover:from-purple-500 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer min-w-[200px]"
+            style={{ appearance: 'auto' }}
+          >
+            <option value="llama3.2:3b" className="bg-slate-900 text-white">
+              llama3.2:3b (Hızlı - 3.2B)
+            </option>
+            <option value="llama3.1:8b" className="bg-slate-900 text-white">
+              llama3.1:8b (İyi Performans - 8B) ✓
+            </option>
+          </select>
+        </div>
+
+        {/* Sunucu Seçimi */}
+        <div className="relative" ref={serverDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setServerDropdownOpen(prev => !prev)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <span className="text-slate-300 text-sm">
+              {selectedServers.length === 0
+                ? 'Sunucu seçin (çoklu)'
+                : `${selectedServers.length} sunucu seçili`}
+            </span>
+            <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
+          </button>
+          {serverDropdownOpen && (
+            <div className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
+              <div className="p-2 border-b border-slate-700">
+                <input
+                  type="text"
+                  value={serverSearch}
+                  onChange={(e) => setServerSearch(e.target.value)}
+                  placeholder="Sunucu ara..."
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-2 p-2 border-b border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedServers(filteredAiReadyServers.map(s => s.id))
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
+                >
+                  Tümünü seç
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedServers([])}
+                  className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded"
+                >
+                  Temizle
+                </button>
+                <span className="text-xs text-slate-500 ml-auto">
+                  {filteredAiReadyServers.length} sunucu
+                </span>
+              </div>
+              <div className="overflow-y-auto flex-1 p-2">
+                {filteredAiReadyServers.length === 0 ? (
+                  <div className="py-4 text-center text-slate-500 text-sm">Sunucu bulunamadı</div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {filteredAiReadyServers.map(server => (
+                      <label
+                        key={server.id}
+                        className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-700/50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedServers.includes(server.id)}
+                          onChange={() => {
+                            setSelectedServers(prev =>
+                              prev.includes(server.id)
+                                ? prev.filter(id => id !== server.id)
+                                : [...prev, server.id]
+                            )
+                          }}
+                          className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{server.name}</p>
+                          <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
-        <div className="overflow-x-auto">
-          <div className="flex space-x-2 p-3">
-            {aiReadyServers.length === 0 ? (
-              <div className="text-center py-4 text-slate-500 text-sm w-full">
-                <span className="text-2xl block mb-2">🤖</span>
-                AI Ready sunucu bulunamadı
-              </div>
-            ) : (
-              aiReadyServers.map(server => (
-                <label
-                  key={server.id}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg cursor-pointer transition-all min-w-[180px] ${
-                    selectedServers.includes(server.id)
-                      ? 'bg-blue-600/20 border border-blue-500/50'
-                      : 'bg-slate-700/50 border border-transparent hover:bg-slate-700'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedServers.includes(server.id)}
-                    onChange={() => {
-                      setSelectedServers(prev =>
-                        prev.includes(server.id)
-                          ? prev.filter(id => id !== server.id)
-                          : [...prev, server.id]
-                      )
-                    }}
-                    className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{server.name}</p>
-                    <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
-                  </div>
-                </label>
-              ))
-            )}
-          </div>
+        {selectedServers.length > 0 && (
+          <span className="text-xs text-slate-400">
+            Sohbet bu sunuculara göre yanıt verecek
+          </span>
+        )}
         </div>
       </div>
 
       {/* Ana Panel - Chat Sessions ve Mesajlar */}
-      <div className="flex-1 flex gap-4">
+      <div className="flex-1 flex gap-4 overflow-hidden p-4">
         {/* Sol Panel - Chat Session'ları */}
         <div className="w-64 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-white">Chat Session'ları</h3>
-            <button
-              onClick={() => createSessionMutation.mutate()}
-              disabled={createSessionMutation.isPending}
-              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors disabled:opacity-50"
-              title="Yeni Chat"
-            >
-              +
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => createSessionMutation.mutate()}
+                disabled={createSessionMutation.isPending}
+                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors disabled:opacity-50"
+                title="Yeni Chat"
+              >
+                +
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Tüm chat sessionlarını silmek istediğinize emin misiniz?')) {
+                    clearAllSessionsMutation.mutate()
+                  }
+                }}
+                disabled={sessions.length === 0 || clearAllSessionsMutation.isPending}
+                className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors disabled:opacity-50"
+                title="Tümünü Sil"
+              >
+                🗑️
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2">
             {sessions.length === 0 ? (
@@ -393,14 +553,14 @@ const Chat: React.FC = () => {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={selectedSessionId ? "Mesajınızı yazın..." : "Önce bir chat session'ı seçin"}
+                placeholder="Mesajınızı yazın..."
                 className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={isLoading || selectedSessionId === null}
+                disabled={isLoading}
               />
             </div>
             <button
               type="submit"
-              disabled={isLoading || !input.trim() || selectedSessionId === null}
+              disabled={isLoading || !input.trim()}
               className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25"
             >
               <span className="flex items-center">
