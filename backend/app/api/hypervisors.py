@@ -3,12 +3,67 @@ Hypervisors API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.hypervisor import Hypervisor, HypervisorType
 from app.schemas.hypervisor import HypervisorCreate, HypervisorUpdate, HypervisorResponse
 
 router = APIRouter()
+
+
+class TestConnectionRequest(BaseModel):
+    type: str
+    hostname: Optional[str] = None
+    ip_address: Optional[str] = None
+    port: Optional[int] = 443
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+@router.post("/test-connection")
+async def test_connection(data: TestConnectionRequest):
+    """Arayüzden bağlantı testi (VMware / oVirt-KVM)."""
+    host = (data.ip_address or data.hostname or "").strip()
+    if not host:
+        return {"success": False, "message": "Host (IP veya hostname) gerekli", "details": ""}
+    port = data.port or 443
+    username = (data.username or "").strip()
+    password = data.password or ""
+    htype = (data.type or "").lower()
+
+    if htype == "vmware":
+        try:
+            from app.services.vmware.vcenter_client import VCenterClient
+            client = VCenterClient(host=host, username=username, password=password)
+            client.login()
+            client.logout()
+            return {"success": True, "message": "vCenter bağlantısı başarılı", "details": ""}
+        except ImportError:
+            return {"success": False, "message": "vCenter modülü yüklenemedi", "details": ""}
+        except Exception as e:
+            return {"success": False, "message": "vCenter bağlantı hatası", "details": str(e)}
+
+    if htype == "kvm":
+        try:
+            from app.services.ovirt.ovirt_client import OVirtClient
+            client = OVirtClient(
+                host=host,
+                username=username,
+                password=password,
+                verify_ssl=False,
+                port=port,
+            )
+            ok, detail = client.test_connection()
+            if ok:
+                return {"success": True, "message": "oVirt bağlantısı başarılı", "details": ""}
+            return {"success": False, "message": "oVirt bağlantı hatası", "details": detail or "Yanıt alınamadı"}
+        except ImportError as e:
+            return {"success": False, "message": "oVirt modülü yüklenemedi", "details": str(e)}
+        except Exception as e:
+            return {"success": False, "message": "oVirt bağlantı hatası", "details": str(e)}
+
+    return {"success": False, "message": f"Desteklenmeyen tip: {data.type}. vmware veya kvm kullanın.", "details": ""}
 
 @router.get("/", response_model=List[HypervisorResponse])
 async def list_hypervisors(db: Session = Depends(get_db)):

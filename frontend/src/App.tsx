@@ -26,6 +26,7 @@ function App() {
             <Route path="/metrics" element={<LiveMetrics />} />
             <Route path="/events" element={<Events />} />
             <Route path="/incidents" element={<Incidents />} />
+            <Route path="/mcp" element={<McpTools />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

@@ -60,3 +60,10 @@ try:
     api_router.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
 except Exception as e:
     print(f"Warning: Could not load incidents router: {e}")
+
+# MCP
+try:
+    from app.api import mcp
+    api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
+except Exception as e:
+    print(f"Warning: Could not load mcp router: {e}")
