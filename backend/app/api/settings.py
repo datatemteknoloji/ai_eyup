@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.credential import GlobalCredential
 from app.models.server import Server
+from app.models.app_settings import AppSettings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -325,3 +326,58 @@ async def get_settings(db: Session = Depends(get_db)):
         "prometheus_url": settings.PROMETHEUS_URL,
         "default_credential": _cred_to_response(default_cred) if default_cred else None
     }
+
+
+# ─── Config Backup / Restore ──────────────────────────
+
+@router.get("/config/backup")
+async def config_backup(db: Session = Depends(get_db)):
+    """Uygulama ayarlarını JSON olarak yedekle (app_settings, credential metadata)."""
+    import datetime
+    app_settings = {}
+    for row in db.query(AppSettings).all():
+        if row.key and row.value is not None:
+            app_settings[row.key] = row.value
+
+    credentials_meta = []
+    for c in db.query(GlobalCredential).order_by(GlobalCredential.name).all():
+        credentials_meta.append({
+            "name": c.name,
+            "username": c.username,
+            "port": c.port,
+            "is_default": c.is_default,
+            "has_password": bool(c.password),
+            "has_private_key": bool(c.private_key),
+        })
+
+    return {
+        "version": "1.0",
+        "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "app_settings": app_settings,
+        "credentials_meta": credentials_meta,
+    }
+
+
+class ConfigRestoreRequest(BaseModel):
+    app_settings: Optional[dict] = None
+
+
+@router.post("/config/restore")
+async def config_restore(data: ConfigRestoreRequest, db: Session = Depends(get_db)):
+    """Yedekten app_settings'i geri yükle."""
+    if not data.app_settings:
+        return {"success": True, "message": "Restore edilecek app_settings yok", "restored": 0}
+
+    restored = 0
+    for key, value in data.app_settings.items():
+        if not key or value is None:
+            continue
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(AppSettings(key=key, value=str(value)))
+        restored += 1
+
+    db.commit()
+    return {"success": True, "message": f"{restored} ayar geri yüklendi", "restored": restored}
