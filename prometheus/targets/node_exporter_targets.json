@@ -68,5 +68,45 @@
       "server_name": "Zabbix01",
       "job": "node-exporter"
     }
+  },
+  {
+    "targets": [
+      "192.168.1.103:9100"
+    ],
+    "labels": {
+      "server_id": "236",
+      "server_name": "learn-terraform-renamed",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.61:9100"
+    ],
+    "labels": {
+      "server_id": "130",
+      "server_name": "enesappeski",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.112:9100"
+    ],
+    "labels": {
+      "server_id": "260",
+      "server_name": "dtkvm01",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.222:9100"
+    ],
+    "labels": {
+      "server_id": "261",
+      "server_name": "dttai",
+      "job": "node-exporter"
+    }
   }
 ]

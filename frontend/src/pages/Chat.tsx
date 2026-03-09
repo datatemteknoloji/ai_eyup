@@ -1,12 +1,58 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
 import { API_BASE_URL } from '../config/api'
+
+/** Markdown tablo metnini CSV'ye çevirip indir */
+function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
+  const lines = mdTable.trim().split('\n').map(l => l.trim()).filter(Boolean)
+  const rows: string[][] = []
+  for (const line of lines) {
+    if (line.startsWith('|') && line.endsWith('|')) {
+      const cells = line.split('|').slice(1, -1).map(c => c.trim())
+      if (cells.length > 0 && cells.some(c => c)) {
+        const isSeparator = cells.every(c => /^:?-+:?$/.test(c) || /^-+$/.test(c))
+        if (!isSeparator) rows.push(cells)
+      }
+    }
+  }
+  if (rows.length === 0) return
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/** İçerikte markdown tablo var mı (ilk tabloyu döndür) */
+function getFirstMarkdownTable(content: string): string | null {
+  const lines = content.split('\n')
+  let start = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+      start = i
+      break
+    }
+  }
+  if (start === -1) return null
+  const out: string[] = []
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line.startsWith('|')) break
+    out.push(line)
+  }
+  return out.length > 0 ? out.join('\n') : null
+}
 
 interface Server {
   id: number
   name: string
   ip_address: string
   ai_ready: boolean
+  status: string
 }
 
 interface Message {
@@ -40,7 +86,9 @@ const Chat: React.FC = () => {
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<string>('llama3.2:3b')
+  const [selectedModel, setSelectedModel] = useState<string>('llama3:70b')
+  const [useRag, setUseRag] = useState<boolean>(true)
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -67,33 +115,25 @@ const Chat: React.FC = () => {
   })
 
   // Ollama modellerini getir (hata olursa default kullan)
-  const { data: _modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+  const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
     queryKey: ['ai-models'],
     queryFn: async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/chat/models`, { timeout: 5000 } as any)
         if (!response.ok) {
-          console.warn('Model API failed, using defaults')
+          // DEV: console.warn(...)
           return {
             success: false,
-            models: [
-              { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
-              { name: 'llama3.1:8b', size: 0, parameter_size: '8B', family: 'llama' },
-              { name: 'llama3.1:70b', size: 0, parameter_size: '70B', family: 'llama' }
-            ],
+            models: [],
             default: 'llama3.2:3b'
           }
         }
         return response.json()
       } catch (error) {
-        console.error('Model fetch error:', error)
+        // DEV: console.error(...)
         return {
           success: false,
-          models: [
-            { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
-            { name: 'llama3.1:8b', size: 0, parameter_size: '8B', family: 'llama' },
-            { name: 'llama3.1:70b', size: 0, parameter_size: '70B', family: 'llama' }
-          ],
+          models: [],
           default: 'llama3.2:3b'
         }
       }
@@ -101,6 +141,17 @@ const Chat: React.FC = () => {
     retry: false,
     staleTime: 60000 // 1 dakika cache
   })
+
+  const availableModels: AIModel[] =
+    modelsData?.models && modelsData.models.length > 0
+      ? modelsData.models
+      : [
+          { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
+          { name: 'llama3.1:8b', size: 0, parameter_size: '8.0B', family: 'llama' },
+          { name: 'qwen2.5:7b', size: 0, parameter_size: '7.6B', family: 'qwen2' },
+          { name: 'qwen:latest', size: 0, parameter_size: '4B', family: 'qwen2' },
+          { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' }
+        ]
 
   // Chat session'larını getir
   const { data: sessions = [], refetch: refetchSessions } = useQuery<ChatSession[]>({
@@ -188,7 +239,7 @@ const Chat: React.FC = () => {
   // İlk session'ı otomatik seç
   useEffect(() => {
     if (sessions.length > 0 && selectedSessionId === null) {
-      console.log('Auto-selecting first session:', sessions[0].id)
+      // DEV: console.log(...)
       setSelectedSessionId(sessions[0].id)
       setSuppressAutoCreate(true)
     }
@@ -201,6 +252,7 @@ const Chat: React.FC = () => {
     const messageText = input
     setInput('')
     setIsLoading(true)
+    setPendingUserMessage(messageText)
 
     try {
       const response = await fetch(`${API_BASE_URL}/chat/`, {
@@ -210,7 +262,8 @@ const Chat: React.FC = () => {
           message: messageText,
           session_id: selectedSessionId,
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
-          model: selectedModel
+          model: selectedModel,
+          use_rag: useRag
         })
       })
 
@@ -221,17 +274,18 @@ const Chat: React.FC = () => {
           setSelectedSessionId(data.session_id)
         }
 
-        // Mesajları yenile
+        // Mesajları yenile (gönderilen mesaj artık sunucuda)
         await refetchMessages()
         await refetchSessions()
       } else {
-        console.error('Chat error:', data)
+        // DEV: console.error(...)
         alert(`Chat hatası: ${data.response || data.detail || 'Bilinmeyen hata'}`)
       }
     } catch (error) {
-      console.error('Chat error:', error)
+      // DEV: console.error(...)
     } finally {
       setIsLoading(false)
+      setPendingUserMessage(null)
     }
   }
 
@@ -257,22 +311,35 @@ const Chat: React.FC = () => {
     }
   }
 
-  const aiReadyServers = servers.filter(s => s.ai_ready)
+  // Sadece AI Ready ve ONLINE/WARNING sunucular - OFFLINE olanlari cikart
+  // Sadece AI Ready ve ONLINE sunucular
+  const aiReadyServers = servers.filter(s => s.ai_ready && s.status === 'ONLINE')
   const filteredAiReadyServers = aiReadyServers.filter(server => {
     if (!serverSearch) return true
     const search = serverSearch.toLowerCase()
     return server.name.toLowerCase().includes(search) || server.ip_address.toLowerCase().includes(search)
   })
-  
-  // Debug: Sunucu listesini konsola yazdır
-  console.log('🔍 AI Ready Sunucular:', aiReadyServers.length, aiReadyServers.map(s => s.name))
-  console.log('🔍 Filtered Sunucular:', filteredAiReadyServers.length)
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       {/* Sunucu ve Model seçimi */}
       <div className="flex-shrink-0 p-4 bg-slate-900 border-b border-slate-700">
         <div className="flex items-center gap-3 flex-wrap">
+        {/* RAG Aç/Kapa */}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-slate-400 text-sm font-medium">📚 RAG:</span>
+          <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${useRag ? 'bg-blue-600' : 'bg-slate-600'}`}
+            onClick={() => setUseRag(prev => !prev)}
+            role="switch"
+            aria-checked={useRag}
+          >
+            <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
+              style={{ marginTop: 2 }}
+            />
+          </span>
+          <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
+        </label>
+
         {/* Model Seçimi */}
         <div className="flex items-center gap-2">
           <span className="text-slate-400 text-sm font-medium">🤖 Model:</span>
@@ -280,18 +347,17 @@ const Chat: React.FC = () => {
             value={selectedModel}
             onChange={(e) => {
               const newModel = e.target.value
-              console.log('Model seçildi:', newModel)
+              // DEV: console.log(...)
               setSelectedModel(newModel)
             }}
             className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 border border-purple-500 rounded-xl text-white text-sm font-medium hover:from-purple-500 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer min-w-[200px]"
             style={{ appearance: 'auto' }}
           >
-            <option value="llama3.2:3b" className="bg-slate-900 text-white">
-              llama3.2:3b (Hızlı - 3.2B)
-            </option>
-            <option value="llama3.1:8b" className="bg-slate-900 text-white">
-              llama3.1:8b (İyi Performans - 8B) ✓
-            </option>
+            {availableModels.map((m) => (
+              <option key={m.name} value={m.name} className="bg-slate-900 text-white">
+                {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -474,7 +540,7 @@ const Chat: React.FC = () => {
                 Bir chat session'ı seçin veya yeni bir chat başlatın.
               </p>
             </div>
-          ) : messages.length === 0 ? (
+          ) : (messages.length === 0 && !pendingUserMessage) ? (
             <div className="h-full flex flex-col items-center justify-center">
               <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
                 <span className="text-4xl">💬</span>
@@ -486,19 +552,66 @@ const Chat: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-4">
-              {messages.map(message => (
+              {[
+                ...messages,
+                ...(pendingUserMessage
+                  ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
+                  : [])
+              ].map(message => (
                 <div
                   key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                       message.role === 'user'
                         ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
                         : 'bg-slate-700 text-slate-200'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
+                    {message.role === 'user' ? (
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
+                    ) : (
+                      <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                        <ReactMarkdown
+                          components={{
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto my-3 rounded-lg border border-slate-600">
+                                <table className="min-w-full text-left text-sm border-collapse">{children}</table>
+                              </div>
+                            ),
+                            thead: ({ children }) => <thead className="bg-slate-600/50">{children}</thead>,
+                            th: ({ children }) => (
+                              <th className="px-3 py-2 font-medium text-slate-200 border-b border-slate-600">{children}</th>
+                            ),
+                            td: ({ children }) => (
+                              <td className="px-3 py-2 border-b border-slate-600/50">{children}</td>
+                            ),
+                            tr: ({ children }) => <tr>{children}</tr>,
+                            code: ({ className, children }) =>
+                              className ? (
+                                <code className={className}>{children}</code>
+                              ) : (
+                                <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>
+                              ),
+                            pre: ({ children }) => (
+                              <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+                            )
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                        {getFirstMarkdownTable(message.content) && (
+                          <button
+                            type="button"
+                            onClick={() => downloadTableAsCsv(getFirstMarkdownTable(message.content)!, 'tablo.csv')}
+                            className="mt-2 text-xs px-2 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 border border-slate-500"
+                          >
+                            📥 CSV / Excel olarak indir
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <div className={`text-xs mt-2 ${
                       message.role === 'user' ? 'text-blue-200' : 'text-slate-500'
                     }`}>

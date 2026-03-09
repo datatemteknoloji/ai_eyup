@@ -3,7 +3,7 @@ oVirt/RHEV REST API Client
 """
 import requests
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from requests.auth import HTTPBasicAuth
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -14,15 +14,21 @@ logger = logging.getLogger(__name__)
 class OVirtClient:
     """oVirt/RHEV REST API client"""
     
-    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = False):
-        self.host = host
-        self.username = username
-        self.password = password
+    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = False, port: Optional[int] = None):
+        self.host = host.strip()
+        self.password = password or ""
         self.verify_ssl = verify_ssl
-        # oVirt admin@internal format
-        if "@" not in username:
-            self.username = f"{username}@internal"
-        self.base_url = f"https://{host}/ovirt-engine/api"
+        if username and "@" not in username:
+            self.username = f"{username.strip()}@internal"
+        else:
+            self.username = (username or "").strip()
+        if ":" in self.host:
+            netloc = self.host
+        elif port and int(port) != 443:
+            netloc = f"{self.host}:{port}"
+        else:
+            netloc = self.host
+        self.base_url = f"https://{netloc}/ovirt-engine/api"
         self.session = requests.Session()
         self.session.verify = verify_ssl
         self.session.auth = HTTPBasicAuth(self.username, self.password)
@@ -30,15 +36,28 @@ class OVirtClient:
             "Accept": "application/json",
             "Content-Type": "application/json"
         })
-    
-    def test_connection(self) -> bool:
-        """Bağlantıyı test et"""
+
+    def test_connection(self) -> Tuple[bool, str]:
+        """Bağlantıyı test et. Returns (success, detail_message)."""
         try:
-            response = self.session.get(f"{self.base_url}/vms")
-            return response.status_code == 200
+            response = self.session.get(f"{self.base_url}/vms", timeout=15)
+            if response.status_code == 200:
+                return True, ""
+            if response.status_code == 401:
+                return False, "401 Yetkisiz - Kullanıcı adı veya şifre hatalı (oVirt için genelde admin)"
+            if response.status_code == 403:
+                return False, "403 Erişim reddedildi"
+            return False, f"HTTP {response.status_code}: {(response.text or '')[:200]}"
+        except requests.exceptions.SSLError:
+            return False, "SSL hatası - Sertifika doğrulanamadı"
+        except requests.exceptions.ConnectTimeout:
+            return False, "Bağlantı zaman aşımı - Host ve port (443) erişilebilir mi?"
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"oVirt connection error: {e}")
+            return False, "Bağlantı kurulamadı - IP/hostname ve port kontrol edin"
         except Exception as e:
             logger.error(f"oVirt connection test failed: {e}")
-            return False
+            return False, str(e)
     
     def list_vms(self) -> List[Dict]:
         """VM listesini getir"""

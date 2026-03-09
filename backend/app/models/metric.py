@@ -21,7 +21,7 @@ class MetricData(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, primary_key=True)
     
     # Relationships
-    server = relationship("Server", back_populates="metrics")
+    server = relationship("Server")
     
     # Composite indexes for common queries
     __table_args__ = (

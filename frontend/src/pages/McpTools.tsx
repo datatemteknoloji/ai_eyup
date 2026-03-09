@@ -24,7 +24,7 @@ interface ToolResponse {
 const McpTools: React.FC = () => {
   const [selectedServerId, setSelectedServerId] = useState<number | null>(null)
   const [selectedTool, setSelectedTool] = useState<string>('')
-  const [result, setResult] = useState<unknown>(null)
+  const [result, setResult] = useState<any | null>(null)
   const [error, setError] = useState<string>('')
   const [isRunning, setIsRunning] = useState(false)
 

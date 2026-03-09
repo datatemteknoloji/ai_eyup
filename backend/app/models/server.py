@@ -1,7 +1,7 @@
 """
 Server Model
 """
-from sqlalchemy import Column, Integer, String, Boolean, JSON, Text, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, JSON, Text, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -22,9 +22,20 @@ class Server(Base):
     memory_gb = Column(Integer, default=0)
     ai_ready = Column(Boolean, default=False, index=True)
     connection_config = Column(JSON, default=dict)
+    
+    # Hypervisor iliskisi
+    hypervisor_id = Column(Integer, ForeignKey("hypervisors.id", ondelete="SET NULL"), nullable=True, index=True)
+    hypervisor_vm_id = Column(String(255), nullable=True)
+    
+    # Node Exporter durum cache (background task 5dk'da bir gunceller)
+    node_exporter_installed = Column(Boolean, default=False)
+    node_exporter_running = Column(Boolean, default=False)
+    node_exporter_last_check = Column(DateTime(timezone=True), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # AIOps relationships
+    # Relationships
+    hypervisor = relationship("Hypervisor", back_populates="servers")
     events = relationship("SystemEvent", back_populates="server", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="server", cascade="all, delete-orphan")

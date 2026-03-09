@@ -39,8 +39,9 @@ except Exception as e:
     fallback_router = APIRouter()
     
     @fallback_router.get("/servers/")
-    async def list_servers():
-        return {"message": "API router not available", "error": str(e)}
+    async def list_servers_fallback():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=f"API router yüklenemedi: {e}")
     
     app.include_router(fallback_router, prefix="/api/v1")
 
@@ -64,6 +65,18 @@ async def startup_tasks():
     from app.background_tasks import background_task_manager
     await background_task_manager.start()
     logger.info("Background tasks started (health checks every 5 minutes)")
+
+    # RAG: Varsayılan metrik açıklamalarını arka planda seed et (Ollama hazır olmayabilir)
+    async def _rag_seed_metrics():
+        try:
+            from app.services.rag_service import ingest_metric_descriptions
+            from app.data.default_metric_descriptions import DEFAULT_METRIC_DESCRIPTIONS
+            n = await ingest_metric_descriptions(DEFAULT_METRIC_DESCRIPTIONS)
+            logger.info(f"RAG metrics seed: {n} chunks added")
+        except Exception as e:
+            logger.debug(f"RAG metrics seed skipped (Ollama/Chroma): {e}")
+    import asyncio
+    asyncio.create_task(_rag_seed_metrics())
 
 @app.on_event("shutdown")
 async def shutdown_tasks():

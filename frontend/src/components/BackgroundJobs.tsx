@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { API_BASE_URL } from '../config/api'
 
 interface BackgroundJob {
   id: string
@@ -141,7 +140,7 @@ const BackgroundJobs: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {hasJobs > 0 && (
+          {jobs.length > 0 && (
             <span className="text-xs text-slate-500">
               {jobs.length} job
             </span>

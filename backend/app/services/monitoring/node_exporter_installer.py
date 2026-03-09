@@ -116,11 +116,16 @@ class NodeExporterInstaller:
             add_step("systemd_service", "success")
 
             # 6. Servisi başlat
-            start_result = self._start_service()
+            # nohup_mode: systemd service yok, nohup ile direkt baslat
+            nohup_mode = service_result.get("nohup_mode", False)
+            if nohup_mode:
+                start_result = self._start_manual()
+            else:
+                start_result = self._start_service()
             if not start_result.get("success"):
                 add_step("start_service", "failed", start_result.get("error"))
                 return {**start_result, "steps": steps}
-            add_step("start_service", "success")
+            add_step("start_service", "success", "nohup ile baslatildi" if nohup_mode else None)
 
             # 7. Durumu kontrol et
             final_check = self.check_status()
@@ -432,23 +437,20 @@ print('OK')
             return {"success": False, "error": f"Kurulum hatası: {str(e)}"}
     
     def _create_systemd_service(self) -> Dict[str, Any]:
-        """Systemd servisi oluştur (root veya user service)"""
+        """Systemd servisi oluştur - datatem/non-root user için user service"""
         try:
             is_root = self.connector.username == "root"
+            username = self.connector.username
             
             # Install path'i belirle
-            install_path_check = self.connector.execute_command("which node_exporter 2>/dev/null || echo '/usr/local/bin/node_exporter'")
-            install_path = install_path_check.get("stdout", "/usr/local/bin/node_exporter").strip()
+            home_check = self.connector.execute_command("echo $HOME")
+            user_home = home_check.get("stdout", f"/home/{username}").strip() or f"/home/{username}"
             
-            # Install path yoksa kullanıcı dizinini kontrol et
-            if not install_path or install_path == "/usr/local/bin/node_exporter":
-                home_check = self.connector.execute_command("echo $HOME")
-                user_home = home_check.get("stdout", f"/home/{self.connector.username}").strip() or f"/home/{self.connector.username}"
+            # Binary nerede?
+            install_path_check = self.connector.execute_command(f"which node_exporter 2>/dev/null || test -f {user_home}/bin/node_exporter && echo '{user_home}/bin/node_exporter' || echo '/usr/local/bin/node_exporter'")
+            install_path = install_path_check.get("stdout", f"{user_home}/bin/node_exporter").strip()
+            if not install_path:
                 install_path = f"{user_home}/bin/node_exporter"
-                # Binary var mı kontrol et
-                bin_check = self.connector.execute_command(f"test -f {install_path} && echo 'exists' || echo 'not found'")
-                if "not found" in bin_check.get("stdout", "").lower():
-                    install_path = "/usr/local/bin/node_exporter"  # Fallback
             
             if is_root:
                 # Root kullanıcı - systemd service
@@ -534,9 +536,10 @@ EOFSERVICE
                     else:
                         sudo_error = sudo_result.get('stderr', sudo_result.get('stdout', 'Bilinmeyen hata'))
                         if "password is required" in sudo_error or "sudo: a password is required" in sudo_error or "not in the sudoers" in sudo_error:
-                            return {"success": False, "error": f"Kullanıcı '{self.connector.username}' sudo yetkisine sahip değil. Root kullanıcı veya sudo yetkisi olan kullanıcı kullanın. Hata: {sudo_error}"}
+                            # Sudo yok - user service de olmadi - nohup ile devam et
+                            return {"success": True, "message": "Systemd service olusturulamadi (sudo yok), nohup ile baslatilacak", "nohup_mode": True}
                         return {"success": False, "error": f"Servis oluşturma hatası: {sudo_error}"}
-                return {"success": False, "error": f"Servis oluşturma hatası: {error_msg}"}
+                return {"success": True, "message": "User systemd service olusturulamadi, nohup ile baslatilacak", "nohup_mode": True}
                 
         except Exception as e:
             logger.error(f"Service creation hatası: {e}", exc_info=True)
@@ -556,7 +559,10 @@ EOFSERVICE
                 """
             else:
                 # Kullanıcı service - önce systemctl --user dene
-                start_cmd = """
+                # loginctl enable-linger: logout sonra da servis calissin
+                start_cmd = f"""
+                    loginctl enable-linger {self.connector.username} 2>/dev/null || true && \
+                    systemctl --user daemon-reload && \
                     systemctl --user enable node_exporter && \
                     systemctl --user start node_exporter && \
                     systemctl --user status node_exporter --no-pager | head -5
@@ -593,35 +599,86 @@ EOFSERVICE
             return {"success": False, "error": f"Servis başlatma hatası: {str(e)}"}
     
     def _start_manual(self) -> Dict[str, Any]:
-        """Node Exporter'ı manuel olarak başlat (nohup ile)"""
+        """Node Exporter'i nohup ile baslatir ve crontab ile kalici yapar."""
         try:
-            # Install path'i bul
+            # Binary yolunu bul
             which_result = self.connector.execute_command("which node_exporter 2>/dev/null || echo ''")
             install_path = which_result.get("stdout", "").strip()
             if not install_path:
                 home_check = self.connector.execute_command("echo $HOME")
                 user_home = home_check.get("stdout", f"/home/{self.connector.username}").strip() or f"/home/{self.connector.username}"
                 install_path = f"{user_home}/bin/node_exporter"
+
+            # Mevcut process'i durdur
+            self.connector.execute_command("pkill -f node_exporter 2>/dev/null || true")
+            import time; time.sleep(1)
+
+            # 1. Önce loginctl linger dene (sudo gerekmeyebilir)
+            self.connector.execute_command(f"loginctl enable-linger {self.connector.username} 2>/dev/null || true")
+
+            # 2. User systemd service tekrar dene (linger sonrası çalışabilir)
+            home_check = self.connector.execute_command("echo $HOME")
+            user_home = home_check.get("stdout", f"/home/{self.connector.username}").strip() or f"/home/{self.connector.username}"
+            systemd_dir = f"{user_home}/.config/systemd/user"
+            service_content = f"""[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={install_path} --web.listen-address=0.0.0.0:{self.NODE_EXPORTER_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+            # Servis dosyası yaz
+            write_cmd = f"""mkdir -p {systemd_dir} && cat > {systemd_dir}/node_exporter.service << 'SVCEOF'
+{service_content}
+SVCEOF"""
+            self.connector.execute_command(write_cmd)
+
+            # Reload & enable & start
+            svc_cmd = "systemctl --user daemon-reload && systemctl --user enable node_exporter && systemctl --user start node_exporter"
+            svc_result = self.connector.execute_command(svc_cmd)
+            svc_stdout = (svc_result.get("stdout", "") + svc_result.get("stderr", "")).lower()
+
+            if svc_result.get("success") or "active" in svc_stdout:
+                # DB güncelle
+                return {"success": True, "message": "Node Exporter user systemd service olarak kuruldu (kalıcı)", "persistent": True}
+
+            # 3. Systemd user service çalışmadı → nohup + crontab
+            logger.info(f"User systemd failed, falling back to nohup+crontab for {self.connector.username}@{self.connector.server.ip_address if hasattr(self.connector, 'server') else ''}")
             
-            # Mevcut process'i durdur (varsa)
-            self.connector.execute_command("pkill -f node_exporter || true")
-            
-            # nohup ile başlat
-            start_cmd = f"""
-                nohup {install_path} --web.listen-address=:{self.NODE_EXPORTER_PORT} > /tmp/node_exporter.log 2>&1 &
-                sleep 2
-                pgrep -f node_exporter && echo "started" || echo "failed"
-            """
-            
-            result = self.connector.execute_command(start_cmd)
-            if result.get("success") and "started" in result.get("stdout", "").lower():
-                return {"success": True, "message": "Node Exporter manuel olarak başlatıldı (nohup)", "manual": True}
-            else:
-                return {"success": False, "error": f"Manuel başlatma hatası: {result.get('stderr', 'Bilinmeyen hata')}"}
-                
+            nohup_cmd = f"nohup {install_path} --web.listen-address=0.0.0.0:{self.NODE_EXPORTER_PORT} > /tmp/node_exporter.log 2>&1 &"
+            start_result = self.connector.execute_command(
+                f"{nohup_cmd}; sleep 2; pgrep -f node_exporter && echo started || echo failed"
+            )
+
+            if not (start_result.get("success") and "started" in start_result.get("stdout", "").lower()):
+                return {"success": False, "error": f"Başlatma hatası: {start_result.get('stderr', '')}"}
+
+            # 4. Crontab @reboot ile kalıcı yap
+            cron_entry = f"@reboot {nohup_cmd}"
+            cron_cmd = f"""(crontab -l 2>/dev/null | grep -v node_exporter; echo "{cron_entry}") | crontab -"""
+            self.connector.execute_command(cron_cmd)
+
+            # 5. ~/.bash_profile / ~/.bashrc'ye de ekle (SSH login sonrası)
+            profile_cmd = f"""grep -q node_exporter ~/.bash_profile 2>/dev/null || echo '# Node Exporter auto-start
+[ -z "$(pgrep -f node_exporter)" ] && nohup {install_path} --web.listen-address=0.0.0.0:{self.NODE_EXPORTER_PORT} > /tmp/node_exporter.log 2>&1 &' >> ~/.bash_profile"""
+            self.connector.execute_command(profile_cmd)
+
+            return {
+                "success": True,
+                "message": f"Node Exporter nohup ile başlatıldı + @reboot crontab ile kalıcı yapıldı",
+                "persistent": True,
+                "method": "nohup+crontab"
+            }
+
         except Exception as e:
             logger.error(f"Manual start hatası: {e}", exc_info=True)
-            return {"success": False, "error": f"Manuel başlatma hatası: {str(e)}"}
+            return {"success": False, "error": f"Başlatma hatası: {str(e)}"}
     
     def check_status(self) -> Dict[str, Any]:
         """Node Exporter durumunu kontrol et"""

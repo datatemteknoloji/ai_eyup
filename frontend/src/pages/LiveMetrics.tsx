@@ -54,12 +54,29 @@ const fetchPrometheusRange = async (
 }
 
 const fetchInstances = async (): Promise<string[]> => {
-  const params = new URLSearchParams()
-  params.append('match[]', 'up{job="node-exporter"}')
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/label/instance/values?${params.toString()}`)
+  // Sadece up=1 (veri gelen) instance'lari goster
+  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=up{job="node-exporter"}`)
   if (!response.ok) throw new Error('Failed to fetch instances')
   const data = await response.json()
-  return data?.data || []
+  const results = data?.data?.result || []
+  return results
+    .filter((r: any) => r.value?.[1] === '1')
+    .map((r: any) => r.metric?.instance || '')
+    .filter(Boolean)
+}
+
+// instance'in up durumunu tutan map
+const fetchInstanceUpStatus = async (): Promise<Record<string, boolean>> => {
+  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=up{job="node-exporter"}`)
+  if (!response.ok) return {}
+  const data = await response.json()
+  const results = data?.data?.result || []
+  const map: Record<string, boolean> = {}
+  results.forEach((r: any) => {
+    const inst = r.metric?.instance || ''
+    if (inst) map[inst] = r.value?.[1] === '1'
+  })
+  return map
 }
 
 const fetchInstanceLabels = async (): Promise<Record<string, string>> => {
@@ -98,89 +115,71 @@ const METRIC_PRESETS: MetricPreset[] = [
     id: 'cpu',
     label: 'CPU kullanımı (%)',
     unit: '%',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",job="node-exporter"}[5m])) * 100)`
-        : `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`,
   },
   {
     id: 'memory',
     label: 'Bellek kullanımı (%)',
     unit: '%',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `(1 - (node_memory_MemAvailable_bytes{job="node-exporter"} / node_memory_MemTotal_bytes{job="node-exporter"})) * 100`
-        : `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`,
   },
   {
     id: 'disk',
     label: 'Disk (/) kullanımı (%)',
     unit: '%',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `(1 - (node_filesystem_avail_bytes{mountpoint="/",job="node-exporter"} / node_filesystem_size_bytes{mountpoint="/",job="node-exporter"})) * 100`
-        : `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`,
   },
   {
     id: 'load',
     label: 'Load average (1m)',
     unit: '',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance ? `node_load1{job="node-exporter"}` : `node_load1{${selector}}`,
+    buildRangeQuery: (selector, _byInstance) => `node_load1{${selector}}`,
   },
   {
     id: 'net_rx',
     label: 'Network RX (B/s)',
     unit: 'B/s',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `sum by (instance) (rate(node_network_receive_bytes_total{device!~"lo",job="node-exporter"}[5m]))`
-        : `sum(rate(node_network_receive_bytes_total{device!~"lo",${selector}}[5m]))`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `sum by (instance) (rate(node_network_receive_bytes_total{device!~"lo",${selector}}[5m]))`,
   },
   {
     id: 'net_tx',
     label: 'Network TX (B/s)',
     unit: 'B/s',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `sum by (instance) (rate(node_network_transmit_bytes_total{device!~"lo",job="node-exporter"}[5m]))`
-        : `sum(rate(node_network_transmit_bytes_total{device!~"lo",${selector}}[5m]))`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `sum by (instance) (rate(node_network_transmit_bytes_total{device!~"lo",${selector}}[5m]))`,
   },
   {
     id: 'mem_available',
     label: 'Bellek kullanılabilir (bytes)',
     unit: 'B',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance ? `node_memory_MemAvailable_bytes{job="node-exporter"}` : `node_memory_MemAvailable_bytes{${selector}}`,
+    buildRangeQuery: (selector, _byInstance) => `node_memory_MemAvailable_bytes{${selector}}`,
   },
   {
     id: 'disk_read',
     label: 'Disk okuma (B/s)',
     unit: 'B/s',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `sum by (instance) (rate(node_disk_read_bytes_total{job="node-exporter"}[5m]))`
-        : `sum(rate(node_disk_read_bytes_total{${selector}}[5m]))`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `sum by (instance) (rate(node_disk_read_bytes_total{${selector}}[5m]))`,
   },
   {
     id: 'disk_written',
     label: 'Disk yazma (B/s)',
     unit: 'B/s',
-    buildRangeQuery: (selector, byInstance) =>
-      byInstance
-        ? `sum by (instance) (rate(node_disk_written_bytes_total{job="node-exporter"}[5m]))`
-        : `sum(rate(node_disk_written_bytes_total{${selector}}[5m]))`,
+    buildRangeQuery: (selector, _byInstance) =>
+      `sum by (instance) (rate(node_disk_written_bytes_total{${selector}}[5m]))`,
   },
 ]
 
-function buildRawMetricQuery(metricName: string, selector: string, byInstance: boolean): string {
-  const base = `job="node-exporter"`
+function buildRawMetricQuery(metricName: string, selector: string, _byInstance: boolean): string {
+  // Her zaman selector ile calis, instance label kaybolmasin
   if (metricName.includes('_total') || metricName.endsWith('_total')) {
-    return byInstance
-      ? `rate(${metricName}{${base}}[5m])`
-      : `rate(${metricName}{${selector}}[5m])`
+    return `sum by (instance) (rate(${metricName}{${selector}}[5m]))`
   }
-  return byInstance ? `${metricName}{${base}}` : `${metricName}{${selector}}`
+  return `${metricName}{${selector}}`
 }
 
 const mapByInstance = (results: PromResult[]) => {
@@ -414,17 +413,25 @@ const EnterpriseMetricChart: React.FC<{
 }
 
 /** Real time modunda tüm veriler bu aralıkla (ms) yenilenir - "veri akar" */
-const REAL_TIME_REFETCH_MS = 4000
+const REAL_TIME_REFETCH_OPTIONS = [
+  { label: '2s', value: 2000 },
+  { label: '4s', value: 4000 },
+  { label: '10s', value: 10000 },
+  { label: '30s', value: 30000 },
+  { label: '1dk', value: 60000 },
+]
+const DEFAULT_realTimeRefetchMs = 4000
 
 const DEFAULT_CHART_METRICS = ['cpu', 'memory', 'disk', 'load']
 
 /** Prometheus regex'te özel karakterleri kaçır (instance=~ için) */
 function escapePrometheusRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return s
 }
 
 const LiveMetrics: React.FC = () => {
   const [selectedInstances, setSelectedInstances] = useState<string[]>([])
+  const [realTimeRefetchMs, setRealTimeRefetchMs] = useState(DEFAULT_realTimeRefetchMs)
   const [instanceDropdownOpen, setInstanceDropdownOpen] = useState(false)
   const [instanceSearch, setInstanceSearch] = useState('')
   const instanceDropdownRef = useRef<HTMLDivElement>(null)
@@ -442,14 +449,12 @@ const LiveMetrics: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-  const [minCpuFilter, setMinCpuFilter] = useState('')
-  const [minMemoryFilter, setMinMemoryFilter] = useState('')
-  const [minDiskFilter, setMinDiskFilter] = useState('')
+
   const [sortKey, setSortKey] = useState<string>('hostname')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
-  const refetchIntervalInstant = realTimeMode ? REAL_TIME_REFETCH_MS : 10000
-  const refetchIntervalSlow = realTimeMode ? REAL_TIME_REFETCH_MS : 15000
+  const refetchIntervalInstant = realTimeMode ? realTimeRefetchMs : 10000
+  const refetchIntervalSlow = realTimeMode ? realTimeRefetchMs : 15000
 
   const { data: instances = [] } = useQuery({
     queryKey: ['prometheus-instances', realTimeMode],
@@ -460,7 +465,13 @@ const LiveMetrics: React.FC = () => {
   const { data: instanceLabels = {} } = useQuery({
     queryKey: ['prometheus-instance-labels', realTimeMode],
     queryFn: fetchInstanceLabels,
-    refetchInterval: realTimeMode ? REAL_TIME_REFETCH_MS : 30000
+    refetchInterval: realTimeMode ? realTimeRefetchMs : 30000
+  })
+
+  const { data: instanceUpStatus = {} } = useQuery({
+    queryKey: ['prometheus-instance-up', realTimeMode],
+    queryFn: fetchInstanceUpStatus,
+    refetchInterval: realTimeMode ? realTimeRefetchMs : 15000
   })
 
   const { data: nodeMetricNames = [] } = useQuery({
@@ -565,22 +576,22 @@ const LiveMetrics: React.FC = () => {
     refetchInterval: refetchIntervalSlow
   })
 
-  const refetchIntervalRange = realTimeMode ? REAL_TIME_REFETCH_MS : (rangeSeconds <= 900 ? 10000 : 30000)
+  const refetchIntervalRange = realTimeMode ? realTimeRefetchMs : (rangeSeconds <= 900 ? 10000 : 30000)
 
   const { data: cpuRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-cpu-range', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-cpu-range', cpuRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(cpuRangeQuery, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange
   })
 
   const { data: memoryRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-memory-range', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-memory-range', memoryRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(memoryRangeQuery, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange
   })
 
   const { data: diskRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-disk-range', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-disk-range', diskRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(diskRangeQuery, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange
   })
@@ -609,25 +620,25 @@ const LiveMetrics: React.FC = () => {
   const customSlot3Query = getRangeQueryForMetricKey(chartSlots[3] ?? DEFAULT_CHART_METRICS[3])
 
   const customChart0 = useQuery({
-    queryKey: ['prometheus-custom-chart', 0, chartSlots[0], instanceQueryKey, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-custom-chart', 0, customSlot0Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot0Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
     enabled: !!customSlot0Query
   })
   const customChart1 = useQuery({
-    queryKey: ['prometheus-custom-chart', 1, chartSlots[1], instanceQueryKey, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-custom-chart', 1, customSlot1Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot1Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
     enabled: !!customSlot1Query
   })
   const customChart2 = useQuery({
-    queryKey: ['prometheus-custom-chart', 2, chartSlots[2], instanceQueryKey, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-custom-chart', 2, customSlot2Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot2Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
     enabled: !!customSlot2Query
   })
   const customChart3 = useQuery({
-    queryKey: ['prometheus-custom-chart', 3, chartSlots[3], instanceQueryKey, rangeSeconds, stepSeconds, realTimeMode],
+    queryKey: ['prometheus-custom-chart', 3, customSlot3Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot3Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
     enabled: !!customSlot3Query
@@ -678,17 +689,13 @@ const LiveMetrics: React.FC = () => {
   }, [instances, selectedInstances, instanceLabels, cpuMap, memoryMap, diskMap, loadMap, netRxMap, netTxMap])
 
   const filteredRows = useMemo(() => {
-    const minCpu = Number(minCpuFilter || 0)
-    const minMem = Number(minMemoryFilter || 0)
-    const minDisk = Number(minDiskFilter || 0)
+
     return rows.filter((row) => {
       const matchesHost = !hostFilter || row.hostname.toLowerCase().includes(hostFilter.toLowerCase())
-      const matchesCpu = minCpuFilter === '' || (row.cpu ?? 0) >= minCpu
-      const matchesMem = minMemoryFilter === '' || (row.memory ?? 0) >= minMem
-      const matchesDisk = minDiskFilter === '' || (row.disk ?? 0) >= minDisk
-      return matchesHost && matchesCpu && matchesMem && matchesDisk
+
+      return matchesHost
     })
-  }, [rows, hostFilter, minCpuFilter, minMemoryFilter, minDiskFilter])
+  }, [rows, hostFilter])
 
   const sortedRows = useMemo(() => {
     const copy = [...filteredRows]
@@ -881,11 +888,17 @@ const LiveMetrics: React.FC = () => {
                           className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
                         />
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-white truncate block">
-                            {instanceLabels[instance] || instance}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${instanceUpStatus[instance] ? 'bg-green-400' : 'bg-red-400'}`} />
+                            <span className={`text-sm font-medium truncate ${instanceUpStatus[instance] ? 'text-white' : 'text-slate-400'}`}>
+                              {instanceLabels[instance] || instance}
+                            </span>
+                            {!instanceUpStatus[instance] && (
+                              <span className="text-xs text-red-400/70 flex-shrink-0">veri yok</span>
+                            )}
+                          </div>
                           {instanceLabels[instance] && (
-                            <span className="text-xs text-slate-400 font-mono truncate block">{instance}</span>
+                            <span className="text-xs text-slate-500 font-mono truncate block pl-3">{instance}</span>
                           )}
                         </div>
                       </label>
@@ -901,39 +914,42 @@ const LiveMetrics: React.FC = () => {
             onChange={(e) => setHostFilter(e.target.value)}
             className="w-48 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <input
-            type="number"
-            min={0}
-            placeholder="Min CPU"
-            value={minCpuFilter}
-            onChange={(e) => setMinCpuFilter(e.target.value)}
-            className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <input
-            type="number"
-            min={0}
-            placeholder="Min RAM"
-            value={minMemoryFilter}
-            onChange={(e) => setMinMemoryFilter(e.target.value)}
-            className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <input
-            type="number"
-            min={0}
-            placeholder="Min Disk"
-            value={minDiskFilter}
-            onChange={(e) => setMinDiskFilter(e.target.value)}
-            className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <span className="text-xs text-slate-400">
-            {realTimeMode
-              ? `Veri ${REAL_TIME_REFETCH_MS / 1000}s'de bir yenileniyor`
-              : timeRangeIndex === 0
+
+          {realTimeMode ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 whitespace-nowrap">Yenileme:</span>
+              <select
+                value={realTimeRefetchMs}
+                onChange={(e) => setRealTimeRefetchMs(Number(e.target.value))}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {REAL_TIME_REFETCH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <span className="text-xs text-slate-400">
+              {timeRangeIndex === 0
                 ? 'Yenileme: 10s'
                 : `Yenileme: 30s · ${timeRangeLabel}`}
-          </span>
+            </span>
+          )}
         </div>
       </div>
+
+      {/* Down sunucu uyarısı */}
+      {selectedInstances.length > 0 && selectedInstances.some(i => instanceUpStatus[i] === false) && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span className="text-amber-400 text-lg mt-0.5">⚠️</span>
+          <div>
+            <p className="text-amber-300 text-sm font-medium">Seçili sunucularda veri yok</p>
+            <p className="text-amber-400/70 text-xs mt-0.5">
+              {selectedInstances.filter(i => instanceUpStatus[i] === false).map(i => instanceLabels[i] || i).join(', ')} — Node Exporter çalışmıyor veya erişilemiyor. Sunucular sayfasından başlatabilirsiniz.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">

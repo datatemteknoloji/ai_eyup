@@ -42,18 +42,25 @@ class SSHManager:
                     except Exception as e:
                         logger.warning(f"Private key parse failed: {e}")
             
-            # Bağlan
+            # Bağlan (Önce key ile dene, başarısız olursa password ile dene)
+            connected = False
+            
             if pkey:
-                self.client.connect(
-                    self.host,
-                    port=self.port,
-                    username=self.username,
-                    pkey=pkey,
-                    timeout=10,
-                    allow_agent=False,
-                    look_for_keys=False
-                )
-            else:
+                try:
+                    self.client.connect(
+                        self.host,
+                        port=self.port,
+                        username=self.username,
+                        pkey=pkey,
+                        timeout=10,
+                        allow_agent=False,
+                        look_for_keys=False
+                    )
+                    connected = True
+                except Exception as key_err:
+                    logger.warning(f"Key auth failed for {self.host}, trying password... ({key_err})")
+                    
+            if not connected and self.password:
                 self.client.connect(
                     self.host,
                     port=self.port,
@@ -63,6 +70,10 @@ class SSHManager:
                     allow_agent=False,
                     look_for_keys=False
                 )
+                connected = True
+                
+            if not connected:
+                raise Exception("Hem key hem de password ile bağlantı başarısız.")
             
             logger.info(f"✅ SSH bağlantısı başarılı: {self.username}@{self.host}")
             return True
@@ -198,8 +209,8 @@ echo "Node Exporter kuruldu ve başlatıldı"
             try:
                 self.client.close()
                 logger.info(f"SSH bağlantısı kapatıldı: {self.host}")
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Operation failed: {e}")
     
     def __enter__(self):
         self.connect()

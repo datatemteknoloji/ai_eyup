@@ -17,7 +17,7 @@ router = APIRouter()
 
 @router.post("/node-exporter/install/{server_id}")
 async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
-    """AI ready sunucuya Node Exporter kur ve Prometheus'a ekle"""
+    """AI ready sunucuya Node Exporter kur - Global credential kullanir"""
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -25,8 +25,25 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
     if not server.ai_ready:
         raise HTTPException(status_code=400, detail="Server must be AI ready to install Node Exporter")
     
-    if not server.connection_config or not server.connection_config.get("username"):
-        raise HTTPException(status_code=400, detail="Server must have SSH credentials to install Node Exporter")
+    # Global default credential'i al
+    from app.models.credential import GlobalCredential
+    global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+    if not global_cred:
+        global_cred = db.query(GlobalCredential).first()
+    
+    # Kullanilacak credential: global varsa global, yoksa sunucunun kendi'si
+    if global_cred:
+        # Gecici olarak server connection_config'ini global credential ile override et
+        original_config = server.connection_config or {}
+        server.connection_config = {
+            "username": global_cred.username,
+            "password": global_cred.password,
+            "private_key": global_cred.private_key,
+            "sudo_password": global_cred.sudo_password or global_cred.password,
+            "port": global_cred.port or 22,
+        }
+    elif not server.connection_config or not server.connection_config.get("username"):
+        raise HTTPException(status_code=400, detail="Global credential veya sunucu SSH bilgisi gerekli")
     
     try:
         installer = NodeExporterInstaller(server)
@@ -60,11 +77,11 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
             # Async reload (opsiyonel) - fallback to sync
             try:
                 await target_manager.reload_prometheus_async()
-            except:
+            except Exception as e:
                 try:
                     target_manager.reload_prometheus_sync()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Operation failed: {e}")
         
         # Bağlantıyı kapat
         installer.connector.close()
@@ -77,6 +94,127 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/node-exporter/start/{server_id}")
+async def start_node_exporter(server_id: int, db: Session = Depends(get_db)):
+    """Kurulu ama durmus Node Exporter'i basla - server veya global credential kullanir"""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    # Credential: once server'in kendisi, yoksa/basarisizsa global default
+    from app.services.ssh_manager import SSHManager
+    from app.models.credential import GlobalCredential
+    from datetime import datetime
+    
+    def try_start(username, password, private_key=None, port=22, sudo_password=None):
+        ssh = SSHManager(
+            host=server.ip_address or server.hostname,
+            username=username, password=password,
+            private_key=private_key, port=port,
+            sudo_password=sudo_password or password
+        )
+        if not ssh.connect():
+            return False, "SSH baglantisi kurulamadi"
+        try:
+            # Zaten çalışıyor mu kontrol et
+            _, pgrep_out, _ = ssh.execute_command("pgrep -f node_exporter 2>/dev/null | head -1")
+            if pgrep_out.strip():
+                # Çalışıyor - crontab ile kalıcı yap (yoksa)
+                _, which_out2, _ = ssh.execute_command(
+                    "which node_exporter 2>/dev/null || find $HOME -name node_exporter 2>/dev/null | head -1"
+                )
+                bin_path = which_out2.strip() or f"/home/{username}/bin/node_exporter"
+                nohup_entry = f"nohup {bin_path} --web.listen-address=0.0.0.0:9100 > /tmp/node_exporter.log 2>&1 &"
+                _, cron_out, _ = ssh.execute_command("crontab -l 2>/dev/null")
+                if "node_exporter" not in cron_out:
+                    ssh.execute_command(
+                        f"(crontab -l 2>/dev/null | grep -v node_exporter; "
+                        f"echo '@reboot sleep 10 && {nohup_entry}') | crontab -"
+                    )
+                return True, "already_running"
+
+            # Binary yolunu bul
+            _, which_out, _ = ssh.execute_command(
+                "which node_exporter 2>/dev/null || find $HOME -name node_exporter 2>/dev/null | head -1"
+            )
+            install_path = which_out.strip() or f"/home/{username}/bin/node_exporter"
+
+            # 1. Systemd user service (sudo gerektirmez) - D-Bus varsa
+            success, stdout, stderr = ssh.execute_command(
+                f"loginctl enable-linger {username} 2>/dev/null; "
+                "systemctl --user daemon-reload 2>/dev/null; "
+                "systemctl --user start node_exporter 2>/dev/null"
+            )
+            combined = (stdout + stderr).lower()
+            if success or ("active" in combined and "d-bus" not in combined and "no such file" not in combined):
+                return True, ""
+
+            # 2. Sudosuz sistem servisi
+            success, stdout, stderr = ssh.execute_command("systemctl start node_exporter")
+            if success or "already active" in (stdout + stderr).lower():
+                return True, ""
+
+            # 3. Sudo ile
+            success, stdout, stderr = ssh.execute_command("systemctl start node_exporter", use_sudo=True)
+            if success or "already active" in (stdout + stderr).lower():
+                return True, ""
+
+            # 4. Nohup + crontab (sudo yok, kalici)
+            nohup_cmd = f"nohup {install_path} --web.listen-address=0.0.0.0:9100 > /tmp/node_exporter.log 2>&1 &"
+            _, p_out, _ = ssh.execute_command(
+                f"pkill -f node_exporter 2>/dev/null; sleep 1; {nohup_cmd}; sleep 2; pgrep -f node_exporter && echo started"
+            )
+            if "started" in p_out.lower():
+                # Crontab ile kalici yap
+                ssh.execute_command(
+                    f"(crontab -l 2>/dev/null | grep -v node_exporter; "
+                    f"echo '@reboot {nohup_cmd}') | crontab -"
+                )
+                return True, "nohup+crontab"
+
+            return False, (stderr or stdout).strip()
+        finally:
+            ssh.close()
+    
+    last_error = "Bilinmeyen hata"
+    
+    # 1. Global default credential'i once dene (en yetkili kullanici)
+    global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+    if not global_cred:
+        global_cred = db.query(GlobalCredential).first()
+    if global_cred:
+        ok, last_error = try_start(
+            username=global_cred.username,
+            password=global_cred.password,
+            private_key=global_cred.private_key,
+            port=global_cred.port or 22,
+            sudo_password=global_cred.sudo_password or global_cred.password
+        )
+        if ok:
+            server.node_exporter_running = True
+            server.node_exporter_last_check = datetime.utcnow()
+            db.commit()
+            return {"success": True, "message": "Node Exporter baslatildi", "server": server.name}
+    
+    # 2. Fallback: server'in kendi credential'i
+    conn = server.connection_config or {}
+    if conn.get("username"):
+        ok, last_error = try_start(
+            username=conn.get("username"),
+            password=conn.get("password"),
+            private_key=conn.get("private_key"),
+            port=conn.get("port", 22),
+            sudo_password=conn.get("sudo_password") or conn.get("password")
+        )
+        if ok:
+            server.node_exporter_running = True
+            server.node_exporter_last_check = datetime.utcnow()
+            db.commit()
+            return {"success": True, "message": "Node Exporter baslatildi", "server": server.name}
+    
+    raise HTTPException(status_code=500, detail=f"Baslatma basarisiz: {last_error}")
 
 @router.post("/node-exporter/uninstall/{server_id}")
 async def uninstall_node_exporter(server_id: int, db: Session = Depends(get_db)):
@@ -104,11 +242,11 @@ async def uninstall_node_exporter(server_id: int, db: Session = Depends(get_db))
             # Async reload - fallback to sync
             try:
                 await target_manager.reload_prometheus_async()
-            except:
+            except Exception as e:
                 try:
                     target_manager.reload_prometheus_sync()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Operation failed: {e}")
         
         # Bağlantıyı kapat
         installer.connector.close()
@@ -156,7 +294,7 @@ async def download_node_exporter_binary(arch: str):
 
 @router.get("/node-exporter/list-ai-ready")
 async def list_ai_ready_servers(db: Session = Depends(get_db)):
-    """AI Ready ve credential'lı sunucuları listele"""
+    """AI Ready sunucuları listele - DB cache okur, SSH yapmaz"""
     try:
         servers = db.query(Server).filter(
             Server.ai_ready == True,
@@ -169,14 +307,19 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
             username = conn_config.get("username", "")
             
             if username and server.ip_address:
-                # Node Exporter durumunu kontrol et
-                status_info = {"installed": False, "running": False}
-                try:
-                    installer = NodeExporterInstaller(server)
-                    status_info = installer.check_status()
-                    installer.connector.close()
-                except:
-                    pass
+                # SSH yapmak yerine DB cache oku (background task günceller)
+                installed = bool(getattr(server, "node_exporter_installed", False))
+                running = bool(getattr(server, "node_exporter_running", False))
+                
+                # Cache yoksa Prometheus'tan hızlı kontrol (SSH yok)
+                if not installed:
+                    from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
+                    try:
+                        if node_exporter_up_for_server(server.ip_address, server.hostname):
+                            installed = True
+                            running = True
+                    except Exception as e:
+                        logger.warning(f"Operation failed: {e}")
                 
                 result.append({
                     "id": server.id,
@@ -187,8 +330,8 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
                     "username": username,
                     "port": conn_config.get("port", 22),
                     "node_exporter": {
-                        "installed": status_info.get("installed", False),
-                        "running": status_info.get("running", False)
+                        "installed": installed,
+                        "running": running
                     }
                 })
         
@@ -234,39 +377,38 @@ def _prometheus_node_exporter_up(server_ip: Optional[str], hostname: Optional[st
 
 @router.get("/node-exporter/status/{server_id}")
 async def check_node_exporter_status(server_id: int, db: Session = Depends(get_db)):
-    """Node Exporter durumunu kontrol et. Önce Prometheus (up ise çalışıyor); yoksa SSH."""
+    """Node Exporter durumunu kontrol et - DB cache + Prometheus, SSH yapmaz"""
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    result = {"installed": False, "running": False}
+    # DB'den taze oku (cache bypass)
+    db.expire(server)
+    db.refresh(server)
 
-    # Önce Prometheus'a bak: SSH olsa bile Prometheus'ta up ise "çalışıyor" kabul et
-    # (Node Exporter sunucuda farklı yolda kurulu olabilir veya SSH gecikme/hatası olabilir)
-    if server.ip_address or server.hostname:
+    installed = bool(server.node_exporter_installed) if server.node_exporter_installed is not None else False
+    running = bool(server.node_exporter_running) if server.node_exporter_running is not None else False
+
+    # DB'de kayıt yoksa Prometheus'tan kontrol et ve DB'ye yaz
+    if not installed and (server.ip_address or server.hostname):
         if _prometheus_node_exporter_up(server.ip_address, server.hostname):
-            return {
-                "server_id": server_id,
-                "server_name": server.name,
-                "server_ip": server.ip_address,
-                "installed": True,
-                "running": True
-            }
-
-    # Prometheus'ta yoksa SSH ile kontrol et (AI Ready ise zaten SSH var)
-    if server.connection_config and server.connection_config.get("username"):
-        try:
-            installer = NodeExporterInstaller(server)
-            result = installer.check_status()
-            installer.connector.close()
-        except Exception as e:
-            logger.warning(f"Node Exporter SSH durum kontrolü hatası (Server ID: {server_id}): {e}")
+            installed = True
+            running = True
+            from datetime import datetime
+            server.node_exporter_installed = True
+            server.node_exporter_running = True
+            server.node_exporter_last_check = datetime.utcnow()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
 
     return {
         "server_id": server_id,
         "server_name": server.name,
         "server_ip": server.ip_address,
-        **result
+        "installed": installed,
+        "running": running
     }
 
 @router.post("/prometheus/sync-ai-ready-targets")
@@ -347,11 +489,11 @@ async def sync_ai_ready_targets(db: Session = Depends(get_db)):
             # Prometheus'u reload et
             try:
                 await target_manager.reload_prometheus_async()
-            except:
+            except Exception as e:
                 try:
                     target_manager.reload_prometheus_sync()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Operation failed: {e}")
         
         return {
             "success": True,

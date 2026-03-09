@@ -23,6 +23,7 @@ class IncidentCreate(BaseModel):
     description: Optional[str] = None
     severity: str = "medium"
     source: str = "manual"
+    assigned_to: Optional[str] = None
     affected_servers: Optional[List[int]] = None
     related_events: Optional[List[int]] = None
 
@@ -34,10 +35,28 @@ class IncidentUpdate(BaseModel):
     resolution: Optional[str] = None
 
 
+@router.get("/stats")
+async def incident_stats(db: Session = Depends(get_db)):
+    """Incident istatistikleri"""
+    total = db.query(Incident).count()
+    open_count = db.query(Incident).filter(Incident.status == "open").count()
+    investigating = db.query(Incident).filter(Incident.status == "investigating").count()
+    resolved = db.query(Incident).filter(Incident.status.in_(["resolved", "closed"])).count()
+    critical = db.query(Incident).filter(Incident.severity == "critical", Incident.status == "open").count()
+    return {
+        "total": total,
+        "open": open_count,
+        "investigating": investigating,
+        "resolved": resolved,
+        "critical": critical
+    }
+
+
 @router.get("/")
 async def list_incidents(
     status: Optional[str] = None,
     severity: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db)
@@ -48,6 +67,8 @@ async def list_incidents(
         q = q.filter(Incident.status == status)
     if severity:
         q = q.filter(Incident.severity == severity)
+    if search:
+        q = q.filter(Incident.title.ilike(f"%{search}%"))
 
     total = q.count()
     incidents = q.order_by(desc(Incident.created_at)).offset(offset).limit(limit).all()
@@ -90,6 +111,7 @@ async def create_incident(data: IncidentCreate, db: Session = Depends(get_db)):
         description=data.description,
         severity=data.severity,
         source=data.source,
+        assigned_to=data.assigned_to,
         affected_servers=data.affected_servers or [],
         related_events=data.related_events or []
     )
@@ -125,6 +147,73 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
     db.commit()
     db.refresh(inc)
     return {"success": True, "message": "Incident güncellendi"}
+
+
+@router.get("/{incident_id}")
+async def get_incident(incident_id: int, db: Session = Depends(get_db)):
+    """Incident detayını getir (ilgili eventler dahil)"""
+    inc = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+
+    server_names = []
+    if inc.affected_servers:
+        servers = db.query(Server).filter(Server.id.in_(inc.affected_servers)).all()
+        server_names = [{"id": s.id, "name": s.name, "ip": s.ip_address, "status": s.status} for s in servers]
+
+    related_event_details = []
+    if inc.related_events:
+        events = db.query(SystemEvent).filter(SystemEvent.id.in_(inc.related_events)).order_by(desc(SystemEvent.created_at)).all()
+        related_event_details = [{
+            "id": e.id, "title": e.title, "severity": e.severity,
+            "event_type": e.event_type, "source": e.source,
+            "resolved": e.resolved, "is_acknowledged": e.is_acknowledged,
+            "created_at": e.created_at.isoformat() if e.created_at else None
+        } for e in events]
+
+    return {
+        "id": inc.id,
+        "title": inc.title,
+        "description": inc.description,
+        "severity": inc.severity,
+        "status": inc.status,
+        "source": inc.source,
+        "affected_servers": inc.affected_servers or [],
+        "affected_server_details": server_names,
+        "related_events": inc.related_events or [],
+        "related_event_details": related_event_details,
+        "root_cause": inc.root_cause,
+        "resolution": inc.resolution,
+        "rca_result": inc.rca_result,
+        "assigned_to": inc.assigned_to,
+        "created_at": inc.created_at.isoformat() if inc.created_at else None,
+        "updated_at": inc.updated_at.isoformat() if inc.updated_at else None,
+        "resolved_at": inc.resolved_at.isoformat() if inc.resolved_at else None
+    }
+
+
+@router.delete("/{incident_id}")
+async def delete_incident(incident_id: int, db: Session = Depends(get_db)):
+    """Incident sil"""
+    inc = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    db.delete(inc)
+    db.commit()
+    return {"success": True, "message": "Incident silindi"}
+
+
+@router.post("/{incident_id}/link-events")
+async def link_events(incident_id: int, event_ids: List[int], db: Session = Depends(get_db)):
+    """Event'leri incident'a bağla"""
+    inc = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    existing = set(inc.related_events or [])
+    existing.update(event_ids)
+    inc.related_events = list(existing)
+    db.commit()
+    return {"success": True, "related_events": inc.related_events}
 
 
 @router.post("/{incident_id}/rca")
@@ -190,20 +279,3 @@ Lütfen şu formatta analiz yap:
     except Exception as e:
         logger.error(f"RCA error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stats")
-async def incident_stats(db: Session = Depends(get_db)):
-    """Incident istatistikleri"""
-    total = db.query(Incident).count()
-    open_count = db.query(Incident).filter(Incident.status == "open").count()
-    investigating = db.query(Incident).filter(Incident.status == "investigating").count()
-    resolved = db.query(Incident).filter(Incident.status.in_(["resolved", "closed"])).count()
-    critical = db.query(Incident).filter(Incident.severity == "critical", Incident.status == "open").count()
-    return {
-        "total": total,
-        "open": open_count,
-        "investigating": investigating,
-        "resolved": resolved,
-        "critical": critical
-    }

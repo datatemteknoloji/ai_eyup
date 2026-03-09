@@ -5,11 +5,10 @@ services:
     container_name: server_management_db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}  # .env'den alınacak
       POSTGRES_DB: server_management
     ports:
       - "5432:5432"
-    # no dev volumes in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -38,11 +37,14 @@ services:
     container_name: server_management_backend
     network_mode: "host"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@localhost:5432/server_management
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@localhost:5432/server_management
       - REDIS_URL=redis://localhost:6379/0
-      - OLLAMA_URL=http://127.0.0.1:11434
+      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-60}
       - PROMETHEUS_URL=http://localhost:9090
       - PUSHGATEWAY_URL=http://localhost:9091
+      - SECRET_KEY=${SECRET_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
@@ -63,7 +65,8 @@ services:
     container_name: server_management_frontend
     ports:
       - "3000:80"
-    # production build served by nginx in container
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - backend
 
@@ -99,7 +102,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Ollama (opsiyonel - açarsanız ağdaki herkes kullanabilir)
+  # Ollama (opsiyonel)
   ollama:
     image: ollama/ollama:latest
     container_name: server_management_ollama
@@ -112,5 +115,5 @@ services:
     profiles:
       - ollama
 
-# Volumes: /var/lib/server_management/
-# Bu sayede Podman/Docker karışımında veri kaybı olmaz
+# 📌 NOT: .env dosyası oluşturun ve SECRET_KEY, POSTGRES_PASSWORD ayarlayın!
+# Örnek: cp .env.example .env && nano .env

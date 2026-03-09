@@ -34,12 +34,19 @@ const Hypervisors: React.FC = () => {
 
   const queryClient = useQueryClient()
 
-  const { data: hypervisors = [], isLoading } = useQuery<Hypervisor[]>({
+  const { data: hypervisors = [], isLoading, isError, error, refetch } = useQuery<Hypervisor[]>({
     queryKey: ['hypervisors'],
     queryFn: async () => {
       const response = await fetch(`${API_BASE_URL}/hypervisors/`)
-      if (!response.ok) throw new Error('Failed to fetch hypervisors')
-      return response.json()
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.msg || JSON.stringify(data) || 'Hypervisor listesi alınamadı'
+        throw new Error(detail)
+      }
+      if (!Array.isArray(data)) {
+        throw new Error(data?.message || data?.error || 'Beklenmeyen yanıt')
+      }
+      return data
     }
   })
 
@@ -179,6 +186,20 @@ const Hypervisors: React.FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4 p-6">
+        <p className="text-red-400 font-medium">Hypervisor listesi yüklenemedi</p>
+        <p className="text-slate-400 text-sm text-center max-w-md">
+          {error instanceof Error ? error.message : 'Backend bağlantısını kontrol edin. API: ' + API_BASE_URL}
+        </p>
+        <button onClick={() => refetch()} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">
+          Tekrar dene
+        </button>
       </div>
     )
   }
@@ -359,7 +380,7 @@ const Hypervisors: React.FC = () => {
                   value={formData.username}
                   onChange={(e) => handleFormChange('username', e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="administrator@vsphere.local"
+                  placeholder={formData.type === 'kvm' ? 'örn. admin (@internal otomatik eklenir)' : 'administrator@vsphere.local'}
                 />
               </div>
               <div>

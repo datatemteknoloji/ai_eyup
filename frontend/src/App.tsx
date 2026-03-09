@@ -12,7 +12,16 @@ import McpTools from './pages/McpTools'
 import Ansible from './pages/Ansible'
 import Layout from './components/Layout'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,          // 30 sn önce fetch edilmişse yeniden istek atma
+      gcTime: 5 * 60_000,         // 5 dk cache'de tut
+      retry: 1,                   // başarısızlıkta sadece 1 kez dene
+      refetchOnWindowFocus: false, // sekme odağında otomatik refetch yapma
+    },
+  },
+})
 
 function App() {
   return (

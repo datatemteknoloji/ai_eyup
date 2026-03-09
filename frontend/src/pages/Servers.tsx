@@ -37,15 +37,15 @@ const Servers: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all') // Varsayılan olarak tüm durumlar
-  const [showOffline, setShowOffline] = useState(true) // Offline sunucuları da göster
+  const [showOffline, setShowOffline] = useState(true) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
-  const [minCpuFilter, setMinCpuFilter] = useState('')
-  const [minMemoryFilter, setMinMemoryFilter] = useState('')
+
   const [sortKey, setSortKey] = useState<string>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [installingNodeExporter, setInstallingNodeExporter] = useState<number | null>(null)
+  const [startingNodeExporter, setStartingNodeExporter] = useState<number | null>(null)
   const [installResultByServerId, setInstallResultByServerId] = useState<Record<number, {
     success: boolean
     message?: string
@@ -86,14 +86,24 @@ const Servers: React.FC = () => {
   }, [installingNodeExporter])
 
   // Önce sunucu listesini al (Node Exporter durumu olmadan)
-  const { data: servers = [], isLoading } = useQuery<Server[]>({
+  const { data: servers = [], isLoading, isFetching, isError, error, refetch } = useQuery<Server[]>({
     queryKey: ['servers'],
     queryFn: async () => {
       const response = await fetch(`${API_BASE_URL}/servers/`)
-      if (!response.ok) throw new Error('Failed to fetch servers')
-      return response.json()
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`
+        try {
+          const err = await response.json()
+          detail = typeof err?.detail === 'string' ? err.detail : JSON.stringify(err)
+        } catch { /* JSON parse hatası yoksay */ }
+        throw new Error(detail)
+      }
+      const data = await response.json()
+      if (!Array.isArray(data)) throw new Error('API dizi döndürmedi')
+      return data
     },
-    refetchInterval: 30000 // 30 saniyede bir yenile
+    refetchInterval: 60_000,   // 60 sn'de bir arka planda yenile
+    placeholderData: (prev) => prev, // önceki veriyi göster, yüklenirken blank bırakma
   })
 
   // Tüm ONLINE sunucular için Node Exporter durumu iste (SSH yoksa backend Prometheus'tan bakar)
@@ -104,16 +114,6 @@ const Servers: React.FC = () => {
     .join(',')
 
   // Node Exporter kurulu sunucuları listele
-  const { data: installedNodeExporters } = useQuery<{ total: number; servers: Array<{ id: number; name: string; ip_address: string; node_exporter: { installed: boolean; running: boolean } }> }>({
-    queryKey: ['nodeExporterInstalled'],
-    queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/monitoring/node-exporter/list-ai-ready`)
-      if (!response.ok) throw new Error('Failed to fetch installed node exporters')
-      return response.json()
-    },
-    refetchInterval: 60000
-  })
-
   // Node Exporter durumlarını ayrı bir query ile al (ONLINE sunucular; backend SSH + Prometheus fallback kullanır)
   const { data: nodeExporterStatuses = {} } = useQuery<Record<number, { installed: boolean; running: boolean }>>({
     queryKey: ['nodeExporterStatuses', checkableServerIds],
@@ -188,8 +188,8 @@ const Servers: React.FC = () => {
         private_key: ''
       })
     },
-    onError: (error) => {
-      console.error('Sunucu ekleme hatası:', error)
+    onError: () => {
+      // DEV: console.error(...)
     }
   })
 
@@ -250,9 +250,13 @@ const Servers: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    console.log('Form submit edildi:', formData)
+    // DEV: console.log(...)
     if (!formData.name || formData.name.trim() === '') {
       alert('Sunucu adı gereklidir!')
+      return
+    }
+    if (!formData.ip_address || formData.ip_address.trim() === '') {
+      alert('IP adresi zorunludur! Lütfen sunucunun IP adresini girin.')
       return
     }
     const connection_config = formData.ssh_username
@@ -341,12 +345,7 @@ const Servers: React.FC = () => {
       (nodeExporterFilter === 'running' && server.node_exporter?.running) ||
       (nodeExporterFilter === 'not_installed' && !server.node_exporter?.installed)
 
-    const minCpu = Number(minCpuFilter || 0)
-    const minMem = Number(minMemoryFilter || 0)
-    const matchesCpu = minCpuFilter === '' || server.cpu_cores >= minCpu
-    const matchesMem = minMemoryFilter === '' || server.memory_gb >= minMem
-
-    return matchesSearch && matchesIp && matchesStatus && matchesAiReady && matchesType && matchesNodeExporter && matchesCpu && matchesMem
+    return matchesSearch && matchesIp && matchesStatus && matchesAiReady && matchesType && matchesNodeExporter
   })
 
   const sortedServers = [...filteredServers].sort((a, b) => {
@@ -413,41 +412,47 @@ const Servers: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        <p className="text-slate-400">Sunucular yükleniyor...</p>
+      </div>
+    )
+  }
+
+  if (isError && servers.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4 p-6">
+        <p className="text-red-400 font-medium">Sunucular yüklenemedi</p>
+        <p className="text-slate-400 text-sm text-center max-w-md">
+          {error instanceof Error ? error.message : 'Backend bağlantısını kontrol edin. API adresi: ' + API_BASE_URL}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+        >
+          Tekrar dene
+        </button>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      {/* Node Exporter Kurulu Sunucular Özeti */}
-      {installedNodeExporters && installedNodeExporters.servers.length > 0 && (
-        <div className="bg-gradient-to-br from-blue-900/40 to-purple-900/40 border border-blue-700/50 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-              📊 Node Exporter Kurulu Sunucular
-              <span className="text-sm font-normal text-blue-300">({installedNodeExporters.servers.filter(s => s.node_exporter.installed).length} sunucu)</span>
-            </h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {installedNodeExporters.servers.filter(s => s.node_exporter.installed).map(server => (
-              <div key={server.id} className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 hover:bg-slate-800/80 transition-colors">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-white truncate">{server.name}</span>
-                  {server.node_exporter.running ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">✓ Çalışıyor</span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">⚠ Durdurulmuş</span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-400 font-mono">{server.ip_address}</div>
-              </div>
-            ))}
-          </div>
+      {/* Hata banner (eski veri varken hata alındıysa göster) */}
+      {isError && servers.length > 0 && (
+        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2.5 text-sm">
+          <span className="text-red-400">⚠️ Yenileme hatası:</span>
+          <span className="text-red-300">{error instanceof Error ? error.message : 'Bilinmeyen hata'}</span>
+          <button onClick={() => refetch()} className="ml-auto text-xs text-red-400 underline">Tekrar dene</button>
         </div>
       )}
-
+      {/* Arka plan yenileme göstergesi */}
+      {isFetching && !isLoading && (
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <div className="animate-spin rounded-full h-3 w-3 border-b border-slate-400"></div>
+          Yenileniyor...
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -528,23 +533,7 @@ const Servers: React.FC = () => {
               <option value="installed">Kurulu</option>
               <option value="not_installed">Kurulu Değil</option>
             </select>
-            {/* Resource Filters */}
-            <input
-              type="number"
-              min={0}
-              value={minCpuFilter}
-              onChange={(e) => setMinCpuFilter(e.target.value)}
-              placeholder="Min CPU"
-              className="w-28 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <input
-              type="number"
-              min={0}
-              value={minMemoryFilter}
-              onChange={(e) => setMinMemoryFilter(e.target.value)}
-              placeholder="Min RAM"
-              className="w-28 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -630,7 +619,15 @@ const Servers: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {sortedServers.map((server) => (
+              {sortedServers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
+                    <p className="font-medium">Henüz sunucu yok</p>
+                    <p className="text-sm mt-1">Yeni sunucu eklemek için &quot;Yeni Sunucu&quot; butonunu kullanın veya backend/veritabanı bağlantısını kontrol edin.</p>
+                    <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
+                  </td>
+                </tr>
+              ) : sortedServers.map((server) => (
                 <React.Fragment key={server.id}>
                 <tr className="hover:bg-slate-700/30 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -678,37 +675,50 @@ const Servers: React.FC = () => {
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {server.ai_ready ? (
-                      server.connection_config?.username ? (
-                        server.node_exporter?.installed ? (
-                          server.node_exporter?.running ? (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
-                              ✅ Çalışıyor
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                              ⚠️ Kurulu (Durdurulmuş)
-                            </span>
-                          )
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setInstallResultByServerId(prev => { const next = { ...prev }; delete next[server.id]; return next })
-                              setInstallingNodeExporter(server.id)
-                              installNodeExporterMutation.mutate(server.id)
-                            }}
-                            disabled={installingNodeExporter === server.id}
-                            className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Node Exporter Kur"
-                          >
-                            {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
-                          </button>
-                        )
-                      ) : (
-                        <span className="text-slate-500 text-sm" title="SSH bağlantı bilgisi yok">N/A</span>
-                      )
+                    {server.node_exporter?.running ? (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                        ✅ Çalışıyor
+                      </span>
+                    ) : server.node_exporter?.installed ? (
+                      <button
+                        onClick={async () => {
+                          setStartingNodeExporter(server.id)
+                          try {
+                            const response = await fetch(`${API_BASE_URL}/monitoring/node-exporter/start/${server.id}`, { method: 'POST' })
+                            const data = await response.json().catch(() => ({}))
+                            if (response.ok) {
+                              queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] })
+                              queryClient.invalidateQueries({ queryKey: ['servers'] })
+                            } else {
+                              alert('Başlatma hatası: ' + (data.detail || 'Bilinmeyen hata'))
+                            }
+                          } catch (e) {
+                            alert('Hata: ' + (e instanceof Error ? e.message : String(e)))
+                          } finally {
+                            setStartingNodeExporter(null)
+                          }
+                        }}
+                        disabled={startingNodeExporter === server.id}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Node Exporter Başlat"
+                      >
+                        {startingNodeExporter === server.id ? '⏳' : '▶️'} {startingNodeExporter === server.id ? 'Başlatılıyor...' : 'Başlat'}
+                      </button>
+                    ) : server.connection_config?.username ? (
+                      <button
+                        onClick={() => {
+                          setInstallResultByServerId(prev => { const next = { ...prev }; delete next[server.id]; return next })
+                          setInstallingNodeExporter(server.id)
+                          installNodeExporterMutation.mutate(server.id)
+                        }}
+                        disabled={installingNodeExporter === server.id}
+                        className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Node Exporter Kur"
+                      >
+                        {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
+                      </button>
                     ) : (
-                      <span className="text-slate-500 text-sm" title="Sadece AI Ready sunucularda kurulum yapılır">N/A</span>
+                      <span className="text-slate-400 text-xs">SSH yok</span>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -832,8 +842,7 @@ const Servers: React.FC = () => {
         </div>
         {sortedServers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
-            {searchTerm || ipFilter || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' ||
-            nodeExporterFilter !== 'all' || minCpuFilter || minMemoryFilter
+            {searchTerm || ipFilter || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
               ? 'Filtreye uygun sunucu bulunamadı' 
               : 'Henüz sunucu eklenmemiş'}
           </div>
@@ -876,14 +885,20 @@ const Servers: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">IP Adresi</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  IP Adresi <span className="text-red-400">*</span>
+                </label>
                 <input
                   type="text"
+                  required
                   value={formData.ip_address}
                   onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={`w-full bg-slate-900 border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${!formData.ip_address ? 'border-red-500/50' : 'border-slate-700'}`}
                   placeholder="örn: 192.168.1.100"
                 />
+                {!formData.ip_address && (
+                  <p className="text-red-400 text-xs mt-1">IP adresi zorunludur</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
