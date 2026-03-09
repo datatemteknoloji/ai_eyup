@@ -210,7 +210,7 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                     password=hypervisor.password or hypervisor.connection_config.get("password", "")
                 )
                 client.login()
-                vms = client.list_vms()
+                vms = client.sync_vms_to_inventory()  # CPU/RAM için detaylı API
                 client.logout()
             except ImportError:
                 errors.append("VMware client modülü bulunamadı")
@@ -232,33 +232,74 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
         else:
             errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
 
+        def _vm_status(vm: dict) -> str:
+            """oVirt/VMware ham durumunu uygulama durumuna çevirir.
+            oVirt: status ('up'/'down'), VMware: power_state ('POWERED_ON'/'POWERED_OFF').
+            """
+            mapping = {
+                "up": "ONLINE", "powered_on": "ONLINE", "poweredon": "ONLINE", "running": "ONLINE",
+                "down": "OFFLINE", "powered_off": "OFFLINE", "poweredoff": "OFFLINE",
+                "stopped": "OFFLINE", "suspended": "OFFLINE",
+            }
+            raw = (vm.get("status") or vm.get("power_state") or "").lower().replace(" ", "_")
+            return mapping.get(raw, "OFFLINE")
+
+        # VM'leri sunuculara ekle/güncelle
+        from app.models.credential import GlobalCredential
+        
+        # Global Credential'ı al (varsa)
+        global_cred = db.query(GlobalCredential).first()
+        
         for vm in vms:
             vm_name = vm.get("name", "Unknown")
+            vm_status = _vm_status(vm)
             existing = db.query(Server).filter(Server.name == vm_name).first()
             if not existing:
+                # Yeni sunucu: Global Credential varsa connection_config'e koy
+                conn_cfg = {}
+                if global_cred:
+                    conn_cfg = {
+                        "username": global_cred.username,
+                        "password": global_cred.password,
+                        "private_key": global_cred.private_key,
+                        "port": global_cred.port or 22,
+                        "sudo_password": global_cred.sudo_password
+                    }
+                
+                # ai_ready: SADECE IP adresi varsa ve SSH başarılıysa true
+                # Hypervisor sync sırasında SSH test yapmıyoruz, sadece IP kontrolü
+                ai_ready_status = False  # Varsayılan: false
+                if vm.get("ip_address") and vm.get("ip_address").strip():
+                    # IP var, credential uygula/SSH test yap seçeneği kullanıcıya bırakılır
+                    ai_ready_status = False  # Kullanıcı "Apply Credential" ile test edecek
+                
                 new_server = Server(
                     name=vm_name,
                     hostname=vm_name,
                     ip_address=vm.get("ip_address", ""),
-                    status="OFFLINE",
+                    status=vm_status,
                     os_type=vm.get("os_type", ""),
                     server_type="VIRTUAL",
                     cpu_cores=vm.get("cpu_cores", 0),
                     memory_gb=vm.get("memory_gb", 0),
-                    connection_config={}
+                    connection_config=conn_cfg,
+                    ai_ready=ai_ready_status
                 )
                 db.add(new_server)
                 synced += 1
             else:
-                # Mevcut sunucuyu güncelle
+                # Mevcut sunucuyu güncelle - connection_config ve ai_ready değerlerini KORU
+                existing.status = vm_status          # hypervisor'ın gerçek durumu
                 if vm.get("ip_address"):
                     existing.ip_address = vm["ip_address"]
-                if vm.get("cpu_cores"):
+                # CPU/RAM: VM'den gelen değeri yaz (0 bile olsa; 0 = bilinmeyen/ayarlanmamış)
+                if "cpu_cores" in vm:
                     existing.cpu_cores = vm["cpu_cores"]
-                if vm.get("memory_gb"):
+                if "memory_gb" in vm:
                     existing.memory_gb = vm["memory_gb"]
                 if vm.get("os_type"):
                     existing.os_type = vm["os_type"]
+                # ÖNEMLI: connection_config ve ai_ready'ye DOKUNMA!
 
         db.commit()
 

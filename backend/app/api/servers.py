@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
 from app.models.server import Server
+from app.models.credential import GlobalCredential
 from app.schemas.server import ServerCreate, ServerUpdate, ServerResponse
 from app.services.monitoring.node_exporter_installer import NodeExporterInstaller
 from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
@@ -21,20 +22,22 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
     try:
         servers = db.query(Server).all()
         result = []
+        conn_config = None
         for s in servers:
+            conn_config = getattr(s, "connection_config", None) or {}
             server_data = {
                 "id": s.id,
-                "name": s.name,
-                "hostname": s.hostname,
-                "ip_address": s.ip_address,
-                "status": s.status,
-                "os_type": s.os_type,
-                "os_version": s.os_version,
-                "server_type": s.server_type,
-                "cpu_cores": s.cpu_cores,
-                "memory_gb": s.memory_gb,
-                "ai_ready": s.ai_ready,
-                "connection_config": s.connection_config,
+                "name": s.name or "",
+                "hostname": s.hostname or "",
+                "ip_address": s.ip_address or "",
+                "status": s.status or "UNKNOWN",
+                "os_type": s.os_type or "",
+                "os_version": s.os_version or "",
+                "server_type": s.server_type or "VIRTUAL",
+                "cpu_cores": s.cpu_cores or 0,
+                "memory_gb": s.memory_gb or 0,
+                "ai_ready": bool(s.ai_ready),
+                "connection_config": conn_config,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None
             }
@@ -42,7 +45,7 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
             # Node Exporter durumunu ekle (ONLINE sunucular: SSH varsa SSH, yoksa/hatada Prometheus)
             if include_node_exporter_status:
                 if s.status == "ONLINE":
-                    if s.connection_config and s.connection_config.get("username"):
+                    if conn_config and conn_config.get("username"):
                         try:
                             installer = NodeExporterInstaller(s)
                             node_exporter_status = installer.check_status()
@@ -66,6 +69,13 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
                             server_data["node_exporter"] = {"installed": False, "running": False}
                 else:
                     server_data["node_exporter"] = {"installed": False, "running": False}
+            
+            # Node Exporter: gerçek zamanlı istenmediyse DB cache kullan
+            if not include_node_exporter_status:
+                server_data["node_exporter"] = {
+                    "installed": bool(getattr(s, "node_exporter_installed", False) or False),
+                    "running": bool(getattr(s, "node_exporter_running", False) or False)
+                }
             
             result.append(server_data)
         
@@ -112,9 +122,13 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
         if status.upper() not in ["ONLINE", "OFFLINE", "WARNING", "CRITICAL"]:
             status = "OFFLINE"
         
+        # IP adresi zorunlu
+        if not server.ip_address or not server.ip_address.strip():
+            raise HTTPException(status_code=400, detail="IP adresi zorunludur")
+        
         # hostname ve ip_address NOT NULL olduğu için default değerler ekle
         hostname = server.hostname or server.name
-        ip_address = server.ip_address or ""
+        ip_address = server.ip_address.strip()
         
         # server_type NOT NULL olduğu için default değer ekle
         server_type = server.server_type or "VIRTUAL"
@@ -136,6 +150,65 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
         db.add(db_server)
         db.commit()
         db.refresh(db_server)
+        
+        # Global credential uygula (sunucunun kendi config'i yoksa)
+        if not db_server.connection_config.get("username"):
+            global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+            if not global_cred:
+                global_cred = db.query(GlobalCredential).first()
+            if global_cred:
+                db_server.connection_config = {
+                    "username": global_cred.username,
+                    "password": global_cred.password,
+                    "private_key": global_cred.private_key,
+                    "sudo_password": global_cred.sudo_password or global_cred.password,
+                    "port": global_cred.port or 22,
+                }
+                db_server.ai_ready = True
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(db_server, "connection_config")
+                db.commit()
+                db.refresh(db_server)
+        
+        # SSH ile baglantı test et ve sunucu bilgilerini guncelle
+        if db_server.connection_config.get("username") and db_server.ip_address:
+            try:
+                from app.services.ssh_manager import SSHManager
+                ssh = SSHManager(
+                    host=db_server.ip_address,
+                    username=db_server.connection_config.get("username"),
+                    password=db_server.connection_config.get("password"),
+                    private_key=db_server.connection_config.get("private_key"),
+                    port=db_server.connection_config.get("port", 22),
+                )
+                if ssh.connect():
+                    db_server.status = "ONLINE"
+                    # OS bilgisini al
+                    _, os_out, _ = ssh.execute_command(
+                        "cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d \'\""
+                    )
+                    if os_out.strip():
+                        db_server.os_version = os_out.strip()
+                    # Kernel
+                    _, kernel_out, _ = ssh.execute_command("uname -r")
+                    if kernel_out.strip():
+                        db_server.os_type = db_server.os_type or "linux"
+                    # CPU & RAM
+                    _, cpu_out, _ = ssh.execute_command("nproc")
+                    if cpu_out.strip().isdigit():
+                        db_server.cpu_cores = int(cpu_out.strip())
+                    _, mem_out, _ = ssh.execute_command(
+                        "free -g 2>/dev/null | awk '/^Mem:/{print $2}'"
+                    )
+                    if mem_out.strip().isdigit():
+                        db_server.memory_gb = int(mem_out.strip())
+                    ssh.close()
+                else:
+                    db_server.status = "OFFLINE"
+                db.commit()
+                db.refresh(db_server)
+            except Exception as ssh_err:
+                logger.warning(f"SSH connect failed for new server {db_server.name}: {ssh_err}")
         
         return {
             "id": db_server.id,
@@ -254,12 +327,15 @@ async def update_server_credentials(server_id: int, credentials: dict, db: Sessi
 
 @router.post("/check-health")
 async def check_all_servers_health(db: Session = Depends(get_db)):
-    """Tüm sunucuların durumlarını kontrol et ve güncelle (ping + SSH)"""
+    """Tüm sunucuların durumlarını kontrol et ve güncelle (TCP port + SSH)"""
     try:
         stats = await ServerHealthChecker.update_server_statuses_async(db)
+        msg = "Sunucu durumları güncellendi"
+        if stats.get("offline", 0) == stats.get("checked", 0) and stats.get("checked", 0) > 0:
+            msg += ". Hiç ONLINE yok; backend loglarında 'OFFLINE: ... sebep:' satırlarına bakın (docker logs server_management_backend)."
         return {
             "success": True,
-            "message": "Sunucu durumları güncellendi",
+            "message": msg,
             "stats": stats
         }
     except Exception as e:
@@ -275,7 +351,7 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Server not found")
         
         old_status = server.status
-        new_status = ServerHealthChecker.check_server_status(server)
+        new_status, _ = ServerHealthChecker.check_server_status(server)
         server.status = new_status
         db.commit()
         

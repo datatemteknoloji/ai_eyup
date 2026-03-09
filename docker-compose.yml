@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL with TimescaleDB
   db:
@@ -11,8 +9,7 @@ services:
       POSTGRES_DB: server_management
     ports:
       - "5432:5432"
-    volumes:
-      - /var/lib/server_management/postgres:/var/lib/postgresql/data
+    # no dev volumes in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -43,7 +40,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@localhost:5432/server_management
       - REDIS_URL=redis://localhost:6379/0
-      - OLLAMA_URL=http://192.168.1.166:11434
+      - OLLAMA_URL=http://127.0.0.1:11434
       - PROMETHEUS_URL=http://localhost:9090
       - PUSHGATEWAY_URL=http://localhost:9091
     volumes:
@@ -51,6 +48,7 @@ services:
       - ./backend/static:/app/static
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
+      - /var/lib/server_management/chroma:/var/lib/server_management/chroma
     depends_on:
       db:
         condition: service_healthy
@@ -64,14 +62,8 @@ services:
       dockerfile: Dockerfile
     container_name: server_management_frontend
     ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
-      - ./frontend/vite.config.ts:/app/vite.config.ts
-      - ./frontend/tailwind.config.js:/app/tailwind.config.js
-      - ./frontend/postcss.config.js:/app/postcss.config.js
-      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - "3000:80"
+    # production build served by nginx in container
     depends_on:
       - backend
 
@@ -107,14 +99,18 @@ services:
       timeout: 5s
       retries: 5
 
-  # Ollama (optional - can run on host)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: server_management_ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
+  # Ollama (opsiyonel - açarsanız ağdaki herkes kullanabilir)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: server_management_ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    ports:
+      - "11434:11434"
+    volumes:
+      - /var/lib/server_management/ollama:/root/.ollama
+    profiles:
+      - ollama
 
-# Volumes artık host path'lerde: /var/lib/server_management/
+# Volumes: /var/lib/server_management/
 # Bu sayede Podman/Docker karışımında veri kaybı olmaz

@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.models.server import Server
 from app.models.chat_session import ChatSession, ChatMessage
 from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
+from app.models.credential import GlobalCredential
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class ChatRequest(BaseModel):
     server_id: Optional[int] = None
     session_id: Optional[int] = None
     model: Optional[str] = None  # Ollama model seçimi
+    use_rag: Optional[bool] = True  # RAG (runbook, incident, metrik) kullanılsın mı
 
 
 class ChatResponse(BaseModel):
@@ -249,11 +251,15 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
         server_context = ""
         if selected_servers:
-            server_context = "Seçili sunucular:\n"
+            server_context = "Secili sunucular (gercek DB verileri):\n"
             for s in selected_servers:
-                server_context += f"- {s.name} ({s.ip_address}): {s.status}, CPU: {s.cpu_cores}, RAM: {s.memory_gb}GB\n"
+                os_info = s.os_version or s.os_type or "Linux"
+                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
         elif ai_ready_servers:
-            server_context = f"Toplam {len(ai_ready_servers)} AI Ready sunucu mevcut.\n"
+            server_context = f"AI Ready sunucular ({len(ai_ready_servers)} adet):\n"
+            for s in ai_ready_servers:
+                os_info = s.os_version or s.os_type or "Linux"
+                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, {s.status}\n"
 
         prometheus_context = ""
         # Prometheus context'i sadece metrik/performans soruları için çek
@@ -282,51 +288,27 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(user_msg)
         db.commit()
         
-        # SSH komut gerekip gerekmediğini kontrol et
-        requires_ssh = any(keyword in message.lower() for keyword in [
-            'disk', 'cpu', 'ram', 'memory', 'process', 'service', 'log', 'çalış',
-            'kontrol et', 'göster', 'listele', 'ne kadar', 'durumu', 'uptime',
-            'top', 'ps', 'df', 'free', 'systemctl', 'journalctl'
-        ])
-        
+        # SSH ile gercek veri topla
+        ssh_context = ""
+        try:
+            from app.services.linux_info_collector import detect_needed_groups, collect_server_info, build_server_context
+            import asyncio
+            if selected_servers:
+                global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+                groups = detect_needed_groups(message)
+                all_server_contexts = []
+                for srv in selected_servers:
+                    info = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda s=srv: collect_server_info(s, groups, global_cred)
+                    )
+                    all_server_contexts.append(build_server_context(srv, info))
+                if all_server_contexts:
+                    ssh_context = "\n\n".join(all_server_contexts)
+        except Exception as e:
+            logger.warning(f"SSH info collect failed: {e}")
+            ssh_context = ""
+
         ssh_results = []
-        if requires_ssh and selected_servers:
-            from app.services.ai_agent import AIAgent
-            agent = AIAgent(settings.OLLAMA_URL)
-            
-            # AI Agent ile sorguyu işle (komut oluştur ve çalıştır)
-            agent_result = await agent.process_query(message, selected_servers, db)
-            
-            if agent_result.get("type") == "command_execution":
-                ssh_results = agent_result.get("commands_executed", [])
-                # AI'nin özeti varsa direkt kullan
-                if agent_result.get("response"):
-                    ai_response = agent_result["response"]
-                    
-                    # Komut sonuçlarını ekle
-                    if ssh_results:
-                        ai_response += "\n\n**Çalıştırılan Komutlar:**\n"
-                        for cmd in ssh_results:
-                            ai_response += f"\n**{cmd['server']}:** `{cmd['command']}`\n"
-                            if cmd['success']:
-                                ai_response += f"```\n{cmd['output'][:300]}\n```\n"
-                            else:
-                                ai_response += f"❌ {cmd['error']}\n"
-                    
-                    # AI yanıtını kaydet
-                    assistant_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=ai_response,
-                    )
-                    db.add(assistant_msg)
-                    db.commit()
-                    
-                    return ChatResponse(
-                        response=ai_response,
-                        commands=ssh_results if ssh_results else None,
-                        session_id=session_id
-                    )
 
         try:
             ollama_url = settings.OLLAMA_URL
@@ -334,22 +316,46 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             model = request.model or settings.OLLAMA_DEFAULT_MODEL
             # Basit ve net prompt oluştur
             context_parts = []
-            if server_context:
-                context_parts.append(server_context.strip())
+            # SSH'tan gelen gercek veri en oncelikli
+            if ssh_context:
+                context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (SSH):\n" + ssh_context.strip())
+            elif server_context:
+                context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
             if prometheus_context:
                 context_parts.append(prometheus_context.strip())
-            
-            context_str = "\n\n".join(context_parts) if context_parts else "Henüz sunucu bilgisi yok."
-            
-            prompt = f"""Sen bir sunucu yönetim asistanı (Server Management Assistant) olarak çalışıyorsun. 
-TÜRKÇE yanıt ver. Kısa, net ve doğrudan cevap ver.
 
-SUNUCU BİLGİLERİ:
+            # RAG: Runbook, geçmiş incident/event ve metrik açıklamaları (use_rag=True ise)
+            if request.use_rag is not False:
+                try:
+                    from app.services.rag_service import get_rag_context_for_message
+                    rag_ctx = await get_rag_context_for_message(message)
+                    if rag_ctx.get("runbook"):
+                        context_parts.append("RUNBOOK / DOKÜMANTASYON (ilgili bölümler):\n" + rag_ctx["runbook"].strip())
+                    if rag_ctx.get("incidents"):
+                        context_parts.append("BENZER GEÇMİŞ OLAYLAR / INCIDENT'LAR:\n" + rag_ctx["incidents"].strip())
+                    if rag_ctx.get("metrics"):
+                        context_parts.append("METRİK AÇIKLAMALARI:\n" + rag_ctx["metrics"].strip())
+                except Exception as rag_err:
+                    logger.debug(f"RAG context atlanıyor: {rag_err}")
+
+            context_str = "\n\n".join(context_parts) if context_parts else "Sunucu bilgisi yok."
+
+            prompt = f"""Sen Linux sistem yonetimi uzmani bir asistansin.
+TURKCE yanit ver.
+
+KESIN KURALLAR:
+1. Asagidaki GERCEK VERILER, sunuculara SSH ile baglanarak toplanmistir. Bu verileri kullan.
+2. RUNBOOK / BENZER OLAY / METRIK aciklamalari verildiyse, soruyla ilgiliyse onlari da kullan.
+3. Kendi bilginden tahmin yapma, uydurma. Yalnizca verilen verileri kullan.
+4. Eger veri yoksa "Bu bilgi mevcut degil" de.
+5. Tablo formatinda istenmisse Markdown tablo olustur (| kolon | kolon |).
+6. Rapor istenmisse bolumler halinde duzenli sunum yap.
+
 {context_str}
 
 KULLANICI SORUSU: {message}
 
-CEVAP: """
+YANIT (Markdown formatinda, Turkce):"""
 
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
@@ -384,10 +390,29 @@ CEVAP: """
                     )
                 else:
                     logger.error(f"Ollama error: {response.status_code} - {response.text}")
+                    # Ollama'dan gelen hata metnini oku (model bulunamadı, bellek vb.)
+                    ollama_error_detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            ollama_error_detail = body.get("error", "") or body.get("message", "") or ""
+                    except Exception:
+                        if response.text and len(response.text) < 300:
+                            ollama_error_detail = response.text
+                    extra = f"**Ollama hatası:** {ollama_error_detail}" if ollama_error_detail else ""
                     error_response = (
-                        f"AI servisi yanıt veremedi (HTTP {response.status_code}). "
-                        "Ollama servisinin çalıştığından emin olun."
+                        "AI servisi yanıt veremedi (Ollama HTTP %d).\n\n"
+                        "**Kontrol edin:**\n"
+                        "• Ollama çalışıyor mu? `curl %s/api/tags`\n"
+                        "• Model yüklü mü? `ollama list` ve `ollama run %s`\n"
+                        "• Sunucuda bellek yeterli mi?"
+                    ) % (
+                        response.status_code,
+                        settings.OLLAMA_URL.rstrip("/"),
+                        (request.model or settings.OLLAMA_DEFAULT_MODEL).split(":")[0],
                     )
+                    if extra:
+                        error_response += "\n\n" + extra
                     err_msg = ChatMessage(
                         session_id=session_id,
                         role="assistant",
@@ -466,4 +491,26 @@ CEVAP: """
         raise
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+        # 500 döndürmek yerine kullanıcıya anlamlı mesaj ver; session varsa kaydet
+        err_msg = (
+            "AI servisi yanıt veremedi. Ollama servisinin çalıştığından emin olun. "
+            "(Bağlantı, zaman aşımı veya geçici hata olabilir.)"
+        )
+        # session_id satır 206'da her zaman tanımlanır; NameError oluşamaz.
+        # None ise oturum oluşturulmadan hata çıktı demektir — DB kaydı atlanır.
+        try:
+            if session_id is not None:
+                err_assistant = ChatMessage(session_id=session_id, role="assistant", content=err_msg)
+                db.add(err_assistant)
+                sess = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if sess:
+                    sess.updated_at = datetime.now(timezone.utc)
+                db.commit()
+        except Exception as db_err:
+            logger.warning(f"Could not save error message to session: {db_err}")
+        return ChatResponse(
+            response=err_msg,
+            commands=None,
+            suggestions=None,
+            session_id=session_id,
+        )

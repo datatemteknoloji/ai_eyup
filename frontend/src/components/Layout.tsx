@@ -20,6 +20,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/events', name: 'Events', icon: '📋' },
     { path: '/incidents', name: 'Incidents', icon: '🚨' },
     { path: '/chat', name: 'AI Chat', icon: '🤖' },
+    { path: '/ansible', name: 'Ansible/AWX', icon: '⚡' },
     { path: '/mcp', name: 'Linux MCP', icon: '🔧' },
     { path: '/metrics', name: 'Canlı Metrikler', icon: '📈' },
     { path: '/settings', name: 'Ayarlar', icon: '⚙️' },

@@ -61,9 +61,30 @@ try:
 except Exception as e:
     print(f"Warning: Could not load incidents router: {e}")
 
+# Anomaly Detection
+try:
+    from app.api import anomalies
+    api_router.include_router(anomalies.router, prefix="/anomalies", tags=["anomalies"])
+except Exception as e:
+    print(f"Warning: Could not load anomalies router: {e}")
+
 # MCP
 try:
     from app.api import mcp
     api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 except Exception as e:
     print(f"Warning: Could not load mcp router: {e}")
+
+# RAG (Runbook, Incidents, Metric descriptions)
+try:
+    from app.api import rag
+    api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+except Exception as e:
+    print(f"Warning: Could not load rag router: {e}")
+
+# Ansible/AWX
+try:
+    from app.api import ansible
+    api_router.include_router(ansible.router, prefix="/ansible", tags=["ansible"])
+except Exception as e:
+    print(f"Warning: Could not load ansible router: {e}")

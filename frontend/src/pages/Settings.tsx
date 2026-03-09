@@ -20,6 +20,201 @@ interface Server {
   connection_config: any
 }
 
+interface RagStatus {
+  runbook: number
+  incidents: number
+  metrics: number
+}
+
+interface RunbookDocument {
+  title: string
+  chunk_count: number
+  chunk_ids?: string[]
+}
+
+const RagTab: React.FC = () => {
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [pdfTitle, setPdfTitle] = useState('')
+  const { data: status, refetch: refetchStatus } = useQuery<RagStatus>({
+    queryKey: ['rag-status'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/status`)
+      if (!res.ok) return { runbook: 0, incidents: 0, metrics: 0 }
+      return res.json()
+    }
+  })
+  const uploadPdf = useMutation({
+    mutationFn: async () => {
+      if (!pdfFile) throw new Error('PDF seçin')
+      const form = new FormData()
+      form.append('file', pdfFile)
+      if (pdfTitle.trim()) form.append('title', pdfTitle.trim())
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/ingest-pdf`, { method: 'POST', body: form })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Yükleme hatası')
+      return r
+    },
+    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); setPdfFile(null); setPdfTitle(''); alert(`PDF eklendi: ${d.chunks_added} chunk.`) },
+    onError: (e) => alert(e instanceof Error ? e.message : 'PDF yükleme hatası')
+  })
+  const seedMetrics = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/metrics/seed`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: () => { refetchStatus(); alert('Metrik açıklamaları eklendi.') }
+  })
+  const reindexIncidents = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/incidents/reindex`, { method: 'POST' })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: (d) => { refetchStatus(); alert(`Incident'lar indexlendi: ${d.chunks_added} kayıt.`) }
+  })
+  const reindexEvents = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/events/reindex`, { method: 'POST' })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: (d) => { refetchStatus(); alert(`Event'ler eklendi: ${d.chunks_added} kayıt.`) }
+  })
+  const { data: runbookDocsData, refetch: refetchRunbookDocs } = useQuery<{ success: boolean; documents: RunbookDocument[] }>({
+    queryKey: ['rag-runbook-documents'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/documents`)
+      if (!res.ok) return { success: false, documents: [] }
+      return res.json()
+    }
+  })
+  const deleteRunbookDoc = useMutation({
+    mutationFn: async (title: string) => {
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/documents?title=${encodeURIComponent(title)}`, { method: 'DELETE' })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Silinemedi')
+      return r
+    },
+    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); alert(`"${d.title}" silindi (${d.deleted_chunks} chunk).`) },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası')
+  })
+  const runbookDocs = runbookDocsData?.documents ?? []
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-white mb-2">RAG (Bilgi Tabanı)</h2>
+      <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
+
+      {/* PDF Ekle - en üstte, belirgin */}
+      <div className="mb-6 p-5 bg-slate-900/70 rounded-xl border-2 border-emerald-500/40">
+        <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+          <span className="text-xl">📄</span> Runbook'a PDF Ekle
+        </h3>
+        <p className="text-slate-400 text-xs mb-4">PDF yükleyin; metin çıkarılıp RAG'e eklenir. Chat'te sorularınıza yanıt verirken kullanılır.</p>
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-[200px]">
+            <label className="block text-xs font-medium text-slate-400 mb-1">PDF dosyası</label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+              className="block w-full text-sm text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white file:font-medium"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Başlık (opsiyonel)</label>
+            <input
+              type="text"
+              value={pdfTitle}
+              onChange={(e) => setPdfTitle(e.target.value)}
+              placeholder="Dosya adı kullanılır"
+              className="w-52 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500"
+            />
+          </div>
+          <button
+            onClick={() => uploadPdf.mutate()}
+            disabled={!pdfFile || uploadPdf.isPending}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-lg shadow-emerald-500/20"
+          >
+            {uploadPdf.isPending ? 'Ekleniyor...' : 'PDF\'i RAG\'e Ekle'}
+          </button>
+        </div>
+        {pdfFile && <p className="text-emerald-400 text-xs mt-2">Seçili: {pdfFile.name}</p>}
+      </div>
+
+      {/* Eklenen runbook dokümanları */}
+      <div className="mb-6 p-5 bg-slate-900/50 rounded-xl border border-slate-700">
+        <h3 className="text-base font-semibold text-white mb-3 flex items-center gap-2">
+          <span className="text-lg">📋</span> Eklenen Runbook Dokümanları
+        </h3>
+        {runbookDocs.length === 0 ? (
+          <p className="text-slate-500 text-sm">Henüz runbook dokümanı yok. Yukarıdan PDF ekleyebilirsiniz.</p>
+        ) : (
+          <ul className="space-y-2">
+            {runbookDocs.map((doc) => (
+              <li
+                key={doc.title}
+                className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/50 border border-slate-700"
+              >
+                <span className="text-white font-medium truncate flex-1 mr-3">{doc.title}</span>
+                <span className="text-slate-400 text-sm whitespace-nowrap">{doc.chunk_count} chunk</span>
+                <button
+                  type="button"
+                  onClick={() => { if (confirm(`"${doc.title}" silinsin mi?`)) deleteRunbookDoc.mutate(doc.title) }}
+                  disabled={deleteRunbookDoc.isPending}
+                  className="ml-3 px-3 py-1.5 text-xs bg-red-600/20 text-red-400 border border-red-500/40 rounded-lg hover:bg-red-600/30 disabled:opacity-50"
+                >
+                  Sil
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-slate-900/50 rounded-xl border border-slate-700 p-4">
+          <p className="text-slate-400 text-sm">Runbook</p>
+          <p className="text-2xl font-semibold text-white">{status?.runbook ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
+        </div>
+        <div className="bg-slate-900/50 rounded-xl border border-slate-700 p-4">
+          <p className="text-slate-400 text-sm">Incidents / Events</p>
+          <p className="text-2xl font-semibold text-white">{status?.incidents ?? 0} <span className="text-sm font-normal text-slate-500">kayıt</span></p>
+        </div>
+        <div className="bg-slate-900/50 rounded-xl border border-slate-700 p-4">
+          <p className="text-slate-400 text-sm">Metrik Açıklamaları</p>
+          <p className="text-2xl font-semibold text-white">{status?.metrics ?? 0} <span className="text-sm font-normal text-slate-500">metrik</span></p>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik Açıklamalarını Yükle (varsayılan)'}
+        </button>
+        <button onClick={() => reindexIncidents.mutate()} disabled={reindexIncidents.isPending}
+          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          {reindexIncidents.isPending ? 'Indexleniyor...' : "Incident'ları RAG'e Ekle"}
+        </button>
+        <button onClick={() => reindexEvents.mutate()} disabled={reindexEvents.isPending}
+          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          {reindexEvents.isPending ? 'Indexleniyor...' : "Event'leri RAG'e Ekle"}
+        </button>
+      </div>
+      <div className="mt-6 bg-slate-900/30 rounded-xl border border-slate-700 p-4">
+        <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl kullanılır?</h4>
+        <ul className="text-xs text-slate-500 space-y-1">
+          <li>• <strong>Metrik açıklamaları:</strong> Chat’te “bu metrik ne?” sorularında kullanılır. Yukarıdan yükleyin.</li>
+          <li>• <strong>Incident’lar:</strong> Veritabanındaki incident’lar RAG’e eklenir; benzer geçmiş olaylar yanıtta kullanılır.</li>
+          <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-slate-800 px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-slate-800 px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('credentials')
   const [showForm, setShowForm] = useState(false)
@@ -109,6 +304,22 @@ const Settings: React.FC = () => {
     }
   })
 
+  const checkAllServersSSH = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/settings/credentials/test-all-ssh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }
+      })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${data.successful}\n❌ Başarısız: ${data.failed}\n\n${data.message}`)
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'SSH test hatası')
+  })
+
   const resetForm = () => {
     setShowForm(false); setEditingCred(null)
     setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 })
@@ -128,6 +339,7 @@ const Settings: React.FC = () => {
   const tabs = [
     { id: 'credentials', name: 'Global Credentials', icon: '🔑' },
     { id: 'ai', name: 'AI Ayarları', icon: '🤖' },
+    { id: 'rag', name: 'RAG (Bilgi Tabanı)', icon: '📚' },
     { id: 'monitoring', name: 'Monitoring', icon: '📊' },
     { id: 'about', name: 'Hakkında', icon: 'ℹ️' },
   ]
@@ -164,10 +376,17 @@ const Settings: React.FC = () => {
                   <h2 className="text-xl font-semibold text-white">Global Credentials</h2>
                   <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın ve sunuculara toplu uygulayın</p>
                 </div>
-                <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm">
-                  {showForm ? '✕ İptal' : '➕ Yeni Credential'}
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => checkAllServersSSH.mutate()}
+                    disabled={checkAllServersSSH.isPending}
+                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50">
+                    {checkAllServersSSH.isPending ? '⏳ Test Ediliyor...' : '🔍 SSH Test & Update'}
+                  </button>
+                  <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
+                    className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm">
+                    {showForm ? '✕ İptal' : '➕ Yeni Credential'}
+                  </button>
+                </div>
               </div>
 
               {/* Form */}
@@ -302,12 +521,12 @@ const Settings: React.FC = () => {
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Ollama URL</label>
-                      <input type="text" value="http://192.168.1.166:11434" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <input type="text" value="http://192.168.1.222:11434" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                       <p className="text-xs text-slate-500 mt-1">Ortam değişkeni ile ayarlanır (OLLAMA_URL)</p>
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Varsayılan Model</label>
-                      <input type="text" value="llama3.2:3b" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <input type="text" value="llama3:70b" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                     </div>
                   </div>
                 </div>
@@ -317,6 +536,11 @@ const Settings: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ═══ RAG ═══ */}
+          {activeTab === 'rag' && (
+            <RagTab />
           )}
 
           {/* ═══ Monitoring ═══ */}
@@ -338,10 +562,10 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <a href="http://192.168.1.166:9090" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-xl border border-slate-700 p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
+                  <a href="http://192.168.1.222:9090" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-xl border border-slate-700 p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
                     <span className="text-2xl">📈</span><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">Metrics & Queries</p></div>
                   </a>
-                  <a href="http://192.168.1.166:9091" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-xl border border-slate-700 p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
+                  <a href="http://192.168.1.222:9091" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-xl border border-slate-700 p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
                     <span className="text-2xl">📊</span><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">Push Metrics</p></div>
                   </a>
                 </div>

@@ -163,6 +163,7 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
 
     applied = 0
+    failed = []
     for server in servers:
         if not server.connection_config:
             server.connection_config = {}
@@ -174,16 +175,140 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
         if cred.sudo_password:
             server.connection_config["sudo_password"] = cred.sudo_password
         server.connection_config["port"] = cred.port
-        if request.set_ai_ready:
-            server.ai_ready = True
         flag_modified(server, "connection_config")
+        
+        # ai_ready: SSH test et, başarılıysa true (SADECE IP adresi olanlarda)
+        if request.set_ai_ready:
+            # IP adresi yoksa ai_ready = False
+            if not server.ip_address or not server.ip_address.strip():
+                logger.debug(f"SSH test atlandı (IP yok): {server.name}")
+                server.ai_ready = False
+                failed.append(f"{server.name} (IP yok)")
+            else:
+                try:
+                    from app.services.ssh_manager import SSHManager
+                    ssh = SSHManager(
+                        host=server.ip_address.strip(),
+                        username=cred.username,
+                        password=cred.password if cred.password else None,
+                        private_key=cred.private_key if cred.private_key else None,
+                        port=cred.port
+                    )
+                    ssh.connect()
+                    ssh.close()
+                    server.ai_ready = True
+                except Exception as e:
+                    logger.debug(f"SSH test failed for {server.name}: {e}")
+                    server.ai_ready = False
+                    failed.append(server.name)
         applied += 1
 
     db.commit()
+    msg = f"'{cred.name}' credential {applied} sunucuya uygulandı"
+    if failed:
+        msg += f". SSH bağlantı başarısız ({len(failed)}): {', '.join(failed[:5])}"
+        if len(failed) > 5:
+            msg += f" ve {len(failed)-5} diğer"
     return {
         "success": True,
-        "message": f"'{cred.name}' credential {applied} sunucuya uygulandı",
-        "applied_count": applied
+        "message": msg,
+        "applied_count": applied,
+        "ai_ready_count": applied - len(failed),
+        "failed_ssh": failed[:20]
+    }
+
+
+@router.post("/credentials/test-all-ssh")
+async def test_all_servers_ssh(db: Session = Depends(get_db)):
+    """Tüm sunucularda SSH test et, ai_ready durumunu güncelle ve SSH key dağıt"""
+    servers = db.query(Server).all()
+    if not servers:
+        raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
+    
+    successful = []
+    failed = []
+    skipped = []
+    key_deployed = []
+    
+    for server in servers:
+        # IP yoksa skip
+        if not server.ip_address or not server.ip_address.strip():
+            logger.debug(f"SSH test atlandı (IP yok): {server.name}")
+            server.ai_ready = False
+            skipped.append(server.name)
+            continue
+        
+        # connection_config yoksa skip
+        if not server.connection_config or not server.connection_config.get("username"):
+            logger.debug(f"SSH test atlandı (credential yok): {server.name}")
+            server.ai_ready = False
+            skipped.append(server.name)
+            continue
+        
+        # SSH test
+        try:
+            from app.services.ssh_manager import SSHManager
+            ssh = SSHManager(
+                host=server.ip_address.strip(),
+                username=server.connection_config.get("username"),
+                password=server.connection_config.get("password"),
+                private_key=server.connection_config.get("private_key"),
+                port=server.connection_config.get("port", 22)
+            )
+            ssh.connect()
+            
+            # SSH bağlantı başarılı - key deployment dene
+            try:
+                # Eğer private key varsa, public key'i oluştur ve sunucuya dağıt
+                if server.connection_config.get("private_key"):
+                    from app.services.ssh_key_deployer import SSHKeyDeployer
+                    deployer = SSHKeyDeployer()
+                    deploy_result = deployer.deploy_public_key(
+                        ssh_manager=ssh,
+                        private_key=server.connection_config.get("private_key")
+                    )
+                    if deploy_result.get("success"):
+                        key_deployed.append(server.name)
+                        logger.info(f"SSH public key deployed to {server.name}")
+            except Exception as key_error:
+                logger.warning(f"SSH key deployment failed for {server.name}: {key_error}")
+            
+            ssh.close()
+            server.ai_ready = True
+            successful.append(server.name)
+            logger.info(f"✅ SSH test başarılı: {server.name}")
+        except Exception as e:
+            logger.debug(f"SSH test failed for {server.name}: {e}")
+            server.ai_ready = False
+            failed.append(server.name)
+    
+    db.commit()
+    
+    msg = f"SSH Test tamamlandı. Başarılı: {len(successful)}, Başarısız: {len(failed)}, Atlandı: {len(skipped)}"
+    if key_deployed:
+        msg += f"\n\n🔑 SSH Key dağıtıldı ({len(key_deployed)}): {', '.join(key_deployed[:10])}"
+        if len(key_deployed) > 10:
+            msg += f" ve {len(key_deployed)-10} diğer"
+    if failed:
+        msg += f"\n\nBaşarısız: {', '.join(failed[:10])}"
+        if len(failed) > 10:
+            msg += f" ve {len(failed)-10} diğer"
+    if skipped:
+        msg += f"\n\nAtlandı (IP/credential yok): {', '.join(skipped[:10])}"
+        if len(skipped) > 10:
+            msg += f" ve {len(skipped)-10} diğer"
+    
+    return {
+        "success": True,
+        "message": msg,
+        "successful": len(successful),
+        "failed": len(failed),
+        "skipped": len(skipped),
+        "key_deployed": len(key_deployed),
+        "successful_servers": successful[:20],
+        "failed_servers": failed[:20],
+        "skipped_servers": skipped[:20],
+        "key_deployed_servers": key_deployed[:20]
     }
 
 

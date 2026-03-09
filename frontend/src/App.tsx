@@ -8,6 +8,8 @@ import LiveMetrics from './pages/LiveMetrics'
 import Settings from './pages/Settings'
 import Events from './pages/Events'
 import Incidents from './pages/Incidents'
+import McpTools from './pages/McpTools'
+import Ansible from './pages/Ansible'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient()
@@ -26,6 +28,7 @@ function App() {
             <Route path="/metrics" element={<LiveMetrics />} />
             <Route path="/events" element={<Events />} />
             <Route path="/incidents" element={<Incidents />} />
+            <Route path="/ansible" element={<Ansible />} />
             <Route path="/mcp" element={<McpTools />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
