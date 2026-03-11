@@ -36,6 +36,8 @@ const NODE_EXPORTER_STEP_LABELS = [
 
 interface MetricsSummary {
   has_node_exporter: boolean
+  source?: string | null
+  power_state?: string | null
   cpu_percent: number | null
   mem_percent: number | null
   disk_percent: number | null
@@ -46,6 +48,7 @@ interface MetricsSummary {
   mem_used_gb: number | null
   disk_total_gb: number | null
   disk_avail_gb: number | null
+  cpu_num?: number | null
 }
 
 interface EventGroup {
@@ -257,13 +260,30 @@ function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () =
                   <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
                   <span>Metrikler yükleniyor...</span>
                 </div>
-              ) : !metrics?.has_node_exporter ? (
+              ) : (!metrics?.has_node_exporter && !metrics?.source) ? (
                 <div className="text-center py-10 text-slate-500">
                   <p className="text-3xl mb-3">📡</p>
-                  <p className="text-sm">Node Exporter kurulu değil veya bu sunucudan veri gelmiyor.</p>
+                  <p className="text-sm">Node Exporter kurulu değil ve vCenter'dan veri alınamadı.</p>
+                  {server.server_type === 'VIRTUAL' && (
+                    <p className="text-xs text-slate-600 mt-1">Ayarlar → Hypervisors'dan vCenter bağlantısını kontrol edin.</p>
+                  )}
                 </div>
               ) : (
                 <>
+                  {/* Data source badge */}
+                  <div className="flex items-center gap-2 text-xs">
+                    {metrics.source === 'vcenter' ? (
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">📊 vCenter</span>
+                    ) : metrics.source === 'prometheus' ? (
+                      <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">📈 Prometheus / Node Exporter</span>
+                    ) : null}
+                    {metrics.power_state && (
+                      <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${metrics.power_state === 'POWERED_ON' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+                        {metrics.power_state === 'POWERED_ON' ? '⚡ Açık' : '⏹ Kapalı'}
+                      </span>
+                    )}
+                  </div>
+
                   {/* Gauge cards */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
@@ -290,8 +310,12 @@ function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () =
                   {/* Extra info */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      ['Load 1m', metrics.load1 !== null ? String(metrics.load1) : '-'],
-                      ['Load 5m', metrics.load5 !== null ? String(metrics.load5) : '-'],
+                      metrics.source === 'vcenter'
+                        ? ['vCPU Sayısı', metrics.cpu_num !== null ? String(metrics.cpu_num) : '-']
+                        : ['Load 1m', metrics.load1 !== null ? String(metrics.load1) : '-'],
+                      metrics.source === 'vcenter'
+                        ? ['RAM (Toplam)', metrics.mem_total_gb !== null ? `${metrics.mem_total_gb} GB` : '-']
+                        : ['Load 5m', metrics.load5 !== null ? String(metrics.load5) : '-'],
                       ['Uptime', fmtUptime(metrics.uptime_seconds)],
                     ].map(([label, value]) => (
                       <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50 text-center">

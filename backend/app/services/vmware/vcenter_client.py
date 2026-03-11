@@ -143,3 +143,110 @@ class VCenterClient:
         
         logger.info(f"Synced {len(inventory)} VMs from vCenter {self.host}")
         return inventory
+
+    def find_vm_by_name_or_ip(self, name: str = "", ip: str = "") -> Optional[str]:
+        """VM'i isim veya IP ile bul, vm_id döner."""
+        vms = self.list_vms()
+        if isinstance(vms, dict):
+            vms = vms.get("value", [])
+        name_l = name.lower()
+        for vm in vms:
+            if name and vm.get("name", "").lower() == name_l:
+                return vm.get("vm")
+        # IP ile eşleşmeye çalış (guest info)
+        if ip:
+            for vm in vms:
+                vm_id = vm.get("vm")
+                if not vm_id:
+                    continue
+                try:
+                    guest = self.get_vm_guest_info(vm_id)
+                    if guest and guest.get("ip_address") == ip:
+                        return vm_id
+                except Exception:
+                    pass
+        return None
+
+    def get_vm_quick_stats(self, vm_id: str) -> Optional[Dict]:
+        """SOAP RetrieveProperties ile VM'in anlık CPU/RAM kullanımını döner.
+
+        Dönen dict: cpu_mhz, cpu_percent, mem_used_mb, mem_total_mb,
+                    mem_percent, uptime_seconds, power_state
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrievePropertiesEx>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSpec>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>summary.quickStats</vim25:pathSet>
+          <vim25:pathSet>summary.config.numCpu</vim25:pathSet>
+          <vim25:pathSet>summary.config.memorySizeMB</vim25:pathSet>
+          <vim25:pathSet>summary.runtime.powerState</vim25:pathSet>
+        </vim25:propSpec>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+      <vim25:options/>
+    </vim25:RetrievePropertiesEx>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            headers = {
+                "Content-Type": "text/xml; charset=utf-8",
+                "SOAPAction": "urn:vim25/6.0",
+            }
+            # Reuse the session cookie from REST login
+            resp = self.session.post(soap_url, data=soap_body, headers=headers,
+                                     verify=self.verify_ssl, timeout=15)
+            if resp.status_code != 200:
+                logger.warning(f"SOAP quick_stats HTTP {resp.status_code}")
+                return None
+
+            root = ET.fromstring(resp.text)
+            ns = {"s": "http://schemas.xmlsoap.org/soap/envelope/",
+                  "v": "urn:vim25"}
+
+            def _val(tag: str) -> Optional[str]:
+                for el in root.iter():
+                    if el.tag.split("}")[-1] == tag:
+                        return el.text
+                return None
+
+            cpu_mhz    = int(_val("overallCpuUsage") or 0)
+            mem_used   = int(_val("guestMemoryUsage") or 0)
+            uptime     = int(_val("uptimeSeconds") or 0)
+            num_cpu    = int(_val("numCpu") or 1)
+            mem_total  = int(_val("memorySizeMB") or 0)
+            power_state = _val("powerState") or "unknown"
+
+            # CPU %: overallCpuUsage(MHz) / (numCpu * host_freq) — approximate using 2000 MHz base
+            # More accurate: query host's cpuMhz, here we use a common 2.0 GHz default
+            cpu_freq_mhz = 2000
+            cpu_percent = round((cpu_mhz / (num_cpu * cpu_freq_mhz)) * 100, 1) if num_cpu else None
+            cpu_percent = min(cpu_percent, 100.0) if cpu_percent is not None else None
+            mem_percent = round((mem_used / mem_total) * 100, 1) if mem_total else None
+
+            return {
+                "cpu_mhz": cpu_mhz,
+                "cpu_percent": cpu_percent,
+                "mem_used_mb": mem_used,
+                "mem_total_mb": mem_total,
+                "mem_percent": mem_percent,
+                "uptime_seconds": uptime,
+                "power_state": power_state,
+                "num_cpu": num_cpu,
+                "source": "vcenter",
+            }
+        except Exception as e:
+            logger.error(f"get_vm_quick_stats error: {e}")
+            return None

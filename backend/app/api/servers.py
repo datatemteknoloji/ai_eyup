@@ -373,7 +373,8 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{server_id}/metrics-summary")
 async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_db)):
-    """Prometheus'tan sunucunun anlık CPU/RAM/Disk/Load/Uptime özetini döner."""
+    """Prometheus/Node Exporter verisini doner. Veri yoksa ve sunucu VIRTUAL ise vCenter'dan alir."""
+    from app.models.hypervisor import Hypervisor, HypervisorType
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -405,9 +406,64 @@ async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_d
     disk_total = await _q(f'node_filesystem_size_bytes{{mountpoint="/",{ifilter}}}')
     disk_avail = await _q(f'node_filesystem_avail_bytes{{mountpoint="/",{ifilter}}}')
 
+    has_prom = cpu is not None
+
+    # ── vCenter fallback: sanal sunucu, Prometheus verisi yok ──────────────
+    vcenter_stats: dict = {}
+    if not has_prom and server.server_type == "VIRTUAL":
+        import asyncio
+        hypervisors = db.query(Hypervisor).filter(
+            Hypervisor.hypervisor_type == HypervisorType.VMWARE
+        ).all()
+        for hyp in hypervisors:
+            vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
+            if not (hyp.hostname and hyp.username and vc_pass):
+                continue
+            try:
+                from app.services.vmware.vcenter_client import VCenterClient
+                vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
+                if not vc.login():
+                    continue
+                vm_id = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: vc.find_vm_by_name_or_ip(name=server.name, ip=ip or "")
+                )
+                if vm_id:
+                    stats = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: vc.get_vm_quick_stats(vm_id)
+                    )
+                    if stats:
+                        vcenter_stats = stats
+                vc.logout()
+                if vcenter_stats:
+                    break
+            except Exception as e:
+                logger.warning(f"vCenter metrics fallback error: {e}")
+
+    if vcenter_stats:
+        mtmb = vcenter_stats.get("mem_total_mb") or 0
+        mumb = vcenter_stats.get("mem_used_mb") or 0
+        return {
+            "server_id": server_id,
+            "has_node_exporter": False,
+            "source": "vcenter",
+            "power_state": vcenter_stats.get("power_state"),
+            "cpu_percent": vcenter_stats.get("cpu_percent"),
+            "mem_percent": vcenter_stats.get("mem_percent"),
+            "disk_percent": None,
+            "load1": None,
+            "load5": None,
+            "uptime_seconds": vcenter_stats.get("uptime_seconds"),
+            "mem_total_gb": round(mtmb / 1024, 1) if mtmb else None,
+            "mem_used_gb":  round(mumb / 1024, 1) if mumb else None,
+            "disk_total_gb": None,
+            "disk_avail_gb": None,
+            "cpu_num": vcenter_stats.get("num_cpu"),
+        }
+
     return {
         "server_id": server_id,
-        "has_node_exporter": cpu is not None,
+        "has_node_exporter": has_prom,
+        "source": "prometheus" if has_prom else None,
         "cpu_percent": round(cpu, 1) if cpu is not None else None,
         "mem_percent": round(mem, 1) if mem is not None else None,
         "disk_percent": round(disk, 1) if disk is not None else None,
