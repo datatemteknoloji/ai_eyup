@@ -24,6 +24,7 @@ class SystemEvent(Base):
     resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen  = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
 
     server = relationship("Server", back_populates="events")
 

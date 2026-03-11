@@ -17,23 +17,19 @@ router = APIRouter()
 
 @router.post("/node-exporter/install/{server_id}")
 async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
-    """AI ready sunucuya Node Exporter kur - Global credential kullanir"""
+    """SSH erişimi olan sunucuya Node Exporter kur - ai_ready zorunlu degil"""
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    
-    if not server.ai_ready:
-        raise HTTPException(status_code=400, detail="Server must be AI ready to install Node Exporter")
-    
+
     # Global default credential'i al
     from app.models.credential import GlobalCredential
     global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
     if not global_cred:
         global_cred = db.query(GlobalCredential).first()
-    
+
     # Kullanilacak credential: global varsa global, yoksa sunucunun kendi'si
     if global_cred:
-        # Gecici olarak server connection_config'ini global credential ile override et
         original_config = server.connection_config or {}
         server.connection_config = {
             "username": global_cred.username,

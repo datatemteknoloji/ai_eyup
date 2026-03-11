@@ -1,41 +1,60 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
+import * as XLSX from 'xlsx'
 
-/** Markdown tablo metnini CSV'ye çevirip indir */
-function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
+function _parseMdTable(mdTable: string): string[][] {
   const lines = mdTable.trim().split('\n').map(l => l.trim()).filter(Boolean)
   const rows: string[][] = []
   for (const line of lines) {
     if (line.startsWith('|') && line.endsWith('|')) {
       const cells = line.split('|').slice(1, -1).map(c => c.trim())
       if (cells.length > 0 && cells.some(c => c)) {
-        const isSeparator = cells.every(c => /^:?-+:?$/.test(c) || /^-+$/.test(c))
-        if (!isSeparator) rows.push(cells)
+        const isSep = cells.every(c => /^:?-+:?$/.test(c))
+        if (!isSep) rows.push(cells)
       }
     }
   }
+  return rows
+}
+
+function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
+  const rows = _parseMdTable(mdTable)
   if (rows.length === 0) return
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
+  a.href = url; a.download = filename; a.click()
   URL.revokeObjectURL(url)
 }
 
-/** İçerikte markdown tablo var mı (ilk tabloyu döndür) */
+function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
+  const rows = _parseMdTable(mdTable)
+  if (rows.length === 0) return
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  // Header satırını kalın yap
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })]
+    if (cell) cell.s = { font: { bold: true } }
+  }
+  // Sütun genişliklerini otomatik ayarla
+  ws['!cols'] = rows[0].map((_, ci) => ({
+    wch: Math.max(...rows.map(r => String(r[ci] || '').length), 10)
+  }))
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Tablo')
+  XLSX.writeFile(wb, filename)
+}
+
 function getFirstMarkdownTable(content: string): string | null {
   const lines = content.split('\n')
   let start = -1
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
-      start = i
-      break
-    }
+    if (lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) { start = i; break }
   }
   if (start === -1) return null
   const out: string[] = []
@@ -47,35 +66,67 @@ function getFirstMarkdownTable(content: string): string | null {
   return out.length > 0 ? out.join('\n') : null
 }
 
-interface Server {
-  id: number
-  name: string
-  ip_address: string
-  ai_ready: boolean
-  status: string
-}
+interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string }
+interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
+interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
-interface Message {
-  id: number
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
+const ThinkingDots = () => (
+  <div className="flex items-center gap-1 py-1">
+    {[0, 150, 300].map(d => (
+      <div key={d} className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+    ))}
+  </div>
+)
 
-interface ChatSession {
-  id: number
-  title: string
-  server_ids: number[]
-  created_at: string
-  updated_at?: string
-  message_count: number
-}
+const StreamingText = ({ text }: { text: string }) => (
+  <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        table: ({ children }) => (
+          <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
+            <table className="min-w-full text-left text-sm border-collapse">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-slate-600">{children}</thead>,
+        th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
+        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-slate-700/60 whitespace-nowrap">{children}</td>,
+        tr: ({ children, ...props }) => <tr className="even:bg-slate-800/30 hover:bg-slate-600/20 transition-colors" {...props}>{children}</tr>,
+        code: ({ className, children }) => className
+          ? <code className={className}>{children}</code>
+          : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
+        pre: ({ children }) => <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+      }}
+    >{text}</ReactMarkdown>
+    <span className="inline-block w-1.5 h-4 bg-blue-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+  </div>
+)
 
-interface AIModel {
-  name: string
-  size: number
-  parameter_size: string
-  family: string
+const ConfirmDialog: React.FC<{
+  open: boolean
+  message: string
+  onConfirm: () => void
+  onCancel: () => void
+}> = ({ open, message, onConfirm, onCancel }) => {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-6 w-80 max-w-[90vw]">
+        <p className="text-sm text-slate-200 mb-6 text-center leading-relaxed">{message}</p>
+        <div className="flex gap-3 justify-center">
+          <button onClick={onCancel}
+            className="flex-1 px-4 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+            İptal
+          </button>
+          <button onClick={() => { onConfirm(); onCancel() }}
+            className="flex-1 px-4 py-2 rounded-lg text-sm bg-red-600 hover:bg-red-500 text-white font-medium transition-colors">
+            Sil
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 const Chat: React.FC = () => {
@@ -86,64 +137,55 @@ const Chat: React.FC = () => {
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<string>('llama3:70b')
+  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [useRag, setUseRag] = useState<boolean>(true)
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
+  const [streamingText, setStreamingText] = useState<string>('')
+  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean
+    message: string
+    onConfirm: () => void
+  }>({ open: false, message: '', onConfirm: () => {} })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const streamSessionRef = useRef<number | null>(null)  // hangi session için stream çalışıyor
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (serverDropdownRef.current && !serverDropdownRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent) => {
+      if (serverDropdownRef.current && !serverDropdownRef.current.contains(e.target as Node))
         setServerDropdownOpen(false)
-      }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [])
 
   const queryClient = useQueryClient()
 
-  // AI Ready sunucuları getir
   const { data: servers = [] } = useQuery<Server[]>({
     queryKey: ['ai-ready-servers'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
-      if (!response.ok) throw new Error('Failed to fetch servers')
-      return response.json()
+      const res = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
     }
   })
 
-  // Ollama modellerini getir (hata olursa default kullan)
   const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
     queryKey: ['ai-models'],
     queryFn: async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/chat/models`, { timeout: 5000 } as any)
-        if (!response.ok) {
-          // DEV: console.warn(...)
-          return {
-            success: false,
-            models: [],
-            default: 'llama3.2:3b'
-          }
-        }
-        return response.json()
-      } catch (error) {
-        // DEV: console.error(...)
-        return {
-          success: false,
-          models: [],
-          default: 'llama3.2:3b'
-        }
-      }
+        const res = await fetch(`${API_BASE_URL}/chat/models`, { signal: AbortSignal.timeout(5000) })
+        if (!res.ok) return { success: false, models: [], default: 'llama3.2:3b' }
+        return res.json()
+      } catch { return { success: false, models: [], default: 'llama3.2:3b' } }
     },
-    retry: false,
-    staleTime: 60000 // 1 dakika cache
+    retry: false, staleTime: 60000
   })
 
   const availableModels: AIModel[] =
-    modelsData?.models && modelsData.models.length > 0
+    modelsData?.models?.length
       ? modelsData.models
       : [
           { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
@@ -153,74 +195,63 @@ const Chat: React.FC = () => {
           { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' }
         ]
 
-  // Chat session'larını getir
   const { data: sessions = [], refetch: refetchSessions } = useQuery<ChatSession[]>({
     queryKey: ['chat-sessions'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/chat/sessions`)
-      if (!response.ok) throw new Error('Failed to fetch sessions')
-      return response.json()
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`)
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
     }
   })
 
-  // Seçili session'ın mesajlarını getir
   const { data: messages = [], refetch: refetchMessages } = useQuery<Message[]>({
     queryKey: ['chat-messages', selectedSessionId],
     queryFn: async () => {
       if (!selectedSessionId) return []
-      const response = await fetch(`${API_BASE_URL}/chat/sessions/${selectedSessionId}/messages`)
-      if (!response.ok) throw new Error('Failed to fetch messages')
-      return response.json()
+      const res = await fetch(`${API_BASE_URL}/chat/sessions/${selectedSessionId}/messages`)
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
     },
     enabled: selectedSessionId !== null
   })
 
-  // Yeni session oluştur
   const createSessionMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-      if (!response.ok) throw new Error('Failed to create session')
-      return response.json()
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
+      abortRef.current?.abort()
+      setIsLoading(false)
+      setStreamingText('')
+      setPendingUserMessage(null)
+      setThinkingPhase('idle')
       setSelectedSessionId(data.id)
+      setInput('')
       setSuppressAutoCreate(false)
     }
   })
 
-  // Session sil
   const deleteSessionMutation = useMutation({
     mutationFn: async (sessionId: number) => {
-      const response = await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}`, {
-        method: 'DELETE'
-      })
-      if (!response.ok) throw new Error('Failed to delete session')
+      const res = await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed')
     },
     onSuccess: (_: unknown, sessionId: number) => {
-      // Listeden silinen session'ı hemen kaldır; refetch yapma, geri gelmesin
-      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], (prev: ChatSession[] | undefined) =>
-        (prev ?? []).filter((s: ChatSession) => s.id !== sessionId)
-      )
+      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], prev => (prev ?? []).filter(s => s.id !== sessionId))
       queryClient.removeQueries({ queryKey: ['chat-messages', sessionId] })
-      if (selectedSessionId === sessionId) {
-        setSelectedSessionId(null)
-      }
+      if (selectedSessionId === sessionId) setSelectedSessionId(null)
     }
   })
 
   const clearAllSessionsMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
-        method: 'DELETE'
-      })
-      if (!response.ok) throw new Error('Failed to clear sessions')
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed')
     },
     onSuccess: () => {
-      // Sadece cache güncelle; refetch yapma, silinenler geri gelmesin
       queryClient.setQueryData<ChatSession[]>(['chat-sessions'], [])
       queryClient.removeQueries({ queryKey: ['chat-messages'] })
       setSelectedSessionId(null)
@@ -228,18 +259,11 @@ const Chat: React.FC = () => {
     }
   })
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  useEffect(() => { scrollToBottom() }, [messages, streamingText])
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
-
-  // İlk session'ı otomatik seç
   useEffect(() => {
     if (sessions.length > 0 && selectedSessionId === null) {
-      // DEV: console.log(...)
       setSelectedSessionId(sessions[0].id)
       setSuppressAutoCreate(true)
     }
@@ -250,12 +274,29 @@ const Chat: React.FC = () => {
     if (!input.trim() || isLoading) return
 
     const messageText = input
-    setInput('')
+    setInput('')  // Gönderilince anında temizle
+    // SSH: log/process/config + OS/kernel/sistem bilgisi sorularında tetiklenir
+    const SSH_ONLY_KEYWORDS = ['log','journal','proses','process','config','konfigür',
+      '/etc/','/var/','systemctl','servis restart','service restart','kurulu','paket','version',
+      'vmstat','iostat','1 dakika','1 dak','derin analiz','benchmark','io performans',
+      'os','işletim','kernel','revision','revizyon','sürüm','release','versiyon','distro',
+      'rhel','centos','ubuntu','debian','oracle','servis','service','hostname',
+      'selinux','sestatus','getenforce','firewall','firewalld','iptables','güvenlik','security',
+      'uname','kernel versiyonu','çekirdek versiyonu']
+    const needsSsh = SSH_ONLY_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
     setIsLoading(true)
     setPendingUserMessage(messageText)
+    setStreamingText('')
+    setThinkingPhase(needsSsh ? 'context' : 'streaming')
+
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    // Bu isteğin başladığı session — done gelince hâlâ aynı session'da mıyız?
+    const startSessionId = selectedSessionId
+    streamSessionRef.current = selectedSessionId
 
     try {
-      const response = await fetch(`${API_BASE_URL}/chat/`, {
+      const res = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -264,29 +305,82 @@ const Chat: React.FC = () => {
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
           model: selectedModel,
           use_rag: useRag
-        })
+        }),
+        signal: ctrl.signal
       })
 
-      const data = await response.json()
-
-      if (response.ok) {
-        if (data.session_id && data.session_id !== selectedSessionId) {
-          setSelectedSessionId(data.session_id)
-        }
-
-        // Mesajları yenile (gönderilen mesaj artık sunucuda)
-        await refetchMessages()
-        await refetchSessions()
-      } else {
-        // DEV: console.error(...)
-        alert(`Chat hatası: ${data.response || data.detail || 'Bilinmeyen hata'}`)
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`)
       }
-    } catch (error) {
-      // DEV: console.error(...)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let accumulated = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const jsonStr = line.slice(6).trim()
+          if (!jsonStr) continue
+          try {
+            const chunk = JSON.parse(jsonStr)
+            if (chunk.start) {
+              if (chunk.session_id && chunk.session_id !== selectedSessionId) {
+                setSelectedSessionId(chunk.session_id)
+              }
+              setThinkingPhase('streaming')
+            }
+            if (chunk.token) {
+              accumulated += chunk.token
+              setStreamingText(accumulated)
+            }
+            if (chunk.error) {
+              setStreamingText(`❌ Hata: ${chunk.error}`)
+              setThinkingPhase('idle')
+            }
+            if (chunk.done) {
+              setThinkingPhase('idle')
+              // Sadece hâlâ aynı session'daysa güncelle — karışmaması için
+              if (startSessionId === selectedSessionId || chunk.session_id === selectedSessionId) {
+                await refetchMessages()
+              }
+              await refetchSessions()
+              setStreamingText('')
+              setPendingUserMessage(null)
+              setInput('')
+            }
+            // Cache'den gelen yanıt: anında streaming gibi göster
+            if (chunk.from_cache) {
+              setThinkingPhase('streaming')
+            }
+          } catch { /* json parse error yoksay */ }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        setStreamingText(`❌ Bağlantı hatası. Tekrar deneyin.`)
+      }
+      setThinkingPhase('idle')
     } finally {
       setIsLoading(false)
-      setPendingUserMessage(null)
+      abortRef.current = null
     }
+  }
+
+  const handleAbort = () => {
+    abortRef.current?.abort()
+    setIsLoading(false)
+    setThinkingPhase('idle')
+    setStreamingText('')
+    setPendingUserMessage(null)
   }
 
   const formatDate = (dateString: string) => {
@@ -297,401 +391,313 @@ const Chat: React.FC = () => {
   const formatSessionDate = (dateString: string) => {
     const date = new Date(dateString)
     const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    
-    if (days === 0) {
-      return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-    } else if (days === 1) {
-      return 'Dün'
-    } else if (days < 7) {
-      return `${days} gün önce`
-    } else {
-      return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
-    }
+    const days = Math.floor((now.getTime() - date.getTime()) / 86400000)
+    if (days === 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    if (days === 1) return 'Dün'
+    if (days < 7) return `${days} gün önce`
+    return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
   }
 
-  // Sadece AI Ready ve ONLINE/WARNING sunucular - OFFLINE olanlari cikart
-  // Sadece AI Ready ve ONLINE sunucular
   const aiReadyServers = servers.filter(s => s.ai_ready && s.status === 'ONLINE')
-  const filteredAiReadyServers = aiReadyServers.filter(server => {
+  const filteredAiReadyServers = aiReadyServers.filter(s => {
     if (!serverSearch) return true
-    const search = serverSearch.toLowerCase()
-    return server.name.toLowerCase().includes(search) || server.ip_address.toLowerCase().includes(search)
+    const q = serverSearch.toLowerCase()
+    return s.name.toLowerCase().includes(q) || s.ip_address.toLowerCase().includes(q)
   })
 
+  const thinkingLabel =
+    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus)...' :
+    thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
+
   return (
+    <>
     <div className="flex flex-col h-screen overflow-hidden">
-      {/* Sunucu ve Model seçimi */}
+      {/* Üst bar */}
       <div className="flex-shrink-0 p-4 bg-slate-900 border-b border-slate-700">
         <div className="flex items-center gap-3 flex-wrap">
-        {/* RAG Aç/Kapa */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <span className="text-slate-400 text-sm font-medium">📚 RAG:</span>
-          <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${useRag ? 'bg-blue-600' : 'bg-slate-600'}`}
-            onClick={() => setUseRag(prev => !prev)}
-            role="switch"
-            aria-checked={useRag}
-          >
-            <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
-              style={{ marginTop: 2 }}
-            />
-          </span>
-          <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
-        </label>
-
-        {/* Model Seçimi */}
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 text-sm font-medium">🤖 Model:</span>
-          <select
-            value={selectedModel}
-            onChange={(e) => {
-              const newModel = e.target.value
-              // DEV: console.log(...)
-              setSelectedModel(newModel)
-            }}
-            className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 border border-purple-500 rounded-xl text-white text-sm font-medium hover:from-purple-500 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer min-w-[200px]"
-            style={{ appearance: 'auto' }}
-          >
-            {availableModels.map((m) => (
-              <option key={m.name} value={m.name} className="bg-slate-900 text-white">
-                {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Sunucu Seçimi */}
-        <div className="relative" ref={serverDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setServerDropdownOpen(prev => !prev)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <span className="text-slate-300 text-sm">
-              {selectedServers.length === 0
-                ? 'Sunucu seçin (çoklu)'
-                : `${selectedServers.length} sunucu seçili`}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <span className="text-slate-400 text-sm font-medium">📚 RAG:</span>
+            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-slate-600'}`}
+              onClick={() => setUseRag(v => !v)} role="switch" aria-checked={useRag}>
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
+                style={{ marginTop: 2 }} />
             </span>
-            <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
-          </button>
-          {serverDropdownOpen && (
-            <div className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
-              <div className="p-2 border-b border-slate-700">
-                <input
-                  type="text"
-                  value={serverSearch}
-                  onChange={(e) => setServerSearch(e.target.value)}
-                  placeholder="Sunucu ara..."
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex items-center gap-2 p-2 border-b border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedServers(filteredAiReadyServers.map(s => s.id))
-                  }}
-                  className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
-                >
-                  Tümünü seç
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedServers([])}
-                  className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded"
-                >
-                  Temizle
-                </button>
-                <span className="text-xs text-slate-500 ml-auto">
-                  {filteredAiReadyServers.length} sunucu
-                </span>
-              </div>
-              <div className="overflow-y-auto flex-1 p-2">
-                {filteredAiReadyServers.length === 0 ? (
-                  <div className="py-4 text-center text-slate-500 text-sm">Sunucu bulunamadı</div>
-                ) : (
-                  <div className="space-y-0.5">
-                    {filteredAiReadyServers.map(server => (
-                      <label
-                        key={server.id}
-                        className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-700/50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedServers.includes(server.id)}
-                          onChange={() => {
-                            setSelectedServers(prev =>
-                              prev.includes(server.id)
-                                ? prev.filter(id => id !== server.id)
-                                : [...prev, server.id]
-                            )
-                          }}
-                          className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{server.name}</p>
-                          <p className="text-xs text-slate-400 font-mono truncate">{server.ip_address}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-        {selectedServers.length > 0 && (
-          <span className="text-xs text-slate-400">
-            Sohbet bu sunuculara göre yanıt verecek
-          </span>
-        )}
-        </div>
-      </div>
+            <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
+          </label>
 
-      {/* Ana Panel - Chat Sessions ve Mesajlar */}
-      <div className="flex-1 flex gap-4 overflow-hidden p-4">
-        {/* Sol Panel - Chat Session'ları */}
-        <div className="w-64 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Chat Session'ları</h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => createSessionMutation.mutate()}
-                disabled={createSessionMutation.isPending}
-                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors disabled:opacity-50"
-                title="Yeni Chat"
-              >
-                +
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm('Tüm chat sessionlarını silmek istediğinize emin misiniz?')) {
-                    clearAllSessionsMutation.mutate()
-                  }
-                }}
-                disabled={sessions.length === 0 || clearAllSessionsMutation.isPending}
-                className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors disabled:opacity-50"
-                title="Tümünü Sil"
-              >
-                🗑️
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 text-sm font-medium">🤖 Model:</span>
+            <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
+              className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 border border-purple-500 rounded-xl text-white text-sm font-medium hover:from-purple-500 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer min-w-[200px]"
+              style={{ appearance: 'auto' }}>
+              {availableModels.map(m => (
+                <option key={m.name} value={m.name} className="bg-slate-900 text-white">
+                  {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="flex-1 overflow-y-auto p-2">
-            {sessions.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-sm">
-                <span className="text-2xl block mb-2">💬</span>
-                Henüz chat session'ı yok
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {sessions.map(session => (
-                  <div
-                    key={session.id}
-                    className={`relative flex items-start space-x-2 p-3 rounded-lg cursor-pointer transition-all group ${
-                      selectedSessionId === session.id
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-700/50 hover:bg-slate-700 text-slate-300'
-                    }`}
-                    onClick={() => setSelectedSessionId(session.id)}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{session.title}</div>
-                      <div className={`text-xs mt-1 ${selectedSessionId === session.id ? 'text-blue-100' : 'text-slate-400'}`}>
-                        {session.message_count} mesaj
+
+          <div className="relative" ref={serverDropdownRef}>
+            <button type="button" onClick={() => setServerDropdownOpen(v => !v)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <span className="text-slate-300 text-sm">
+                {selectedServers.length === 0 ? 'Sunucu seçin (çoklu)' : `${selectedServers.length} sunucu seçili`}
+              </span>
+              <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+            {serverDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
+                <div className="p-2 border-b border-slate-700">
+                  <input type="text" value={serverSearch} onChange={e => setServerSearch(e.target.value)}
+                    placeholder="Sunucu ara..." autoFocus
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="flex items-center gap-2 p-2 border-b border-slate-700">
+                  <button type="button" onClick={() => setSelectedServers(filteredAiReadyServers.map(s => s.id))}
+                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
+                  <button type="button" onClick={() => setSelectedServers([])}
+                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
+                </div>
+                <div className="overflow-y-auto flex-1">
+                  {filteredAiReadyServers.length === 0 ? (
+                    <div className="p-4 text-center text-slate-500 text-sm">AI Ready sunucu yok</div>
+                  ) : filteredAiReadyServers.map(s => (
+                    <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700 cursor-pointer">
+                      <input type="checkbox" checked={selectedServers.includes(s.id)}
+                        onChange={e => {
+                          if (e.target.checked) setSelectedServers(prev => [...prev, s.id])
+                          else setSelectedServers(prev => prev.filter(id => id !== s.id))
+                        }}
+                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                      <div>
+                        <div className="text-white text-sm font-medium">{s.name}</div>
+                        <div className="text-slate-500 text-xs font-mono">{s.ip_address}</div>
                       </div>
-                      <div className={`text-xs ${selectedSessionId === session.id ? 'text-blue-100' : 'text-slate-500'}`}>
-                        {formatSessionDate(session.updated_at || session.created_at)}
-                      </div>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (confirm('Bu chat session\'ını silmek istediğinize emin misiniz?')) {
-                          deleteSessionMutation.mutate(session.id)
-                        }
-                      }}
-                      className={`opacity-0 group-hover:opacity-100 p-1 rounded transition-opacity ${
-                        selectedSessionId === session.id ? 'hover:bg-white/20' : 'hover:bg-slate-600'
-                      }`}
-                      title="Sil"
-                    >
-                      <span className="text-xs">✕</span>
-                    </button>
-                  </div>
-                ))}
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </div>
         </div>
+      </div>
 
-        {/* Sağ Panel - Chat Mesajları */}
+      <div className="flex flex-1 gap-4 p-4 overflow-hidden">
+        {/* Sol Panel - Oturumlar */}
+        <div className="w-64 flex-shrink-0 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+          <div className="p-3 border-b border-slate-700 flex items-center justify-between flex-shrink-0">
+            <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
+            <div className="flex items-center gap-1">
+              <button onClick={() => createSessionMutation.mutate()}
+                className="px-2 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-500">+ Yeni</button>
+              {sessions.length > 0 && (
+                <button onClick={() => setConfirmDialog({ open: true, message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?', onConfirm: () => clearAllSessionsMutation.mutate() })}
+                  className="px-2 py-1 bg-slate-700 text-slate-400 text-xs rounded-lg hover:bg-slate-600">🗑</button>
+              )}
+            </div>
+          </div>
+          <div className="overflow-y-auto flex-1 p-2">
+            {sessions.length === 0 ? (
+              <div className="text-center py-6 text-slate-500 text-xs">Henüz chat yok</div>
+            ) : sessions.map(session => (
+              <div key={session.id}
+                className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
+                  selectedSessionId === session.id ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-slate-700'
+                }`}
+                onClick={() => {
+                  if (session.id !== selectedSessionId) {
+                    abortRef.current?.abort()
+                    setIsLoading(false)
+                    setStreamingText('')
+                    setPendingUserMessage(null)
+                    setThinkingPhase('idle')
+                  }
+                  setSelectedSessionId(session.id)
+                  setInput('')
+                }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-slate-200 truncate">{session.title}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {session.message_count} mesaj · {formatSessionDate(session.updated_at || session.created_at)}
+                  </p>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setConfirmDialog({ open: true, message: 'Bu chat silinecek?', onConfirm: () => deleteSessionMutation.mutate(session.id) }) }}
+                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs p-1 rounded transition-opacity">
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Sağ Panel */}
         <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
-        {/* Mesajlar */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {selectedSessionId === null ? (
-            <div className="h-full flex flex-col items-center justify-center">
-              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
-                <span className="text-4xl">🤖</span>
+          {/* Mesajlar */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {selectedSessionId === null ? (
+              <div className="h-full flex flex-col items-center justify-center">
+                <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
+                  <span className="text-4xl">🤖</span>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">AI Asistan</h2>
+                <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-2">AI Asistan</h2>
-              <p className="text-slate-400 text-center max-w-md">
-                Bir chat session'ı seçin veya yeni bir chat başlatın.
-              </p>
-            </div>
-          ) : (messages.length === 0 && !pendingUserMessage) ? (
-            <div className="h-full flex flex-col items-center justify-center">
-              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
-                <span className="text-4xl">💬</span>
+            ) : (messages.length === 0 && !pendingUserMessage) ? (
+              <div className="h-full flex flex-col items-center justify-center">
+                <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
+                  <span className="text-4xl">💬</span>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Yeni Konuşma</h2>
+                <p className="text-slate-400 text-center max-w-md mb-8">Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.</p>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-2">Yeni Konuşma</h2>
-              <p className="text-slate-400 text-center max-w-md mb-8">
-                Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {[
-                ...messages,
-                ...(pendingUserMessage
-                  ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
-                  : [])
-              ].map(message => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                      message.role === 'user'
+            ) : (
+              <div className="space-y-4">
+                {[
+                  ...messages,
+                  ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
+                    ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
+                    : [])
+                ].map(msg => (
+                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                      msg.role === 'user'
                         ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
                         : 'bg-slate-700 text-slate-200'
-                    }`}
-                  >
-                    {message.role === 'user' ? (
-                      <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
-                    ) : (
-                      <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-                        <ReactMarkdown
-                          components={{
+                    }`}>
+                      {msg.role === 'user' ? (
+                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+                      ) : (
+                        <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                             table: ({ children }) => (
-                              <div className="overflow-x-auto my-3 rounded-lg border border-slate-600">
+                              <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
                                 <table className="min-w-full text-left text-sm border-collapse">{children}</table>
                               </div>
                             ),
-                            thead: ({ children }) => <thead className="bg-slate-600/50">{children}</thead>,
-                            th: ({ children }) => (
-                              <th className="px-3 py-2 font-medium text-slate-200 border-b border-slate-600">{children}</th>
-                            ),
-                            td: ({ children }) => (
-                              <td className="px-3 py-2 border-b border-slate-600/50">{children}</td>
-                            ),
-                            tr: ({ children }) => <tr>{children}</tr>,
-                            code: ({ className, children }) =>
-                              className ? (
-                                <code className={className}>{children}</code>
-                              ) : (
-                                <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>
-                              ),
-                            pre: ({ children }) => (
-                              <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
-                            )
-                          }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
-                        {getFirstMarkdownTable(message.content) && (
-                          <button
-                            type="button"
-                            onClick={() => downloadTableAsCsv(getFirstMarkdownTable(message.content)!, 'tablo.csv')}
-                            className="mt-2 text-xs px-2 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 border border-slate-500"
-                          >
-                            📥 CSV / Excel olarak indir
-                          </button>
-                        )}
+                            thead: ({ children }) => <thead className="bg-slate-600">{children}</thead>,
+                            th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
+                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-slate-700/60 whitespace-nowrap">{children}</td>,
+                            tr: ({ children, ...props }) => <tr className="even:bg-slate-800/30 hover:bg-slate-600/20 transition-colors" {...props}>{children}</tr>,
+                            code: ({ className, children }) => className
+                              ? <code className={className}>{children}</code>
+                              : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
+                            pre: ({ children }) => <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+                          }}>{msg.content}</ReactMarkdown>
+                          {getFirstMarkdownTable(msg.content) && (
+                            <div className="mt-2 flex gap-2">
+                              <button type="button"
+                                onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
+                                className="text-xs px-2 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 border border-slate-500 flex items-center gap-1">
+                                📄 CSV indir
+                              </button>
+                              <button type="button"
+                                onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
+                                className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
+                                📊 Excel indir
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
+                        {formatDate(msg.created_at)}
                       </div>
-                    )}
-                    <div className={`text-xs mt-2 ${
-                      message.role === 'user' ? 'text-blue-200' : 'text-slate-500'
-                    }`}>
-                      {formatDate(message.created_at)}
                     </div>
                   </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-slate-700 rounded-2xl px-4 py-3">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
+                ))}
 
-        {/* Input */}
-        <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/50">
-          {selectedServers.length > 0 && (
-            <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
-              <span className="text-xs text-slate-400">Seçili sunucular:</span>
-              {selectedServers.map(serverId => {
-                const server = aiReadyServers.find(s => s.id === serverId)
-                return server ? (
-                  <span
-                    key={serverId}
-                    className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded border border-blue-500/30"
-                  >
-                    {server.name}
-                    <button
-                      onClick={() => setSelectedServers(prev => prev.filter(id => id !== serverId))}
-                      className="ml-1 hover:text-blue-300"
-                    >
-                      ✕
-                    </button>
-                  </span>
-                ) : null
-              })}
-            </div>
-          )}
-          <form onSubmit={handleSubmit} className="flex items-center space-x-4">
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Mesajınızı yazın..."
-                className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={isLoading}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25"
-            >
-              <span className="flex items-center">
-                {isLoading ? (
-                  <span className="animate-spin">⏳</span>
-                ) : (
-                  <>
-                    <span>Gönder</span>
-                    <span className="ml-2">→</span>
-                  </>
+                {/* Streaming / thinking area — sadece bu isteğin session'ı için göster */}
+                {isLoading && streamSessionRef.current === selectedSessionId && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-700 rounded-2xl px-4 py-3 max-w-[85%] w-full">
+                      {thinkingPhase === 'context' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span>{thinkingLabel}</span>
+                          </div>
+                          <ThinkingDots />
+                        </div>
+                      )}
+                      {thinkingPhase === 'streaming' && streamingText && (
+                        <div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
+                            <div className="w-2.5 h-2.5 border-2 border-green-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span>Yanıt üretiliyor...</span>
+                          </div>
+                          <StreamingText text={streamingText} />
+                        </div>
+                      )}
+                      {thinkingPhase === 'streaming' && !streamingText && <ThinkingDots />}
+                    </div>
+                  </div>
                 )}
-              </span>
-            </button>
-          </form>
-        </div>
+
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+
+          {/* Input */}
+          <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/50">
+            {selectedServers.length > 0 && (
+              <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
+                <span className="text-xs text-slate-400">Seçili sunucular:</span>
+                {selectedServers.map(serverId => {
+                  const server = aiReadyServers.find(s => s.id === serverId)
+                  return server ? (
+                    <span key={serverId}
+                      className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded border border-blue-500/30">
+                      {server.name}
+                      <button onClick={() => setSelectedServers(prev => prev.filter(id => id !== serverId))} className="ml-1 hover:text-blue-300">✕</button>
+                    </span>
+                  ) : null
+                })}
+              </div>
+            )}
+            <form onSubmit={handleSubmit} className="flex items-center space-x-3">
+              <div className="flex-1 relative">
+                <input type="text" value={input} onChange={e => setInput(e.target.value)}
+                  placeholder={isLoading ? 'AI düşünüyor...' : 'Mesajınızı yazın... (Enter ile gönder)'}
+                  className={`w-full bg-slate-800 border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
+                    isLoading ? 'border-blue-500/50 bg-slate-900' : 'border-slate-600'
+                  }`}
+                  disabled={isLoading}
+                />
+                {isLoading && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {[0,1,2].map(i => (
+                      <div key={i} className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 100}ms` }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {isLoading ? (
+                <button type="button" onClick={handleAbort}
+                  className="px-5 py-3 bg-red-600/80 text-white rounded-xl hover:bg-red-600 transition-all text-sm font-medium">
+                  ⏹ Durdur
+                </button>
+              ) : (
+                <button type="submit" disabled={!input.trim()}
+                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25">
+                  <span className="flex items-center gap-2">
+                    <span>Gönder</span><span>→</span>
+                  </span>
+                </button>
+              )}
+            </form>
+          </div>
         </div>
       </div>
     </div>
+    <ConfirmDialog
+      open={confirmDialog.open}
+      message={confirmDialog.message}
+      onConfirm={confirmDialog.onConfirm}
+      onCancel={() => setConfirmDialog(d => ({ ...d, open: false }))}
+    />
+    </>
   )
 }
 

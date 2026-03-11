@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,9 +47,15 @@ except Exception as e:
     
     app.include_router(fallback_router, prefix="/api/v1")
 
+_SSH_EXECUTOR = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ssh_worker")
+
 @app.on_event("startup")
 async def startup_tasks():
     """Uygulama başlangıcında yapılacak işlemler"""
+    # Paralel SSH bağlantıları için geniş thread pool
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(_SSH_EXECUTOR)
+    logger.info("SSH thread pool başlatıldı (max_workers=50)")
     # Tabloları oluştur
     from app.core.database import engine, Base
     import app.models  # noqa: F401 - modelleri Base.metadata'ya kaydetmek için
@@ -75,7 +83,6 @@ async def startup_tasks():
             logger.info(f"RAG metrics seed: {n} chunks added")
         except Exception as e:
             logger.debug(f"RAG metrics seed skipped (Ollama/Chroma): {e}")
-    import asyncio
     asyncio.create_task(_rag_seed_metrics())
 
 @app.on_event("shutdown")
@@ -83,6 +90,7 @@ async def shutdown_tasks():
     """Uygulama kapanırken background task'ları durdur"""
     from app.background_tasks import background_task_manager
     await background_task_manager.stop()
+    _SSH_EXECUTOR.shutdown(wait=False)
     logger.info("Background tasks stopped")
 
 @app.get("/")

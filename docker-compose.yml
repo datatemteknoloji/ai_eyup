@@ -5,10 +5,12 @@ services:
     container_name: server_management_db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}  # .env'den alınacak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}  # .env'den alinacak
       POSTGRES_DB: server_management
     ports:
       - "5432:5432"
+    volumes:
+      - /var/lib/server_management/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s

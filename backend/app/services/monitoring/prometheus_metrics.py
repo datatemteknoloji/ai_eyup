@@ -160,72 +160,81 @@ class PrometheusMetricsService:
         return metrics
     
     async def get_metrics_context_for_ai(self, message: str) -> str:
-        """AI için metrik context'i oluştur"""
+        """AI için metrik context'i oluştur — Node Exporter verisini öncelikle kullan."""
         context = ""
-        
-        # Mesajdan hangi metriklerin istenildiğini anla
-        message_lower = message.lower()
-        
-        # Sistem genel bakış
-        if any(kw in message_lower for kw in ['genel', 'overview', 'durum', 'durumu', 'özet', 'summary']):
+        ml = message.lower()
+
+        want_perf    = any(kw in ml for kw in ['performans', 'performance', 'cpu', 'memory', 'ram',
+                                                'bellek', 'disk', 'kullanım', 'usage', 'yüksek', 'yük'])
+        want_network = any(kw in ml for kw in ['network', 'ağ', 'bandwidth', 'trafik', 'traffic'])
+        want_uptime  = any(kw in ml for kw in ['uptime', 'çalışma süresi', 'ne kadar', 'boot', 'restart'])
+
+        # Herhangi bir sunucu sorusunda (veya fallback olarak) genel özet her zaman verilir
+        try:
             overview = await self.get_system_overview()
-            context += "\n📊 Sistem Genel Bakış:\n"
-            if overview.get("cpu", {}).get("average"):
-                context += f"  - CPU Kullanımı: {overview['cpu']['average']:.2f}%\n"
-            if overview.get("memory", {}).get("usage_percent"):
-                context += f"  - Memory Kullanımı: {overview['memory']['usage_percent']:.2f}%\n"
-            if overview.get("disk", {}).get("usage_percent"):
-                context += f"  - Disk Kullanımı: {overview['disk']['usage_percent']:.2f}%\n"
-            if overview.get("load", {}).get("1min"):
-                context += f"  - Load Average (1min): {overview['load']['1min']:.2f}\n"
-        
-        # Performans metrikleri
-        if any(kw in message_lower for kw in ['performans', 'performance', 'cpu', 'memory', 'disk', 'kullanım']):
-            metrics = await self.get_server_metrics()
-            context += "\n📈 Detaylı Performans Metrikleri:\n"
-            
-            if metrics.get("cpu_usage"):
-                context += "  CPU Kullanımı:\n"
-                for item in metrics["cpu_usage"][:5]:  # İlk 5 sunucu
-                    context += f"    - {item['instance']}: {item['value']:.2f}%\n"
-            
-            if metrics.get("memory_usage"):
-                context += "  Memory Kullanımı:\n"
-                for item in metrics["memory_usage"][:5]:
-                    context += f"    - {item['instance']}: {item['value']:.2f}%\n"
-            
-            if metrics.get("disk_usage"):
-                context += "  Disk Kullanımı:\n"
-                for item in metrics["disk_usage"][:5]:
-                    context += f"    - {item['instance']}: {item['value']:.2f}%\n"
-        
-        # Network metrikleri
-        if any(kw in message_lower for kw in ['network', 'ağ', 'bandwidth', 'trafik']):
-            network_query = 'rate(node_network_receive_bytes_total[15m])'
-            network_data = await self.query_metric(network_query)
-            if network_data and network_data.get("status") == "success":
-                results = network_data.get("data", {}).get("result", [])
-                if results:
-                    context += "\n🌐 Network Trafiği:\n"
-                    for r in results[:5]:
-                        instance = r.get("metric", {}).get("instance", "unknown")
-                        device = r.get("metric", {}).get("device", "unknown")
-                        value = float(r["value"][1])
-                        context += f"  - {instance} ({device}): {value:.2f} bytes/s\n"
-        
+            context += "\n📊 Sistem Genel Bakış (Prometheus/Node Exporter):\n"
+            if overview.get("cpu", {}).get("average") is not None:
+                context += f"  - Ortalama CPU: {overview['cpu']['average']:.2f}%\n"
+            if overview.get("memory", {}).get("usage_percent") is not None:
+                context += f"  - Ortalama RAM: {overview['memory']['usage_percent']:.2f}%\n"
+            if overview.get("disk", {}).get("usage_percent") is not None:
+                context += f"  - Ortalama Disk: {overview['disk']['usage_percent']:.2f}%\n"
+            if overview.get("load", {}).get("1min") is not None:
+                context += f"  - Load Average (1 dk): {overview['load']['1min']:.2f}\n"
+        except Exception:
+            pass
+
+        # Sunucu bazlı detaylı metrikler
+        if want_perf:
+            try:
+                metrics = await self.get_server_metrics()
+                if any(metrics.get(k) for k in ("cpu_usage", "memory_usage", "disk_usage")):
+                    context += "\n📈 Sunucu Bazlı Metrikler (Node Exporter):\n"
+                    if metrics.get("cpu_usage"):
+                        context += "  CPU:\n"
+                        for item in metrics["cpu_usage"][:10]:
+                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
+                    if metrics.get("memory_usage"):
+                        context += "  RAM:\n"
+                        for item in metrics["memory_usage"][:10]:
+                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
+                    if metrics.get("disk_usage"):
+                        context += "  Disk:\n"
+                        for item in metrics["disk_usage"][:10]:
+                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
+            except Exception:
+                pass
+
+        # Network trafiği
+        if want_network:
+            try:
+                network_data = await self.query_metric('rate(node_network_receive_bytes_total{device!="lo"}[5m])')
+                if network_data and network_data.get("status") == "success":
+                    results = network_data["data"].get("result", [])
+                    if results:
+                        context += "\n🌐 Network (alım, son 5 dk):\n"
+                        for r in results[:8]:
+                            instance = r.get("metric", {}).get("instance", "?")
+                            device   = r.get("metric", {}).get("device", "?")
+                            value    = float(r["value"][1])
+                            context += f"  {instance} [{device}]: {value/1024:.1f} KB/s\n"
+            except Exception:
+                pass
+
         # Uptime
-        if any(kw in message_lower for kw in ['uptime', 'çalışma süresi', 'ne kadar süredir']):
-            uptime_query = 'avg(node_boot_time_seconds)'
-            uptime_data = await self.query_metric(uptime_query)
-            if uptime_data and uptime_data.get("status") == "success":
-                results = uptime_data.get("data", {}).get("result", [])
-                if results:
-                    context += "\n⏱️ Uptime Bilgileri:\n"
-                    for r in results[:5]:
-                        instance = r.get("metric", {}).get("instance", "unknown")
-                        boot_time = float(r["value"][1])
-                        from datetime import datetime, timedelta
-                        uptime_days = (datetime.now().timestamp() - boot_time) / 86400
-                        context += f"  - {instance}: {uptime_days:.1f} gün\n"
-        
+        if want_uptime:
+            try:
+                uptime_data = await self.query_metric('node_boot_time_seconds')
+                if uptime_data and uptime_data.get("status") == "success":
+                    from datetime import datetime as _dt
+                    results = uptime_data["data"].get("result", [])
+                    if results:
+                        context += "\n⏱️ Uptime:\n"
+                        for r in results[:10]:
+                            instance = r.get("metric", {}).get("instance", "?")
+                            days = (_dt.now().timestamp() - float(r["value"][1])) / 86400
+                            context += f"  {instance}: {days:.1f} gün\n"
+            except Exception:
+                pass
+
         return context

@@ -14,14 +14,11 @@ from app.services.ssh_manager import SSHManager
 
 logger = logging.getLogger(__name__)
 
-# Journald priority seviyeleri: 0=emerg,1=alert,2=crit,3=err,4=warning
-# Biz 4 (warning) ve ustunu aliyoruz
 JOURNALD_CMD = (
     "journalctl -p 4 --since '10 minutes ago' --no-pager "
     "--output=short-iso 2>/dev/null | tail -200"
 )
 
-# Syslog fallback
 SYSLOG_CMD = (
     "grep -E '(WARNING|ERROR|CRITICAL|FAULT|FAILED|error|warning|critical|fault|failed)' "
     "/var/log/messages /var/log/syslog /var/log/secure 2>/dev/null | "
@@ -29,7 +26,6 @@ SYSLOG_CMD = (
     "date -v-10M '+%b %d %H:%M')\" '$0 > d' | tail -100"
 )
 
-# Kernel OOM / Disk / HW hata pattern'leri
 CRITICAL_PATTERNS = [
     (re.compile(r'Out of memory|oom.kill|oom-kill', re.I), "OOM Killer", "critical"),
     (re.compile(r'kernel panic', re.I), "Kernel Panic", "critical"),
@@ -60,7 +56,6 @@ def _detect_severity_and_category(line: str):
     for pattern, category, severity in WARNING_PATTERNS:
         if pattern.search(line):
             return severity, category
-    # Genel seviye tespiti
     line_lower = line.lower()
     if any(k in line_lower for k in ['error', 'err ', ' err', 'fault', 'failed', 'critical', 'crit']):
         return "error", "General Error"
@@ -69,28 +64,107 @@ def _detect_severity_and_category(line: str):
     return "warning", "General"
 
 
+_SKIP_PATTERNS = [
+    "-- Logs begin at", "-- No entries --", "-- Reboot --", "-- Boot ",
+    "Logs begin at", "journalctl: ", "Selected fields:", "lines 1-",
+    "(END)", "-- Journal begins",
+]
+
+
+def _is_meta_line(line: str) -> bool:
+    stripped = line.strip()
+    for pat in _SKIP_PATTERNS:
+        if pat in stripped:
+            return True
+    if stripped.startswith("-- ") and stripped.endswith(" --"):
+        return True
+    if len(stripped) < 15:
+        return True
+    return False
+
+
+# Sıra önemli: önce spesifik (UUID, IP, hex, addr), sonra genel sayı
+_NORMALIZE_PATTERNS = [
+    (re.compile(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'), '<UUID>'),
+    (re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'), '<IP>'),
+    (re.compile(r'\b0x[0-9a-fA-F]+\b'), '<HEX>'),
+    (re.compile(r'\b[0-9a-fA-F]{10,}\b'), '<HEX>'),
+    # USB/PCI port: "11-2", "3-1.2", "0000:03:00.0"
+    (re.compile(r'\b\d+[:\-]\d+(?:[:\-.]\d+)+\b'), '<ADDR>'),
+    # Genel tamsayı (negatif dahil: error -62)
+    (re.compile(r'-?\b\d+\b'), '<N>'),
+    (re.compile(r'T\d{2}:\d{2}:\d{2}'), 'T<TIME>'),
+    (re.compile(r'\d{4}-\d{2}-\d{2}'), '<DATE>'),
+]
+
+
+def _strip_log_prefix(msg: str) -> str:
+    """Timestamp, hostname ve process prefix'lerini soy; sadece mesaj kısmını döndür."""
+    # journalctl short-iso: "2024-01-01T12:00:00+0300 hostname proc[pid]: message"
+    m = re.match(r'\S+T\S+\s+\S+\s+(.+)', msg)
+    if m:
+        msg = m.group(1)
+    # syslog: "Jan  1 12:00:00 hostname message"
+    m2 = re.match(r'\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+(.+)', msg)
+    if m2:
+        msg = m2.group(1)
+    # Satır hâlâ "hostname service: ..." formatında başlıyorsa hostname'i soy.
+    # Kural: ilk kelimede ":" yoksa ve ikinci "kelime:" varsa → hostname'dir.
+    m3 = re.match(r'^(\S+)\s+(\S+:.+)', msg)
+    if m3 and ':' not in m3.group(1):
+        msg = m3.group(2)
+    # process[pid]: kısmını da soy
+    msg = re.sub(r'^\S+\[\d+\]:\s*', '', msg)
+    return msg.strip()
+
+
+def _normalize_for_dedup(line: str) -> str:
+    """
+    Sayısal/değişken kısımları <N>, <IP>, <UUID>, <ADDR> vb. ile değiştirerek
+    benzer log satırlarını tek bir key'e düşürür.
+
+    Örnek:
+      "usb 11-2: device not accepting address 101, error -62"
+      "usb 11-3: device not accepting address 102, error -62"
+      → ikisi de: "usb <addr>: device not accepting address <n>, error <n>"
+    """
+    msg = _strip_log_prefix(line)
+    for pattern, replacement in _NORMALIZE_PATTERNS:
+        msg = pattern.sub(replacement, msg)
+    return msg.lower().strip()
+
+
 def _parse_log_lines(output: str) -> List[Dict[str, Any]]:
-    """Log satirlarini parse et, tekrarlari filtrele."""
+    """Log satirlarini parse et, benzer tekrarlari normalize ederek uniq yap."""
     entries = []
-    seen = set()
+    seen: set = set()
+    seen_counts: dict = {}
     for line in output.split('\n'):
         line = line.strip()
-        if not line or len(line) < 10:
+        if not line:
             continue
-        # Cok uzun satirlari kisalt
+        if _is_meta_line(line):
+            continue
         if len(line) > 1000:
             line = line[:1000] + "..."
         severity, category = _detect_severity_and_category(line)
-        # Tekrar kontrolu (ilk 80 karakter hash)
-        key = line[:80]
+        key = _normalize_for_dedup(line)
         if key in seen:
+            seen_counts[key] = seen_counts.get(key, 1) + 1
             continue
         seen.add(key)
+        seen_counts[key] = 1
         entries.append({
             "line": line,
             "severity": severity,
             "category": category,
         })
+    # Tekrar sayısını ilk örneğe ekle
+    for entry in entries:
+        k = _normalize_for_dedup(entry["line"])
+        cnt = seen_counts.get(k, 1)
+        if cnt > 1:
+            entry["line"] = entry["line"] + " [x" + str(cnt) + "]"
     return entries
 
 
@@ -120,12 +194,10 @@ def collect_server_logs(
 
     logs = []
     try:
-        # 1. journalctl dene
         ok, out, err = ssh.execute_command(JOURNALD_CMD)
         if ok and out.strip():
             logs = _parse_log_lines(out)
         else:
-            # 2. Syslog fallback
             ok2, out2, _ = ssh.execute_command(SYSLOG_CMD)
             if ok2 and out2.strip():
                 logs = _parse_log_lines(out2)
@@ -135,58 +207,79 @@ def collect_server_logs(
     return logs
 
 
+def _clean_title_for_storage(line: str) -> str:
+    """Title olarak kaydedilecek satırdan timestamp ve hostname prefix soyar."""
+    return _strip_log_prefix(line)
+
+
 def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]]) -> int:
-    """Toplanan loglari SystemEvent tablosuna kaydet (duplicate atla)."""
+    """Toplanan loglari SystemEvent tablosuna kaydet.
+
+    Ayni normalize key ile kayit varsa yeni kayit acmaz, mevcut kaydın last_seen
+    alanini gunceller. Boylece "Son Olusum" zamani gercek son gorulme zamanini gosterir.
+    """
     if not logs:
         return 0
 
-    # Son 15 dakikadaki mevcut event'leri al (duplicate kontrolu)
-    since = datetime.utcnow() - timedelta(minutes=15)
-    existing = db.query(SystemEvent.title).filter(
+    since = datetime.utcnow() - timedelta(hours=4)
+    existing_rows = db.query(SystemEvent.id, SystemEvent.title).filter(
         SystemEvent.server_id == server.id,
         SystemEvent.created_at >= since,
         SystemEvent.event_type == "log_entry"
     ).all()
-    existing_titles = {e[0][:80] for e in existing}
+    # norm_key -> event id mapping
+    existing_map: dict = {_normalize_for_dedup(e[1])[:120]: e[0] for e in existing_rows}
 
+    now = datetime.utcnow()
     saved = 0
+    updated_ids: set = set()
+
     for log in logs:
-        title = log["line"][:200]
-        if title[:80] in existing_titles:
+        raw_line = log["line"]
+        clean_title = _clean_title_for_storage(raw_line)[:200]
+        norm_key = _normalize_for_dedup(raw_line)[:120]
+
+        if norm_key in existing_map:
+            eid = existing_map[norm_key]
+            if eid not in updated_ids:
+                db.query(SystemEvent).filter(SystemEvent.id == eid).update(
+                    {"last_seen": now}, synchronize_session=False
+                )
+                updated_ids.add(eid)
             continue
+
         event = SystemEvent(
             server_id=server.id,
             event_type="log_entry",
             severity=log["severity"],
             source="log_collector",
-            title=title,
-            description=log["line"],
+            title=clean_title,
+            description=raw_line,
             raw_data={
                 "category": log["category"],
-                "collected_at": datetime.utcnow().isoformat(),
+                "collected_at": now.isoformat(),
             },
             is_acknowledged=False,
             resolved=False,
+            last_seen=now,
         )
         db.add(event)
-        existing_titles.add(title[:80])
+        existing_map[norm_key] = -1  # placeholder so we don't add duplicate in same batch
         saved += 1
 
-    if saved > 0:
-        db.commit()
+    db.commit()
     return saved
 
 
-def collect_all_servers_logs(db: Session) -> Dict[str, Any]:
-    """Tum ONLINE AI-ready sunuculardan log topla."""
-    servers = db.query(Server).filter(
-        Server.ai_ready == True,
-        Server.status == "ONLINE"
-    ).all()
+def collect_all_servers_logs(db: Session, only_ai_ready: bool = False) -> Dict[str, Any]:
+    """Tum ONLINE sunuculardan SSH ile log topla."""
+    q = db.query(Server).filter(Server.status == "ONLINE")
+    if only_ai_ready:
+        q = q.filter(Server.ai_ready == True)
+    servers = q.all()
+    servers = [s for s in servers if (s.connection_config or {}).get("username") or True]
 
-    global_cred = db.query(GlobalCredential).filter(
-        GlobalCredential.is_default == True
-    ).first()
+    global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
     if not global_cred:
         global_cred = db.query(GlobalCredential).first()
 

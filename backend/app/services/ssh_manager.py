@@ -82,7 +82,7 @@ class SSHManager:
             logger.error(f"❌ SSH bağlantı hatası ({self.host}): {e}")
             return False
     
-    def execute_command(self, command: str, use_sudo: bool = False) -> Tuple[bool, str, str]:
+    def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 30) -> Tuple[bool, str, str]:
         """
         Komut çalıştır
         Returns: (success, stdout, stderr)
@@ -94,7 +94,7 @@ class SSHManager:
             if use_sudo and self.sudo_password:
                 command = f"echo '{self.sudo_password}' | sudo -S {command}"
             
-            stdin, stdout, stderr = self.client.exec_command(command, timeout=30)
+            stdin, stdout, stderr = self.client.exec_command(command, timeout=cmd_timeout)
             
             stdout_text = stdout.read().decode('utf-8', errors='ignore')
             stderr_text = stderr.read().decode('utf-8', errors='ignore')

@@ -215,6 +215,8 @@ const RagTab: React.FC = () => {
   )
 }
 
+interface AIModel { name: string; size: number; parameter_size: string; family: string }
+
 const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('credentials')
   const [showForm, setShowForm] = useState(false)
@@ -225,6 +227,19 @@ const Settings: React.FC = () => {
   const [selectedServerIds, setSelectedServerIds] = useState<number[]>([])
   const [setAiReady, setSetAiReady] = useState(true)
   const queryClient = useQueryClient()
+  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
+  const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+    queryKey: ['ai-models'],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/chat/models`, { signal: AbortSignal.timeout(5000) })
+        if (!res.ok) return { success: false, models: [], default: 'llama3.2:3b' }
+        return res.json()
+      } catch { return { success: false, models: [], default: 'llama3.2:3b' } }
+    },
+    staleTime: 60000,
+  })
+  const availableModels: AIModel[] = modelsData?.models?.length ? modelsData.models : []
 
   // Queries
   const { data: credentials = [], isLoading: credsLoading } = useQuery<Credential[]>({
@@ -526,7 +541,21 @@ const Settings: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Varsayılan Model</label>
-                      <input type="text" value="llama3:70b" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <select
+                        value={selectedModel}
+                        onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
+                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-purple-500"
+                      >
+                        {availableModels.length === 0 && (
+                          <option value={selectedModel}>{selectedModel}</option>
+                        )}
+                        {availableModels.map(m => (
+                          <option key={m.name} value={m.name}>
+                            {m.name}{m.parameter_size ? ` — ${m.parameter_size}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-slate-500 mt-1">Chat ve Event analizi için kullanılacak model</p>
                     </div>
                   </div>
                 </div>

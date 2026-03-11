@@ -369,3 +369,53 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"Health check failed for server {server_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Health check error: {str(e)}")
+
+
+@router.get("/{server_id}/metrics-summary")
+async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_db)):
+    """Prometheus'tan sunucunun anlık CPU/RAM/Disk/Load/Uptime özetini döner."""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
+    svc = PrometheusMetricsService()
+    ip = server.ip_address
+
+    async def _q(query: str):
+        try:
+            res = await svc.query_metric(query)
+            if res and res.get("status") == "success":
+                results = res["data"]["result"]
+                if results:
+                    return float(results[0]["value"][1])
+        except Exception:
+            pass
+        return None
+
+    ifilter = f'instance=~"{ip}:.*"'
+    cpu   = await _q(f'100 - (avg by (instance) (rate(node_cpu_seconds_total{{mode="idle",{ifilter}}}[5m])) * 100)')
+    mem   = await _q(f'(1 - node_memory_MemAvailable_bytes{{{ifilter}}} / node_memory_MemTotal_bytes{{{ifilter}}}) * 100')
+    disk  = await _q(f'(1 - node_filesystem_avail_bytes{{mountpoint="/",{ifilter}}} / node_filesystem_size_bytes{{mountpoint="/",{ifilter}}}) * 100')
+    load1 = await _q(f'node_load1{{{ifilter}}}')
+    load5 = await _q(f'node_load5{{{ifilter}}}')
+    uptime_s = await _q(f'node_time_seconds{{{ifilter}}} - node_boot_time_seconds{{{ifilter}}}')
+    mem_total = await _q(f'node_memory_MemTotal_bytes{{{ifilter}}}')
+    mem_avail = await _q(f'node_memory_MemAvailable_bytes{{{ifilter}}}')
+    disk_total = await _q(f'node_filesystem_size_bytes{{mountpoint="/",{ifilter}}}')
+    disk_avail = await _q(f'node_filesystem_avail_bytes{{mountpoint="/",{ifilter}}}')
+
+    return {
+        "server_id": server_id,
+        "has_node_exporter": cpu is not None,
+        "cpu_percent": round(cpu, 1) if cpu is not None else None,
+        "mem_percent": round(mem, 1) if mem is not None else None,
+        "disk_percent": round(disk, 1) if disk is not None else None,
+        "load1": round(load1, 2) if load1 is not None else None,
+        "load5": round(load5, 2) if load5 is not None else None,
+        "uptime_seconds": int(uptime_s) if uptime_s is not None else None,
+        "mem_total_gb": round(mem_total / 1073741824, 1) if mem_total else None,
+        "mem_used_gb": round((mem_total - mem_avail) / 1073741824, 1) if mem_total and mem_avail else None,
+        "disk_total_gb": round(disk_total / 1073741824, 1) if disk_total else None,
+        "disk_avail_gb": round(disk_avail / 1073741824, 1) if disk_avail else None,
+    }

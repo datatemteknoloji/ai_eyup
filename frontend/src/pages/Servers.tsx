@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface Server {
   id: number
@@ -32,12 +34,330 @@ const NODE_EXPORTER_STEP_LABELS = [
   { id: 'prometheus', label: 'Prometheus hedefi ekleme' }
 ]
 
+interface MetricsSummary {
+  has_node_exporter: boolean
+  cpu_percent: number | null
+  mem_percent: number | null
+  disk_percent: number | null
+  load1: number | null
+  load5: number | null
+  uptime_seconds: number | null
+  mem_total_gb: number | null
+  mem_used_gb: number | null
+  disk_total_gb: number | null
+  disk_avail_gb: number | null
+}
+
+interface EventGroup {
+  event_type: string
+  title: string
+  severity: string
+  server_id: number | null
+  server_name: string | null
+  event_ids: number[]
+  count: number
+  latest_created_at: string | null
+  resolved?: boolean
+  is_acknowledged?: boolean
+}
+
+function fmtUptime(seconds: number | null): string {
+  if (!seconds) return '-'
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d > 0) return `${d}g ${h}s`
+  if (h > 0) return `${h}s ${m}dk`
+  return `${m}dk`
+}
+
+function MetricBar({ label, value, colorClass }: { label: string; value: number | null; colorClass: string }) {
+  const v = value ?? 0
+  return (
+    <div>
+      <div className="flex justify-between text-xs text-slate-400 mb-1">
+        <span>{label}</span>
+        <span className={value !== null ? 'text-white font-medium' : 'text-slate-600'}>{value !== null ? `${value}%` : 'N/A'}</span>
+      </div>
+      <div className="w-full bg-slate-700 rounded-full h-2">
+        <div className={`h-2 rounded-full transition-all ${colorClass}`} style={{ width: `${Math.min(v, 100)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+const SCOLOR: Record<string, string> = {
+  critical: 'bg-red-500/20 text-red-400 border-red-500/30',
+  emergency: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
+  warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  info: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  error: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+}
+
+function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
+  const [tab, setTab] = useState<'info' | 'events' | 'perf'>('info')
+  const [analyzeText, setAnalyzeText] = useState('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const analyzeAbort = React.useRef<AbortController | null>(null)
+
+  const { data: metrics, isLoading: metricsLoading } = useQuery<MetricsSummary>({
+    queryKey: ['server-metrics-summary', server.id],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/servers/${server.id}/metrics-summary`)
+      if (!res.ok) throw new Error('metrics error')
+      return res.json()
+    },
+    refetchInterval: 15000,
+    enabled: tab === 'perf',
+  })
+
+  const { data: eventsData, isLoading: eventsLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
+    queryKey: ['server-events', server.id],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/events/grouped?server_id=${server.id}&resolved=false&limit=30&sort_by=latest_created_at&sort_dir=desc`)
+      if (!res.ok) return { total: 0, groups: [] }
+      return res.json()
+    },
+    refetchInterval: 30000,
+    enabled: tab === 'events',
+  })
+
+  const startAnalyze = async () => {
+    analyzeAbort.current?.abort()
+    const ctrl = new AbortController()
+    analyzeAbort.current = ctrl
+    setAnalyzeText('')
+    setIsAnalyzing(true)
+    const model = localStorage.getItem('chat_selected_model') || 'llama3.2:3b'
+    const metricsCtx = metrics ? `CPU: ${metrics.cpu_percent ?? 'N/A'}%, RAM: ${metrics.mem_percent ?? 'N/A'}%, Disk: ${metrics.disk_percent ?? 'N/A'}%, Load: ${metrics.load1 ?? 'N/A'}` : ''
+    const prompt = `${server.name} (${server.ip_address}) sunucusunun genel durumunu analiz et. ${metricsCtx ? `Anlık metrikler: ${metricsCtx}.` : ''} Bu sunucuyla ilgili dikkat edilmesi gereken noktaları, önerileri ve varsa performans iyileştirmelerini belirt.`
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: prompt, use_rag: true, model }),
+        signal: ctrl.signal,
+      })
+      if (!res.ok || !res.body) throw new Error()
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = '', acc = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const chunk = JSON.parse(line.slice(6))
+            if (chunk.token) { acc += chunk.token; setAnalyzeText(acc) }
+            if (chunk.done) setIsAnalyzing(false)
+          } catch {}
+        }
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') setAnalyzeText('❌ Analiz başarısız.')
+    } finally { setIsAnalyzing(false) }
+  }
+
+  const sshUser = server.connection_config?.username
+  const cpuColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 60 ? 'bg-yellow-500' : 'bg-green-500'
+  const memColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-yellow-500' : 'bg-blue-500'
+  const diskColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-yellow-500' : 'bg-purple-500'
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="w-full max-w-xl bg-slate-900 border-l border-slate-700 flex flex-col shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700 bg-slate-800/50">
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${server.status === 'ONLINE' ? 'bg-gradient-to-br from-green-500 to-green-600' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
+            <span className="text-white text-lg">🖥️</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-white font-semibold text-base truncate">{server.name}</h2>
+            <p className="text-slate-400 text-xs font-mono">{server.ip_address} • {server.hostname || '-'}</p>
+          </div>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border mr-2 ${server.status === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+            ● {server.status}
+          </span>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-700 bg-slate-800/30">
+          {([['info', '📋 Bilgi'], ['perf', '📈 Performans'], ['events', '🔔 Eventler']] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${tab === id ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {/* ── INFO TAB ── */}
+          {tab === 'info' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ['Sunucu Adı', server.name],
+                  ['IP Adresi', server.ip_address || '-'],
+                  ['Hostname', server.hostname || '-'],
+                  ['Tip', server.server_type || '-'],
+                  ['OS', server.os_type || '-'],
+                  ['OS Versiyon', server.os_version || '-'],
+                  ['CPU', server.cpu_cores ? `${server.cpu_cores} çekirdek` : '-'],
+                  ['RAM', server.memory_gb ? `${server.memory_gb} GB` : '-'],
+                  ['SSH Kullanıcı', sshUser || '-'],
+                  ['AI Ready', server.ai_ready ? '✅ Evet' : '❌ Hayır'],
+                  ['Node Exporter', server.node_exporter?.running ? '✅ Çalışıyor' : server.node_exporter?.installed ? '⚠️ Kurulu/Durdurulmuş' : '❌ Kurulu Değil'],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">{label}</p>
+                    <p className="text-sm text-white font-medium break-all">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* AI Analiz */}
+              <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-white">🤖 AI Analiz</h3>
+                  <button onClick={startAnalyze} disabled={isAnalyzing}
+                    className="px-3 py-1 text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-600/40 disabled:opacity-50">
+                    {isAnalyzing ? '⏳ Analiz ediliyor...' : analyzeText ? '🔄 Yeniden' : '▶ Analiz Et'}
+                  </button>
+                </div>
+                {analyzeText ? (
+                  <div className="prose prose-invert prose-sm max-w-none text-slate-200 text-xs">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{analyzeText}</ReactMarkdown>
+                    {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-purple-400 animate-pulse ml-0.5 rounded-sm" />}
+                  </div>
+                ) : isAnalyzing ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-xs">
+                    <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                    <span>AI analiz yapıyor...</span>
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-xs">Sunucu hakkında AI analizi başlatmak için yukarıdaki butona tıklayın.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── PERF TAB ── */}
+          {tab === 'perf' && (
+            <div className="space-y-4">
+              {metricsLoading ? (
+                <div className="flex items-center gap-2 text-slate-400 text-sm py-8 justify-center">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Metrikler yükleniyor...</span>
+                </div>
+              ) : !metrics?.has_node_exporter ? (
+                <div className="text-center py-10 text-slate-500">
+                  <p className="text-3xl mb-3">📡</p>
+                  <p className="text-sm">Node Exporter kurulu değil veya bu sunucudan veri gelmiyor.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Gauge cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: 'CPU', value: metrics.cpu_percent, icon: '⚡', color: 'text-yellow-400' },
+                      { label: 'RAM', value: metrics.mem_percent, icon: '🧠', color: 'text-blue-400' },
+                      { label: 'Disk', value: metrics.disk_percent, icon: '💾', color: 'text-purple-400' },
+                    ].map(({ label, value, icon, color }) => (
+                      <div key={label} className="bg-slate-800/50 rounded-xl border border-slate-700 p-3 text-center">
+                        <p className={`text-2xl font-bold ${value !== null ? (value > 85 ? 'text-red-400' : value > 60 ? 'text-yellow-400' : 'text-green-400') : 'text-slate-600'}`}>
+                          {value !== null ? `${value}%` : 'N/A'}
+                        </p>
+                        <p className={`text-xs mt-1 ${color}`}>{icon} {label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Progress bars */}
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                    <MetricBar label="CPU Kullanımı" value={metrics.cpu_percent} colorClass={cpuColor(metrics.cpu_percent)} />
+                    <MetricBar label={`RAM  ${metrics.mem_used_gb != null ? `(${metrics.mem_used_gb}/${metrics.mem_total_gb} GB)` : ''}`} value={metrics.mem_percent} colorClass={memColor(metrics.mem_percent)} />
+                    <MetricBar label={`Disk  ${metrics.disk_avail_gb != null ? `(${metrics.disk_avail_gb} GB boş / ${metrics.disk_total_gb} GB)` : ''}`} value={metrics.disk_percent} colorClass={diskColor(metrics.disk_percent)} />
+                  </div>
+
+                  {/* Extra info */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      ['Load 1m', metrics.load1 !== null ? String(metrics.load1) : '-'],
+                      ['Load 5m', metrics.load5 !== null ? String(metrics.load5) : '-'],
+                      ['Uptime', fmtUptime(metrics.uptime_seconds)],
+                    ].map(([label, value]) => (
+                      <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50 text-center">
+                        <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+                        <p className="text-sm font-medium text-white">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── EVENTS TAB ── */}
+          {tab === 'events' && (
+            <div className="space-y-2">
+              {eventsLoading ? (
+                <div className="flex items-center gap-2 text-slate-400 text-sm py-8 justify-center">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Eventler yükleniyor...</span>
+                </div>
+              ) : !eventsData?.groups?.length ? (
+                <div className="text-center py-10 text-slate-500">
+                  <p className="text-3xl mb-3">✅</p>
+                  <p className="text-sm">Bu sunucuya ait aktif event bulunmuyor.</p>
+                </div>
+              ) : (
+                eventsData.groups.map((grp, i) => (
+                  <div key={i} className="bg-slate-800/50 rounded-lg border border-slate-700/50 p-3">
+                    <div className="flex items-start gap-2">
+                      <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0 ${SCOLOR[grp.severity] || SCOLOR.info}`}>
+                        {grp.severity}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-slate-200 break-words leading-snug">{grp.title}</p>
+                        <div className="flex gap-3 mt-1">
+                          <span className="text-[10px] text-slate-500">{grp.event_type}</span>
+                          <span className="text-[10px] text-slate-500">{grp.count}×</span>
+                          {grp.latest_created_at && (
+                            <span className="text-[10px] text-slate-500">
+                              {new Date(grp.latest_created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 const Servers: React.FC = () => {
+  const [selectedServer, setSelectedServer] = useState<Server | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all') // Varsayılan olarak tüm durumlar
-  const [showOffline, setShowOffline] = useState(true) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
+  const [showOffline, setShowOffline] = useState(false) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
@@ -437,6 +757,7 @@ const Servers: React.FC = () => {
   }
 
   return (
+    <>
     <div className="space-y-6">
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
       {isError && servers.length > 0 && (
@@ -629,7 +950,7 @@ const Servers: React.FC = () => {
                 </tr>
               ) : sortedServers.map((server) => (
                 <React.Fragment key={server.id}>
-                <tr className="hover:bg-slate-700/30 transition-colors">
+                <tr className="hover:bg-slate-700/30 transition-colors cursor-pointer" onClick={() => setSelectedServer(server)}>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
@@ -640,7 +961,7 @@ const Servers: React.FC = () => {
                         <span className="text-white">🖥️</span>
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-white">{server.name}</div>
+                        <div className="text-sm font-medium text-white cursor-pointer hover:text-blue-400 transition-colors" onClick={() => setSelectedServer(server)}>{server.name}</div>
                         <div className="text-sm text-slate-400">{server.hostname}</div>
                       </div>
                     </div>
@@ -704,7 +1025,7 @@ const Servers: React.FC = () => {
                       >
                         {startingNodeExporter === server.id ? '⏳' : '▶️'} {startingNodeExporter === server.id ? 'Başlatılıyor...' : 'Başlat'}
                       </button>
-                    ) : server.connection_config?.username ? (
+                    ) : server.status === 'ONLINE' ? (
                       <button
                         onClick={() => {
                           setInstallResultByServerId(prev => { const next = { ...prev }; delete next[server.id]; return next })
@@ -718,7 +1039,7 @@ const Servers: React.FC = () => {
                         {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
                       </button>
                     ) : (
-                      <span className="text-slate-400 text-xs">SSH yok</span>
+                      <span className="text-slate-400 text-xs">Çevrimdışı</span>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -1018,6 +1339,11 @@ const Servers: React.FC = () => {
       )}
 
     </div>
+
+      {selectedServer && (
+        <ServerDetailDrawer server={selectedServer} onClose={() => setSelectedServer(null)} />
+      )}
+    </>
   )
 }
 
