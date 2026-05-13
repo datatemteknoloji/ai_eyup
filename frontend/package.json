@@ -17,7 +17,10 @@
     "recharts": "^2.10.3",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

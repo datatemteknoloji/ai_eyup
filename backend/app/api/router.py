@@ -104,3 +104,17 @@ try:
     api_router.include_router(repositories.router, prefix="/repos", tags=["repositories"])
 except Exception as e:
     logger.error(f"Could not load repositories router: {e}", exc_info=True)
+
+# System Updates
+try:
+    from app.api import system_updates
+    api_router.include_router(system_updates.router, prefix="/updates", tags=["system-updates"])
+except Exception as e:
+    logger.error(f"Could not load system_updates router: {e}", exc_info=True)
+
+# SSH Web Terminal
+try:
+    from app.api import terminal
+    api_router.include_router(terminal.router, prefix="/terminal", tags=["terminal"])
+except Exception as e:
+    logger.error(f"Could not load terminal router: {e}", exc_info=True)

@@ -15,6 +15,63 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+@router.post("/node-exporter/bulk-install")
+async def bulk_install_node_exporter(
+    server_ids: Optional[List[int]] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Birden fazla sunucuya paralel Node Exporter kurulumu.
+    server_ids boşsa: node_exporter_running=False olan tüm ONLINE AI-Ready sunucular.
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    if server_ids:
+        servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
+    else:
+        # node exporter çalışmayan, ONLINE, AI-Ready sunucular
+        servers = db.query(Server).filter(
+            Server.status == "ONLINE",
+            Server.ai_ready == True,
+            Server.node_exporter_running == False,
+        ).all()
+
+    if not servers:
+        return {"queued": 0, "message": "Uygun sunucu bulunamadı"}
+
+    results = {}
+
+    def _install_one(srv):
+        try:
+            installer = NodeExporterInstaller(srv, db)
+            res = installer.install()
+            # DB'yi güncelle
+            srv.node_exporter_installed = res.get("success", False)
+            srv.node_exporter_running   = res.get("success", False)
+            db.commit()
+            return srv.id, {"success": res.get("success", False), "message": res.get("message", "")}
+        except Exception as e:
+            return srv.id, {"success": False, "message": str(e)}
+
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="bulk-ne") as pool:
+        from concurrent.futures import as_completed
+        futures = {pool.submit(_install_one, s): s for s in servers}
+        for f in as_completed(futures):
+            srv_id, result = f.result()
+            results[str(srv_id)] = result
+
+    success = sum(1 for r in results.values() if r["success"])
+    failed  = len(results) - success
+    logger.info(f"Bulk Node Exporter: {success} başarılı, {failed} başarısız")
+    return {
+        "queued":   len(servers),
+        "success":  success,
+        "failed":   failed,
+        "results":  results,
+    }
+
+
 @router.post("/node-exporter/install/{server_id}")
 async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
     """SSH erişimi olan sunucuya Node Exporter kur - ai_ready zorunlu degil"""

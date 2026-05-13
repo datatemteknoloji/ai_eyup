@@ -118,5 +118,15 @@
       "server_name": "minio2",
       "job": "node-exporter"
     }
+  },
+  {
+    "targets": [
+      "192.168.1.170:9100"
+    ],
+    "labels": {
+      "server_id": "264",
+      "server_name": "gorkem2",
+      "job": "node-exporter"
+    }
   }
 ]

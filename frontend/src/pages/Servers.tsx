@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, lazy, Suspense } from 'react'
+const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
@@ -12,15 +13,178 @@ interface Server {
   status: string
   os_type: string
   os_version: string
+  os_release_id: string
+  os_version_id: string
+  kernel_version: string
   server_type: string
   cpu_cores: number
   memory_gb: number
   ai_ready: boolean
+  hypervisor_id: number | null
+  hypervisor_name: string | null
   connection_config: any
   node_exporter?: {
     installed: boolean
     running: boolean
   }
+}
+
+// ─── Toplu Node Exporter Kur ──────────────────────────────────────────────────
+const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
+  const [loading, setLoading] = React.useState(false)
+  const [result, setResult]   = React.useState<{success: number; failed: number} | null>(null)
+
+  const notRunning = servers.filter(s => s.status === 'ONLINE' && s.ai_ready && !s.node_exporter?.running)
+
+  const handleClick = async () => {
+    if (notRunning.length === 0) { alert('Node Exporter çalışmayan aktif AI-Ready sunucu yok'); return }
+    if (!confirm(`${notRunning.length} sunucuya Node Exporter kurulacak/başlatılacak. Devam?`)) return
+
+    setLoading(true); setResult(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/monitoring/node-exporter/bulk-install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(notRunning.map(s => s.id)),
+      })
+      if (r.ok) {
+        const d = await r.json()
+        setResult({ success: d.success, failed: d.failed })
+        onDone()
+        setTimeout(() => setResult(null), 8000)
+      }
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading || notRunning.length === 0}
+      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-cyan-700 text-white rounded-lg hover:from-cyan-500 hover:to-cyan-600 transition-all disabled:opacity-50"
+      title={`Node Exporter çalışmayan ${notRunning.length} AI-Ready sunucuya toplu kur`}
+    >
+      {loading ? (
+        <>
+          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+          <span>Kuruluyor... ({notRunning.length})</span>
+        </>
+      ) : result ? (
+        <span>✓ {result.success} başarılı{result.failed > 0 ? ` · ${result.failed} hata` : ''}</span>
+      ) : (
+        <>
+          <span>📊</span>
+          <span>Toplu Metrik Kur {notRunning.length > 0 ? `(${notRunning.length})` : ''}</span>
+        </>
+      )}
+    </button>
+  )
+}
+
+// ─── AI Ready Güncelle Butonu ─────────────────────────────────────────────────
+const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [loading, setLoading] = React.useState(false)
+  const [result, setResult]   = React.useState<{ai_ready: number; not_ready: number; tested: number} | null>(null)
+
+  const handleClick = async () => {
+    if (!confirm(
+      'Tüm sunucularda SSH bağlantısı test edilecek.\n' +
+      'Global Credential ile bağlanabilen sunucular → AI Ready = ✅\n' +
+      'Bağlanamayanlar → AI Ready = ❌\n\nDevam?'
+    )) return
+
+    setLoading(true); setResult(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, { method: 'POST' })
+      if (r.ok) {
+        const d = await r.json()
+        setResult(d)
+        onDone()
+        setTimeout(() => setResult(null), 8000)
+      }
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg hover:from-indigo-500 hover:to-indigo-600 transition-all disabled:opacity-50"
+      title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
+    >
+      {loading ? (
+        <>
+          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+          <span>Test ediliyor...</span>
+        </>
+      ) : result ? (
+        <span>🤖 {result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+      ) : (
+        <>
+          <span>🤖</span>
+          <span>AI Ready Güncelle</span>
+        </>
+      )}
+    </button>
+  )
+}
+
+// ─── OS Bilgisi Yenile Butonu ──────────────────────────────────────────────────
+const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
+  const [loading, setLoading] = React.useState(false)
+  const [result, setResult]   = React.useState<{updated: number; failed: number} | null>(null)
+
+  const handleClick = async () => {
+    // AI ready veya tümü?
+    const aiReadyIds = servers.filter(s => s.ai_ready).map(s => s.id)
+    const ids = aiReadyIds.length > 0 ? aiReadyIds : servers.map(s => s.id)
+
+    const confirmed = window.confirm(
+      aiReadyIds.length > 0
+        ? `${aiReadyIds.length} AI-Ready sunucuya SSH bağlanıp OS/Kernel bilgisi güncellenecek. Devam?`
+        : `Tüm ${ids.length} sunucuya SSH bağlanıp OS bilgisi güncellenecek. Devam?`
+    )
+    if (!confirmed) return
+
+    setLoading(true); setResult(null)
+    try {
+      const r = await fetch('/api/v1/servers/refresh-os-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_ids: ids }),
+      })
+      if (r.ok) {
+        const d = await r.json()
+        setResult(d)
+        onDone()
+        setTimeout(() => setResult(null), 5000)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-500 hover:to-purple-600 transition-all disabled:opacity-50"
+      title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
+    >
+      {loading ? (
+        <>
+          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+          <span>OS Güncelleniyor...</span>
+        </>
+      ) : result ? (
+        <span>✓ {result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
+      ) : (
+        <>
+          <span>💻</span>
+          <span>OS Bilgisini Yenile</span>
+        </>
+      )}
+    </button>
+  )
 }
 
 const NODE_EXPORTER_STEP_LABELS = [
@@ -181,12 +345,36 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-white font-semibold text-base truncate">{server.name}</h2>
-            <p className="text-slate-400 text-xs font-mono">{server.ip_address} • {server.hostname || '-'}</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
+              {server.hypervisor_name && (
+                <span className="text-xs text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">
+                  ☁ {server.hypervisor_name}
+                </span>
+              )}
+            </div>
           </div>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border mr-2 ${server.status === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${server.status === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
             ● {server.status}
           </span>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+          {/* SSH butonu detay headerında */}
+          {server.status === 'ONLINE' && server.ip_address && (
+            <button
+              onClick={() => {
+                const w = window.open(
+                  `/terminal/${server.id}?name=${encodeURIComponent(server.name)}&ip=${encodeURIComponent(server.ip_address)}`,
+                  `ssh-${server.id}`,
+                  'width=1200,height=700,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
+                )
+                if (!w) alert('Popup engellendi — tarayıcı ayarlarınızdan popup iznini açın.')
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono flex-shrink-0"
+              title="SSH Terminal"
+            >
+              <span>⌨</span> SSH
+            </button>
+          )}
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none flex-shrink-0">&times;</button>
         </div>
 
         {/* Tabs */}
@@ -210,18 +398,46 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   ['Sunucu Adı', server.name],
                   ['IP Adresi', server.ip_address || '-'],
                   ['Hostname', server.hostname || '-'],
+                  ...(server.hypervisor_name ? [['Hypervisor', `☁ ${server.hypervisor_name}`]] : []),
                   ['Tip', server.server_type || '-'],
-                  ['OS', server.os_type || '-'],
-                  ['OS Versiyon', server.os_version || '-'],
+                  ['OS Dağıtım', server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
+                  ['OS Sürüm', server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
+                  ['Kernel', server.kernel_version || '-'],
                   ['CPU', server.cpu_cores ? `${server.cpu_cores} çekirdek` : '-'],
                   ['RAM', server.memory_gb ? `${server.memory_gb} GB` : '-'],
                   ['SSH Kullanıcı', sshUser || '-'],
-                  ['AI Ready', server.ai_ready ? '✅ Evet' : '❌ Hayır'],
+                  ['AI Ready', '__AI_READY_TOGGLE__'],
                   ['Node Exporter', server.node_exporter?.running ? '✅ Çalışıyor' : server.node_exporter?.installed ? '⚠️ Kurulu/Durdurulmuş' : '❌ Kurulu Değil'],
                 ].map(([label, value]) => (
                   <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">{label}</p>
-                    <p className="text-sm text-white font-medium break-all">{value}</p>
+                    {value === '__AI_READY_TOGGLE__' ? (
+                      <div className="flex items-center justify-between mt-0.5">
+                        <span className={`text-sm font-medium ${server.ai_ready ? 'text-green-400' : 'text-slate-400'}`}>
+                          {server.ai_ready ? '✅ AI Ready' : '❌ AI Ready Değil'}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            const newVal = !server.ai_ready
+                            await fetch(`${API_BASE_URL}/servers/${server.id}`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ ai_ready: newVal }),
+                            })
+                            onClose()
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded-lg border transition-colors ${
+                            server.ai_ready
+                              ? 'text-red-400 border-red-500/40 hover:bg-red-500/10'
+                              : 'text-green-400 border-green-500/40 hover:bg-green-500/10'
+                          }`}
+                        >
+                          {server.ai_ready ? 'Kaldır' : 'Ekle'}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-white font-medium break-all">{value}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -382,12 +598,33 @@ const Servers: React.FC = () => {
   const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all') // Varsayılan olarak tüm durumlar
   const [showOffline, setShowOffline] = useState(false) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
-  const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // all, true, false
+  const [aiReadyFilter, setAiReadyFilter] = useState<string>('true') // all, true, false — varsayılan: AI Ready
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
 
   const [sortKey, setSortKey] = useState<string>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [sshTarget, setSshTarget] = useState<{id: number; name: string; ip: string} | null>(null)
+
+  // Kolon genişlikleri (px)
+  const [colWidths, setColWidths] = useState<number[]>([260, 120, 240, 140, 180, 120])
+
+  // Resize handler
+  const resizingCol = React.useRef<{col: number; startX: number; startW: number} | null>(null)
+  const onResizeMouseDown = (col: number, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    resizingCol.current = { col, startX: e.clientX, startW: colWidths[col] }
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingCol.current) return
+      const delta = ev.clientX - resizingCol.current.startX
+      const newW = Math.max(60, resizingCol.current.startW + delta)
+      setColWidths(prev => { const next = [...prev]; next[resizingCol.current!.col] = newW; return next })
+    }
+    const onUp = () => { resizingCol.current = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
   const [installingNodeExporter, setInstallingNodeExporter] = useState<number | null>(null)
   const [startingNodeExporter, setStartingNodeExporter] = useState<number | null>(null)
   const [installResultByServerId, setInstallResultByServerId] = useState<Record<number, {
@@ -633,11 +870,6 @@ const Servers: React.FC = () => {
     }
   }
 
-  const getSortIcon = (key: string) => {
-    if (sortKey !== key) return '↕'
-    return sortDirection === 'asc' ? '▲' : '▼'
-  }
-
   const getStatusOrder = (status: string) => {
     const order: Record<string, number> = {
       ONLINE: 1,
@@ -673,10 +905,12 @@ const Servers: React.FC = () => {
       server.hostname?.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesIp = !ipFilter || server.ip_address?.toLowerCase().includes(ipFilter.toLowerCase())
     
-    // Status filtresi: showOffline true ise tümü, false ise sadece ONLINE
-    const matchesStatus = showOffline 
+    // Status filtresi:
+    // showOffline=false → OFFLINE gizle (ONLINE + WARNING + diğerleri görünür)
+    // showOffline=true  → hepsi görünür (OFFLINE dahil)
+    const matchesStatus = showOffline
       ? (statusFilter === 'all' || server.status === statusFilter)
-      : (server.status === 'ONLINE' || (statusFilter !== 'all' && server.status === statusFilter))
+      : (server.status !== 'OFFLINE' && (statusFilter === 'all' || server.status === statusFilter))
     
     const matchesAiReady = aiReadyFilter === 'all' || 
       (aiReadyFilter === 'true' && server.ai_ready) ||
@@ -902,6 +1136,9 @@ const Servers: React.FC = () => {
               <span className="mr-2">🔄</span>
               Durumları Kontrol Et
             </button>
+            <AiReadyUpdateButton onDone={() => refetch()} />
+            <BulkNodeExporterButton servers={servers} onDone={() => refetch()} />
+            <OsRefreshButton servers={servers} onDone={() => refetch()} />
             <button
               onClick={() => setShowAddModal(true)}
               className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25"
@@ -916,57 +1153,56 @@ const Servers: React.FC = () => {
       {/* Table */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full" style={{ tableLayout: 'fixed', minWidth: colWidths.reduce((a,b) => a+b, 0) }}>
+            {/* Kolon genişlikleri */}
+            <colgroup>
+              {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
+            </colgroup>
             <thead>
-              <tr className="bg-slate-900/50">
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('name')} className="flex items-center gap-1">
-                    Sunucu <span className="text-[10px]">{getSortIcon('name')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('ip')} className="flex items-center gap-1">
-                    IP Adresi <span className="text-[10px]">{getSortIcon('ip')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('status')} className="flex items-center gap-1">
-                    Durum <span className="text-[10px]">{getSortIcon('status')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('type')} className="flex items-center gap-1">
-                    Tip <span className="text-[10px]">{getSortIcon('type')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <div className="flex items-center gap-3">
-                    <span>Kaynaklar</span>
-                    <button onClick={() => toggleSort('cpu')} className="flex items-center gap-1">
-                      CPU <span className="text-[10px]">{getSortIcon('cpu')}</span>
-                    </button>
-                    <button onClick={() => toggleSort('memory')} className="flex items-center gap-1">
-                      RAM <span className="text-[10px]">{getSortIcon('memory')}</span>
-                    </button>
-                  </div>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('ai')} className="flex items-center gap-1">
-                    AI <span className="text-[10px]">{getSortIcon('ai')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('node_exporter')} className="flex items-center gap-1">
-                    Node Exporter <span className="text-[10px]">{getSortIcon('node_exporter')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">İşlemler</th>
+              <tr className="bg-slate-800/80 border-b border-slate-700 select-none">
+                {([
+                  { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'name'   },
+                  { key: 'status', label: 'Durum',       sortable: true,  sortKey: 'status' },
+                  { key: 'os',     label: 'OS / Kernel', sortable: false, sortKey: ''       },
+                  { key: 'cpu',    label: 'CPU / RAM',   sortable: true,  sortKey: 'cpu'    },
+                  { key: 'izleme', label: 'İzleme',      sortable: true,  sortKey: 'ai'     },
+                  { key: 'action', label: '',           sortable: false, sortKey: '' },
+                ] as Array<{key: string; label: string; sortable: boolean; sortKey?: string}>).map((col, ci) => (
+                  <th key={col.key}
+                    className="relative px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide overflow-hidden">
+                    {/* Başlık + sort ikonu */}
+                    <div className="flex items-center gap-1 pr-3">
+                      {col.sortable ? (
+                        <button
+                          onClick={() => toggleSort(col.sortKey || col.key)}
+                          className="flex items-center gap-1 hover:text-white transition-colors group/sort"
+                        >
+                          {col.label}
+                          <span className={`text-[11px] ml-0.5 ${sortKey === (col.sortKey || col.key) ? 'text-blue-400' : 'text-slate-600 group-hover/sort:text-slate-400'}`}>
+                            {sortKey === (col.sortKey || col.key) ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                          </span>
+                        </button>
+                      ) : (
+                        <span>{col.label}</span>
+                      )}
+                    </div>
+                    {/* Resize handle */}
+                    {ci < colWidths.length - 1 && (
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-col-resize group/rz hover:bg-blue-500/10"
+                        onMouseDown={e => onResizeMouseDown(ci, e)}
+                      >
+                        <div className="w-0.5 h-4 bg-slate-600 group-hover/rz:bg-blue-400 transition-colors rounded-full" />
+                      </div>
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {sortedServers.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                     <p className="font-medium">Henüz sunucu yok</p>
                     <p className="text-sm mt-1">Yeni sunucu eklemek için &quot;Yeni Sunucu&quot; butonunu kullanın veya backend/veritabanı bağlantısını kontrol edin.</p>
                     <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
@@ -974,57 +1210,134 @@ const Servers: React.FC = () => {
                 </tr>
               ) : sortedServers.map((server) => (
                 <React.Fragment key={server.id}>
-                <tr className="hover:bg-slate-700/30 transition-colors cursor-pointer" onClick={() => setSelectedServer(server)}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        server.status === 'ONLINE' 
-                          ? 'bg-gradient-to-br from-green-500 to-green-600' 
-                          : 'bg-gradient-to-br from-slate-600 to-slate-700'
+                <tr className="hover:bg-slate-700/20 transition-colors cursor-pointer border-b border-slate-700/50 group" onClick={() => setSelectedServer(server)}>
+
+                  {/* ── Sunucu Adı + IP + Hostname ── */}
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-lg ${
+                        server.status === 'ONLINE'
+                          ? 'bg-green-500/20 ring-1 ring-green-500/40'
+                          : server.status === 'OFFLINE'
+                          ? 'bg-slate-700/50 ring-1 ring-slate-600/40'
+                          : 'bg-yellow-500/20 ring-1 ring-yellow-500/40'
                       }`}>
-                        <span className="text-white">🖥️</span>
+                        {server.server_type === 'PHYSICAL' ? '🖥️' : '💻'}
                       </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-white cursor-pointer hover:text-blue-400 transition-colors" onClick={() => setSelectedServer(server)}>{server.name}</div>
-                        <div className="text-sm text-slate-400">{server.hostname}</div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors truncate max-w-[180px]">
+                          {server.name}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className="text-xs font-mono text-slate-400">{server.ip_address || '-'}</span>
+                          {server.hypervisor_name ? (
+                            <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">
+                              ☁ {server.hypervisor_name}
+                            </span>
+                          ) : server.hostname && server.hostname !== server.name && server.hostname !== server.ip_address ? (
+                            <span className="text-xs text-slate-600 truncate max-w-[100px]">{server.hostname}</span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-white font-mono">{server.ip_address || '-'}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusBadge(server.status)}`}>
-                      ● {server.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-slate-300">{server.server_type}</div>
-                    <div className="text-xs text-slate-500">{server.os_type || 'N/A'}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-slate-300">
-                      {server.cpu_cores > 0 ? `${server.cpu_cores} CPU` : '-'}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {server.memory_gb > 0 ? `${server.memory_gb} GB RAM` : '-'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {server.ai_ready ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                        🤖 Ready
+
+                  {/* ── Durum ── */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {server.status === 'ONLINE' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
+                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                        Aktif
+                      </span>
+                    ) : server.status === 'OFFLINE' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-700/50 text-slate-400 border border-slate-600/50">
+                        <span className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
+                        Çevrimdışı
                       </span>
                     ) : (
-                      <span className="text-slate-500 text-sm">-</span>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusBadge(server.status)}`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                        {server.status}
+                      </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {server.node_exporter?.running ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
-                        ✅ Çalışıyor
-                      </span>
-                    ) : server.node_exporter?.installed ? (
+
+                  {/* ── OS / Kernel ── */}
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const icon = server.os_release_id === 'rhel'   ? '🔴' :
+                                   server.os_release_id === 'ol'     ? '🟠' :
+                                   server.os_release_id === 'rocky'  ? '🟢' :
+                                   server.os_release_id === 'ubuntu' ? '🟡' :
+                                   server.os_release_id === 'debian' ? '🌀' :
+                                   server.os_version?.toLowerCase().includes('red hat') ? '🔴' :
+                                   server.os_version?.toLowerCase().includes('oracle')  ? '🟠' :
+                                   server.os_version?.toLowerCase().includes('rocky')   ? '🟢' :
+                                   server.os_version?.toLowerCase().includes('ubuntu')  ? '🟡' : '🐧'
+                      const osName = server.os_release_id
+                        ? `${server.os_release_id.toUpperCase()} ${server.os_version_id || ''}`
+                        : server.os_version?.replace('(Plow)','').replace('(Ootpa)','').replace('(Ootpa)','').trim() || null
+                      return (
+                        <div className="flex items-start gap-2">
+                          <span className="text-base mt-0.5 flex-shrink-0">{icon}</span>
+                          <div className="min-w-0">
+                            {osName ? (
+                              <div className="text-sm font-medium text-white truncate max-w-[180px]" title={osName}>
+                                {osName}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-slate-600 italic">Bilinmiyor</div>
+                            )}
+                            {server.kernel_version && (
+                              <div className="text-[11px] text-slate-500 font-mono truncate max-w-[200px] mt-0.5"
+                                   title={server.kernel_version}>
+                                {server.kernel_version}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </td>
+
+                  {/* ── CPU / RAM ── */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="space-y-1">
+                      {server.cpu_cores > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400 w-7">CPU</span>
+                          <span className="text-sm font-medium text-white">{server.cpu_cores}</span>
+                          <span className="text-xs text-slate-500">çekirdek</span>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-600">—</div>
+                      )}
+                      {server.memory_gb > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400 w-7">RAM</span>
+                          <span className="text-sm font-medium text-white">{server.memory_gb}</span>
+                          <span className="text-xs text-slate-500">GB</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* ── İzleme (AI + Node Exporter) ── */}
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex flex-wrap gap-1.5">
+                      {/* AI Ready */}
+                      {server.ai_ready && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
+                          🤖 AI
+                        </span>
+                      )}
+                      {/* Node Exporter */}
+                      {server.node_exporter?.running ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/25">
+                          <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                          Metrik
+                        </span>
+                      ) : server.node_exporter?.installed ? (
                       <button
                         onClick={async () => {
                           setStartingNodeExporter(server.id)
@@ -1063,26 +1376,54 @@ const Servers: React.FC = () => {
                         {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
                       </button>
                     ) : (
-                      <span className="text-slate-400 text-xs">Çevrimdışı</span>
+                      <span className="text-xs text-slate-600 italic">Çevrimdışı</span>
                     )}
+                    </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <div className="flex items-center justify-end space-x-2">
+
+                  {/* ── İşlemler ── */}
+                  <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
                       {installNodeExporterMutation.isError && installingNodeExporter === server.id && (
-                        <span className="text-red-400 text-xs" title={installNodeExporterMutation.error?.message}>
-                          ❌
-                        </span>
+                        <span className="text-red-400 text-xs" title={installNodeExporterMutation.error?.message}>❌</span>
                       )}
+                      {server.status === 'ONLINE' && server.ip_address && (
+                        <button
+                          onClick={() => {
+                            // Yeni popup pencerede aç
+                            const w = window.open(
+                              `/terminal/${server.id}?name=${encodeURIComponent(server.name)}&ip=${encodeURIComponent(server.ip_address)}`,
+                              `ssh-${server.id}`,
+                              'width=1200,height=700,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
+                            )
+                            if (!w) {
+                              // Popup engellenirse modal aç
+                              setSshTarget({id: server.id, name: server.name, ip: server.ip_address})
+                            }
+                          }}
+                          className="px-2.5 py-1.5 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono"
+                          title="SSH Terminal Aç (Yeni Pencere)"
+                        >
+                          SSH
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedServer(server)}
+                        className="px-2.5 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+                        title="Detay"
+                      >
+                        Detay
+                      </button>
                       <button
                         onClick={() => {
                           if (confirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
                             deleteMutation.mutate(server.id)
                           }
                         }}
-                        className="text-red-400 hover:text-red-300 transition-colors p-2"
+                        className="px-2.5 py-1.5 text-xs text-red-400 hover:text-white hover:bg-red-700 rounded-lg transition-colors"
                         title="Sil"
                       >
-                        🗑️
+                        Sil
                       </button>
                     </div>
                   </td>
@@ -1090,7 +1431,7 @@ const Servers: React.FC = () => {
                 {/* Kurulum adımları: Kur basılan satırda açılır */}
                 {(installingNodeExporter === server.id || installResultByServerId[server.id]) && (
                   <tr key={`${server.id}-install`} className="bg-slate-800/80">
-                    <td colSpan={8} className="px-6 py-4">
+                    <td colSpan={6} className="px-6 py-4">
                       <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-sm font-medium text-slate-300">Node Exporter kurulumu — {server.name}</span>
@@ -1366,6 +1707,22 @@ const Servers: React.FC = () => {
 
       {selectedServer && (
         <ServerDetailDrawer server={selectedServer} onClose={() => setSelectedServer(null)} />
+      )}
+
+      {/* SSH Terminal Modal */}
+      {sshTarget && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+            <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        }>
+          <SshTerminalModal
+            serverId={sshTarget.id}
+            serverName={sshTarget.name}
+            serverIp={sshTarget.ip}
+            onClose={() => setSshTarget(null)}
+          />
+        </Suspense>
       )}
     </>
   )

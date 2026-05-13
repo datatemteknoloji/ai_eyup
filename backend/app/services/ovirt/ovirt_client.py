@@ -59,60 +59,103 @@ class OVirtClient:
             logger.error(f"oVirt connection test failed: {e}")
             return False, str(e)
     
-    def list_vms(self) -> List[Dict]:
-        """VM listesini getir"""
+    @staticmethod
+    def _to_int(val, default: int = 0) -> int:
+        """oVirt API bazen sayıları string olarak döndürür. Güvenli dönüşüm."""
         try:
-            response = self.session.get(f"{self.base_url}/vms")
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    def list_vms(self) -> List[Dict]:
+        """VM listesini getir — oVirt ve OLVM (Oracle Linux Virtualization Manager) destekli."""
+        try:
+            # Sayfalama: max=100 ile toplu çek
+            response = self.session.get(
+                f"{self.base_url}/vms",
+                params={"max": 500},
+                timeout=30,
+            )
             if response.status_code != 200:
-                logger.error(f"oVirt API error: {response.status_code} - {response.text}")
+                logger.error(f"oVirt API error: {response.status_code} - {response.text[:200]}")
                 return []
-            
+
             data = response.json()
-            vms = data.get("vm", [])
-            
+            # oVirt: {"vm": [...]}  veya  {"vms": [...]}
+            vms = data.get("vm") or data.get("vms") or []
+            if isinstance(vms, dict):
+                vms = [vms]
+
             inventory = []
             for vm in vms:
                 vm_name = vm.get("name", "Unknown")
-                vm_id = vm.get("id")
-                
-                # NIC bilgisi al (IP için)
+                vm_id   = vm.get("id", "")
+
+                # ── IP adresi (/vms/{id}/reporteddevices) ────────────────────
                 ip_address = ""
                 try:
-                    nic_response = self.session.get(f"{self.base_url}/vms/{vm_id}/nics")
-                    if nic_response.status_code == 200:
-                        nics = nic_response.json().get("nic", [])
-                        for nic in nics:
-                            reported_devices = nic.get("reported_devices", {})
-                            if reported_devices:
-                                reported_device = reported_devices.get("reported_device", [])
-                                if reported_device and len(reported_device) > 0:
-                                    ips = reported_device[0].get("ips", {}).get("ip", [])
-                                    if ips and len(ips) > 0:
-                                        ip_address = ips[0].get("address", "")
-                                        break
-                except Exception as e:
-                    logger.warning(f"Could not get IP for VM {vm_name}: {e}")
-                
-                # VM detayları
+                    rd_r = self.session.get(
+                        f"{self.base_url}/vms/{vm_id}/reporteddevices",
+                        timeout=10,
+                    )
+                    if rd_r.status_code == 200:
+                        rd_data = rd_r.json()
+                        devices = rd_data.get("reported_device", [])
+                        if isinstance(devices, dict):
+                            devices = [devices]
+                        for dev in devices:
+                            ip_list = dev.get("ips", {}).get("ip", [])
+                            if isinstance(ip_list, dict):
+                                ip_list = [ip_list]
+                            for ip_entry in ip_list:
+                                addr = ip_entry.get("address", "")
+                                ver  = ip_entry.get("version", "v4")
+                                if (addr and ver == "v4"
+                                        and not addr.startswith("127.")
+                                        and not addr.startswith("169.254")):
+                                    ip_address = addr
+                                    break
+                            if ip_address:
+                                break
+                except Exception as exc:
+                    logger.debug(f"IP bilgisi alınamadı ({vm_name}): {exc}")
+
+                # ── CPU / RAM ─────────────────────────────────────────────────
                 cpu_topology = vm.get("cpu", {}).get("topology", {})
-                cpu_cores = cpu_topology.get("cores", 0) * cpu_topology.get("sockets", 1)
-                memory_bytes = vm.get("memory", 0)
-                memory_gb = int(memory_bytes / (1024**3)) if memory_bytes else 0
-                
-                vm_data = {
-                    "name": vm_name,
+                cores   = self._to_int(cpu_topology.get("cores",   1), 1)
+                sockets = self._to_int(cpu_topology.get("sockets", 1), 1)
+                threads = self._to_int(cpu_topology.get("threads", 1), 1)
+                cpu_cores = cores * sockets * threads
+
+                memory_bytes = self._to_int(vm.get("memory", 0), 0)
+                memory_gb    = memory_bytes // (1024 ** 3) if memory_bytes > 0 else 0
+
+                # ── OS Tipi ──────────────────────────────────────────────────
+                os_type = vm.get("os", {}).get("type", "") or ""
+
+                # ── Durum ────────────────────────────────────────────────────
+                # oVirt status: "up" | "down" | "suspended" | "paused" | ...
+                raw_status = vm.get("status", "unknown")
+                if isinstance(raw_status, dict):
+                    raw_status = raw_status.get("#text", raw_status.get("state", "unknown"))
+                status = "ONLINE" if str(raw_status).lower() in ("up", "powering_up") else \
+                         "OFFLINE" if str(raw_status).lower() in ("down", "not_responding") else \
+                         str(raw_status).upper()
+
+                inventory.append({
+                    "name":       vm_name,
                     "ip_address": ip_address,
-                    "hostname": vm_name,
-                    "os_type": vm.get("os", {}).get("type", ""),
-                    "cpu_cores": cpu_cores,
-                    "memory_gb": memory_gb,
-                    "status": vm.get("status", "unknown")
-                }
-                inventory.append(vm_data)
-            
-            logger.info(f"Synced {len(inventory)} VMs from oVirt {self.host}")
+                    "hostname":   vm_name,
+                    "os_type":    os_type,
+                    "cpu_cores":  cpu_cores,
+                    "memory_gb":  memory_gb,
+                    "status":     status,
+                    "vm_id":      vm_id,
+                })
+
+            logger.info(f"oVirt/OLVM {self.host}: {len(inventory)} VM senkronize edildi")
             return inventory
-            
+
         except Exception as e:
-            logger.error(f"oVirt list_vms error: {e}")
+            logger.error(f"oVirt list_vms error: {e}", exc_info=True)
             return []

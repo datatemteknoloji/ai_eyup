@@ -13,6 +13,8 @@ import Ansible from './pages/Ansible'
 import AnomalyDetection from './pages/AnomalyDetection'
 import PackageManager from './pages/PackageManager'
 import Repositories from './pages/Repositories'
+import SystemUpdate from './pages/SystemUpdate'
+import TerminalPage from './pages/TerminalPage'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient({
@@ -26,28 +28,42 @@ const queryClient = new QueryClient({
   },
 })
 
+// Layout wrapper — terminal dışında tüm sayfalara sidebar/header ekler
+const WithLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Layout>{children}</Layout>
+)
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/servers" element={<Servers />} />
-            <Route path="/hypervisors" element={<Hypervisors />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/metrics" element={<LiveMetrics />} />
-            <Route path="/events" element={<Events />} />
-            <Route path="/incidents" element={<Incidents />} />
-            <Route path="/anomalies" element={<AnomalyDetection />} />
-            <Route path="/ansible" element={<Ansible />} />
-            <Route path="/mcp" element={<McpTools />} />
-            <Route path="/packages" element={<PackageManager />} />
-            <Route path="/repositories" element={<Repositories />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </Layout>
+        <Routes>
+          {/* Terminal — Layout YOK, tam ekran popup pencere */}
+          <Route path="/terminal/:serverId" element={<TerminalPage />} />
+
+          {/* Diğer tüm sayfalar — Layout var */}
+          <Route path="/*" element={
+            <WithLayout>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/servers" element={<Servers />} />
+                <Route path="/hypervisors" element={<Hypervisors />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/metrics" element={<LiveMetrics />} />
+                <Route path="/events" element={<Events />} />
+                <Route path="/incidents" element={<Incidents />} />
+                <Route path="/anomalies" element={<AnomalyDetection />} />
+                <Route path="/ansible" element={<Ansible />} />
+                <Route path="/mcp" element={<McpTools />} />
+                <Route path="/packages" element={<PackageManager />} />
+                <Route path="/repositories" element={<Repositories />} />
+                <Route path="/system-update" element={<SystemUpdate />} />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </WithLayout>
+          } />
+        </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   )

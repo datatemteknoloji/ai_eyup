@@ -369,9 +369,11 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div>
                     <label className="text-xs text-slate-400 block mb-2">
                       Versiyon
-                      {selectedProduct.url_versioned === false && (
-                        <span className="ml-2 text-yellow-400">— sadece isimde kullanılır, URL değişmez</span>
-                      )}
+                      {selectedProduct.repo_type === 'rhel' || selectedProduct.repo_type === 'rocky' || selectedProduct.repo_type === 'alma' ? (
+                        <span className="ml-2 text-slate-500">— Sunucunuzun minor sürümüyle eşleştirin (ör. RHEL 9.4 → 9.4 seçin)</span>
+                      ) : selectedProduct.url_versioned === false ? (
+                        <span className="ml-2 text-yellow-400">— URL sabit (rolling), versiyon sadece etikette gösterilir</span>
+                      ) : null}
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {selectedProduct.version_options.map(v => (
@@ -865,6 +867,8 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
   const [jobs, setJobs] = useState<SyncJob[]>([])
   const [selectedJob, setSelectedJob] = useState<SyncJob | null>(null)
   const [loading, setLoading] = useState(true)
+  const [liveProgress, setLiveProgress] = useState<any>(null)
+  const logRef = React.useRef<HTMLPreElement>(null)
 
   const load = useCallback(async () => {
     const r = await fetch(`${API}/${repo.id}/jobs`)
@@ -872,23 +876,34 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
     setLoading(false)
   }, [repo.id])
 
+  // Canlı ilerleme ve log için progress endpoint'i poll et
+  const loadProgress = useCallback(async () => {
+    const r = await fetch(`${API}/${repo.id}/progress`)
+    if (r.ok) setLiveProgress(await r.json())
+  }, [repo.id])
+
   useEffect(() => { load() }, [load])
 
-  // Auto-refresh if any job is running
+  // Auto-refresh: job listesi + canlı progress
   useEffect(() => {
     const hasRunning = jobs.some(j => j.status === 'running' || j.status === 'pending')
     if (!hasRunning) return
-    const t = setInterval(load, 3000)
+    loadProgress()
+    const t = setInterval(() => { load(); loadProgress() }, 2000)
     return () => clearInterval(t)
-  }, [jobs, load])
+  }, [jobs, load, loadProgress])
 
+  // Seçili job'ı güncelle
   useEffect(() => {
     if (!selectedJob) return
-    if (jobs.length > 0) {
-      const updated = jobs.find(j => j.id === selectedJob.id)
-      if (updated) setSelectedJob(updated)
-    }
+    const updated = jobs.find(j => j.id === selectedJob.id)
+    if (updated) setSelectedJob(updated)
   }, [jobs, selectedJob])
+
+  // Log sonuna scroll et
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [selectedJob?.log])
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -924,46 +939,107 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
           <div className="flex-1 overflow-y-auto p-5">
             {selectedJob ? (
               <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-3 text-xs">
-                  <div className="bg-slate-700/50 rounded-lg p-3">
-                    <div className="text-slate-400">Toplam</div>
-                    <div className="text-white font-bold text-lg">{selectedJob.total_packages.toLocaleString('tr-TR')}</div>
+                {/* Stat kartları */}
+                <div className="grid grid-cols-4 gap-2 text-xs">
+                  <div className="bg-slate-700/50 rounded-lg p-3 text-center">
+                    <div className="text-slate-400 mb-0.5">Toplam</div>
+                    <div className="text-white font-bold text-base">
+                      {(liveProgress?.total_packages || selectedJob.total_packages || 0).toLocaleString('tr-TR')}
+                    </div>
                   </div>
-                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-                    <div className="text-slate-400">Synced</div>
-                    <div className="text-green-300 font-bold text-lg">{selectedJob.synced_packages.toLocaleString('tr-TR')}</div>
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-center">
+                    <div className="text-slate-400 mb-0.5">Disk'te</div>
+                    <div className="text-green-300 font-bold text-base">
+                      {(liveProgress?.rpm_on_disk || selectedJob.synced_packages || 0).toLocaleString('tr-TR')}
+                    </div>
                   </div>
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                    <div className="text-slate-400">Hatalı</div>
-                    <div className="text-red-300 font-bold text-lg">{selectedJob.failed_packages.toLocaleString('tr-TR')}</div>
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-center">
+                    <div className="text-slate-400 mb-0.5">Boyut</div>
+                    <div className="text-blue-300 font-bold text-base">
+                      {liveProgress?.disk_mb
+                        ? liveProgress.disk_mb >= 1024
+                          ? `${(liveProgress.disk_mb/1024).toFixed(1)} GB`
+                          : `${liveProgress.disk_mb} MB`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-center">
+                    <div className="text-slate-400 mb-0.5">Hatalı</div>
+                    <div className="text-red-300 font-bold text-base">{selectedJob.failed_packages || 0}</div>
                   </div>
                 </div>
 
+                {/* İlerleme çubuğu */}
                 {(selectedJob.status === 'running' || selectedJob.status === 'pending') && (
                   <div>
                     <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                      <span>İlerleme</span>
-                      <span>{Math.round((selectedJob.synced_packages / Math.max(selectedJob.total_packages, 1)) * 100)}%</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />
+                        Sync devam ediyor...
+                      </span>
+                      <span>
+                        {(() => {
+                          const done  = liveProgress?.rpm_on_disk || selectedJob.synced_packages || 0
+                          const total = liveProgress?.total_packages || selectedJob.total_packages || 0
+                          return total > 0 ? `${Math.round(done*100/total)}%` : '...'
+                        })()}
+                      </span>
                     </div>
-                    <div className="bg-slate-700 rounded-full h-2">
-                      <div className="bg-blue-500 h-2 rounded-full transition-all"
-                        style={{ width: `${Math.round((selectedJob.synced_packages / Math.max(selectedJob.total_packages, 1)) * 100)}%` }} />
+                    <div className="bg-slate-700 rounded-full h-2.5">
+                      <div className="bg-blue-500 h-2.5 rounded-full transition-all duration-500"
+                        style={{
+                          width: (() => {
+                            const done  = liveProgress?.rpm_on_disk || selectedJob.synced_packages || 0
+                            const total = liveProgress?.total_packages || selectedJob.total_packages || 1
+                            return `${Math.min(100, Math.round(done*100/total))}%`
+                          })()
+                        }} />
                     </div>
                   </div>
                 )}
 
-                {selectedJob.log && (
-                  <div>
-                    <div className="text-xs text-slate-400 mb-2">İşlem Logu</div>
-                    <pre className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto">
+                {/* Canlı log */}
+                <div>
+                  <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                    <span>İşlem Logu</span>
+                    {(selectedJob.status === 'running' || selectedJob.status === 'pending') && (
+                      <span className="flex items-center gap-1 text-green-400">
+                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                        Canlı
+                      </span>
+                    )}
+                  </div>
+                  {selectedJob.log ? (
+                    <pre ref={logRef}
+                      className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed">
                       {selectedJob.log}
                     </pre>
-                  </div>
-                )}
+                  ) : (selectedJob.status === 'running' || selectedJob.status === 'pending') ? (
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-center gap-3">
+                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      <div>
+                        <div className="text-xs text-blue-300">Sync başlatılıyor...</div>
+                        <div className="text-xs text-slate-500 mt-0.5">Log birkaç saniye içinde görünecek</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-slate-500 text-center italic">
+                      Log kaydı yok
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-                ← Detay için bir iş seçin
+              <div className="flex flex-col items-center justify-center h-full gap-3">
+                {jobs.some(j => j.status === 'running' || j.status === 'pending') ? (
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                    <div className="text-sm text-slate-300">Sync devam ediyor</div>
+                    <div className="text-xs text-slate-500 mt-1">Sol panelden işi seçin</div>
+                  </div>
+                ) : (
+                  <div className="text-slate-500 text-sm">← Detay için bir iş seçin</div>
+                )}
               </div>
             )}
           </div>

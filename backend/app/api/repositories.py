@@ -377,14 +377,35 @@ def sync_metadata(repo_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{repo_id}/jobs")
-def list_jobs(repo_id: int, limit: int = 20, db: Session = Depends(get_db)):
-    jobs = (
+def list_jobs(repo_id: int, limit: int = 5, db: Session = Depends(get_db)):
+    """
+    Son sync işlerini döner.
+    Varsayılan limit=5 — UI'da sadece son 5 iş gösterilir.
+    Çok sayıda failed biriktiyse yalnızca en son olanı döner.
+    """
+    all_jobs = (
         db.query(RepoSyncJob)
         .filter_by(repo_id=repo_id)
         .order_by(RepoSyncJob.id.desc())
-        .limit(limit)
+        .limit(100)    # max 100 tane al, sonra filtrele
         .all()
     )
+
+    # Dedup: running/pending varsa onu al; her status'tan en fazla 1 tane sakla
+    # ama her zaman son `limit` kadar benzersiz işi döndür
+    seen_statuses = set()
+    filtered = []
+    for j in all_jobs:
+        key = j.status
+        # running/pending → her zaman göster
+        if j.status in ("running", "pending"):
+            filtered.append(j)
+        elif key not in seen_statuses:
+            seen_statuses.add(key)
+            filtered.append(j)
+        if len(filtered) >= limit:
+            break
+
     return [
         {
             "id":               j.id,
@@ -559,12 +580,12 @@ PRODUCT_TEMPLATES = [
         "product": "RHEL 9", "repo_type": "rhel", "os_version": "9",
         "auth_type": "basic", "arch": "x86_64", "icon": "rhel",
         "version_options": [
-            {"label": "9.6 (latest)", "value": "9.6", "is_latest": True},
+            {"label": "9.7 (güncel)", "value": "9.7", "is_latest": True},
+            {"label": "9.6",          "value": "9.6"},
             {"label": "9.5",          "value": "9.5"},
             {"label": "9.4",          "value": "9.4"},
             {"label": "9.3",          "value": "9.3"},
             {"label": "9.2",          "value": "9.2"},
-            {"label": "9.0",          "value": "9.0"},
         ],
         "channels": [
             {"key": "baseos",    "label": "BaseOS",            "default": True,
@@ -588,7 +609,7 @@ PRODUCT_TEMPLATES = [
         "product": "RHEL 8", "repo_type": "rhel", "os_version": "8",
         "auth_type": "basic", "arch": "x86_64", "icon": "rhel",
         "version_options": [
-            {"label": "8.10 (latest)", "value": "8.10", "is_latest": True},
+            {"label": "8.10 (güncel)", "value": "8.10", "is_latest": True},
             {"label": "8.9",           "value": "8.9"},
             {"label": "8.8",           "value": "8.8"},
             {"label": "8.7",           "value": "8.7"},
@@ -616,7 +637,7 @@ PRODUCT_TEMPLATES = [
         "product": "RHEL 7", "repo_type": "rhel", "os_version": "7",
         "auth_type": "basic", "arch": "x86_64", "icon": "rhel",
         "version_options": [
-            {"label": "7.9 (latest)", "value": "7.9", "is_latest": True},
+            {"label": "7.9 (güncel)", "value": "7.9", "is_latest": True},
             {"label": "7.8",          "value": "7.8"},
             {"label": "7.7",          "value": "7.7"},
         ],
@@ -643,7 +664,7 @@ PRODUCT_TEMPLATES = [
         "auth_type": "none", "arch": "x86_64", "icon": "oel",
         "url_versioned": False,   # URL değişmez, sadece isimde kullanılır
         "version_options": [
-            {"label": "9.5 (latest)", "value": "9.5", "is_latest": True},
+            {"label": "9.5 (güncel)", "value": "9.5", "is_latest": True},
             {"label": "9.4",          "value": "9.4"},
             {"label": "9.3",          "value": "9.3"},
             {"label": "9.2",          "value": "9.2"},
@@ -664,7 +685,7 @@ PRODUCT_TEMPLATES = [
         "auth_type": "none", "arch": "x86_64", "icon": "oel",
         "url_versioned": False,
         "version_options": [
-            {"label": "8.10 (latest)", "value": "8.10", "is_latest": True},
+            {"label": "8.10 (güncel)", "value": "8.10", "is_latest": True},
             {"label": "8.9",           "value": "8.9"},
             {"label": "8.8",           "value": "8.8"},
             {"label": "8.7",           "value": "8.7"},
@@ -685,7 +706,7 @@ PRODUCT_TEMPLATES = [
         "auth_type": "none", "arch": "x86_64", "icon": "oel",
         "url_versioned": False,
         "version_options": [
-            {"label": "7.9 (latest)", "value": "7.9", "is_latest": True},
+            {"label": "7.9 (güncel)", "value": "7.9", "is_latest": True},
             {"label": "7.8",          "value": "7.8"},
             {"label": "7.7",          "value": "7.7"},
         ],
@@ -703,7 +724,7 @@ PRODUCT_TEMPLATES = [
         "product": "Rocky Linux 9", "repo_type": "rocky", "os_version": "9",
         "auth_type": "none", "arch": "x86_64", "icon": "rocky",
         "version_options": [
-            {"label": "9.5 (latest)", "value": "9.5", "is_latest": True},
+            {"label": "9.5 (güncel)", "value": "9.5", "is_latest": True},
             {"label": "9.4",          "value": "9.4"},
             {"label": "9.3",          "value": "9.3"},
         ],
@@ -722,7 +743,7 @@ PRODUCT_TEMPLATES = [
         "product": "Rocky Linux 8", "repo_type": "rocky", "os_version": "8",
         "auth_type": "none", "arch": "x86_64", "icon": "rocky",
         "version_options": [
-            {"label": "8.10 (latest)", "value": "8.10", "is_latest": True},
+            {"label": "8.10 (güncel)", "value": "8.10", "is_latest": True},
             {"label": "8.9",           "value": "8.9"},
             {"label": "8.8",           "value": "8.8"},
         ],
@@ -742,7 +763,7 @@ PRODUCT_TEMPLATES = [
         "product": "Ubuntu", "repo_type": "ubuntu", "os_version": "24.04",
         "auth_type": "none", "arch": "amd64", "icon": "ubuntu",
         "version_options": [
-            {"label": "24.04 Noble (latest)", "value": "noble",    "is_latest": True},
+            {"label": "24.04 Noble (güncel)", "value": "noble",    "is_latest": True},
             {"label": "22.04 Jammy",          "value": "jammy"},
             {"label": "20.04 Focal",          "value": "focal"},
         ],

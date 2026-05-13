@@ -87,8 +87,16 @@ def run_rhsm_sync(repo_id: int, job_id: int) -> None:
 
     def log(msg: str, level: str = "INFO"):
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        log_lines.append(f"[{ts}] {msg}")
+        line = f"[{ts}] {msg}"
+        log_lines.append(line)
         getattr(logger, level.lower(), logger.info)(f"RHSM#{repo_id} {msg}")
+        try:
+            j = db.query(RepoSyncJob).filter_by(id=job_id).first()
+            if j:
+                j.log = "\n".join(log_lines[-100:])
+                db.commit()
+        except Exception:
+            pass
 
     try:
         repo: RepoSource = db.query(RepoSource).filter_by(id=repo_id).first()

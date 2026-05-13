@@ -222,7 +222,9 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                 client = OVirtClient(
                     host=hypervisor.ip_address or hypervisor.hostname,
                     username=hypervisor.username or hypervisor.connection_config.get("username", ""),
-                    password=hypervisor.password or hypervisor.connection_config.get("password", "")
+                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
+                    port=hypervisor.port,
+                    verify_ssl=False,
                 )
                 vms = client.list_vms()
             except ImportError:
@@ -233,16 +235,20 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
             errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
 
         def _vm_status(vm: dict) -> str:
-            """oVirt/VMware ham durumunu uygulama durumuna çevirir.
-            oVirt: status ('up'/'down'), VMware: power_state ('POWERED_ON'/'POWERED_OFF').
-            """
+            """oVirt/VMware ham durumunu uygulama durumuna çevirir."""
             mapping = {
-                "up": "ONLINE", "powered_on": "ONLINE", "poweredon": "ONLINE", "running": "ONLINE",
-                "down": "OFFLINE", "powered_off": "OFFLINE", "poweredoff": "OFFLINE",
-                "stopped": "OFFLINE", "suspended": "OFFLINE",
+                # oVirt raw
+                "up": "ONLINE", "powering_up": "ONLINE",
+                "down": "OFFLINE", "not_responding": "OFFLINE",
+                "suspended": "OFFLINE", "stopped": "OFFLINE",
+                # VMware raw
+                "powered_on": "ONLINE", "poweredon": "ONLINE", "running": "ONLINE",
+                "powered_off": "OFFLINE", "poweredoff": "OFFLINE",
+                # zaten dönüştürülmüş (list_vms içinde map edilmiş)
+                "online": "ONLINE", "offline": "OFFLINE",
             }
-            raw = (vm.get("status") or vm.get("power_state") or "").lower().replace(" ", "_")
-            return mapping.get(raw, "OFFLINE")
+            raw = (vm.get("status") or vm.get("power_state") or "").lower().replace(" ", "_").replace("-", "_")
+            return mapping.get(raw, "UNKNOWN")
 
         # VM'leri sunuculara ekle/güncelle
         from app.models.credential import GlobalCredential
@@ -283,16 +289,22 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                     cpu_cores=vm.get("cpu_cores", 0),
                     memory_gb=vm.get("memory_gb", 0),
                     connection_config=conn_cfg,
-                    ai_ready=ai_ready_status
+                    ai_ready=ai_ready_status,
+                    hypervisor_id=hypervisor_id,
+                    hypervisor_vm_id=vm.get("vm_id", ""),
                 )
                 db.add(new_server)
                 synced += 1
             else:
                 # Mevcut sunucuyu güncelle - connection_config ve ai_ready değerlerini KORU
-                existing.status = vm_status          # hypervisor'ın gerçek durumu
+                existing.status = vm_status
+                # hypervisor_id eksikse düzelt
+                if not existing.hypervisor_id:
+                    existing.hypervisor_id = hypervisor_id
+                if vm.get("vm_id") and not existing.hypervisor_vm_id:
+                    existing.hypervisor_vm_id = vm["vm_id"]
                 if vm.get("ip_address"):
                     existing.ip_address = vm["ip_address"]
-                # CPU/RAM: VM'den gelen değeri yaz (0 bile olsa; 0 = bilinmeyen/ayarlanmamış)
                 if "cpu_cores" in vm:
                     existing.cpu_cores = vm["cpu_cores"]
                 if "memory_gb" in vm:

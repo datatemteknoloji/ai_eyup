@@ -15,9 +15,12 @@ class Server(Base):
     hostname = Column(String(255))
     ip_address = Column(String(45), index=True)
     status = Column(String(50), default="unknown")
-    os_type = Column(String(50))
-    os_version = Column(String(255))
-    server_type = Column(String(50))
+    os_type       = Column(String(50))
+    os_version    = Column(String(255))   # PRETTY_NAME
+    os_release_id = Column(String(50))    # ID: "rhel"|"ol"|"rocky"|"ubuntu"
+    os_version_id = Column(String(20))    # VERSION_ID: "9.5"|"8.10"|"22.04"
+    kernel_version= Column(String(100))   # uname -r
+    server_type   = Column(String(50))
     cpu_cores = Column(Integer, default=0)
     memory_gb = Column(Integer, default=0)
     ai_ready = Column(Boolean, default=False, index=True)

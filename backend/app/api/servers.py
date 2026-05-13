@@ -16,6 +16,166 @@ from app.services.monitoring.server_health_checker import ServerHealthChecker
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _parse_os_release(raw: str) -> dict:
+    result = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if "=" in line and not line.startswith("#"):
+            k, _, v = line.partition("=")
+            result[k.strip()] = v.strip().strip('"').strip("'")
+    return result
+
+
+@router.post("/update-ai-ready")
+def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
+    """
+    Tüm IP'li sunucularda SSH bağlantısını test eder.
+    Bağlanabilenler → ai_ready=True, bağlanamayanlar → ai_ready=False.
+    Global Credential öncelikli, yoksa sunucunun kendi connection_config'i kullanılır.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.models.credential import GlobalCredential
+    from app.core.database import SessionLocal
+
+    server_ids = (body or {}).get("server_ids")
+    q = db.query(Server)
+    if server_ids:
+        q = q.filter(Server.id.in_(server_ids))
+    # Sadece IP'si olan sunucular
+    server_list = q.filter(
+        Server.ip_address != None,
+        Server.ip_address != "",
+    ).all()
+
+    # Global credential — sadece ana thread'de oku
+    global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
+                  or db.query(GlobalCredential).first()
+
+    # Thread'e geçirmek için immutable snapshot al
+    gc_snapshot = {
+        "username": global_cred.username if global_cred else None,
+        "password": global_cred.password if global_cred else None,
+        "private_key": global_cred.private_key if global_cred else None,
+        "port": global_cred.port if global_cred else 22,
+    } if global_cred else {}
+
+    server_snapshots = [
+        {
+            "id": s.id,
+            "ip": s.ip_address,
+            "name": s.name,
+            "cfg": s.connection_config or {},
+        }
+        for s in server_list
+    ]
+
+    def _test_one(snap: dict) -> tuple[int, bool, str]:
+        cfg = snap["cfg"]
+        username = cfg.get("username") or gc_snapshot.get("username") or "root"
+        password = cfg.get("password") or gc_snapshot.get("password")
+        key      = cfg.get("private_key") or gc_snapshot.get("private_key")
+        port     = int(cfg.get("port") or gc_snapshot.get("port") or 22)
+
+        from app.services.ssh_manager import SSHManager
+        ssh = SSHManager(
+            host=snap["ip"], username=username,
+            password=password, private_key=key, port=port,
+        )
+        try:
+            ok = ssh.connect()
+            if ok:
+                ssh.close()
+            return snap["id"], ok, snap["name"]
+        except Exception:
+            return snap["id"], False, snap["name"]
+
+    # Her thread kendi DB session'ını açar
+    test_results: list[tuple[int, bool, str]] = []
+    with ThreadPoolExecutor(max_workers=20, thread_name_prefix="ai-ready") as pool:
+        futures = {pool.submit(_test_one, s): s for s in server_snapshots}
+        for f in as_completed(futures):
+            test_results.append(f.result())
+
+    # Ana thread'de toplu güncelle
+    ready_count = not_ready_count = 0
+    thread_db = SessionLocal()
+    try:
+        for srv_id, ok, name in test_results:
+            thread_db.query(Server).filter_by(id=srv_id).update({"ai_ready": ok})
+            if ok:
+                ready_count += 1
+            else:
+                not_ready_count += 1
+        thread_db.commit()
+    finally:
+        thread_db.close()
+
+    logger.info(f"AI Ready güncellendi: {ready_count} hazır, {not_ready_count} bağlanamadı")
+    return {
+        "tested":    len(test_results),
+        "ai_ready":  ready_count,
+        "not_ready": not_ready_count,
+    }
+
+
+@router.post("/refresh-os-info")
+def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
+    """SSH ile seçili (veya tüm) sunuculardan OS/kernel bilgisini günceller."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    server_ids = (body or {}).get("server_ids")
+    q = db.query(Server)
+    if server_ids:
+        q = q.filter(Server.id.in_(server_ids))
+    servers = q.filter(Server.ip_address != None).all()
+
+    updated, failed = [], []
+
+    def _update_one(srv):
+        try:
+            cfg = srv.connection_config or {}
+            from app.services.ssh_manager import SSHManager
+            ssh = SSHManager(
+                host=srv.ip_address,
+                username=cfg.get("username", "root"),
+                password=cfg.get("password"),
+                private_key=cfg.get("private_key"),
+                port=int(cfg.get("port", 22) or 22),
+            )
+            if not ssh.connect():
+                return srv.id, None, "SSH bağlanamadı"
+            _, raw, _ = ssh.execute_command("cat /etc/os-release 2>/dev/null")
+            info = _parse_os_release(raw)
+            _, k_out, _ = ssh.execute_command("uname -r")
+            ssh.close()
+            return srv.id, {
+                "os_version":    info.get("PRETTY_NAME"),
+                "os_release_id": info.get("ID"),
+                "os_version_id": info.get("VERSION_ID"),
+                "os_type":       info.get("ID") or srv.os_type,
+                "kernel_version": k_out.strip() or None,
+            }, None
+        except Exception as e:
+            return srv.id, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_update_one, s): s for s in servers}
+        for f in as_completed(futures):
+            srv_id, info, err = f.result()
+            if info:
+                srv = db.query(Server).filter_by(id=srv_id).first()
+                if srv:
+                    for k, v in info.items():
+                        if v:
+                            setattr(srv, k, v)
+                    db.commit()
+                updated.append(srv_id)
+            else:
+                failed.append({"id": srv_id, "error": err})
+
+    return {"updated": len(updated), "failed": len(failed)}
+
+
 @router.get("/")
 async def list_servers(db: Session = Depends(get_db), include_node_exporter_status: bool = False):
     """Tüm sunucuları listele"""
@@ -25,18 +185,25 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
         conn_config = None
         for s in servers:
             conn_config = getattr(s, "connection_config", None) or {}
+            # Hypervisor adı (relationship üzerinden)
+            hv_name = s.hypervisor.name if s.hypervisor else None
             server_data = {
                 "id": s.id,
                 "name": s.name or "",
                 "hostname": s.hostname or "",
                 "ip_address": s.ip_address or "",
                 "status": s.status or "UNKNOWN",
-                "os_type": s.os_type or "",
-                "os_version": s.os_version or "",
+                "os_type":        s.os_type or "",
+                "os_version":     s.os_version or "",
+                "os_release_id":  s.os_release_id or "",
+                "os_version_id":  s.os_version_id or "",
+                "kernel_version": s.kernel_version or "",
                 "server_type": s.server_type or "VIRTUAL",
                 "cpu_cores": s.cpu_cores or 0,
                 "memory_gb": s.memory_gb or 0,
                 "ai_ready": bool(s.ai_ready),
+                "hypervisor_id":   s.hypervisor_id,
+                "hypervisor_name": hv_name,
                 "connection_config": conn_config,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None

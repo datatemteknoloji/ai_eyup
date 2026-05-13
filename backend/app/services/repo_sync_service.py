@@ -318,8 +318,22 @@ def run_repo_sync(repo_id: int, job_id: int,
     log_lines: List[str] = []
 
     def log(msg: str):
-        log_lines.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
+        line = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}"
+        log_lines.append(line)
         logger.info(f"REPO#{repo_id} {msg}")
+        # Her log satırını anında DB'ye yaz — ayrı session ile thread-safe
+        try:
+            from app.core.database import SessionLocal as _SL
+            _db = _SL()
+            try:
+                j = _db.query(RepoSyncJob).filter_by(id=job_id).first()
+                if j:
+                    j.log = "\n".join(log_lines[-100:])
+                    _db.commit()
+            finally:
+                _db.close()
+        except Exception:
+            pass
 
     try:
         repo: RepoSource = db.query(RepoSource).filter_by(id=repo_id).first()
