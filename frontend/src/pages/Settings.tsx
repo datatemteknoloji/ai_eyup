@@ -32,6 +32,13 @@ interface RunbookDocument {
   chunk_ids?: string[]
 }
 
+interface GeneralSettings {
+  ollama_url: string
+  ollama_model: string
+  prometheus_url: string
+  metric_retention_days?: number
+}
+
 const RagTab: React.FC = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfTitle, setPdfTitle] = useState('')
@@ -227,7 +234,10 @@ const Settings: React.FC = () => {
   const [selectedServerIds, setSelectedServerIds] = useState<number[]>([])
   const [setAiReady, setSetAiReady] = useState(true)
   const queryClient = useQueryClient()
+  const [metricRetentionDays, setMetricRetentionDays] = useState<number>(30)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
+  const [modelSaved, setModelSaved] = useState(false)
+  const [retentionSaved, setRetentionSaved] = useState(false)
   const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
     queryKey: ['ai-models'],
     queryFn: async () => {
@@ -240,6 +250,34 @@ const Settings: React.FC = () => {
     staleTime: 60000,
   })
   const availableModels: AIModel[] = modelsData?.models?.length ? modelsData.models : []
+  const { data: generalSettings } = useQuery<GeneralSettings>({
+    queryKey: ['general-settings'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/settings/`)
+      if (!res.ok) throw new Error('Ayarlar alınamadı')
+      return res.json()
+    },
+    staleTime: 60000,
+  })
+  // Backend'den gelen aktif model ile sync et (ilk yüklemede localStorage yoksa)
+  React.useEffect(() => {
+    if (modelsData?.default && !localStorage.getItem('chat_selected_model')) {
+      setSelectedModel(modelsData.default)
+    } else if (modelsData?.default && modelsData.default !== 'llama3.2:3b') {
+      // Backend'de kayıtlı model varsa onu öne çıkar
+      const stored = localStorage.getItem('chat_selected_model')
+      if (!stored || stored === 'llama3.2:3b') {
+        setSelectedModel(modelsData.default)
+        localStorage.setItem('chat_selected_model', modelsData.default)
+      }
+    }
+  }, [modelsData?.default])
+
+  React.useEffect(() => {
+    if (generalSettings?.metric_retention_days) {
+      setMetricRetentionDays(generalSettings.metric_retention_days)
+    }
+  }, [generalSettings?.metric_retention_days])
 
   // Queries
   const { data: credentials = [], isLoading: credsLoading } = useQuery<Credential[]>({
@@ -333,6 +371,26 @@ const Settings: React.FC = () => {
       alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${data.successful}\n❌ Başarısız: ${data.failed}\n\n${data.message}`)
     },
     onError: (e) => alert(e instanceof Error ? e.message : 'SSH test hatası')
+  })
+
+  const saveMetricRetention = useMutation({
+    mutationFn: async (days: number) => {
+      const res = await fetch(`${API_BASE_URL}/settings/metric-retention`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days })
+      })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Metrik saklama süresi güncellenemedi')
+      return r
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['general-settings'] })
+      setRetentionSaved(true)
+      setTimeout(() => setRetentionSaved(false), 3000)
+      alert(`Metrik saklama süresi ${data.metric_retention_days} gün olarak güncellendi. ${data.deleted_rows ?? 0} eski kayıt silindi.`)
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Kaydetme hatası')
   })
 
   const resetForm = () => {
@@ -532,18 +590,13 @@ const Settings: React.FC = () => {
               <h2 className="text-xl font-semibold text-white mb-6">AI Ayarları</h2>
               <div className="space-y-6">
                 <div className="bg-slate-900/50 rounded-xl border border-slate-700 p-6">
-                  <h3 className="text-lg font-medium text-white mb-4">Ollama Yapılandırması</h3>
+                  <h3 className="text-lg font-medium text-white mb-4">Ollama Model Seçimi</h3>
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2">Ollama URL</label>
-                      <input type="text" value="http://192.168.1.222:11434" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
-                      <p className="text-xs text-slate-500 mt-1">Ortam değişkeni ile ayarlanır (OLLAMA_URL)</p>
-                    </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Varsayılan Model</label>
                       <select
                         value={selectedModel}
-                        onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
+                        onChange={e => setSelectedModel(e.target.value)}
                         className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-purple-500"
                       >
                         {availableModels.length === 0 && (
@@ -555,13 +608,36 @@ const Settings: React.FC = () => {
                           </option>
                         ))}
                       </select>
-                      <p className="text-xs text-slate-500 mt-1">Chat ve Event analizi için kullanılacak model</p>
+                      <p className="text-xs text-slate-500 mt-1">Chat ve Event analizi için varsayılan model (Ollama üzerinden)</p>
+                    </div>
+                    <div className="flex items-center gap-3 mt-4">
+                      <button
+                        onClick={async () => {
+                          localStorage.setItem('chat_selected_model', selectedModel)
+                          await fetch(`${API_BASE_URL}/settings/ollama-model`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model: selectedModel })
+                          })
+                          setModelSaved(true)
+                          setTimeout(() => setModelSaved(false), 3000)
+                        }}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors">
+                        💾 Kaydet
+                      </button>
+                      {modelSaved && (
+                        <span className="text-green-400 text-sm flex items-center gap-1">
+                          ✅ Model kaydedildi
+                        </span>
+                      )}
                     </div>
                   </div>
+
+
                 </div>
                 <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center space-x-3">
                   <span className="text-2xl">✅</span>
-                  <div><p className="text-green-400 font-medium">AI Servisi Aktif</p><p className="text-green-400/70 text-sm">Ollama bağlantısı başarılı</p></div>
+                  <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
                 </div>
               </div>
             </div>
@@ -588,6 +664,43 @@ const Settings: React.FC = () => {
                       <label className="block text-sm text-slate-300 mb-2">Pushgateway URL</label>
                       <input type="text" value="http://pushgateway:9091" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                     </div>
+                    <div className="border-t border-slate-700 pt-4">
+                      <label className="block text-sm text-slate-300 mb-2">Metrik Saklama Süresi (gün)</label>
+                      <div className="flex items-center gap-3">
+                        <select
+                          value={metricRetentionDays}
+                          onChange={e => setMetricRetentionDays(Number(e.target.value))}
+                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
+                        >
+                          <option value={7}>7 gün</option>
+                          <option value={15}>15 gün</option>
+                          <option value={30}>30 gün</option>
+                          <option value={60}>60 gün</option>
+                          <option value={90}>90 gün</option>
+                          <option value={180}>180 gün</option>
+                          <option value={365}>365 gün</option>
+                        </select>
+                        <button
+                          onClick={() => {
+                            const currentDays = generalSettings?.metric_retention_days ?? 30
+                            const isDecrease = metricRetentionDays < currentDays
+                            const message = isDecrease
+                              ? `Saklama süresi ${currentDays} günden ${metricRetentionDays} güne düşürülecek.\n${metricRetentionDays} günden eski metrik kayıtları silinecek.\n\nDevam etmek istiyor musunuz?`
+                              : `Metrik saklama süresi ${metricRetentionDays} gün olarak güncellensin mi?`
+                            if (!window.confirm(message)) return
+                            saveMetricRetention.mutate(metricRetentionDays)
+                          }}
+                          disabled={saveMetricRetention.isPending}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium"
+                        >
+                          {saveMetricRetention.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                        </button>
+                        {retentionSaved && <span className="text-green-400 text-sm">✅ Kaydedildi</span>}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Süre düşürülürse (ör. 30 → 15), 15 günden eski metrik kayıtları hemen silinir.
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -611,7 +724,7 @@ const Settings: React.FC = () => {
                   <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
                     <span className="text-white font-bold text-2xl">SM</span>
                   </div>
-                  <div><h3 className="text-2xl font-bold text-white">Server Manager</h3><p className="text-slate-400">v1.0.0 - Enterprise AIOps Platform</p></div>
+                  <div><h3 className="text-2xl font-bold text-white">datatem AI</h3><p className="text-slate-400">v1.0.0 - AI Infrastructure Management</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4">
                   <div className="bg-slate-800 rounded-lg p-4"><p className="text-slate-400 text-sm">Backend</p><p className="text-white font-medium">FastAPI + Python</p></div>

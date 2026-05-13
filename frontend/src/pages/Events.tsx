@@ -15,6 +15,7 @@ interface SystemEvent {
   description: string | null
   raw_data: any
   is_acknowledged: boolean
+  is_known: boolean
   resolved: boolean
   created_at: string | null
 }
@@ -26,6 +27,7 @@ interface EventStats {
   warning: number
   emergency: number
   acknowledged: number
+  known: number
 }
 
 interface EventGroup {
@@ -39,6 +41,7 @@ interface EventGroup {
   latest_created_at: string | null
   resolved?: boolean
   is_acknowledged?: boolean
+  is_known?: boolean
 }
 
 const SEVERITY_STYLES: Record<string, string> = {
@@ -73,10 +76,29 @@ const Events: React.FC = () => {
   const [analyzeGroup, setAnalyzeGroup]     = useState<EventGroup | null>(null)
   const [analysisText, setAnalysisText]     = useState('')
   const [isAnalyzing, setIsAnalyzing]       = useState(false)
+  const [incidentModal, setIncidentModal]   = useState<{ event_ids: number[]; group_title?: string } | null>(null)
+  const [incidentForm, setIncidentForm]     = useState({ title: '', description: '', severity: 'medium', assigned_to: '' })
   const analyzeModel = localStorage.getItem('chat_selected_model') || 'llama3.2:3b'
   const analyzeAbortRef                     = useRef<AbortController | null>(null)
   const [scanResult, setScanResult]         = useState<{total_servers:number; servers_with_logs:number; total_saved:number; details:any[]} | null>(null)
   const queryClient = useQueryClient()
+
+  const createIncident = useMutation({
+    mutationFn: async (payload: { title: string; description: string; severity: string; assigned_to: string; related_events: number[] }) => {
+      const res = await fetch(`${API_BASE_URL}/incidents/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, source: 'manual' })
+      })
+      if (!res.ok) throw new Error('Incident oluşturulamadı')
+      return res.json()
+    },
+    onSuccess: (data) => {
+      setIncidentModal(null)
+      alert(`✅ Incident oluşturuldu! ID: ${data.id}\n\nIncidents sayfasından takip edebilirsiniz.`)
+    },
+    onError: () => alert('❌ Incident oluşturulamadı')
+  })
 
 
   const paramsBase = () => {
@@ -133,7 +155,7 @@ const Events: React.FC = () => {
     queryKey: ['eventStats'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/events/stats`)
-      if (!res.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0 }
+      if (!res.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return res.json()
     },
     refetchInterval: 20000
@@ -191,9 +213,23 @@ const Events: React.FC = () => {
     onSuccess: invalidate
   })
 
+  const knownEvent = useMutation({
+    mutationFn: async (id: number) => {
+      await fetch(`${API_BASE_URL}/events/${id}/known`, { method: 'POST' })
+    },
+    onSuccess: invalidate
+  })
+
   const resolveEvent = useMutation({
     mutationFn: async (id: number) => {
       await fetch(`${API_BASE_URL}/events/${id}/resolve`, { method: 'POST' })
+    },
+    onSuccess: invalidate
+  })
+
+  const unresolveEvent = useMutation({
+    mutationFn: async (id: number) => {
+      await fetch(`${API_BASE_URL}/events/${id}/unresolve`, { method: 'POST' })
     },
     onSuccess: invalidate
   })
@@ -282,7 +318,7 @@ const Events: React.FC = () => {
     [...selectedGroups].flatMap(i => sortedGroups[i]?.event_ids ?? [])
 
   // Grup toplu işlem
-  const groupBulkAction = async (action: 'acknowledge' | 'resolve' | 'delete') => {
+  const groupBulkAction = async (action: 'acknowledge' | 'known' | 'resolve' | 'unresolve' | 'delete') => {
     const ids = selectedGroupEventIds()
     if (!ids.length) return
     if (action === 'delete') {
@@ -323,7 +359,7 @@ const Events: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt, use_rag: true, model: analyzeModel }),
+        body: JSON.stringify({ message: prompt, use_rag: true, model: analyzeModel, skip_server_context: true }),
         signal: ctrl.signal
       })
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
@@ -375,14 +411,15 @@ const Events: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
         {[
           { label: 'Toplam',     value: stats?.total || 0,        color: 'from-blue-500 to-blue-600',     icon: '📋' },
           { label: 'Çözülmemiş', value: stats?.unresolved || 0,   color: 'from-orange-500 to-orange-600', icon: '⏳' },
           { label: 'Kritik',     value: stats?.critical || 0,     color: 'from-red-500 to-red-600',       icon: '🔴' },
           { label: 'Emergency',  value: stats?.emergency || 0,    color: 'from-pink-500 to-pink-600',     icon: '🚨' },
           { label: 'Uyarı',      value: stats?.warning || 0,      color: 'from-yellow-500 to-yellow-600', icon: '🟡' },
-          { label: 'Onaylandı',  value: stats?.acknowledged || 0, color: 'from-green-500 to-green-600',   icon: '👁' },
+          { label: 'İncelemede',  value: stats?.acknowledged || 0, color: 'from-green-500 to-green-600',   icon: '👁' },
+          { label: 'Bilinen Olay', value: stats?.known || 0, color: 'from-teal-500 to-teal-600', icon: '🧠' },
         ].map((s, i) => (
           <div key={i} className="bg-slate-800 rounded-xl border border-slate-700 p-3">
             <div className="flex items-center justify-between">
@@ -517,16 +554,32 @@ const Events: React.FC = () => {
           <span className="text-blue-400 text-sm font-medium">{selectedIds.size} event seçili</span>
           <button onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })} disabled={bulkAction.isPending}
             className="px-3 py-1.5 text-xs bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/20 disabled:opacity-50">
-            👁 Toplu Onayla
+            👁 Toplu İncelemeye Al
+          </button>
+          <button onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })} disabled={bulkAction.isPending}
+            className="px-3 py-1.5 text-xs bg-teal-500/10 text-teal-400 border border-teal-500/30 rounded-lg hover:bg-teal-500/20 disabled:opacity-50">
+            🧠 Bilinen Olay
           </button>
           <button onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })} disabled={bulkAction.isPending}
             className="px-3 py-1.5 text-xs bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/20 disabled:opacity-50">
-            ✅ Toplu Çöz
+            ✅ Toplu Kapat
+          </button>
+          <button onClick={() => bulkAction.mutate({ action: 'unresolve', ids: [...selectedIds] })} disabled={bulkAction.isPending}
+            className="px-3 py-1.5 text-xs bg-orange-500/10 text-orange-400 border border-orange-500/30 rounded-lg hover:bg-orange-500/20 disabled:opacity-50">
+            ↩ Yeniden Aç
           </button>
           <button onClick={() => { if (confirm(`${selectedIds.size} event silinecek. Emin misiniz?`)) bulkDelete.mutate([...selectedIds]) }}
             disabled={bulkDelete.isPending}
             className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20 disabled:opacity-50">
             🗑️ Toplu Sil
+          </button>
+          <button onClick={() => {
+            const firstEvent = events.find(e => selectedIds.has(e.id))
+            setIncidentForm({ title: firstEvent ? firstEvent.title : 'Yeni Incident', description: '', severity: 'medium', assigned_to: '' })
+            setIncidentModal({ event_ids: [...selectedIds] })
+          }}
+            className="px-3 py-1.5 text-xs bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-lg hover:bg-purple-500/20">
+            🚨 Incident Oluştur
           </button>
           <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-slate-400 hover:text-white">Seçimi Kaldır</button>
         </div>
@@ -555,8 +608,9 @@ const Events: React.FC = () => {
                     </span>
                     {ev.server_name && <span className="text-[10px] text-purple-400 font-mono">{ev.server_name}</span>}
                     <span className="text-[10px] text-slate-400 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{ev.event_type}</span>
-                    {ev.resolved && <span className="text-[10px] text-green-400">✅ Çözüldü</span>}
-                    {ev.is_acknowledged && !ev.resolved && <span className="text-[10px] text-yellow-400">👁 Onaylandı</span>}
+                    {ev.resolved && <span className="text-[10px] text-green-400">✅ Kapatüldü</span>}
+                    {ev.is_acknowledged && !ev.resolved && <span className="text-[10px] text-yellow-400">👁 İncelemede</span>}
+                    {(ev as any).is_known && !ev.resolved && <span className="text-[10px] text-teal-400">🧠 Bilinen Olay</span>}
                     <span className="ml-auto text-[10px] text-slate-500">
                       {ev.created_at ? new Date(ev.created_at).toLocaleString('tr-TR') : '-'}
                     </span>
@@ -590,15 +644,32 @@ const Events: React.FC = () => {
                   <div className="ml-auto flex gap-2">
                     <button onClick={() => groupBulkAction('acknowledge')}
                       className="px-3 py-1 text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded hover:bg-yellow-500/30">
-                      👁 Tümünü Onayla
+                      👁 Tümünü İncelemeye Al
+                    </button>
+                    <button onClick={() => groupBulkAction('known')}
+                      className="px-3 py-1 text-xs bg-teal-500/20 text-teal-300 border border-teal-500/30 rounded hover:bg-teal-500/30">
+                      🧠 Bilinen Olay
                     </button>
                     <button onClick={() => groupBulkAction('resolve')}
                       className="px-3 py-1 text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded hover:bg-green-500/30">
-                      ✅ Tümünü Çöz
+                      ✅ Tümünü Kapat
+                    </button>
+                    <button onClick={() => groupBulkAction('unresolve')}
+                      className="px-3 py-1 text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/30">
+                      ↩ Yeniden Aç
                     </button>
                     <button onClick={() => groupBulkAction('delete')}
                       className="px-3 py-1 text-xs bg-red-500/20 text-red-300 border border-red-500/30 rounded hover:bg-red-500/30">
                       🗑 Tümünü Sil
+                    </button>
+                    <button onClick={() => {
+                      const ids = selectedGroupEventIds()
+                      const title = Array.from(selectedGroups).map(i => sortedGroups[i]?.title).filter(Boolean).join(', ')
+                      setIncidentForm({ title: title || 'Çoklu Grup Incident', description: '', severity: 'medium', assigned_to: '' })
+                      setIncidentModal({ event_ids: ids })
+                    }}
+                      className="px-3 py-1 text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-500/30">
+                      🚨 Incident Oluştur
                     </button>
                     <button onClick={() => setSelectedGroups(new Set())}
                       className="px-3 py-1 text-xs bg-slate-600 text-slate-300 border border-slate-500 rounded hover:bg-slate-500">
@@ -677,12 +748,29 @@ const Events: React.FC = () => {
                         </button>
                         <button onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids })}
                           className="px-2 py-1 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-600/20 rounded hover:bg-yellow-500/20 transition-colors whitespace-nowrap">
-                          👁 Onayla
+                          👁 İncelemeye Al
+                        </button>
+                        <button onClick={() => bulkAction.mutate({ action: 'known', ids: grp.event_ids })}
+                          className="px-2 py-1 text-[10px] bg-teal-500/10 text-teal-400 border border-teal-600/20 rounded hover:bg-teal-500/20 transition-colors whitespace-nowrap">
+                          🧠 Bilinen Olay
                         </button>
                         <button onClick={() => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids })}
                           className="px-2 py-1 text-[10px] bg-green-500/10 text-green-400 border border-green-600/20 rounded hover:bg-green-500/20 transition-colors whitespace-nowrap">
-                          ✅ Çöz
+                          ✅ Kapat
                         </button>
+                        <button onClick={() => {
+                          setIncidentForm({ title: grp.title, description: `${grp.count} event içeren grup`, severity: grp.severity === 'emergency' ? 'critical' : grp.severity, assigned_to: '' })
+                          setIncidentModal({ event_ids: grp.event_ids, group_title: grp.title })
+                        }}
+                          className="px-2 py-1 text-[10px] bg-purple-500/10 text-purple-400 border border-purple-600/20 rounded hover:bg-purple-500/20 transition-colors whitespace-nowrap">
+                          🚨 Incident
+                        </button>
+                        {grp.resolved && (
+                          <button onClick={() => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids })}
+                            className="px-2 py-1 text-[10px] bg-orange-500/10 text-orange-400 border border-orange-600/20 rounded hover:bg-orange-500/20 transition-colors whitespace-nowrap">
+                            ↩ Yeniden Aç
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -745,9 +833,17 @@ const Events: React.FC = () => {
                       </td>
                       <td className="px-3 py-3 text-xs text-slate-500">{event.source || '-'}</td>
                       <td className="px-3 py-3">
-                        {event.resolved ? <span className="text-green-400 text-[10px] font-medium">✅ Çözüldü</span>
-                          : event.is_acknowledged ? <span className="text-yellow-400 text-[10px] font-medium">👁 Onaylandı</span>
-                          : <span className="text-red-400 text-[10px] font-medium">⏳ Bekliyor</span>}
+                        {event.resolved
+                          ? <span className="flex items-center gap-1">
+                              <span className="text-green-400 text-[10px] font-medium">✅ Kapatüldü</span>
+                              <button onClick={() => unresolveEvent.mutate(event.id)}
+                                className="text-[9px] text-slate-500 hover:text-orange-400 border border-slate-600 hover:border-orange-500/40 px-1 py-0.5 rounded transition-colors" title="Yeniden Aç">
+                                ↩
+                              </button>
+                            </span>
+                          : event.is_known ? <span className="text-teal-400 text-[10px] font-medium">🧠 Bilinen Olay</span>
+                          : event.is_acknowledged ? <span className="text-yellow-400 text-[10px] font-medium">👁 İncelemede</span>
+                          : <span className="text-red-400 text-[10px] font-medium">⏳ Yeni</span>}
                       </td>
                       <td className="px-3 py-3 text-[10px] text-slate-500 whitespace-nowrap">
                         {event.created_at ? new Date(event.created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
@@ -762,8 +858,14 @@ const Events: React.FC = () => {
                           )}
                           {!event.is_acknowledged && !event.resolved && (
                             <button onClick={() => ackEvent.mutate(event.id)}
-                              className="px-2 py-1 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded hover:bg-yellow-500/20">
+                              className="px-2 py-1 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded hover:bg-yellow-500/20" title="İncelemeye Al">
                               👁
+                            </button>
+                          )}
+                          {!event.is_known && !event.resolved && (
+                            <button onClick={() => knownEvent.mutate(event.id)}
+                              className="px-2 py-1 text-[10px] bg-teal-500/10 text-teal-400 border border-teal-500/30 rounded hover:bg-teal-500/20" title="Bilinen Olay">
+                              🧠
                             </button>
                           )}
                           {!event.resolved && (
@@ -872,13 +974,110 @@ const Events: React.FC = () => {
               <div className="flex gap-2">
                 <button onClick={() => { bulkAction.mutate({ action: 'acknowledge', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
                   className="px-3 py-1.5 text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded hover:bg-yellow-500/30">
-                  👁 Onayla
+                  👁 İncelemeye Al
+                </button>
+                <button onClick={() => { bulkAction.mutate({ action: 'known', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
+                  className="px-3 py-1.5 text-xs bg-teal-500/20 text-teal-300 border border-teal-500/30 rounded hover:bg-teal-500/30">
+                  🧠 Bilinen Olay
                 </button>
                 <button onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
                   className="px-3 py-1.5 text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded hover:bg-green-500/30">
-                  ✅ Çözüldü İşaretle
+                  ✅ Kapat
+                </button>
+                <button onClick={() => { bulkAction.mutate({ action: 'unresolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
+                  className="px-3 py-1.5 text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/30">
+                  ↩ Yeniden Aç
+                </button>
+                <button onClick={() => {
+                  setIncidentForm({ title: analyzeGroup.title, description: analysisText.slice(0, 300) || `${analyzeGroup.count} event içeren grup`, severity: analyzeGroup.severity === 'emergency' ? 'critical' : analyzeGroup.severity, assigned_to: '' })
+                  setIncidentModal({ event_ids: analyzeGroup.event_ids, group_title: analyzeGroup.title })
+                }}
+                  className="px-3 py-1.5 text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-500/30">
+                  🚨 Incident Oluştur
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Incident Oluştur Modal */}
+      {incidentModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+              <div>
+                <h2 className="text-white font-semibold text-lg">🚨 Incident Oluştur</h2>
+                <p className="text-slate-400 text-xs mt-0.5">{incidentModal.event_ids.length} event bu incident'a bağlanacak</p>
+              </div>
+              <button onClick={() => setIncidentModal(null)} className="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Başlık *</label>
+                <input
+                  value={incidentForm.title}
+                  onChange={e => setIncidentForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder="Incident başlığı..."
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Açıklama</label>
+                <textarea
+                  value={incidentForm.description}
+                  onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="Incident açıklaması..."
+                  rows={3}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500 resize-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Önem Derecesi</label>
+                  <select
+                    value={incidentForm.severity}
+                    onChange={e => setIncidentForm(f => ({ ...f, severity: e.target.value }))}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500">
+                    <option value="low">🔵 Low</option>
+                    <option value="medium">🟡 Medium</option>
+                    <option value="high">🟠 High</option>
+                    <option value="critical">🔴 Critical</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Atanan Kişi</label>
+                  <input
+                    value={incidentForm.assigned_to}
+                    onChange={e => setIncidentForm(f => ({ ...f, assigned_to: e.target.value }))}
+                    placeholder="İsim..."
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-3">
+                <p className="text-xs text-slate-400 mb-1">Bağlanacak Eventler</p>
+                <p className="text-white text-sm font-mono">{incidentModal.event_ids.join(', ')}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 p-5 border-t border-slate-700">
+              <button onClick={() => setIncidentModal(null)}
+                className="px-4 py-2 text-sm text-slate-400 border border-slate-600 rounded-lg hover:bg-slate-700">
+                İptal
+              </button>
+              <button
+                disabled={!incidentForm.title.trim() || createIncident.isPending}
+                onClick={() => createIncident.mutate({
+                  title: incidentForm.title,
+                  description: incidentForm.description,
+                  severity: incidentForm.severity,
+                  assigned_to: incidentForm.assigned_to,
+                  related_events: incidentModal.event_ids
+                })}
+                className="flex-1 px-4 py-2 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                {createIncident.isPending ? '⏳ Oluşturuluyor...' : '🚨 Incident Oluştur'}
+              </button>
             </div>
           </div>
         </div>

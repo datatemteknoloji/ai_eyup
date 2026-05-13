@@ -1,0 +1,46 @@
+---
+description: Frontend değişikliklerinden sonra build ve deploy adımları
+globs: frontend/**/*.tsx,frontend/**/*.ts,frontend/**/*.css
+alwaysApply: false
+---
+
+# Frontend Deployment Kuralı
+
+## ÖNEMLİ: `restart` YETERSİZ — Production build zorunlu
+
+Frontend container **nginx + production build** çalıştırır.
+`docker compose restart frontend` sadece nginx'i yeniden başlatır, JS kodunu **DERLEMEZ**.
+
+## Zorunlu Adımlar (sırayla)
+
+Herhangi bir frontend dosyası değiştirildiğinde:
+
+```bash
+# 1. Yeniden build et (her zaman --no-cache kullan, aksi halde Docker eski kodu kullanır)
+docker compose build --no-cache frontend
+
+# 2. Yeni image'ı ayağa kaldır
+docker compose up -d frontend
+```
+
+Bu iki komut birlikte çalıştırılabilir:
+```bash
+cd /home/datatem/ainew && docker compose build --no-cache frontend && docker compose up -d frontend
+```
+
+## Doğrulama
+
+Build sonrası bundle hash'inin değiştiğini doğrula:
+```bash
+docker exec server_management_frontend grep -o 'src="/assets/index-[^"]*\.js"' /usr/share/nginx/html/index.html
+```
+Hash değişmediyse kod derlenmemiştir — `--no-cache` ile tekrar dene.
+
+## Kullanıcıya Hatırlat
+
+Build sonrası kullanıcıya şunu söyle:
+> Tarayıcınızda **Ctrl+Shift+R** (Mac: Cmd+Shift+R) ile hard refresh yapın.
+
+## İstisna
+
+`docker compose restart frontend` YALNIZCA nginx config değiştiğinde yeterlidir.

@@ -11,6 +11,7 @@ from datetime import datetime
 from app.core.database import get_db
 from app.models.event import SystemEvent
 from app.models.server import Server
+from app.services.incident_auto import auto_create_or_link_incident
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,7 +29,7 @@ class EventCreate(BaseModel):
 
 class BulkActionRequest(BaseModel):
     event_ids: List[int]
-    action: str  # "acknowledge", "resolve"
+    action: str  # "acknowledge", "resolve", "known", "unresolve"
 
 
 def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
@@ -43,6 +44,7 @@ def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
         "description": e.description,
         "raw_data": e.raw_data,
         "is_acknowledged": e.is_acknowledged,
+        "is_known": getattr(e, "is_known", False),
         "resolved": e.resolved,
         "created_at": e.created_at.isoformat() if e.created_at else None
     }
@@ -57,13 +59,16 @@ async def event_stats(db: Session = Depends(get_db)):
     warning = db.query(SystemEvent).filter(SystemEvent.severity == "warning", SystemEvent.resolved == False).count()
     emergency = db.query(SystemEvent).filter(SystemEvent.severity == "emergency", SystemEvent.resolved == False).count()
     acknowledged = db.query(SystemEvent).filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()
+    from sqlalchemy import and_
+    known = db.query(SystemEvent).filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()
     return {
         "total": total,
         "unresolved": unresolved,
         "critical": critical,
         "warning": warning,
         "emergency": emergency,
-        "acknowledged": acknowledged
+        "acknowledged": acknowledged,
+        "known": known
     }
 
 
@@ -133,11 +138,14 @@ async def create_event(data: EventCreate, db: Session = Depends(get_db)):
     db.add(event)
     db.commit()
     db.refresh(event)
+    # Critical/emergency event -> otomatik incident
+    incident_id = auto_create_or_link_incident(db, event)
     return {
         "id": event.id,
         "title": event.title,
         "severity": event.severity,
-        "created_at": event.created_at.isoformat() if event.created_at else None
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+        "auto_incident_id": incident_id
     }
 
 
@@ -155,12 +163,32 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
             event.is_acknowledged = True
             event.acknowledged_at = now
             count += 1
+        elif data.action == "known" and not getattr(event, "is_known", False):
+            event.is_known = True
+            event.known_at = now
+            count += 1
         elif data.action == "resolve" and not event.resolved:
             event.resolved = True
             event.resolved_at = now
             count += 1
+        elif data.action == "unresolve" and event.resolved:
+            event.resolved = False
+            event.resolved_at = None
+            count += 1
     db.commit()
     return {"success": True, "affected": count, "message": f"{count} event güncellendi"}
+
+
+@router.post("/{event_id}/known")
+async def mark_event_known(event_id: int, db: Session = Depends(get_db)):
+    """Event'i Bilgim Dahilinde olarak işaretle"""
+    event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event bulunamadı")
+    event.is_known = True
+    event.known_at = datetime.utcnow()
+    db.commit()
+    return {"success": True, "message": "Bilgim dahilinde olarak işaretlendi"}
 
 
 @router.post("/{event_id}/acknowledge")
@@ -185,6 +213,18 @@ async def resolve_event(event_id: int, db: Session = Depends(get_db)):
     event.resolved_at = datetime.utcnow()
     db.commit()
     return {"success": True, "message": "Event çözüldü olarak işaretlendi"}
+
+
+@router.post("/{event_id}/unresolve")
+async def unresolve_event(event_id: int, db: Session = Depends(get_db)):
+    """Event'i tekrar açık duruma al (çözülmedi)"""
+    event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event bulunamadı")
+    event.resolved = False
+    event.resolved_at = None
+    db.commit()
+    return {"success": True, "message": "Event yeniden açıldı"}
 
 
 @router.delete("/{event_id}")
@@ -294,6 +334,7 @@ async def list_events_grouped(
                 "latest_created_at": last_seen_val.isoformat() if last_seen_val else None,
                 "resolved": e.resolved,
                 "is_acknowledged": e.is_acknowledged,
+                "is_known": getattr(e, "is_known", False),
             }
         groups_map[key]["event_ids"].append(e.id)
         if last_seen_val:

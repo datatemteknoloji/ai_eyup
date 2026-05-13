@@ -53,6 +53,8 @@ services:
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
       - /var/lib/server_management/chroma:/var/lib/server_management/chroma
+      - /var/lib/server_management/repos:/app/repos
+      - /var/lib/server_management/uploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy

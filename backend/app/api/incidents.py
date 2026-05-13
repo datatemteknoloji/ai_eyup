@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import httpx
 from app.core.database import get_db
-from app.core.config import settings
+from app.core.config import settings, get_active_model
 from app.models.event import Incident, SystemEvent
 from app.models.server import Server
 
@@ -260,13 +260,13 @@ Lütfen şu formatta analiz yap:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
-                json={"model": settings.OLLAMA_DEFAULT_MODEL, "prompt": prompt, "stream": False}
+                json={"model": get_active_model(db), "prompt": prompt, "stream": False}
             )
             if response.status_code == 200:
                 rca_text = response.json().get("response", "Analiz yapılamadı")
                 inc.rca_result = {
                     "analysis": rca_text,
-                    "model": settings.OLLAMA_DEFAULT_MODEL,
+                    "model": get_active_model(db),
                     "analyzed_at": datetime.utcnow().isoformat()
                 }
                 inc.root_cause = rca_text[:500]  # İlk 500 karakter özet

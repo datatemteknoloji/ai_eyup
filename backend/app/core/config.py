@@ -15,11 +15,25 @@ class Settings:
     )
     
     # Ollama AI - Docker container'dan host'a erişim için
-    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://192.168.1.166:11434")
-    OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))  # 300s → 60s
+    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://192.168.1.222:11434")
+    OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
     OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "llama3.2:3b")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_AUTO_MODEL_ENABLED: bool = os.getenv("OLLAMA_AUTO_MODEL_ENABLED", "true").lower() == "true"
+
+    # Harici AI Sağlayıcıları (isteğe bağlı - API anahtarı varsa kullanılır)
+    # Groq - Ücretsiz, çok hızlı (llama3-70b-8192, mixtral-8x7b, gemma2-9b-it)
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+    # OpenAI - GPT-4o, GPT-4o-mini
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_URL: str = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions")
+    # Anthropic - Claude 3.5 Sonnet/Haiku
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_API_URL: str = "https://api.anthropic.com/v1/messages"
+    # OpenRouter - 100+ model tek API (openai/gpt-4o, anthropic/claude-3.5-sonnet, vs.)
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_API_URL: str = "https://openrouter.ai/api/v1/chat/completions"
 
     # RAG (ChromaDB)
     RAG_CHROMA_PATH: str = os.getenv("RAG_CHROMA_PATH", "/var/lib/server_management/chroma")
@@ -55,3 +69,15 @@ class Settings:
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
 
 settings = Settings()
+
+
+def get_active_model(db) -> str:
+    """DB'den seçilen aktif Ollama modelini okur. Yoksa config default'una döner."""
+    try:
+        from app.models.app_settings import AppSettings
+        row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
+        if row and row.value:
+            return row.value
+    except Exception:
+        pass
+    return settings.OLLAMA_DEFAULT_MODEL

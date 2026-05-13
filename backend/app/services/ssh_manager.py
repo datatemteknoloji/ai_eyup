@@ -52,7 +52,7 @@ class SSHManager:
                         port=self.port,
                         username=self.username,
                         pkey=pkey,
-                        timeout=10,
+                        timeout=5,
                         allow_agent=False,
                         look_for_keys=False
                     )
@@ -66,7 +66,7 @@ class SSHManager:
                     port=self.port,
                     username=self.username,
                     password=self.password,
-                    timeout=10,
+                    timeout=5,
                     allow_agent=False,
                     look_for_keys=False
                 )
@@ -82,7 +82,7 @@ class SSHManager:
             logger.error(f"❌ SSH bağlantı hatası ({self.host}): {e}")
             return False
     
-    def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 30) -> Tuple[bool, str, str]:
+    def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 15) -> Tuple[bool, str, str]:
         """
         Komut çalıştır
         Returns: (success, stdout, stderr)

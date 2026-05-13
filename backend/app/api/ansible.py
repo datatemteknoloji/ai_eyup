@@ -199,7 +199,14 @@ async def launch_awx_job(req: AWXJobLaunchRequest, db: Session = Depends(get_db)
     limit = None
     if req.server_ids:
         servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
-        limit = ",".join(s.name for s in servers)
+        # Limit her zaman IP ile yapılır; isim sadece görüntü için kullanılır
+        servers_with_ip = [s for s in servers if s.ip_address and s.ip_address.strip()]
+        servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())]
+        if not servers_with_ip:
+            raise HTTPException(status_code=400, detail="Seçili sunucuların hiçbirinde IP adresi yok (AWX limit için IP gerekiyor)")
+        limit = ",".join(s.ip_address.strip() for s in servers_with_ip)
+        if servers_without_ip:
+            logger.warning("AWX limitte IP olmadığı için atlanan sunucular: %s", ", ".join(s.name for s in servers_without_ip))
     
     result = client.launch_job_template(
         template_id=req.template_id,

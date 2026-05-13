@@ -21,6 +21,9 @@ class SystemEvent(Base):
     is_acknowledged = Column(Boolean, default=False)
     acknowledged_by = Column(String(100))
     acknowledged_at = Column(DateTime(timezone=True))
+    is_known = Column(Boolean, default=False)   # Bilgim Dahilinde
+    known_by = Column(String(100))
+    known_at = Column(DateTime(timezone=True))
     resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())

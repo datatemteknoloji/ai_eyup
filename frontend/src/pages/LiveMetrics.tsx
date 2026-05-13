@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-const PROMETHEUS_URL = 'http://192.168.1.166:9090'
+const PROMETHEUS_URL = 'http://192.168.1.222:9090'
 
 /** Zaman aralığı seçenekleri: real-time (15dk) ile 8 saate kadar */
 const TIME_RANGES = [

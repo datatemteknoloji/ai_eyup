@@ -9,22 +9,29 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.models.server import Server
 from app.models.event import SystemEvent
+from app.services.incident_auto import auto_create_or_link_incident
 from app.models.credential import GlobalCredential
 from app.services.ssh_manager import SSHManager
 
 logger = logging.getLogger(__name__)
 
-JOURNALD_CMD = (
-    "journalctl -p 4 --since '10 minutes ago' --no-pager "
-    "--output=short-iso 2>/dev/null | tail -200"
-)
+def _build_journald_cmd(since_hours: int = 2) -> str:
+    return (
+        f"journalctl -p 4 --since '{since_hours} hours ago' --no-pager "
+        "--output=short-iso 2>/dev/null | tail -500"
+    )
 
-SYSLOG_CMD = (
-    "grep -E '(WARNING|ERROR|CRITICAL|FAULT|FAILED|error|warning|critical|fault|failed)' "
-    "/var/log/messages /var/log/syslog /var/log/secure 2>/dev/null | "
-    "awk -v d=\"$(date -d '10 minutes ago' '+%b %d %H:%M' 2>/dev/null || "
-    "date -v-10M '+%b %d %H:%M')\" '$0 > d' | tail -100"
-)
+def _build_syslog_cmd(since_hours: int = 2) -> str:
+    mins = since_hours * 60
+    return (
+        "grep -E '(WARNING|ERROR|CRITICAL|FAULT|FAILED|error|warning|critical|fault|failed)' "
+        "/var/log/messages /var/log/syslog /var/log/secure 2>/dev/null | "
+        f"awk -v d=\"$(date -d '{mins} minutes ago' '+%b %d %H:%M' 2>/dev/null || "
+        f"date -v-{mins}M '+%b %d %H:%M')\" '$0 > d' | tail -300"
+    )
+
+JOURNALD_CMD = _build_journald_cmd(2)
+SYSLOG_CMD = _build_syslog_cmd(2)
 
 CRITICAL_PATTERNS = [
     (re.compile(r'Out of memory|oom.kill|oom-kill', re.I), "OOM Killer", "critical"),
@@ -170,9 +177,10 @@ def _parse_log_lines(output: str) -> List[Dict[str, Any]]:
 
 def collect_server_logs(
     server: Server,
-    global_cred: Optional[GlobalCredential] = None
+    global_cred: Optional[GlobalCredential] = None,
+    since_hours: int = 2,
 ) -> List[Dict[str, Any]]:
-    """Bir sunucudan SSH ile log topla."""
+    """Bir sunucudan SSH ile log topla. since_hours: kac saatlik gecmis log."""
     conn = server.connection_config or {}
     username = conn.get("username") or (global_cred.username if global_cred else None)
     password = conn.get("password") or (global_cred.password if global_cred else None)
@@ -194,11 +202,13 @@ def collect_server_logs(
 
     logs = []
     try:
-        ok, out, err = ssh.execute_command(JOURNALD_CMD)
+        journald_cmd = _build_journald_cmd(since_hours)
+        syslog_cmd = _build_syslog_cmd(since_hours)
+        ok, out, err = ssh.execute_command(journald_cmd)
         if ok and out.strip():
             logs = _parse_log_lines(out)
         else:
-            ok2, out2, _ = ssh.execute_command(SYSLOG_CMD)
+            ok2, out2, _ = ssh.execute_command(syslog_cmd)
             if ok2 and out2.strip():
                 logs = _parse_log_lines(out2)
     finally:
@@ -212,7 +222,7 @@ def _clean_title_for_storage(line: str) -> str:
     return _strip_log_prefix(line)
 
 
-def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]]) -> int:
+def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], since_hours: int = 2) -> int:
     """Toplanan loglari SystemEvent tablosuna kaydet.
 
     Ayni normalize key ile kayit varsa yeni kayit acmaz, mevcut kaydın last_seen
@@ -221,7 +231,7 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]]) -> 
     if not logs:
         return 0
 
-    since = datetime.utcnow() - timedelta(hours=4)
+    since = datetime.utcnow() - timedelta(hours=max(since_hours + 1, 25))
     existing_rows = db.query(SystemEvent.id, SystemEvent.title).filter(
         SystemEvent.server_id == server.id,
         SystemEvent.created_at >= since,
@@ -268,12 +278,26 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]]) -> 
         saved += 1
 
     db.commit()
+    # Critical/emergency log eventler -> otomatik incident
+    if saved > 0:
+        # commit sonrası oluşan eventleri bul ve auto-incident kontrol et
+        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        new_events = db.query(SystemEvent).filter(
+            SystemEvent.server_id == server.id,
+            SystemEvent.created_at >= since_batch,
+            SystemEvent.severity.in_(['critical', 'emergency'])
+        ).all()
+        for ev in new_events:
+            try:
+                auto_create_or_link_incident(db, ev)
+            except Exception as exc:
+                logger.warning(f'[AutoIncident] event #{ev.id} hatasi: {exc}')
     return saved
 
 
-def collect_all_servers_logs(db: Session, only_ai_ready: bool = False) -> Dict[str, Any]:
-    """Tum ONLINE sunuculardan SSH ile log topla."""
-    q = db.query(Server).filter(Server.status == "ONLINE")
+def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hours: int = 2) -> Dict[str, Any]:
+    """Tum ONLINE sunuculardan SSH ile log topla. since_hours=168 ile 7 gunluk backfill yapilabilir."""
+    q = db.query(Server).filter(Server.status.in_(["ONLINE", "WARNING"]))
     if only_ai_ready:
         q = q.filter(Server.ai_ready == True)
     servers = q.all()
@@ -288,9 +312,9 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False) -> Dict[s
 
     for srv in servers:
         try:
-            logs = collect_server_logs(srv, global_cred)
+            logs = collect_server_logs(srv, global_cred, since_hours=since_hours)
             if logs:
-                saved = save_logs_to_db(db, srv, logs)
+                saved = save_logs_to_db(db, srv, logs, since_hours=since_hours)
                 total_saved += saved
                 critical_count = sum(1 for l in logs if l["severity"] == "critical")
                 error_count = sum(1 for l in logs if l["severity"] == "error")

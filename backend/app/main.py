@@ -74,6 +74,49 @@ async def startup_tasks():
     await background_task_manager.start()
     logger.info("Background tasks started (health checks every 5 minutes)")
 
+    # Yarım kalan repo sync işlerini yeniden başlat
+    try:
+        from app.core.database import SessionLocal
+        from app.models.repository import RepoSource, RepoSyncJob
+        from app.api.repositories import _executor
+        from app.services.repo_sync_service import run_repo_sync
+        from app.services.rhsm_sync_service import run_rhsm_sync
+        from datetime import datetime, timezone
+
+        db = SessionLocal()
+        stuck = db.query(RepoSource).filter(
+            RepoSource.sync_status == "syncing"
+        ).all()
+
+        resumed = 0
+        for repo in stuck:
+            # Eski "running/pending" job'ı failed yap, yeni job aç
+            old_jobs = db.query(RepoSyncJob).filter(
+                RepoSyncJob.repo_id == repo.id,
+                RepoSyncJob.status.in_(["running", "pending"])
+            ).all()
+            for j in old_jobs:
+                j.status = "failed"
+                j.log = (j.log or "") + "\n[Sistem yeniden başlatıldı — otomatik devam]"
+
+            new_job = RepoSyncJob(repo_id=repo.id, status="pending")
+            db.add(new_job)
+            db.commit()
+            db.refresh(new_job)
+
+            if repo.sync_method == "rhsm":
+                _executor.submit(run_rhsm_sync, repo.id, new_job.id)
+            else:
+                _executor.submit(run_repo_sync, repo.id, new_job.id, False)
+            resumed += 1
+            logger.info(f"Repo sync devam ettiriliyor: {repo.name}")
+
+        db.close()
+        if resumed:
+            logger.info(f"✅ {resumed} yarım kalan repo sync yeniden başlatıldı")
+    except Exception as e:
+        logger.warning(f"Repo sync resume hatası: {e}")
+
     # RAG: Varsayılan metrik açıklamalarını arka planda seed et (Ollama hazır olmayabilir)
     async def _rag_seed_metrics():
         try:
@@ -96,6 +139,17 @@ async def shutdown_tasks():
 @app.get("/")
 async def root():
     return {"message": "Server Management API", "version": "1.0.0"}
+
+# ─── Local repository static file serving ─────────────────────────────────────
+try:
+    from fastapi.staticfiles import StaticFiles
+    import os
+    _repos_dir = "/app/repos"
+    os.makedirs(_repos_dir, exist_ok=True)
+    app.mount("/repos", StaticFiles(directory=_repos_dir, html=False), name="repos")
+    logger.info(f"Local repo serve: /repos → {_repos_dir}")
+except Exception as _e:
+    logger.warning(f"Could not mount /repos static dir: {_e}")
 
 @app.get("/health")
 async def health():

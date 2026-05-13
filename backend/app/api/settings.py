@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
 from app.core.database import get_db
@@ -320,11 +321,91 @@ async def get_settings(db: Session = Depends(get_db)):
     """Genel ayarları getir"""
     from app.core.config import settings
     default_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+    # DB'den aktif model oku, yoksa config default'u kullan
+    model_row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
+    active_model = model_row.value if model_row and model_row.value else settings.OLLAMA_DEFAULT_MODEL
+    metric_retention_row = db.query(AppSettings).filter(AppSettings.key == "metric_retention_days").first()
+    try:
+        metric_retention_days = int(metric_retention_row.value) if metric_retention_row and metric_retention_row.value else 30
+    except ValueError:
+        metric_retention_days = 30
     return {
         "ollama_url": settings.OLLAMA_URL,
-        "ollama_model": settings.OLLAMA_DEFAULT_MODEL,
+        "ollama_model": active_model,
         "prometheus_url": settings.PROMETHEUS_URL,
+        "metric_retention_days": metric_retention_days,
         "default_credential": _cred_to_response(default_cred) if default_cred else None
+    }
+
+
+@router.put("/ollama-model")
+async def set_ollama_model(payload: dict, db: Session = Depends(get_db)):
+    """Aktif Ollama modelini kaydet"""
+    model = (payload.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="Model adı boş olamaz")
+    row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
+    if row:
+        row.value = model
+    else:
+        db.add(AppSettings(key="ollama_active_model", value=model))
+    db.commit()
+    logger.info(f"Aktif Ollama modeli guncellendi: {model}")
+    return {"success": True, "model": model}
+
+
+@router.put("/metric-retention")
+async def set_metric_retention(payload: dict, db: Session = Depends(get_db)):
+    """MetricData saklama süresini güncelle ve eski metrikleri temizle."""
+    days_raw = payload.get("days")
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="days sayı olmalıdır")
+
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days 1 ile 365 arasında olmalıdır")
+
+    # App setting kaydet
+    row = db.query(AppSettings).filter(AppSettings.key == "metric_retention_days").first()
+    if row:
+        row.value = str(days)
+    else:
+        db.add(AppSettings(key="metric_retention_days", value=str(days)))
+    db.commit()
+
+    # 1) Eski kayıtları anında temizle (kullanıcının beklediği davranış)
+    delete_sql = text(
+        "DELETE FROM metric_data WHERE timestamp < (NOW() AT TIME ZONE 'UTC') - (:days || ' days')::interval"
+    )
+    deleted_result = db.execute(delete_sql, {"days": days})
+    deleted_rows = int(deleted_result.rowcount or 0)
+    db.commit()
+
+    # 2) Timescale retention policy varsa güncelle
+    policy_updated = False
+    policy_error = None
+    try:
+        db.execute(text("SELECT remove_retention_policy('metric_data', if_exists => TRUE);"))
+        db.execute(
+            text(
+                "SELECT add_retention_policy('metric_data', (:days || ' days')::interval, if_not_exists => TRUE);"
+            ),
+            {"days": days},
+        )
+        db.commit()
+        policy_updated = True
+    except Exception as e:
+        # Timescale extension yoksa veya policy çağrısı hata verirse sadece manuel delete ile devam.
+        db.rollback()
+        policy_error = str(e)
+
+    return {
+        "success": True,
+        "metric_retention_days": days,
+        "deleted_rows": deleted_rows,
+        "policy_updated": policy_updated,
+        "policy_error": policy_error,
     }
 
 
@@ -381,3 +462,27 @@ async def config_restore(data: ConfigRestoreRequest, db: Session = Depends(get_d
 
     db.commit()
     return {"success": True, "message": f"{restored} ayar geri yüklendi", "restored": restored}
+
+
+class AIProviderRequest(BaseModel):
+    provider: str  # groq, openai, openrouter, anthropic
+    api_key: str
+
+@router.post("/ai-provider")
+async def set_ai_provider_key(data: AIProviderRequest):
+    """Harici AI sağlayıcı API anahtarını ortam değişkenine yazar (runtime)."""
+    import os
+    from app.core.config import settings
+    provider_map = {
+        "groq": ("GROQ_API_KEY", "GROQ_API_KEY"),
+        "openai": ("OPENAI_API_KEY", "OPENAI_API_KEY"),
+        "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+        "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
+    }
+    if data.provider not in provider_map:
+        raise HTTPException(status_code=400, detail=f"Bilinmeyen sağlayıcı: {data.provider}")
+
+    env_key, attr = provider_map[data.provider]
+    os.environ[env_key] = data.api_key
+    setattr(settings, attr, data.api_key)
+    return {"success": True, "provider": data.provider, "message": f"{data.provider} API anahtarı güncellendi"}

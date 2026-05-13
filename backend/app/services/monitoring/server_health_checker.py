@@ -15,7 +15,7 @@ class ServerHealthChecker:
     """Sunucu sağlık durumunu kontrol eden servis"""
 
     @staticmethod
-    def ping_server(ip_address: str, port: int = 22, timeout: int = 4) -> Tuple[bool, str]:
+    def ping_server(ip_address: str, port: int = 22, timeout: int = 2) -> Tuple[bool, str]:
         """TCP bağlantı dener; (başarılı_mı, hata_açıklaması) döner."""
         try:
             with socket.create_connection((ip_address, port), timeout=timeout):

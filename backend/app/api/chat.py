@@ -8,22 +8,74 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
 import logging
+import re
+import unicodedata
 import httpx
 
 from app.core.database import get_db
-from app.core.config import settings
+from app.core.config import settings, get_active_model
 from app.models.server import Server
+from app.models.hypervisor import Hypervisor
 from app.models.chat_session import ChatSession, ChatMessage
 from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
 from app.models.credential import GlobalCredential
 
 logger = logging.getLogger(__name__)
 
+def _detect_provider(model: str) -> str:
+    """Model adından sağlayıcıyı tespit et."""
+    m = (model or "").lower()
+    if m.startswith("groq:") or any(x in m for x in ["llama3-70b", "llama3-8b", "mixtral-8x7b", "gemma2-9b", "llama-3.1-70b", "llama-3.3-70b"]):
+        return "groq"
+    if m.startswith("gpt-") or m.startswith("openai/") or m.startswith("o1") or m.startswith("o3"):
+        return "openai"
+    if m.startswith("claude") or m.startswith("anthropic/"):
+        return "anthropic"
+    if "/" in m and not m.startswith("http"):
+        return "openrouter"
+    return "ollama"
+
+
+async def _stream_external_openai(client, url: str, api_key: str, model: str, prompt: str, extra_headers: dict = None):
+    """OpenAI-uyumlu API için streaming generator (Groq, OpenAI, OpenRouter)."""
+    import json as _j
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    payload = {
+        "model": model.replace("groq:", "").replace("openai/", ""),
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "max_tokens": 2048,
+    }
+    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+        if resp.status_code != 200:
+            body = await resp.aread()
+            yield f"[API Hatası {resp.status_code}: {body.decode()[:200]}]"
+            return
+        async for line in resp.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = _j.loads(data)
+                token = chunk["choices"][0]["delta"].get("content", "")
+                if token:
+                    yield token
+            except Exception:
+                continue
+
+
 router = APIRouter()
 
 
 @router.get("/models")
-async def list_available_models():
+async def list_available_models(db: Session = Depends(get_db)):
     """Ollama'da mevcut modelleri listele"""
     try:
         ollama_url = settings.OLLAMA_URL
@@ -42,13 +94,13 @@ async def list_available_models():
                 return {
                     "success": True,
                     "models": models,
-                    "default": settings.OLLAMA_DEFAULT_MODEL
+                    "default": get_active_model(db)
                 }
             else:
                 return {
                     "success": False,
                     "models": [],
-                    "default": settings.OLLAMA_DEFAULT_MODEL,
+                    "default": get_active_model(db),
                     "error": "Ollama'ya bağlanılamadı"
                 }
     except Exception as e:
@@ -56,7 +108,7 @@ async def list_available_models():
         return {
             "success": False,
             "models": [],
-            "default": settings.OLLAMA_DEFAULT_MODEL,
+            "default": get_active_model(db),
             "error": str(e)
         }
 
@@ -65,9 +117,12 @@ class ChatRequest(BaseModel):
     message: str
     server_ids: Optional[List[int]] = None
     server_id: Optional[int] = None
+    hypervisor_ids: Optional[List[int]] = None
+    hypervisor_id: Optional[int] = None
     session_id: Optional[int] = None
     model: Optional[str] = None  # Ollama model seçimi
     use_rag: Optional[bool] = True  # RAG (runbook, incident, metrik) kullanılsın mı
+    skip_server_context: Optional[bool] = False  # SSH/Prometheus context toplama, event analizi için
 
 
 class ChatResponse(BaseModel):
@@ -103,6 +158,33 @@ def _session_to_dict(session: ChatSession, message_count: int = 0) -> dict:
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         "message_count": message_count,
     }
+
+
+def _normalize_user_message_for_match(message: str) -> str:
+    msg = unicodedata.normalize("NFKD", message.lower())
+    msg = "".join(c for c in msg if not unicodedata.combining(c))
+    tr = str.maketrans("ıİşŞğĞüÜöÖçÇ", "iisSgGuUoOcC")
+    return msg.translate(tr)
+
+
+def _servers_mentioned_in_message(db: Session, message: str) -> List[Server]:
+    """Mesajda geçen name / hostname / ip ile eşleşen Server satırları."""
+    msg = _normalize_user_message_for_match(message)
+    found: List[Server] = []
+    seen: set = set()
+    for s in db.query(Server).all():
+        for c in ((s.name or "").strip(), (s.hostname or "").strip(), (s.ip_address or "").strip()):
+            if len(c) < 3:
+                continue
+            try:
+                if re.search(r"\b" + re.escape(c.lower()) + r"\b", msg):
+                    if s.id not in seen:
+                        seen.add(s.id)
+                        found.append(s)
+                    break
+            except re.error:
+                continue
+    return found
 
 
 @router.get("/sessions")
@@ -222,6 +304,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
         # Seçili sunucuları bul
         selected_servers = []
+        explicit_server_target = bool((request.server_ids and len(request.server_ids) > 0) or request.server_id or (request.hypervisor_ids and len(request.hypervisor_ids) > 0) or request.hypervisor_id)
         if request.server_ids and len(request.server_ids) > 0:
             selected_servers = (
                 db.query(Server)
@@ -242,12 +325,39 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             )
             if server:
                 selected_servers = [server]
+
+        # Hypervisor hedeflenmişse, o hypervisor(lar)a bağlı AI-ready sunucuları seç
+        if not selected_servers and request.hypervisor_ids and len(request.hypervisor_ids) > 0:
+            selected_servers = (
+                db.query(Server)
+                .filter(
+                    Server.hypervisor_id.in_(request.hypervisor_ids),
+                    Server.ai_ready == True,
+                )
+                .all()
+            )
+        elif not selected_servers and request.hypervisor_id:
+            selected_servers = (
+                db.query(Server)
+                .filter(
+                    Server.hypervisor_id == request.hypervisor_id,
+                    Server.ai_ready == True,
+                )
+                .all()
+            )
         
         # Eğer sunucu seçilmemişse tüm AI Ready sunucuları al
         if not selected_servers:
             selected_servers = db.query(Server).filter(Server.ai_ready == True).all()
         
         ai_ready_servers = db.query(Server).filter(Server.ai_ready == True).all()
+
+        mentioned = _servers_mentioned_in_message(db, message)
+        if mentioned:
+            if explicit_server_target:
+                selected_servers = list(dict.fromkeys(mentioned + selected_servers))
+            else:
+                selected_servers = mentioned
 
         server_context = ""
         if selected_servers:
@@ -263,10 +373,10 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
         # Önce Prometheus (Node Exporter metrikleri) — SSH'a gerek kalmadan çoğu metrik buradan gelir
         PROMETHEUS_KEYWORDS = [
-            'cpu', 'ram', 'memory', 'bellek', 'disk', 'network', 'ağ', 'bandwidth',
-            'uptime', 'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
+            'cpu', 'ram', 'memory', 'bellek', 'disk', 'bandwidth',
+            'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
             'kullanım', 'usage', 'durum', 'status', 'genel', 'overview', 'özet',
-            'sunucu', 'server', 'makine', 'machine', 'trafik', 'traffic',
+            'trafik', 'traffic', 'throughput',
         ]
         SSH_ONLY_KEYWORDS = [
             'log', 'journal', 'hata mesaj', 'error log', 'syslog',
@@ -277,8 +387,19 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             'installed', 'kurulu', 'paket', 'package', 'version',
             'vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz',
             'io performans', 'disk performans', 'benchmark',
+            'netstat', 'ss -', 'ip route', 'ip addr', 'ifconfig', 'arp',
+            'route', 'traceroute', 'ping', 'nmap', 'tcpdump', 'dig', 'nslookup',
+            'çıktı', 'cikti', 'output', 'komut', 'command', 'göster', 'listele',
+            'getir', 'ver', 'çalıştır', 'alırmısın', 'alabilirmisin',
+            'lsblk', 'fdisk', 'blkid', 'lspci', 'lshw', 'dmidecode',
+            'last', 'lastb', 'who', 'docker ps', 'podman ps', 'kubectl',
+            'crontab', 'cat ', 'grep ', 'tail ', 'head ', 'find ',
         ]
         # OS/kernel/sistem bilgisi → Prometheus'ta yok, SSH gerekir
+        APP_KEYWORDS = [
+            'uygulama', 'uygulamalar', 'application', 'applications',
+            'çalışıyor', 'calisiyor', 'hangi program', 'installed software',
+        ]
         SSH_SYSINFO_KEYWORDS = [
             'os', 'işletim', 'operating system', 'kernel', 'distro', 'distribution',
             'revision', 'revizyon', 'sürüm', 'release', 'versiyon',
@@ -289,15 +410,31 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             'firewall', 'firewalld', 'iptables', 'güvenlik', 'security',
             'açık port', 'open port', 'sudo', 'sudoers',
             'uname', 'kernel versiyonu', 'çekirdek versiyonu',
-        'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
-        'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
+            'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
+            'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
+            'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
+            'nslookup', 'dig', 'isim çözümleme', 'name resolution',
+            'gateway', 'ağ geçidi', 'default route', 'ip route',
         ]
         DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
         msg_lower_ctx = message.lower()
-        needs_prometheus = any(k in msg_lower_ctx for k in PROMETHEUS_KEYWORDS)
-        SERVER_TRIGGER_CTX = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
-        needs_ssh_ctx = any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX)
-        ssh_timeout_ctx = 75.0 if any(k in msg_lower_ctx for k in DEEP_PERF_KEYWORDS) else 12.0
+        needs_prometheus = any(k in msg_lower_ctx for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
+        SERVER_TRIGGER_CTX = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS + APP_KEYWORDS
+        needs_ssh_ctx = any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) and not request.skip_server_context
+        ssh_timeout_ctx = 40.0 if any(k in msg_lower_ctx for k in DEEP_PERF_KEYWORDS) else 20.0
+
+        # Kullanıcı sunucu seçmemişse yalnızca sunucu/altyapı niyeti varsa tüm AI-ready sunucuları ekle.
+        if not selected_servers and needs_ssh_ctx:
+            selected_servers = db.query(Server).filter(Server.ai_ready == True).all()
+
+        # Genel sorularda (sunucu niyeti yok + sunucu seçilmedi) otomatik sunucu bağlamı ekleme.
+        server_context = ""
+        include_server_context = bool(selected_servers) and (needs_ssh_ctx or explicit_server_target)
+        if include_server_context:
+            server_context = "Secili sunucular (gercek DB verileri):\n"
+            for s in selected_servers:
+                os_info = s.os_version or s.os_type or "Linux"
+                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
 
         prometheus_context = ""
         if needs_prometheus:
@@ -326,42 +463,60 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         
         # SSH ile gercek veri topla — sunucu keyword olmayan sohbet mesajlarında atla
         ssh_context = ""
+        all_server_contexts: List[str] = []
         try:
-            from app.services.linux_info_collector import detect_needed_groups, collect_server_info, build_server_context
             import asyncio
+            from app.services.linux_info_collector import detect_needed_groups, collect_server_info, build_server_context
             if selected_servers and (needs_ssh_ctx or (needs_prometheus and not prometheus_context)):
                 global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
-                groups = detect_needed_groups(message)
-                loop = asyncio.get_event_loop()
-                # Tüm sunuculara paralel bağlan
-                tasks = [
-                    loop.run_in_executor(None, lambda s=srv: collect_server_info(s, groups, global_cred))
-                    for srv in selected_servers
-                ]
-                done, pending = await asyncio.wait(tasks, timeout=ssh_timeout_ctx)
-                for t in pending:
-                    t.cancel()
-                    logger.warning(f"SSH paralel timeout ({ssh_timeout_ctx}s): bir sunucu yanıt vermedi")
-                all_server_contexts = []
-                for i, t in enumerate(tasks):
-                    if t in done:
-                        try:
-                            info = t.result()
-                            all_server_contexts.append(build_server_context(selected_servers[i], info))
-                        except Exception as e_srv:
-                            logger.debug(f"SSH failed for {selected_servers[i].name}: {e_srv}")
-                if all_server_contexts:
-                    ssh_context = "\n\n".join(all_server_contexts)
+                if not global_cred:
+                    global_cred = db.query(GlobalCredential).first()
+                has_any_ssh = global_cred is not None or any(
+                    (getattr(s, "connection_config", None) or {}).get("username")
+                    for s in selected_servers
+                )
+                if not has_any_ssh:
+                    logger.warning("Chat SSH: Global veya sunucu SSH bilgisi yok")
+                else:
+                    groups = detect_needed_groups(message)
+                    loop = asyncio.get_event_loop()
+                    # Paralel SSH: tüm sunucuları aynı anda sorgula, max ssh_timeout_ctx saniye bekle
+                    tasks = [
+                        loop.run_in_executor(
+                            None,
+                            lambda s=srv, g=groups, gc=global_cred: collect_server_info(s, g, gc),
+                        )
+                        for srv in selected_servers
+                    ]
+                    done, pending = await asyncio.wait(tasks, timeout=float(ssh_timeout_ctx))
+                    for t in pending:
+                        t.cancel()
+                    for i, task in enumerate(tasks):
+                        srv = selected_servers[i]
+                        if task in done:
+                            try:
+                                all_server_contexts.append(build_server_context(srv, task.result()))
+                            except Exception as e_srv:
+                                logger.warning("SSH failed for %s: %s", srv.name, e_srv)
+                                all_server_contexts.append(build_server_context(srv, {"error": str(e_srv)}))
+                        else:
+                            logger.warning("SSH zaman asimi: %s", srv.name)
+                            all_server_contexts.append(
+                                build_server_context(srv, {"error": f"SSH zaman asimi ({int(ssh_timeout_ctx)}s)"})
+                            )
+                    if all_server_contexts:
+                        ssh_context = "\n\n".join(all_server_contexts)
         except Exception as e:
             logger.warning(f"SSH info collect failed: {e}")
             ssh_context = ""
+
 
         ssh_results = []
 
         try:
             ollama_url = settings.OLLAMA_URL
             # Kullanıcının seçtiği model veya default model
-            model = request.model or settings.OLLAMA_DEFAULT_MODEL
+            model = request.model or get_active_model(db)
             # Basit ve net prompt oluştur
             context_parts = []
             # SSH'tan gelen gercek veri en oncelikli
@@ -388,6 +543,20 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                         context_parts.append("METRİK AÇIKLAMALARI:\n" + rag_ctx["metrics"].strip())
                 except Exception as rag_err:
                     logger.debug(f"RAG context atlanıyor: {rag_err}")
+
+            # Hypervisor bağlamı (seçim varsa)
+            selected_hypervisors = []
+            if request.hypervisor_ids and len(request.hypervisor_ids) > 0:
+                selected_hypervisors = db.query(Hypervisor).filter(Hypervisor.id.in_(request.hypervisor_ids)).all()
+            elif request.hypervisor_id:
+                hv = db.query(Hypervisor).filter(Hypervisor.id == request.hypervisor_id).first()
+                if hv:
+                    selected_hypervisors = [hv]
+            if selected_hypervisors:
+                hv_lines = []
+                for h in selected_hypervisors:
+                    hv_lines.append(f"- {h.name} ({h.hypervisor_type.value if h.hypervisor_type else '-'}): host={h.hostname or '-'}, ip={h.ip_address or '-'}, port={h.port or '-'}")
+                context_parts.append("SEÇİLİ HYPERVISORLAR:\n" + "\n".join(hv_lines))
 
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
@@ -452,7 +621,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                     ) % (
                         response.status_code,
                         settings.OLLAMA_URL.rstrip("/"),
-                        (request.model or settings.OLLAMA_DEFAULT_MODEL).split(":")[0],
+                        (request.model or get_active_model(db)).split(":")[0],
                     )
                     if extra:
                         error_response += "\n\n" + extra
@@ -566,33 +735,59 @@ import re as _re
 
 # Keyword → bağlamdan hangi satırları öne çıkar
 _FOCUS_PATTERNS = {
-    "selinux":    ["SELinux Durumu", "SELinux status", "getenforce", "Enforcing", "Permissive", "Disabled", "disabled"],
-    "sestatus":   ["SELinux Durumu", "SELinux status"],
-    "firewall":   ["Firewall Durumu", "firewalld", "iptables", "inactive", "active"],
-    "iptables":   ["Firewall Durumu", "iptables"],
-    "uname":     ["Kernel", "kernel_full", "kernel_version", "uname"],
-    "hostname":  ["OS", "hostname", "Hostname", "Static hostname"],
-    "free":      ["Bellek", "RAM", "Mem:", "Swap:", "free -"],
-    "free -m":   ["Bellek", "RAM", "Mem:", "Swap:"],
-    "df":        ["Disk", "Filesystem", "df -h"],
-    "df -h":     ["Disk", "Filesystem"],
-    "uptime":    ["Uptime", "load average"],
-    "kernel":     ["Kernel"],
-    "os":         ["OS", "PRETTY_NAME", "Oracle", "Red Hat", "Ubuntu", "CentOS"],
-    "revision":   ["OS", "PRETTY_NAME", "VERSION"],
-    "cpu":        ["CPU", "load average"],
-    "disk":       ["Disk", "df -h"],
-    "memory":     ["Bellek", "Memory", "free -h"],
-    "port":       ["Açık Portlar", "LISTEN"],
-    "log":        ["Hata Loglari"],
-    "servis":     ["Calisan Servisler", "Hatali Servisler"],
-    "mac":        ["MAC Adresleri", "link/ether", "ether ", "MAC"],
-    "mac adresi": ["MAC Adresleri", "link/ether", "ether "],
-    "mac address":["MAC Adresleri", "link/ether", "ether "],
-    "ifconfig":   ["ifconfig", "MAC Adresleri", "Ag Arayuzleri", "link/ether", "ether "],
-    "network":    ["Ag Arayuzleri", "MAC Adresleri", "ifconfig", "link/ether"],
-    "ethernet":   ["MAC Adresleri", "link/ether", "ether "],
-    "arp":        ["MAC Adresleri", "link/ether"],
+    # Güvenlik
+    "selinux":       ["SELinux Durumu", "SELinux status", "getenforce", "Enforcing", "Permissive", "Disabled"],
+    "sestatus":      ["SELinux Durumu", "SELinux status"],
+    "firewall":      ["Firewall", "firewalld", "iptables", "nft"],
+    "iptables":      ["Firewall", "iptables"],
+    # Kernel/OS
+    "uname":         ["Kernel", "kernel_full", "kernel_version", "uname"],
+    "kernel":        ["Kernel"],
+    "hostname":      ["OS", "hostname", "Hostname", "Static hostname"],
+    "os":            ["OS", "PRETTY_NAME", "Oracle", "Red Hat", "Ubuntu", "CentOS"],
+    "revision":      ["OS", "PRETTY_NAME", "VERSION"],
+    # Performans
+    "cpu":           ["CPU", "load average"],
+    "disk":          ["Disk", "df -h", "Inode"],
+    "memory":        ["Bellek", "Memory", "free -h"],
+    "free":          ["Bellek", "RAM", "Mem:", "Swap:"],
+    "df":            ["Disk", "Filesystem", "df -h"],
+    "uptime":        ["Uptime", "load average", "Son Önyükleme"],
+    # Ağ topoloji (SSH'dan gelir)
+    "gateway":       ["Varsayılan Ağ Geçidi", "default via", "default", "0.0.0.0", "UG"],
+    "default gw":    ["Varsayılan Ağ Geçidi", "default via", "default", "0.0.0.0", "UG"],
+    "gw":            ["Varsayılan Ağ Geçidi", "default via", "default", "0.0.0.0", "UG"],
+    "default route": ["Varsayılan Ağ Geçidi", "default via", "default"],
+    "route":         ["Yönlendirme Tablosu", "Varsayılan Ağ Geçidi", "default via"],
+    "resolv":        ["/etc/resolv.conf", "nameserver", "search", "DNS"],
+    "resolv.conf":   ["/etc/resolv.conf", "nameserver", "search"],
+    "nameserver":    ["/etc/resolv.conf", "nameserver", "DNS"],
+    "dns":           ["/etc/resolv.conf", "nameserver", "search", "DNS"],
+    "ip addr":       ["Ağ Arayüzleri", "inet "],
+    "network":       ["Ağ Arayüzleri", "MAC Adresleri", "Varsayılan Ağ Geçidi", "ifconfig"],
+    "mac":           ["MAC Adresleri", "link/ether", "ether "],
+    "mac adresi":    ["MAC Adresleri", "link/ether", "ether "],
+    "mac address":   ["MAC Adresleri", "link/ether", "ether "],
+    "ifconfig":      ["ifconfig", "MAC Adresleri", "Ağ Arayüzleri", "link/ether"],
+    "ethernet":      ["MAC Adresleri", "link/ether", "ether "],
+    "arp":           ["ARP Tablosu", "MAC Adresleri", "link/ether"],
+    "port":          ["Dinlenen Portlar", "Açık Portlar", "LISTEN"],
+    # Servis/süreç
+    "log":           ["Hata Logları", "Son Hatalar", "Auth Logları"],
+    "servis":        ["Çalışan Servisler", "Hatalı Servisler"],
+    "service":       ["Çalışan Servisler", "Hatalı Servisler"],
+    "docker":        ["Docker (Çalışan)", "Docker (Tümü)", "Docker İstatistikleri"],
+    "container":     ["Docker (Çalışan)", "Podman (Çalışan)", "Konteyner Servisleri"],
+    "konteyner":     ["Docker (Çalışan)", "Podman (Çalışan)"],
+    "ntp":           ["NTP Durumu", "NTP Kaynakları", "Zaman Senkronizasyonu", "Reference ID", "Stratum"],
+    "chrony":        ["NTP Durumu", "Reference ID", "Stratum"],
+    "sertifika":     ["Sertifika Detayları", "Sertifika Dosyaları", "notAfter", "subject"],
+    "ssl":           ["Sertifika Detayları", "OpenSSL Versiyonu"],
+    "cron":          ["Kullanıcı Cron", "/etc/crontab", "Systemd Timer"],
+    "java":          ["Java", "java_version"],
+    "python":        ["Python", "python_version"],
+    "donanım":       ["Donanım (Sistem)", "Sunucu Modeli", "PCI Aygıtlar"],
+    "hardware":      ["Donanım (Sistem)", "Sunucu Modeli", "PCI Aygıtlar"],
 }
 
 
@@ -634,10 +829,47 @@ def _extract_focused_summary(message: str, ssh_contexts: list) -> str:
     if not rows:
         return ""
 
+    # Gateway/IP gibi tek satır veriler için önceden tablo oluştur
+    # Model direkt bunu yanıtında kullanacak, yorumlamayacak
+    ml_lower = message.lower()
+    is_table_query = any(k in ml_lower for k in ["gateway", "gw", "resolv", "nameserver", "dns server", "ip adresi", "mac adresi"])
+    
+    if is_table_query:
+        # Her sunucu için tek satır değer çıkart ve tablo yap
+        table_rows = []
+        for ctx in ssh_contexts:
+            m = _re.match(r"=== (.+?) \((.+?)\) ===", ctx)
+            if not m:
+                continue
+            srv_name, srv_ip = m.group(1), m.group(2)
+            # İlgili satırları topla
+            relevant_values = []
+            for line in ctx.split("\n"):
+                for pat in matched_patterns:
+                    if pat.lower() in line.lower():
+                        # Gerçek değer satırı: label satırı değil, veri satırı al
+                        stripped = line.strip()
+                        if stripped and ":" not in stripped[:30] and stripped not in relevant_values:
+                            relevant_values.append(stripped)
+                        elif stripped.endswith(":") is False and stripped:
+                            if stripped not in relevant_values and len(stripped) > 5:
+                                relevant_values.append(stripped)
+            value = relevant_values[0] if relevant_values else "SSH verisi yok"
+            table_rows.append(f"| {srv_name} | {srv_ip} | {value} |")
+        
+        if table_rows:
+            header = "| Sunucu | IP | Değer |\n|--------|-------|-------|"
+            table = header + "\n" + "\n".join(table_rows)
+            return (
+                "SSH GERCEK VERİ TABLOSU (asagidaki degerleri AYNEN kullan, hic degistirme):\n"
+                + table + "\n\n"
+            )
+
     return (
-        "ODAKLI OZET (soruyla ilgili veriler -- BUNLARI KULLAN):\n"
+        "ODAKLI OZET (SSH'dan gelen GERCEK veriler -- kesinlikle bunlari kullan, tahmin etme):\n"
         + "\n".join(rows)
         + "\n"
+        + "UYARI: Yukardaki degerler gercek SSH ciktisidir. Farkli deger uretme, aynen goster.\n"
     )
 
 
@@ -670,29 +902,67 @@ def _build_prompt(
     collection_summary = NL.join(coll)
 
     identity = NL.join([
-        "Sen bir Linux altyapi yonetim asistanisin. Adin AINE (AI Infrastructure Engine).",
+        "Sen AINE (AI Infrastructure Engine) adinda, 15+ yillik deneyime sahip kıdemli bir Linux Sistem Yoneticisi",
+        "ve Sanallaştırma Uzmanisın (Senior Linux SysAdmin & Virtualization Engineer).",
         "",
-        "YETENEKLERIN:",
-        "- Bu sistem yonetilen sunuculara SSH ile baglanip gercek komutlar calistirabiliyor",
-        "  (sestatus, getenforce, df, ps, journalctl, vmstat, iostat vb.)",
+        "UZMANLIK ALANLARIN:",
+        "--- Linux Sistem Yonetimi ---",
+        "- Red Hat / CentOS / AlmaLinux / Rocky, Debian / Ubuntu, SUSE uzerinde derin bilgi",
+        "- systemd, journalctl, cgroups, namespaces, kernel parametreleri (sysctl)",
+        "- Performans analizi: top, htop, atop, sar, vmstat, iostat, iotop, perf, strace, lsof",
+        "- Ag yonetimi: ss, netstat, tcpdump, iperf3, ip route, firewalld, iptables, nftables",
+        "- Depolama: LVM, RAID, ZFS, ext4/xfs tuning, fstab, mount, smartctl, fdisk/parted",
+        "- Guvenlik: SELinux, AppArmor, sudo, PAM, auditd, fail2ban, OpenSSH hardening",
+        "- Paket yonetimi: rpm/dnf/yum, dpkg/apt, zypper, dependency hell cozme",
+        "- Cron, at, systemd timer'lar, log rotation (logrotate), rsyslog/journald",
+        "- Kernel tuning: vm.swappiness, net.core, fs.file-max, dirty_ratio gibi parametreler",
+        "",
+        "--- Sanallaştırma & Konteyner ---",
+        "- VMware vSphere / ESXi / vCenter: VM yonetimi, vMotion, DRS, HA, datastore, snapshot",
+        "- oVirt / RHEV / KVM: VM olusturma, live migration, storage domain, network profili",
+        "- Docker & Docker Compose: image yonetimi, network, volume, log driver, resource limit",
+        "- Temel Kubernetes: pod, deployment, service, pv/pvc sorunlari",
+        "- QEMU/libvirt: virsh komutlari, xml config, snapshot, clone",
+        "",
+        "--- Monitoring & Tanı ---",
+        "- Prometheus, Node Exporter, Alertmanager, Grafana",
+        "- Log analizi: grep/awk/sed ile pattern tespiti, anomali yorumlama",
+        "- Darboğaz tespiti: CPU steal, iowait, memory pressure, network saturation",
+        "",
+        "SISTEM YETENEKLERI:",
+        "- Yonetilen sunuculara SSH ile baglanip gercek komutlar calistirabiliyor",
+        "  (sestatus, getenforce, df, ps, journalctl, vmstat, iostat, sar, ss, netstat vb.)",
         "- Prometheus/Node Exporter uzerinden CPU, RAM, disk, network metrikleri okunabiliyor",
-        "- Gecmis konusma verileri ve runbook'lar kullanilabiliyor",
+        "- Gecmis konusma, runbook'lar ve incident kayitlari kullanilabiliyor",
         "",
         "ONEMLI: Asla 'SSH yapamam' veya 'dogrudan baglanamam' deme.",
         "Sistem SSH yapabiliyor. Eger veri gelmemisse toplanmamis demektir, toplanamaz degil.",
     ])
 
     rules = NL.join([
-        "KURALLAR:",
-        "1. BAGLAM bolumundeki gercek veriyi once kullan, kendi bilginle tahmin yapma",
-        "2. Baglam bos veya yetersizse: asagidaki formati kullan:",
-        "   '> Bu bilgi icin sunuculardan veri toplanmadi.'",
-        "   '> Simdi tekrar deneniyor... veya sunucu adini belirterek tekrar sor.'",
-        "3. ASLA 'SSH yapamam', 'dogrudan baglanamam', 'veri tabanindan bakiyorum' yazma",
-        "   Dogru cumle: 'Bu sorgu icin SSH verisi toplanmamis, asagidaki gibi sor:'",
+        "YANIT KURALLARI:",
+        "1. BAGLAM bolumundeki GERCEK veriyi once kullan — kendi bilginle asla tahmin yapma",
+        "2. Baglam bos veya yetersizse: 'Bu sunucu icin SSH verisi alinamadi (baglanamadi veya zaman asimi).' de.",
+        "   ASLA 'tekrar deneniyor' veya 'bekleniyor' deme — bu sistem otomatik retry yapmaz.",
+        "3. ASLA 'SSH yapamam', 'dogrudan baglanamam', 'veri tabanindan bakiyorum' yazma.",
+        "   Dogru cumle: '[sunucu_adi] icin SSH baglantisi basarisiz oldu veya veri alinamadi.'",
         "4. Tablo istenirse Markdown tablo kullan (| kolon | kolon |)",
-        "5. Turkce yanitla — kisaltmadan, net ve acimlayici yaz",
-        "6. Veri varsa asla 'bilmiyorum' ya da 'emin degilim' deme, veriyi yorumla",
+        "5. Turkce yanitla — kisaltmadan, net ve aciklayici yaz",
+        "6. Veri varsa asla 'bilmiyorum' ya da 'emin degilim' deme — veriyi yorumla",
+        "7. resolv.conf, /etc/ dosya iceriklerini gorudugunde, oldugu gibi goster (trim etme)",
+        "",
+        "UZMAN YANIT TARZI:",
+        "8. Her soruyu bir kıdemli admin gibi ele al:",
+        "   - Once olasi KOKEN NEDENLER (root cause) belirt",
+        "   - Somut TANI KOMUTU oner (calistirilabilir, parametreli)",
+        "   - COZUM ADIMLARI numaralı liste halinde ver",
+        "   - Varsa UYARI / RISK bilgisi ekle (ornegin: 'production'da dikkat, once test et')",
+        "9. Performans sorularinda degerler anlamsiz kalmayacak sekilde yorum yap:",
+        "   - CPU iowait > %20 → disk darbogazı sinyali gibi",
+        "   - Load average > CPU cekirdek sayisi → sistem bunalmis gibi",
+        "10. Komut onerirken ciktiyi nasil yorumlayacagini da goster",
+        "11. Kritik islemler icin (rm, mkfs, reboot, kill) MUTLAKA uyari ver ve once yedek/snapshot al de",
+        "12. VMware/oVirt sorularinda vSphere/oVirt terimleri kullan (datastore, portgroup, vNIC vb.)",
     ])
 
     prompt_parts = [identity]
@@ -763,6 +1033,207 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 yield _sse({"done": True, "session_id": session_id, "from_cache": True})
                 return
 
+            # ── 2a. Direkt komut çalıştırma (AI bypass) ─────────────────
+            # Kullanıcı belirli bir Linux komutu istiyorsa → SSH'dan direkt çalıştır
+            _LONG_CMDS = ['vmstat', 'iostat', 'sar', 'top -b']
+
+            def _extract_commands_from_msg(msg):
+                """Mesajdan Linux komutlarini token bazli cikar."""
+                _CMD_SPECS = [
+                    ('vmstat', 4), ('iostat', 4), ('sar', 4),
+                    ('netstat', 3), ('ss', 3), ('ps', 3),
+                    ('df', 2), ('du', 2), ('lsblk', 2), ('lscpu', 1),
+                    ('free', 2), ('lsmod', 1), ('uptime', 1),
+                    ('top', 3), ('ifconfig', 2), ('arp', 2),
+                    ('route', 2), ('ip', 3),
+                ]
+                tokens = msg.split()
+                found = []
+                i = 0
+                while i < len(tokens):
+                    tok = tokens[i].lower().rstrip(".,?!")
+                    matched = False
+                    for cmd_name, max_args in _CMD_SPECS:
+                        if tok == cmd_name:
+                            parts = [tokens[i]]
+                            j = i + 1
+                            count = 0
+                            while j < len(tokens) and count < max_args:
+                                arg = tokens[j].rstrip(".,?!")
+                                if arg.startswith("-") or arg.lstrip("-").isdigit():
+                                    parts.append(arg)
+                                    count += 1
+                                    j += 1
+                                else:
+                                    break
+                            cmd = " ".join(parts)
+                            if cmd not in found:
+                                found.append(cmd)
+                            i = j
+                            matched = True
+                            break
+                    if not matched:
+                        i += 1
+                return found
+
+            direct_cmds = _extract_commands_from_msg(message)
+            logger.info(f"[DIRECT] direct_cmds={direct_cmds!r} server_id={request.server_id!r}")
+
+
+            if direct_cmds:
+                logger.info(f"Direkt komut(lar) algılandı: {direct_cmds!r}")
+                # Analiz isteniyor mu?
+                _ANALYZE_KEYWORDS = ['analiz', 'analyze', 'yorumla', 'değerlendir', 'incele',
+                                     'açıkla', 'neden', 'sorun', 'problem', 'yavaş', 'yüksek',
+                                     'kontrol et', 'ne anlama', 'ne göster', 'raporla', 'rapor']
+                _needs_analysis = any(k in message.lower() for k in _ANALYZE_KEYWORDS)
+
+                # Sunucuları belirle: önce UI'dan seçilen, sonra mesaj içinden, son çare hepsi
+                _all_ai_srv = db.query(Server).filter(Server.ai_ready == True).all()
+                if request.server_ids:
+                    _target_servers = [s for s in _all_ai_srv if s.id in request.server_ids]
+                elif request.server_id:
+                    _target_servers = [s for s in _all_ai_srv if s.id == request.server_id]
+                else:
+                    ml_dc2 = message.lower()
+                    _target_servers = [s for s in _all_ai_srv if (s.name and s.name.lower() in ml_dc2) or (s.ip_address and s.ip_address in message)]
+                    if not _target_servers:
+                        _target_servers = _all_ai_srv
+
+                from app.services.ssh_manager import SSHManager
+                _cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+
+                # Her komut için timeout belirle
+                def _get_timeout(cmd):
+                    return 120 if any(lc in cmd for lc in _LONG_CMDS) else 30
+
+                async def _run_all_cmds():
+                    import asyncio as _a
+                    loop = _a.get_event_loop()
+                    # Her sunucu için tüm komutları sırayla çalıştır (SSH bağlantısını yeniden kullan)
+                    async def _ssh_server(srv):
+                        def _do():
+                            results = {}
+                            try:
+                                ssh = SSHManager(host=srv.ip_address, username=_cred.username,
+                                                 password=_cred.password, port=_cred.port or 22)
+                                if not ssh.connect():
+                                    for cmd in direct_cmds:
+                                        results[cmd] = (None, "SSH bağlantısı kurulamadı")
+                                    return srv.name, results
+                                for cmd in direct_cmds:
+                                    t = _get_timeout(cmd)
+                                    ok, out, err = ssh.execute_command(f"timeout {t} {cmd} 2>&1")
+                                    if ok and out and out.strip():
+                                        results[cmd] = (out.strip(), "")
+                                    else:
+                                        # Komut bulunamadı mı yoksa gerçek hata mı?
+                                        combined = (out or "") + (err or "")
+                                        if "not found" in combined.lower() or "command not found" in combined.lower() or (not ok and not out and not err):
+                                            results[cmd] = (None, f"Komut yüklü değil: {cmd.split()[0]}")
+                                        elif out and out.strip():
+                                            results[cmd] = (out.strip(), "")
+                                        else:
+                                            results[cmd] = (None, err.strip() if err else "Komut çalışmadı")
+                                ssh.close()
+                            except Exception as ex:
+                                for cmd in direct_cmds:
+                                    results[cmd] = (None, str(ex))
+                            return srv.name, results
+                        return await loop.run_in_executor(None, _do)
+
+                    tasks = [_a.ensure_future(_ssh_server(s)) for s in _target_servers]
+                    return await _a.gather(*tasks)
+
+                srv_count = len(_target_servers)
+                srv_names_str = ", ".join(s.name for s in _target_servers)
+                cmds_str = " + ".join(f"`{c}`" for c in direct_cmds)
+                yield _sse({"token": f"{cmds_str} komutu {srv_count} sunucuda çalıştırılıyor ({srv_names_str})...\n\n"})
+                _all_results = await _run_all_cmds()  # [(srv_name, {cmd: (out, err)}), ...]
+
+                # Ham çıktıyı formatla
+                raw_output_lines = [f"## Komut Çıktıları ({', '.join(direct_cmds)})\n"]
+                cmd_context_parts = []
+                for srv_name, cmd_results in _all_results:
+                    raw_output_lines.append(f"### {srv_name}\n")
+                    srv_ctx = [f"=== {srv_name} ==="]
+                    for cmd, (out, err) in cmd_results.items():
+                        if out:
+                            raw_output_lines.append(f"**`{cmd}`**\n```\n{out}\n```\n")
+                            srv_ctx.append(f"--- {cmd} ---\n{out}")
+                        else:
+                            raw_output_lines.append(f"**`{cmd}`**: *SSH hatası: {err or 'bilinmiyor'}*\n")
+                            srv_ctx.append(f"--- {cmd} ---\nHATA: {err or 'bilinmiyor'}")
+                    cmd_context_parts.append("\n".join(srv_ctx))
+                raw_output = "\n".join(raw_output_lines)
+
+                if not _needs_analysis:
+                    for i in range(0, len(raw_output), 8):
+                        yield _sse({"token": raw_output[i:i+8]})
+                    full_resp = raw_output
+                else:
+                    for i in range(0, len(raw_output), 8):
+                        yield _sse({"token": raw_output[i:i+8]})
+                    yield _sse({"token": "\n---\n## Analiz\n\n"})
+
+                    cmd_context = "\n\n".join(cmd_context_parts)
+                    cmds_label = ", ".join(f"`{c}`" for c in direct_cmds)
+                    analysis_prompt = (
+                        "Sen bir Linux altyapı uzmanısın. Aşağıda sunuculardan alınan "
+                        f"{cmds_label} komut çıktıları var.\n\n"
+                        "KRİTİK KURAL: Sadece aşağıdaki gerçek verileri kullan. "
+                        "'Komut yüklü değil' veya 'SSH hatası' yazan komutlar için HİÇBİR VERİ UYDURMA. "
+                        "O komutlar için sadece 'Yüklü değil' veya 'Hata' yaz.\n\n"
+                        "KOMUT ÇIKTILARI:\n"
+                        + cmd_context
+                        + "\n\nKULLANICI İSTEĞİ: " + message
+                        + "\n\nLütfen sadece mevcut gerçek verileri analiz et: performans sorunlarını, "
+                        "yüksek değerleri, anormallikleri ve önerileri Türkçe olarak açıkla. "
+                        "Sunucular arasında karşılaştırma yap. Markdown kullan. "
+                        "Gerçek veri olmayan komutlar için tablo uydurma."
+                        + "\n\nYANIT (Türkçe, Markdown):"
+                    )
+
+                    # Ollama streaming
+                    _model = request.model or get_active_model(db)
+                    _ollama_url = settings.OLLAMA_URL.rstrip("/") + "/api/generate"
+                    analysis_text = ""
+                    try:
+                        async with httpx.AsyncClient(timeout=120) as _hc:
+                            async with _hc.stream("POST", _ollama_url, json={
+                                "model": _model, "prompt": analysis_prompt,
+                                "stream": True, "options": {"temperature": 0.3, "num_predict": 1500}
+                            }) as _resp:
+                                async for _chunk in _resp.aiter_lines():
+                                    if not _chunk:
+                                        continue
+                                    try:
+                                        _d = __import__("json").loads(_chunk)
+                                        tok = _d.get("response", "")
+                                        if tok:
+                                            analysis_text += tok
+                                            yield _sse({"token": tok})
+                                        if _d.get("done"):
+                                            break
+                                    except Exception:
+                                        pass
+                    except Exception as ae:
+                        err_msg = f"\n*Analiz hatası: {ae}*"
+                        analysis_text = err_msg
+                        yield _sse({"token": err_msg})
+                    full_resp = raw_output + "\n---\n## Analiz\n\n" + analysis_text
+
+                # Oturuma kaydet
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(session_id=session_id, role="assistant", content=full_resp))
+                s_obj = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if s_obj:
+                    from datetime import datetime, timezone as _tz
+                    s_obj.updated_at = datetime.now(_tz.utc)
+                db.commit()
+                yield _sse({"done": True, "session_id": session_id})
+                return
+
             # ── 2. Seçili sunucular ───────────────────────────────────────
             selected_servers = []
             if request.server_ids:
@@ -775,8 +1246,32 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 ).first()
                 if srv:
                     selected_servers = [srv]
+            elif request.hypervisor_ids:
+                selected_servers = db.query(Server).filter(
+                    Server.hypervisor_id.in_(request.hypervisor_ids), Server.ai_ready == True
+                ).all()
+            elif request.hypervisor_id:
+                selected_servers = db.query(Server).filter(
+                    Server.hypervisor_id == request.hypervisor_id, Server.ai_ready == True
+                ).all()
+
+            # ── Mesajdan sunucu adı/IP otomatik algılama ─────────────────
+            # Kullanıcı "ahmet-test2 sunucusundan..." veya "192.168.1.46'dan..."
+            # dediğinde o sunucuyu otomatik seç
             if not selected_servers:
-                selected_servers = db.query(Server).filter(Server.ai_ready == True).all()
+                all_ai_servers = db.query(Server).filter(Server.ai_ready == True).all()
+                msg_lower_srv = message.lower()
+                detected_servers = []
+                for s in all_ai_servers:
+                    name_match = s.name and s.name.lower() in msg_lower_srv
+                    ip_match = s.ip_address and s.ip_address in message
+                    if name_match or ip_match:
+                        detected_servers.append(s)
+                if detected_servers:
+                    selected_servers = detected_servers
+                    logger.info(f"Mesajdan sunucu algılandı: {[s.name for s in detected_servers]}")
+                else:
+                    selected_servers = all_ai_servers
 
             server_context = ""
             if selected_servers:
@@ -789,10 +1284,10 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             # ── 3. Keyword analizi ────────────────────────────────────────
             PROMETHEUS_KEYWORDS = [
-                'cpu', 'ram', 'memory', 'bellek', 'disk', 'network', 'ağ', 'bandwidth',
-                'uptime', 'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
+                'cpu', 'ram', 'memory', 'bellek', 'disk', 'bandwidth',
+                'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
                 'kullanım', 'usage', 'durum', 'status', 'genel', 'overview', 'özet',
-                'sunucu', 'server', 'makine', 'machine', 'trafik', 'traffic',
+                'trafik', 'traffic', 'throughput',
             ]
             SSH_ONLY_KEYWORDS = [
                 'log', 'journal', 'hata mesaj', 'error log', 'syslog',
@@ -803,6 +1298,23 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 'installed', 'kurulu', 'paket', 'package', 'version',
                 'vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz',
                 'io performans', 'disk performans', 'benchmark',
+                # Ağ komutları
+                'netstat', 'ss -', 'ip route', 'ip addr', 'ifconfig', 'arp',
+                'route', 'traceroute', 'ping', 'nmap', 'tcpdump', 'dig', 'nslookup',
+                # Genel komut isteği
+                'çıktı', 'cikti', 'output', 'komut', 'command', 'göster', 'listele',
+                'getir', 'ver', 'çalıştır', 'çalıştırır', 'alırmısın', 'alır mısın',
+                'alabilirmisin', 'alabilir misin', 'görebilirmiyim', 'göster',
+                # Disk/sistem komutları
+                'lsblk', 'fdisk', 'blkid', 'mount', 'df', 'du',
+                'lspci', 'lshw', 'dmidecode', 'lsusb',
+                # Kullanıcı/güvenlik
+                'last', 'lastb', 'who', 'w ', 'id ', 'groups',
+                # Servis/uygulama
+                'docker ps', 'podman ps', 'kubectl',
+                'crontab', 'at -l', 'atq',
+                'cat ', 'grep ', 'tail ', 'head ', 'less ', 'more ',
+                'find ', 'locate ', 'which ', 'whereis ',
             ]
             SSH_SYSINFO_KEYWORDS = [
                 'os', 'işletim', 'operating system', 'kernel', 'distro', 'distribution',
@@ -814,17 +1326,20 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 'firewall', 'firewalld', 'iptables', 'güvenlik', 'security',
                 'açık port', 'open port', 'sudo', 'sudoers',
                 'uname', 'kernel versiyonu', 'çekirdek versiyonu',
-            'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
-            'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
+                'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
+                'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
+                'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
+                'nslookup', 'dig', 'isim çözümleme', 'name resolution',
+                'gateway', 'ağ geçidi', 'default route', 'ip route',
             ]
             DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
             ml = message.lower()
-            needs_prometheus = any(k in ml for k in PROMETHEUS_KEYWORDS)
+            needs_prometheus = any(k in ml for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
             # SSH: sunucu/sistem sorusu içeriyorsa her zaman çalıştır (keyword listesine bağlı değil)
             SERVER_TRIGGER = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
-            needs_ssh = any(k in ml for k in SERVER_TRIGGER)
+            needs_ssh = any(k in ml for k in SERVER_TRIGGER) and not request.skip_server_context
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
-            context_timeout = 75.0 if is_deep else 12.0
+            context_timeout = 40.0 if is_deep else 20.0
 
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
 
@@ -909,6 +1424,20 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             if rag_ctx.get("metrics"):
                 context_parts.append("METRIK ACIKLAMALARI:\n" + rag_ctx["metrics"].strip())
 
+            # Hypervisor bağlamı (seçim varsa)
+            selected_hypervisors = []
+            if request.hypervisor_ids and len(request.hypervisor_ids) > 0:
+                selected_hypervisors = db.query(Hypervisor).filter(Hypervisor.id.in_(request.hypervisor_ids)).all()
+            elif request.hypervisor_id:
+                hv = db.query(Hypervisor).filter(Hypervisor.id == request.hypervisor_id).first()
+                if hv:
+                    selected_hypervisors = [hv]
+            if selected_hypervisors:
+                hv_lines = []
+                for h in selected_hypervisors:
+                    hv_lines.append(f"- {h.name} ({h.hypervisor_type.value if h.hypervisor_type else '-'}): host={h.hostname or '-'}, ip={h.ip_address or '-'}, port={h.port or '-'}")
+                context_parts.append("SEÇİLİ HYPERVISORLAR:\n" + "\n".join(hv_lines))
+
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
             prompt = _build_prompt(
@@ -924,33 +1453,61 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             db.add(ChatMessage(session_id=session_id, role="user", content=message))
             db.commit()
 
-            # ── 6. Ollama streaming ───────────────────────────────────────
-            model = request.model or settings.OLLAMA_DEFAULT_MODEL
+            # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
             full_response = ""
 
             async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.OLLAMA_URL}/api/generate",
-                    json={"model": model, "prompt": prompt, "stream": True},
-                ) as resp:
-                    if resp.status_code != 200:
-                        yield _sse({"error": f"Ollama HTTP {resp.status_code}"})
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = _json.loads(line)
-                        except Exception:
-                            continue
-                        token = chunk.get("response", "")
-                        done_flag = chunk.get("done", False)
-                        if token:
-                            full_response += token
-                            yield _sse({"token": token})
-                        if done_flag:
-                            break
+                if provider == "groq" and settings.GROQ_API_KEY:
+                    async for token in _stream_external_openai(
+                        client, settings.GROQ_API_URL, settings.GROQ_API_KEY,
+                        model, prompt
+                    ):
+                        full_response += token
+                        yield _sse({"token": token})
+
+                elif provider == "openai" and settings.OPENAI_API_KEY:
+                    async for token in _stream_external_openai(
+                        client, settings.OPENAI_API_URL, settings.OPENAI_API_KEY,
+                        model, prompt
+                    ):
+                        full_response += token
+                        yield _sse({"token": token})
+
+                elif provider == "openrouter" and settings.OPENROUTER_API_KEY:
+                    async for token in _stream_external_openai(
+                        client, settings.OPENROUTER_API_URL, settings.OPENROUTER_API_KEY,
+                        model, prompt,
+                        extra_headers={"HTTP-Referer": "https://datatem.ai", "X-Title": "datatem AI"}
+                    ):
+                        full_response += token
+                        yield _sse({"token": token})
+
+                else:
+                    # Ollama (varsayılan)
+                    async with client.stream(
+                        "POST",
+                        f"{settings.OLLAMA_URL}/api/generate",
+                        json={"model": model, "prompt": prompt, "stream": True},
+                    ) as resp:
+                        if resp.status_code != 200:
+                            yield _sse({"error": f"Ollama HTTP {resp.status_code}"})
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = _json.loads(line)
+                            except Exception:
+                                continue
+                            token = chunk.get("response", "")
+                            done_flag = chunk.get("done", False)
+                            if token:
+                                full_response += token
+                                yield _sse({"token": token})
+                            if done_flag:
+                                break
 
             # ── 7. Kaydet + Cache ─────────────────────────────────────────
             db.add(ChatMessage(

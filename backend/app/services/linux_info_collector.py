@@ -9,74 +9,248 @@ from app.services.ssh_manager import SSHManager
 logger = logging.getLogger(__name__)
 
 COMMAND_GROUPS = {
+    # ── KERNEL ──────────────────────────────────────────────────────────────
     "kernel": [
         ("uname -r", "kernel_version"),
         ("uname -a", "kernel_full"),
         ("hostname", "hostname_short"),
         ("hostname -f 2>/dev/null || hostname", "hostname_fqdn"),
+        ("cat /proc/version 2>/dev/null | head -1", "kernel_proc_version"),
+        ("sysctl kernel.hostname kernel.ostype kernel.osrelease kernel.version 2>/dev/null", "sysctl_kernel"),
+        ("dmesg --level=err,crit,alert,emerg 2>/dev/null | tail -10 || dmesg 2>/dev/null | grep -iE 'error|fail|panic|oops|warn' | tail -10", "dmesg_errors"),
+        ("lsmod 2>/dev/null | head -20", "kernel_modules"),
+        ("sysctl vm.swappiness vm.dirty_ratio net.ipv4.ip_forward net.ipv4.tcp_syncookies 2>/dev/null", "sysctl_important"),
     ],
+    # ── İŞLETİM SİSTEMİ ─────────────────────────────────────────────────────
     "os": [
-        # Birden fazla yöntemi dene; PRETTY_NAME, VERSION, NAME, oracle-release, redhat-release hepsi
         ("( cat /etc/os-release 2>/dev/null | grep -E '^PRETTY_NAME=|^NAME=|^VERSION=|^VERSION_ID=' ; cat /etc/oracle-release 2>/dev/null ; cat /etc/redhat-release 2>/dev/null ; cat /etc/centos-release 2>/dev/null ) | sort -u | head -6", "os_info"),
-        ("hostnamectl 2>/dev/null | grep -E 'Operating System|Kernel'", "os_hostnamectl"),
+        ("hostnamectl 2>/dev/null | grep -E 'Operating System|Kernel|Chassis|Virtualization|Architecture'", "os_hostnamectl"),
+        ("timedatectl 2>/dev/null || date", "datetime_info"),
+        ("locale 2>/dev/null | head -5", "locale_info"),
+        ("cat /etc/hosts 2>/dev/null | grep -v '^#' | grep -v '^$' | head -20", "etc_hosts"),
+        ("cat /etc/environment 2>/dev/null | head -10", "env_file"),
+        ("cat /etc/timezone 2>/dev/null || timedatectl 2>/dev/null | grep 'Time zone'", "timezone"),
+        ("systemctl get-default 2>/dev/null || runlevel 2>/dev/null", "runlevel"),
     ],
+    # ── CPU / İŞLEMCİ ───────────────────────────────────────────────────────
     "cpu": [
         ("nproc", "cpu_count"),
-        ("lscpu 2>/dev/null | grep -E 'Model name|Architecture|CPU.s.|Thread|Core' | head -6", "cpu_detail"),
+        ("lscpu 2>/dev/null | grep -E 'Model name|Architecture|CPU.s.|Thread|Core|Socket|Vendor|MHz|Virtualization|NUMA' | head -12", "cpu_detail"),
         ("top -bn1 2>/dev/null | grep 'Cpu' | head -1", "cpu_usage"),
+        ("cat /proc/cpuinfo 2>/dev/null | grep -E '^model name|^cpu MHz|^cache size|^flags' | sort -u | head -8", "cpuinfo"),
+        ("grep -c '^processor' /proc/cpuinfo 2>/dev/null", "cpu_logical_count"),
+        ("cpupower frequency-info 2>/dev/null | head -6 || cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null", "cpu_governor"),
+        ("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '{print $1/1000\" C\"}' | head -5 || sensors 2>/dev/null | grep -E 'Core|temp' | head -8", "cpu_temp"),
     ],
+    # ── BELLEK / RAM ─────────────────────────────────────────────────────────
     "memory": [
         ("free -h", "memory_info"),
+        ("cat /proc/meminfo 2>/dev/null | grep -E '^MemTotal|^MemFree|^MemAvailable|^Buffers|^Cached|^SwapTotal|^SwapFree|^SwapCached|^Dirty|^HugePages' | head -15", "meminfo_detail"),
+        ("swapon --show 2>/dev/null || cat /proc/swaps 2>/dev/null", "swap_devices"),
+        ("cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null", "thp_status"),
+        ("ps aux --sort=-%mem 2>/dev/null | head -6", "top_mem_processes"),
     ],
+    # ── DİSK / DEPOLAMA ──────────────────────────────────────────────────────
     "disk": [
-        ("df -h 2>/dev/null | head -15", "disk_usage"),
-        ("lsblk -d -o NAME,SIZE,TYPE 2>/dev/null | head -10", "block_devices"),
+        ("df -h 2>/dev/null | head -20", "disk_usage"),
+        ("df -ih 2>/dev/null | head -15", "inode_usage"),
+        ("lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL 2>/dev/null | head -20", "block_devices"),
+        ("blkid 2>/dev/null | head -15", "blkid_info"),
+        ("cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$'", "fstab"),
+        ("findmnt -t nfs,nfs4,cifs 2>/dev/null | head -10", "network_mounts"),
+        ("pvs 2>/dev/null; vgs 2>/dev/null; lvs 2>/dev/null", "lvm_info"),
+        ("mdadm --detail --scan 2>/dev/null | head -15", "raid_info"),
+        ("iostat -dx 2>/dev/null | head -15 || vmstat -d 2>/dev/null | head -10", "disk_io"),
+        ("du -sh /var/log 2>/dev/null; du -sh /tmp 2>/dev/null; du -sh /home 2>/dev/null", "dir_sizes"),
+        ("find /var/log -name '*.log' -size +100M 2>/dev/null | head -5", "large_logs"),
     ],
+    # ── AĞ / NETWORK ─────────────────────────────────────────────────────────
     "network": [
-        # IP + MAC birlikte: ip addr full çıktısı (inet, ether satırları dahil)
         ("ip addr 2>/dev/null | grep -E '^[0-9]+:|link/ether|inet ' | head -60", "network_interfaces"),
-        # ifconfig fallback (bazı sistemlerde ip addr yok)
         ("ifconfig 2>/dev/null | grep -E '^[a-z]|inet |ether ' | head -60 || true", "ifconfig_out"),
-        # Kısa mac listesi: arayüz adı + MAC
         ("ip link show 2>/dev/null | grep -E '^[0-9]+:|link/ether' | awk '/^[0-9]+:/{iface=$2} /link\/ether/{print iface, $2}' | head -20", "mac_addresses"),
-        ("ss -tuln 2>/dev/null | head -20", "listening_ports"),
+        ("ss -tuln 2>/dev/null | head -30", "listening_ports"),
+        ("ss -s 2>/dev/null", "socket_stats"),
+        ("cat /etc/resolv.conf 2>/dev/null || echo 'resolv.conf not found'", "resolv_conf"),
+        ("cat /etc/nsswitch.conf 2>/dev/null | grep -E '^hosts:|^passwd:|^shadow:' || true", "nsswitch_conf"),
+        ("{ ip route show default 2>/dev/null | grep .; } || { ip route 2>/dev/null | grep -i default | grep .; } || { route -n 2>/dev/null | awk '$1==\"0.0.0.0\"{print}' | grep .; } || { netstat -rn 2>/dev/null | awk '$1==\"0.0.0.0\"{print}' | grep .; } || echo 'default gateway not determined'", "default_route"),
+        ("ip route 2>/dev/null | head -15 || route -n 2>/dev/null | head -15 || netstat -rn 2>/dev/null | head -15", "routing_table"),
+        ("netstat -rn 2>/dev/null | head -20 || route -n 2>/dev/null | head -20", "netstat_rn"),
+        ("ip -s link 2>/dev/null | head -30", "network_stats"),
+        ("arp -n 2>/dev/null | head -15 || ip neigh 2>/dev/null | head -15", "arp_table"),
+        ("cat /etc/hosts 2>/dev/null | grep -v '^#' | grep -v '^$' | head -20", "hosts_file"),
+        ("nmcli con show 2>/dev/null | head -15 || cat /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null | head -30", "network_config"),
+        ("ss -tnp 2>/dev/null | grep ESTABLISHED | head -20", "active_connections"),
     ],
+    # ── PROCESSLER / SÜREÇLER ────────────────────────────────────────────────
     "processes": [
-        ("ps aux --sort=-%cpu 2>/dev/null | head -11", "top_processes"),
+        ("ps aux --sort=-%cpu 2>/dev/null | head -15", "top_processes"),
+        ("ps aux --sort=-%mem 2>/dev/null | head -10", "top_mem_procs"),
+        ("ps -eo pid,ppid,user,stat,pcpu,pmem,comm 2>/dev/null | sort -k5 -rn | head -15", "proc_detail"),
+        ("pstree -p 2>/dev/null | head -20 || ps --forest -eo pid,ppid,user,comm 2>/dev/null | head -20", "proc_tree"),
+        ("lsof -i -n -P 2>/dev/null | grep LISTEN | head -20", "lsof_listen"),
     ],
+    # ── SERVİSLER / SYSTEMD ──────────────────────────────────────────────────
     "services": [
-        ("systemctl list-units --type=service --state=running --no-pager 2>/dev/null | head -20", "running_services"),
-        ("systemctl list-units --type=service --state=failed --no-pager 2>/dev/null | head -10", "failed_services"),
+        ("systemctl list-units --type=service --state=running --no-pager 2>/dev/null | head -30", "running_services"),
+        ("systemctl list-units --type=service --state=failed --no-pager 2>/dev/null", "failed_services"),
+        ("systemctl list-units --state=failed --no-pager 2>/dev/null", "all_failed_units"),
+        ("systemd-analyze blame 2>/dev/null | head -15", "slow_services"),
+        ("systemd-analyze 2>/dev/null | head -3", "boot_time"),
+        ("journalctl -u systemd --since '1 hour ago' --no-pager 2>/dev/null | tail -5", "systemd_logs"),
+        ("chkconfig --list 2>/dev/null | grep ':on' | head -15 || ls /etc/rc3.d/ 2>/dev/null | head -10", "legacy_services"),
     ],
+    # ── UPTIME ──────────────────────────────────────────────────────────────
     "uptime": [
         ("uptime", "uptime"),
+        ("who -b 2>/dev/null || last reboot 2>/dev/null | head -3", "last_boot"),
+        ("last reboot 2>/dev/null | head -5", "reboot_history"),
     ],
+    # ── LOAD / YÜK ───────────────────────────────────────────────────────────
     "load": [
         ("cat /proc/loadavg", "load_avg"),
-        ("vmstat 1 2 2>/dev/null | tail -1", "vmstat"),
+        ("vmstat 1 3 2>/dev/null", "vmstat"),
+        ("sar -u 1 3 2>/dev/null | tail -5 || true", "sar_cpu"),
     ],
+    # ── PERFORMANS (DERİN) ────────────────────────────────────────────────────
     "performance_deep": [
-        # 10 örnek: vmstat/iostat 1 saniye aralıklı 10 kez (toplam ~10s, SSH timeout'a sığar)
-        ("vmstat 1 10 2>/dev/null", "vmstat_1min"),
-        ("iostat -x 1 10 2>/dev/null", "iostat_1min"),
+        ("vmstat 1 5 2>/dev/null", "vmstat_1min"),
+        ("iostat -x 1 5 2>/dev/null", "iostat_1min"),
         ("sar -u 1 10 2>/dev/null || echo 'sar not available'", "sar_cpu_1min"),
+        ("sar -n DEV 1 5 2>/dev/null | tail -15 || true", "sar_net_1min"),
+        ("sar -d 1 5 2>/dev/null | tail -10 || true", "sar_disk_1min"),
+        ("pidstat 1 5 2>/dev/null | tail -15 || true", "pidstat"),
+        ("cat /proc/pressure/cpu 2>/dev/null; cat /proc/pressure/memory 2>/dev/null; cat /proc/pressure/io 2>/dev/null", "psi_pressure"),
     ],
+    # ── LOGLAR ──────────────────────────────────────────────────────────────
     "logs": [
-        ("journalctl -p err --since '1 hour ago' --no-pager 2>/dev/null | tail -15", "error_logs"),
+        ("journalctl -p err..emerg --since '2 hours ago' --no-pager 2>/dev/null | tail -20", "error_logs"),
+        ("journalctl --since '1 hour ago' --no-pager 2>/dev/null | grep -iE 'failed|error|critical|warning' | tail -15", "recent_errors"),
+        ("journalctl -k --since '1 hour ago' --no-pager 2>/dev/null | tail -10", "kernel_logs"),
+        ("tail -20 /var/log/messages 2>/dev/null || tail -20 /var/log/syslog 2>/dev/null", "syslog_tail"),
+        ("tail -15 /var/log/secure 2>/dev/null || tail -15 /var/log/auth.log 2>/dev/null", "auth_log"),
+        ("journalctl --disk-usage 2>/dev/null", "journal_disk_usage"),
     ],
+    # ── GÜVENLİK ─────────────────────────────────────────────────────────────
     "security": [
-        ("last -n 10 2>/dev/null", "last_logins"),
+        ("last -n 15 2>/dev/null", "last_logins"),
+        ("lastb -n 10 2>/dev/null | head -15", "failed_logins"),
         ("who 2>/dev/null", "current_users"),
+        ("w 2>/dev/null | head -10", "logged_in_users"),
         ("sestatus 2>/dev/null || getenforce 2>/dev/null || echo 'SELinux: not found'", "selinux_status"),
-        ("systemctl is-active firewalld 2>/dev/null && firewall-cmd --state 2>/dev/null || iptables -L -n --line-numbers 2>/dev/null | head -20 || echo 'firewall: not checked'", "firewall_status"),
+        ("systemctl is-active firewalld 2>/dev/null && firewall-cmd --list-all 2>/dev/null | head -20 || iptables -L -n 2>/dev/null | head -25 || nft list ruleset 2>/dev/null | head -20", "firewall_status"),
         ("ss -tuln 2>/dev/null | head -30", "open_ports"),
-        ("cat /etc/sudoers.d/* 2>/dev/null | head -20 ; grep -v '^#' /etc/sudoers 2>/dev/null | head -20", "sudoers"),
+        ("grep -v '^#' /etc/sudoers 2>/dev/null | grep -v '^$' | head -20 ; cat /etc/sudoers.d/* 2>/dev/null | grep -v '^#' | head -10", "sudoers"),
+        ("cat /etc/passwd 2>/dev/null | grep -v nologin | grep -v false | grep -v halt | grep -v shutdown | grep -v sync", "system_users"),
+        ("cat /etc/group 2>/dev/null | grep -v '^#' | head -20", "system_groups"),
+        ("find /home -name '.ssh' -type d 2>/dev/null | head -10", "ssh_dirs"),
+        ("auditctl -l 2>/dev/null | head -10 || echo 'audit: not configured'", "audit_rules"),
+        ("grep 'Failed password\|Invalid user\|session opened\|session closed' /var/log/secure 2>/dev/null | tail -10 || grep 'Failed\|Invalid\|session' /var/log/auth.log 2>/dev/null | tail -10", "auth_events"),
     ],
+    # ── PAKETLER ─────────────────────────────────────────────────────────────
     "packages": [
-        ("rpm -qa --last 2>/dev/null | head -10", "recent_packages"),
+        ("rpm -qa --last 2>/dev/null | head -15", "recent_packages"),
+        ("rpm -qa 2>/dev/null | wc -l", "rpm_count"),
+        ("yum check-update 2>/dev/null | tail -5 || dnf check-update 2>/dev/null | tail -5 || apt list --upgradable 2>/dev/null | tail -5", "pending_updates"),
+        ("rpm -qa 2>/dev/null | grep -iE 'kernel|java|python|nginx|apache|mysql|postgres|redis|docker|openssl' | sort | head -20 || dpkg -l 2>/dev/null | grep -iE 'kernel|java|python|nginx|apache|mysql|postgres|redis|docker|openssl' | head -20", "key_packages"),
+        ("dpkg -l 2>/dev/null | tail -15 || true", "deb_packages"),
+        ("pip3 list 2>/dev/null | head -15 || pip list 2>/dev/null | head -15 || true", "python_packages"),
     ],
+    # ── CRON / ZAMANLANMIŞ GÖREVLER ──────────────────────────────────────────
     "cron": [
         ("crontab -l 2>/dev/null", "user_cron"),
+        ("cat /etc/crontab 2>/dev/null", "system_crontab"),
+        ("ls /etc/cron.d/ 2>/dev/null; cat /etc/cron.d/* 2>/dev/null | grep -v '^#' | grep -v '^$' | head -20", "cron_d"),
+        ("ls /etc/cron.daily/ /etc/cron.weekly/ /etc/cron.monthly/ 2>/dev/null", "cron_dirs"),
+        ("systemctl list-timers --no-pager 2>/dev/null | head -20", "systemd_timers"),
+        ("at -l 2>/dev/null || atq 2>/dev/null", "at_jobs"),
+    ],
+    # ── DONANIM ──────────────────────────────────────────────────────────────
+    "hardware": [
+        ("dmidecode -t system 2>/dev/null | grep -E 'Product|Manufacturer|Version|Serial|UUID' | head -6 || cat /sys/class/dmi/id/product_name 2>/dev/null", "hw_system"),
+        ("dmidecode -t memory 2>/dev/null | grep -E 'Size|Type|Speed|Manufacturer|Part Number' | grep -v 'No Module' | head -20", "hw_memory_slots"),
+        ("lspci 2>/dev/null | grep -iE 'VGA|Network|Ethernet|RAID|Storage|USB|Audio' | head -20", "pci_devices"),
+        ("lsusb 2>/dev/null | head -10", "usb_devices"),
+        ("lshw -short 2>/dev/null | head -30 || true", "hw_summary"),
+        ("cat /sys/class/dmi/id/product_name 2>/dev/null; cat /sys/class/dmi/id/board_vendor 2>/dev/null", "hw_model"),
+        ("ipmitool chassis status 2>/dev/null | head -5 || true", "ipmi_status"),
+    ],
+    # ── SSL / SERTİFİKALAR ────────────────────────────────────────────────────
+    "ssl": [
+        ("find /etc/pki /etc/ssl /etc/letsencrypt 2>/dev/null -name '*.crt' -o -name '*.pem' 2>/dev/null | head -10", "cert_files"),
+        ("for cert in $(find /etc/pki/tls/certs /etc/ssl/certs /etc/nginx/ssl /etc/httpd/ssl 2>/dev/null -name '*.crt' -o -name '*.pem' | head -5); do echo \"=== $cert ===\"; openssl x509 -noout -subject -issuer -dates -in $cert 2>/dev/null; done", "cert_details"),
+        ("openssl version 2>/dev/null", "openssl_version"),
+    ],
+    # ── KONTEYNERLER / DOCKER ────────────────────────────────────────────────
+    "containers": [
+        ("docker ps 2>/dev/null | head -20 || true", "docker_running"),
+        ("docker ps -a 2>/dev/null | head -20 || true", "docker_all"),
+        ("docker images 2>/dev/null | head -15 || true", "docker_images"),
+        ("docker stats --no-stream 2>/dev/null | head -15 || true", "docker_stats"),
+        ("podman ps 2>/dev/null | head -15 || true", "podman_running"),
+        ("podman images 2>/dev/null | head -10 || true", "podman_images"),
+        ("kubectl get pods --all-namespaces 2>/dev/null | head -20 || true", "k8s_pods"),
+        ("kubectl get nodes 2>/dev/null | head -10 || true", "k8s_nodes"),
+        ("systemctl is-active docker 2>/dev/null; systemctl is-active podman 2>/dev/null; systemctl is-active containerd 2>/dev/null", "container_services"),
+    ],
+    # ── WEB SUNUCULARI ────────────────────────────────────────────────────────
+    "web": [
+        ("nginx -v 2>&1 | head -2; nginx -T 2>/dev/null | grep -E 'listen|server_name|root|proxy_pass' | head -20", "nginx_info"),
+        ("httpd -v 2>/dev/null || apache2 -v 2>/dev/null; httpd -S 2>/dev/null | head -15 || apache2ctl -S 2>/dev/null | head -15", "apache_info"),
+        ("systemctl is-active nginx apache2 httpd 2>/dev/null", "web_service_status"),
+        ("ls /etc/nginx/sites-enabled/ 2>/dev/null; ls /etc/nginx/conf.d/ 2>/dev/null; ls /etc/httpd/conf.d/ 2>/dev/null", "web_vhosts"),
+        ("curl -s -o /dev/null -w '%{http_code}' http://localhost 2>/dev/null || true", "web_local_check"),
+    ],
+    # ── VERİTABANI ────────────────────────────────────────────────────────────
+    "database": [
+        ("systemctl is-active postgresql mysql mariadb mongod redis-server 2>/dev/null", "db_service_status"),
+        ("psql -U postgres -c '\\l' 2>/dev/null | head -15 || true", "postgres_dbs"),
+        ("psql -U postgres -c 'SELECT version()' 2>/dev/null | head -3 || true", "postgres_version"),
+        ("mysql -e 'SHOW DATABASES;' 2>/dev/null | head -15 || mysql -u root -e 'SHOW DATABASES;' 2>/dev/null | head -15 || true", "mysql_dbs"),
+        ("mysql -e 'SELECT VERSION();' 2>/dev/null | head -3 || true", "mysql_version"),
+        ("redis-cli info server 2>/dev/null | head -10 || true", "redis_info"),
+        ("mongosh --eval 'db.version()' 2>/dev/null | head -3 || mongo --eval 'db.version()' 2>/dev/null | head -3 || true", "mongo_version"),
+    ],
+    # ── NTP / ZAMAN SENKRONİZASYONU ──────────────────────────────────────────
+    "ntp": [
+        ("chronyc tracking 2>/dev/null | head -10 || ntpq -p 2>/dev/null | head -10 || timedatectl show 2>/dev/null | head -5", "ntp_status"),
+        ("chronyc sources 2>/dev/null | head -10 || ntpq -p 2>/dev/null | head -10", "ntp_sources"),
+        ("timedatectl 2>/dev/null | grep -E 'synchronized|NTP|timezone|RTC'", "time_sync"),
+    ],
+    # ── KULLANICILAR ─────────────────────────────────────────────────────────
+    "users": [
+        ("cat /etc/passwd 2>/dev/null | awk -F: '$3>=1000 && $3!=65534{print $1,$3,$4,$6,$7}'", "real_users"),
+        ("cat /etc/group 2>/dev/null | awk -F: '$4!=\"\"{print $1,$4}' | head -20", "groups_with_members"),
+        ("lastlog 2>/dev/null | grep -v 'Never' | head -15", "last_login_all"),
+        ("who 2>/dev/null; w 2>/dev/null | head -10", "active_sessions"),
+        ("passwd -S -a 2>/dev/null | grep -v Locked | head -15 || true", "passwd_status"),
+    ],
+    # ── UYGULAMA / SERVİS DETAY ──────────────────────────────────────────────
+    "apps": [
+        ("java -version 2>&1 | head -2 || true", "java_version"),
+        ("python3 --version 2>/dev/null || python --version 2>/dev/null || true", "python_version"),
+        ("node --version 2>/dev/null || true", "node_version"),
+        ("php --version 2>/dev/null | head -1 || true", "php_version"),
+        ("ruby --version 2>/dev/null || true", "ruby_version"),
+        ("go version 2>/dev/null || true", "go_version"),
+        ("systemctl list-units --type=service --state=active --no-pager 2>/dev/null | grep -iE 'tomcat|wildfly|jboss|glassfish|jetty' | head -5", "java_servers"),
+    ],
+    # ── SISTEM LİMİTLERİ ─────────────────────────────────────────────────────
+    "limits": [
+        ("ulimit -a 2>/dev/null | head -15", "ulimits"),
+        ("cat /proc/sys/fs/file-max 2>/dev/null; cat /proc/sys/fs/file-nr 2>/dev/null", "file_limits"),
+        ("sysctl fs.file-max net.core.somaxconn net.ipv4.tcp_max_syn_backlog 2>/dev/null", "sysctl_limits"),
+        ("cat /etc/security/limits.conf 2>/dev/null | grep -v '^#' | grep -v '^$' | head -20", "security_limits"),
+        ("cat /proc/sys/kernel/pid_max 2>/dev/null; cat /proc/sys/kernel/threads-max 2>/dev/null", "pid_limits"),
+    ],
+    # ── DOSYA SİSTEMİ / PATH ─────────────────────────────────────────────────
+    "filesystem": [
+        ("ls -la /etc/ | head -20", "etc_listing"),
+        ("ls -la /var/log/ | head -15", "log_listing"),
+        ("find /tmp -mtime -1 2>/dev/null | head -10", "tmp_recent"),
+        ("find /var/log -name '*.log' -newer /proc/1 2>/dev/null | head -10", "new_logs"),
+        ("stat /boot 2>/dev/null | head -5; df -h /boot 2>/dev/null | tail -1", "boot_partition"),
+        ("cat /proc/mounts 2>/dev/null | grep -v 'proc\|sys\|dev\|run' | head -20", "mounts"),
     ],
 }
 
@@ -202,7 +376,7 @@ KEYWORD_TO_GROUPS: dict = {
     "dns": ["network"], "nameserver": ["network"], "resolv": ["network"],
     "/etc/resolv.conf": ["network"], "nslookup": ["network"], "dig": ["network"],
     "isim cozumleme": ["network"], "isim çözümleme": ["network"],
-    "name resolution": ["network"], "gateway": ["network"], "ag gecidi": ["network"],
+    "name resolution": ["network"], "gateway": ["network"], "default gw": ["network"], "gw": ["network"], "ag gecidi": ["network"],
     "ağ geçidi": ["network"], "yonlendirici": ["network"], "yönlendirici": ["network"],
     "router": ["network"], "route": ["network"], "ip route": ["network"],
     "routing table": ["network"], "yonlendirme tablosu": ["network"],
@@ -481,7 +655,8 @@ KEYWORD_TO_GROUPS: dict = {
     "report": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime", "processes"],
     "ozet": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
     "özet": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
-    "bilgi": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
+    "sistem bilgisi": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
+    "sunucu bilgisi": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
     "genel": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
     "summary": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
     "hakkinda": ["kernel", "os", "cpu", "memory", "disk", "uptime"],
@@ -505,18 +680,16 @@ KEYWORD_TO_GROUPS: dict = {
     "ağır": ["cpu", "memory", "load", "disk", "performance_deep"],
     "slow": ["cpu", "memory", "load", "disk", "performance_deep"],
     "lag": ["cpu", "memory", "load", "disk", "performance_deep"],
-    "tum": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
-    "tüm": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
-    "hepsi": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
-    "full": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
     "detayli": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
     "detaylı": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
     "tam rapor": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
+    "tum bilgi": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
+    "tüm bilgi": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
     "everything": ["kernel", "os", "cpu", "memory", "disk", "network", "services", "uptime"],
     "neler var": ["kernel", "os", "cpu", "memory", "disk", "uptime", "services"],
     "kontrol et": ["kernel", "os", "cpu", "memory", "disk", "uptime", "services"],
     "incele": ["kernel", "os", "cpu", "memory", "disk", "uptime", "services"],
-    "check": ["kernel", "os", "cpu", "memory", "disk", "uptime", "services"],
+    "check all": ["kernel", "os", "cpu", "memory", "disk", "uptime", "services"],
     "monitor": ["cpu", "memory", "disk", "load", "processes"],
     "izle": ["cpu", "memory", "disk", "load", "processes"],
     "analiz": ["cpu", "memory", "disk", "load", "performance_deep"],
@@ -530,48 +703,173 @@ KEYWORD_TO_GROUPS: dict = {
     "debug": ["cpu", "memory", "disk", "load", "logs", "processes"],
     "neden": ["cpu", "memory", "disk", "load", "logs"],
     "why": ["cpu", "memory", "disk", "load", "logs"],
+    # DONANIM
+    "donanim": ["hardware"], "donanım": ["hardware"], "hardware": ["hardware"],
+    "dmidecode": ["hardware"], "lspci": ["hardware"], "lsusb": ["hardware"],
+    "lshw": ["hardware"], "model": ["hardware", "os"], "seri no": ["hardware"],
+    "seri numarasi": ["hardware"], "server modeli": ["hardware"],
+    "anakart": ["hardware"], "motherboard": ["hardware"],
+    "ram slotu": ["hardware", "memory"], "memory slot": ["hardware", "memory"],
+    "bios": ["hardware", "kernel"], "uefi": ["hardware", "kernel"],
+    "ipmi": ["hardware"], "bmc": ["hardware"], "idrac": ["hardware"],
+    "ilo": ["hardware"], "imm": ["hardware"],
+
+    # NTP / ZAMAN
+    "ntp": ["ntp"], "chrony": ["ntp"], "chronyc": ["ntp"], "ntpq": ["ntp"],
+    "zaman": ["ntp", "os"], "time sync": ["ntp"], "senkron": ["ntp"],
+    "timedatectl": ["ntp", "os"], "saat senkron": ["ntp"],
+    "drift": ["ntp"], "offset": ["ntp"], "ntp server": ["ntp"],
+
+    # DOCKER / KONTEYNER
+    "docker": ["containers"], "podman": ["containers"], "konteyner": ["containers"],
+    "container": ["containers"], "kubernetes": ["containers"], "kubectl": ["containers"],
+    "k8s": ["containers"], "pod": ["containers"], "image": ["containers"],
+    "docker ps": ["containers"], "docker image": ["containers"],
+    "containerd": ["containers"], "cri-o": ["containers"],
+    "namespace": ["containers"], "deployment": ["containers"],
+
+    # WEB SUNUCUSU
+    "nginx": ["web", "services"], "apache": ["web", "services"],
+    "httpd": ["web", "services"], "web server": ["web"], "web sunucu": ["web"],
+    "sanal host": ["web"], "virtual host": ["web"], "vhost": ["web"],
+    "site": ["web"], "domain": ["web"], "ssl sertifika": ["ssl", "web"],
+    "https": ["ssl", "web"], "http": ["web"],
+
+    # VERİTABANI
+    "veritabani": ["database"], "veritabanı": ["database"], "database": ["database"],
+    "postgresql": ["database"], "postgres": ["database"], "psql": ["database"],
+    "mysql": ["database"], "mariadb": ["database"], "mongodb": ["database"],
+    "redis": ["database"], "db": ["database"], "sql": ["database"],
+
+    # SSL / SERTİFİKA
+    "ssl": ["ssl"], "tls": ["ssl"], "sertifika": ["ssl"], "certificate": ["ssl"],
+    "cert": ["ssl"], "openssl": ["ssl"], "x509": ["ssl"], "pki": ["ssl"],
+    "let's encrypt": ["ssl"], "letsencrypt": ["ssl"],
+
+    # CRON / ZAMANLAMA
+    "cron": ["cron"], "crontab": ["cron"], "zamanlama": ["cron"],
+    "scheduled": ["cron"], "timer": ["cron", "services"], "at job": ["cron"],
+    "anacron": ["cron"], "systemd timer": ["cron", "services"],
+
+    # KULLANICILAR
+    "kullanici": ["users", "security"], "kullanıcı": ["users", "security"],
+    "user": ["users", "security"], "passwd": ["users", "security"],
+    "/etc/passwd": ["users", "security"], "/etc/group": ["users", "security"],
+    "sudo": ["users", "security"], "root": ["users", "security"],
+    "oturum": ["users", "security"], "session": ["users", "security"],
+    "login": ["users", "security", "logs"], "logout": ["users", "security"],
+    "giriş": ["users", "security"], "çıkış": ["users", "security"],
+
+    # UYGULAMA
+    "java": ["apps"], "python": ["apps"], "node": ["apps"], "nodejs": ["apps"],
+    "php": ["apps"], "ruby": ["apps"], "go": ["apps"], "golang": ["apps"],
+    "tomcat": ["apps", "services"], "jboss": ["apps", "services"],
+    "wildfly": ["apps", "services"],
+
+    # DOSYA SİSTEMİ
+    "/etc/": ["filesystem"], "/var/": ["filesystem"], "/tmp": ["filesystem"],
+    "mount": ["filesystem", "disk"], "unmount": ["filesystem", "disk"],
+    "dosya sistemi": ["filesystem", "disk"],
+
+    # SİSTEM LİMİTLERİ
+    "ulimit": ["limits"], "open files": ["limits"], "file descriptor": ["limits"],
+    "max processes": ["limits"], "nproc": ["limits", "processes"],
+    "connection limit": ["limits", "network"], "somaxconn": ["limits", "network"],
+
+
 }
 
-STANDARD_GROUPS = {"kernel", "os", "cpu", "memory", "disk", "uptime", "load", "security"}
+STANDARD_GROUPS = {"kernel", "os", "cpu", "memory", "disk", "uptime", "load", "services", "security"}
 
 # Sadece spesifik kelimeler gelinceye kadar bekleyen ekstra gruplar
 EXTRA_GROUPS_KEYWORDS = {
-    "performance_deep": ["vmstat", "iostat", "1 dakika", "1 dak", "derin analiz", "benchmark"],
-    "logs":     ["log", "hata", "error", "journal", "syslog"],
-    "processes": ["process", "proses", "ps aux", "calisan", "top"],
-    "services": ["servis", "service", "systemctl", "daemon"],
-    "network":  ["network", "ag", "port", "ip addr", "arayuz", "interface"],
-    "packages": ["paket", "rpm", "yum", "dnf", "apt", "kurulu", "installed"],
-    "security": ["selinux", "sestatus", "firewall", "sudo", "guvenlik"],
+    "performance_deep": ["vmstat", "iostat", "1 dakika", "1 dak", "derin analiz", "benchmark", "psi", "pressure"],
+    "logs":        ["log", "hata", "error", "journal", "syslog", "auth", "secure", "dmesg"],
+    "processes":   ["process", "proses", "ps aux", "calisan", "çalışan", "top", "lsof", "pstree", "fork"],
+    "services":    ["servis", "service", "systemctl", "daemon", "unit", "failed unit"],
+    "network":     ["network", "ag", "ağ", "port", "ip addr", "arayuz", "arayüz", "interface", "dns", "resolv", "nameserver", "gateway", "ağ geçidi", "route", "arp", "nmcli"],
+    "packages":    ["paket", "rpm", "yum", "dnf", "apt", "kurulu", "installed", "update", "upgrade", "pip"],
+    "security":    ["selinux", "sestatus", "firewall", "sudo", "guvenlik", "güvenlik", "auth", "login", "fail2ban", "passwd", "group"],
+    "hardware":    ["donanim", "donanım", "hardware", "dmidecode", "lspci", "lsusb", "lshw", "bios", "ipmi", "model", "seri"],
+    "cron":        ["cron", "crontab", "zamanlama", "timer", "schedule", "at job"],
+    "containers":  ["docker", "podman", "container", "konteyner", "kubernetes", "k8s", "kubectl", "pod"],
+    "web":         ["nginx", "apache", "httpd", "web server", "web sunucu", "vhost", "site"],
+    "database":    ["postgresql", "postgres", "mysql", "mariadb", "mongodb", "redis", "veritaban", "database"],
+    "ntp":         ["ntp", "chrony", "zaman senkron", "time sync", "timedatectl"],
+    "ssl":         ["ssl", "tls", "sertifika", "certificate", "cert", "openssl", "pki", "letsencrypt"],
+    "users":       ["kullanici", "kullanıcı", "user", "passwd", "group", "sudo", "oturum", "session", "login"],
+    "apps":        ["java", "python", "node", "nodejs", "php", "ruby", "go", "golang", "tomcat", "jboss"],
+    "limits":      ["ulimit", "open files", "file descriptor", "max process", "somaxconn"],
+    "filesystem":  ["/etc/", "/var/", "/tmp", "mount", "unmount", "dosya sistemi"],
+}
+
+
+# Sadece bu gruplardan biri istendiğinde STANDARD_GROUPS'u küçült
+_FOCUSED_GROUPS = {
+    "network", "hardware", "containers", "web", "database", "ntp", "ssl",
+    "cron", "users", "apps", "limits", "filesystem",
+}
+_MINIMAL_BASE = {"kernel", "os"}
+
+# Açıkça genel sistem sorgusu olduğunu gösteren kelimeler (tam kelime veya güvenli substring)
+_GENERAL_TRIGGER_WORDS = {
+    "genel", "ozet", "özet", "summary", "overview", "rapor",
+    "everything", "tam rapor", "tum bilgi", "tüm bilgi",
+    "sistem durumu", "sistem bilgisi", "sunucu bilgisi",
+    "detayli", "detaylı", "full report", "neler var",
+    "kontrol et", "incele", "check all",
 }
 
 
 def detect_needed_groups(message: str) -> List[str]:
     """
-    Standart grupları her zaman döndür + soru içeriğine göre ekstra gruplar ekle.
-    Böylece keyword eşleşmesi olmasa bile temel veriler toplanır.
+    Akıllı grup seçimi:
+    - Odaklı sorular (network/docker/ntp/ssl vb.) → sadece ilgili gruplar + kernel+os
+    - Genel sorular (cpu/disk/memory/genel/rapor vb.) → STANDARD_GROUPS + ekstralar
+    
+    Bu sayede 'default gw' sorusu kernel+os+network (3 grup),
+    'genel sistem durumu' ise tüm standard grupları çalıştırır.
     """
     import unicodedata
     msg = unicodedata.normalize('NFKD', message.lower())
     msg = ''.join(c for c in msg if not unicodedata.combining(c))
 
-    groups = set(STANDARD_GROUPS)
-
-    # Ekstra grupları kontrol et
+    # 1. Ekstra grupları bul (hem EXTRA_GROUPS_KEYWORDS hem KEYWORD_TO_GROUPS)
+    extra_groups: set = set()
     for group, keywords in EXTRA_GROUPS_KEYWORDS.items():
         if any(kw in msg for kw in keywords):
-            groups.add(group)
-
-    # Eski keyword tablosu — geriye dönük uyumluluk
+            extra_groups.add(group)
     for keyword, group_list in KEYWORD_TO_GROUPS.items():
         if keyword in msg:
-            groups.update(group_list)
+            extra_groups.update(group_list)
 
-    # Derin performans analizi çok yavaş — sadece açıkça istenince
-    if "performance_deep" in groups and not any(
+    # Derin performans analizi çok yavaş
+    if "performance_deep" in extra_groups and not any(
         kw in msg for kw in ["vmstat", "iostat", "1 dakika", "1 dak", "benchmark"]
     ):
-        groups.discard("performance_deep")
+        extra_groups.discard("performance_deep")
+
+    # 2. Odaklı grupları ayır (network, containers, ntp, ssl vb.)
+    focused_groups = extra_groups & _FOCUSED_GROUPS
+
+    # 3. Genel mod mu? Şu durumlarda genel mod:
+    #    a) Açık genel tetikleyici kelimeler varsa ("genel", "rapor", "özet"...)
+    #    b) VEYA standart performans/kaynak grupları açıkça isteniyorsa
+    #       (cpu, memory, disk, load - NOT sadece kernel/os/services/security)
+    is_explicit_general = any(w in msg for w in _GENERAL_TRIGGER_WORDS)
+    perf_groups = extra_groups & {"cpu", "memory", "disk", "load", "uptime", "processes"}
+    is_resource_query = bool(perf_groups)
+
+    if focused_groups and not is_explicit_general and not is_resource_query:
+        # Odaklı mod: sadece ilgili focused gruplar + minimal base
+        # Security ve services ekle (çoğu sorgu için yararlı)
+        groups = _MINIMAL_BASE | focused_groups | {"services"}
+    elif focused_groups and is_resource_query:
+        # Karma sorgu: hem odaklı hem kaynak (ör. "cpu ve gateway")
+        groups = _MINIMAL_BASE | focused_groups | perf_groups | {"services"}
+    else:
+        # Genel mod: tüm standard gruplar + ekstralar
+        groups = set(STANDARD_GROUPS) | extra_groups
 
     return list(groups)
 
@@ -602,8 +900,8 @@ def collect_server_info(server, groups: List[str], global_cred=None) -> Dict[str
         for group_name in groups:
             for cmd, key in COMMAND_GROUPS.get(group_name, []):
                 try:
-                    # Deep performance komutları (vmstat/iostat 10s) için daha uzun timeout
-                    timeout = 90 if group_name == "performance_deep" else 30
+                    # Deep performance komutları için biraz daha uzun, normal komutlar kısa
+                    timeout = 45 if group_name == "performance_deep" else 15
                     success, stdout, stderr = ssh.execute_command(cmd, cmd_timeout=timeout)
                     output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
                     if output:
@@ -678,21 +976,111 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
 
     lines = [f"=== {server.name} ({server.ip_address}) ==="]
     field_labels = {
-        "os_info": "OS", "os_hostnamectl": "OS (hostnamectl)", "kernel_version": "Kernel",
+        # Kernel / OS
+        "kernel_version": "Kernel", "kernel_full": "Kernel (full)", "kernel_proc_version": "Kernel (/proc)",
+        "sysctl_kernel": "sysctl (kernel)", "sysctl_important": "sysctl (önemli)",
+        "dmesg_errors": "dmesg Hatalar", "kernel_modules": "Kernel Modülleri",
+        "os_info": "OS", "os_hostnamectl": "OS (hostnamectl)",
         "hostname_short": "Hostname", "hostname_fqdn": "FQDN",
-        "cpu_detail": "CPU", "cpu_usage": "CPU Kullanim", "cpu_count": "CPU Adet",
-        "memory_info": "Bellek", "disk_usage": "Disk",
-        "block_devices": "Disk Aygitlari", "network_interfaces": "Ag Arayuzleri (IP+MAC)", "ifconfig_out": "ifconfig", "mac_addresses": "MAC Adresleri",
-        "listening_ports": "Dinlenen Portlar", "uptime": "Uptime",
+        "datetime_info": "Tarih/Saat", "locale_info": "Locale", "timezone": "Timezone",
+        "etc_hosts": "/etc/hosts", "env_file": "/etc/environment",
+        "runlevel": "Çalışma Modu (Runlevel)",
+        # CPU
+        "cpu_count": "CPU Adet", "cpu_detail": "CPU", "cpu_usage": "CPU Kullanımı",
+        "cpuinfo": "/proc/cpuinfo", "cpu_logical_count": "CPU (Mantıksal)",
+        "cpu_governor": "CPU Governor", "cpu_temp": "CPU Sıcaklık",
+        # Memory
+        "memory_info": "Bellek", "meminfo_detail": "/proc/meminfo",
+        "swap_devices": "Swap Aygıtları", "thp_status": "Transparent HugePage",
+        "top_mem_processes": "En Çok Bellek Kullanan Süreçler",
+        # Disk
+        "disk_usage": "Disk Kullanımı", "inode_usage": "Inode Kullanımı",
+        "block_devices": "Blok Aygıtlar", "blkid_info": "Disk UUID/FS (blkid)",
+        "fstab": "/etc/fstab", "network_mounts": "Ağ Montaj Noktaları (NFS/CIFS)",
+        "lvm_info": "LVM (PV/VG/LV)", "raid_info": "RAID (mdadm)",
+        "disk_io": "Disk I/O İstatistikleri", "dir_sizes": "Dizin Boyutları",
+        "large_logs": "Büyük Log Dosyaları",
+        # Network
+        "network_interfaces": "Ağ Arayüzleri (IP+MAC)", "ifconfig_out": "ifconfig",
+        "mac_addresses": "MAC Adresleri", "listening_ports": "Dinlenen Portlar",
+        "socket_stats": "Soket İstatistikleri (ss -s)", "resolv_conf": "/etc/resolv.conf (DNS)",
+        "nsswitch_conf": "/etc/nsswitch.conf", "default_route": "Varsayılan Ağ Geçidi",
+        "routing_table": "Yönlendirme Tablosu", "netstat_rn": "netstat -rn Çıktısı", "network_stats": "Ağ İstatistikleri",
+        "arp_table": "ARP Tablosu", "hosts_file": "/etc/hosts",
+        "network_config": "Ağ Yapılandırması", "active_connections": "Aktif Bağlantılar",
+        # Processes
+        "top_processes": "En Yoğun Süreçler (CPU)", "top_mem_procs": "En Yoğun Süreçler (RAM)",
+        "proc_detail": "Süreç Detayları", "proc_tree": "Süreç Ağacı", "lsof_listen": "lsof (LISTEN)",
+        # Services
+        "running_services": "Çalışan Servisler", "failed_services": "Hatalı Servisler",
+        "all_failed_units": "Tüm Hatalı Birimler", "slow_services": "Yavaş Başlayan Servisler",
+        "boot_time": "Önyükleme Süresi", "systemd_logs": "Systemd Logları",
+        "legacy_services": "Eski Stil Servisler",
+        # Uptime/Load
+        "uptime": "Uptime", "last_boot": "Son Önyükleme", "reboot_history": "Yeniden Başlama Geçmişi",
         "load_avg": "Load Average", "vmstat": "vmstat",
-        "vmstat_1min": "vmstat (1 dakika)", "iostat_1min": "iostat -x (1 dakika)",
-        "sar_cpu_1min": "sar CPU (1 dakika)",
-        "running_services": "Calisan Servisler", "failed_services": "Hatali Servisler",
-        "top_processes": "En Yogun Surecler", "error_logs": "Hata Loglari",
-        "last_logins": "Son Girisler", "current_users": "Aktif Kullanicilar",
-        "selinux_status": "SELinux Durumu", "firewall_status": "Firewall Durumu",
-        "open_ports": "Açık Portlar", "sudoers": "Sudo Yetkiler",
-        "recent_packages": "Son Paketler", "user_cron": "Cron Gorevleri",
+        "vmstat_1min": "vmstat (uzun)", "iostat_1min": "iostat -x (uzun)",
+        "sar_cpu_1min": "sar CPU (uzun)", "sar_net_1min": "sar Ağ (uzun)",
+        "sar_disk_1min": "sar Disk (uzun)", "pidstat": "pidstat", "psi_pressure": "PSI Baskı",
+        "sar_cpu": "sar CPU",
+        # Logs
+        "error_logs": "Hata Logları", "recent_errors": "Son Hatalar",
+        "kernel_logs": "Kernel Logları", "syslog_tail": "Syslog",
+        "auth_log": "Auth Logları", "journal_disk_usage": "Journal Disk Kullanımı",
+        # Security
+        "last_logins": "Son Girişler", "failed_logins": "Başarısız Girişler",
+        "current_users": "Aktif Kullanıcılar", "logged_in_users": "Oturum Açık Kullanıcılar",
+        "selinux_status": "SELinux Durumu", "firewall_status": "Firewall",
+        "open_ports": "Açık Portlar", "sudoers": "Sudo Yetkileri",
+        "system_users": "Sistem Kullanıcıları", "system_groups": "Gruplar",
+        "ssh_dirs": "SSH Dizinleri", "audit_rules": "Audit Kuralları", "auth_events": "Auth Olayları",
+        # Packages
+        "recent_packages": "Son Kurulan Paketler", "rpm_count": "Paket Sayısı",
+        "pending_updates": "Bekleyen Güncellemeler", "key_packages": "Anahtar Paketler",
+        "deb_packages": "Debian Paketleri", "python_packages": "Python Paketleri",
+        # Cron
+        "user_cron": "Kullanıcı Cron", "system_crontab": "/etc/crontab",
+        "cron_d": "/etc/cron.d", "cron_dirs": "Cron Dizinleri",
+        "systemd_timers": "Systemd Timer'lar", "at_jobs": "at Görevleri",
+        # Hardware
+        "hw_system": "Donanım (Sistem)", "hw_memory_slots": "RAM Slotları",
+        "pci_devices": "PCI Aygıtlar", "usb_devices": "USB Aygıtlar",
+        "hw_summary": "Donanım Özeti", "hw_model": "Sunucu Modeli", "ipmi_status": "IPMI/BMC",
+        # SSL
+        "cert_files": "Sertifika Dosyaları", "cert_details": "Sertifika Detayları",
+        "openssl_version": "OpenSSL Versiyonu",
+        # Containers
+        "docker_running": "Docker (Çalışan)", "docker_all": "Docker (Tümü)",
+        "docker_images": "Docker Images", "docker_stats": "Docker İstatistikleri",
+        "podman_running": "Podman (Çalışan)", "podman_images": "Podman Images",
+        "k8s_pods": "Kubernetes Pod'lar", "k8s_nodes": "Kubernetes Node'lar",
+        "container_services": "Konteyner Servisleri",
+        # Web
+        "nginx_info": "Nginx", "apache_info": "Apache",
+        "web_service_status": "Web Servisi Durumu", "web_vhosts": "Sanal Hostlar",
+        "web_local_check": "Web Yerel Erişim",
+        # Database
+        "db_service_status": "Veritabanı Servisleri", "postgres_dbs": "PostgreSQL Veritabanları",
+        "postgres_version": "PostgreSQL Versiyonu", "mysql_dbs": "MySQL Veritabanları",
+        "mysql_version": "MySQL Versiyonu", "redis_info": "Redis", "mongo_version": "MongoDB",
+        # NTP
+        "ntp_status": "NTP Durumu", "ntp_sources": "NTP Kaynakları", "time_sync": "Zaman Senkronizasyonu",
+        # Users
+        "real_users": "Gerçek Kullanıcılar", "groups_with_members": "Grup Üyelikleri",
+        "last_login_all": "Son Girişler (Tümü)", "active_sessions": "Aktif Oturumlar",
+        "passwd_status": "Parola Durumu",
+        # Apps
+        "java_version": "Java", "python_version": "Python", "node_version": "Node.js",
+        "php_version": "PHP", "ruby_version": "Ruby", "go_version": "Go",
+        "java_servers": "Java Uygulama Sunucuları",
+        # Limits
+        "ulimits": "Sistem Limitleri (ulimit)", "file_limits": "Dosya Limitleri",
+        "sysctl_limits": "sysctl Limitleri", "security_limits": "/etc/security/limits.conf",
+        "pid_limits": "PID Limitleri",
+        # Filesystem
+        "etc_listing": "/etc dizini", "log_listing": "/var/log dizini",
+        "tmp_recent": "/tmp (yeni)", "new_logs": "Yeni Log Dosyaları",
+        "boot_partition": "Boot Bölümü", "mounts": "Montaj Noktaları",
     }
     for key, label in field_labels.items():
         if key in info and info[key]:

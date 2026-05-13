@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
+import { ServerDetailDrawer } from './Servers'
 
-interface Server {
+interface DashboardServer {
   id: number
   name: string
   hostname: string
@@ -13,6 +14,10 @@ interface Server {
   cpu_cores: number
   memory_gb: number
   os_type: string
+  os_version?: string
+  server_type?: string
+  connection_config?: any
+  node_exporter?: { installed: boolean; running: boolean }
   created_at?: string
 }
 
@@ -23,8 +28,318 @@ interface Hypervisor {
   ip_address: string
 }
 
+interface EsxHost {
+  host_name: string
+  host_ref?: string
+  last_updated?: string
+  cpu_usage_pct: number | null
+  cpu_usage_mhz: number | null
+  cpu_total_mhz: number | null
+  cpu_cores: number | null
+  mem_used_mb: number | null
+  mem_total_mb: number | null
+  mem_usage_pct: number | null
+  ds_used_gb: number | null
+  ds_total_gb: number | null
+  ds_usage_pct: number | null
+  vms_running: number | null
+  vms_total: number | null
+  connection_state: string | null
+  power_state: string | null
+  maintenance_mode: number | null
+}
+
+interface EsxHostMetricsResponse {
+  hypervisor_id: number
+  hypervisor_name: string
+  host_count: number
+  hosts: EsxHost[]
+}
+
+// ── Yardımcı bileşenler ────────────────────────────────────────────────────
+
+function UsageBar({
+  pct,
+  used,
+  total,
+  unit,
+  colorClass,
+}: {
+  pct: number | null
+  used: number | null
+  total: number | null
+  unit: string
+  colorClass: string
+}) {
+  const p = pct ?? (used != null && total != null && total > 0 ? (used / total) * 100 : null)
+  if (p == null) return <span className="text-slate-500 text-xs">Veri yok</span>
+
+  const freeVal = total != null && used != null ? total - used : null
+  const barColor =
+    p >= 90 ? 'bg-red-500' : p >= 75 ? 'bg-yellow-500' : colorClass
+
+  return (
+    <div className="w-full">
+      <div className="flex justify-between text-xs mb-1">
+        <span className={p >= 90 ? 'text-red-400' : p >= 75 ? 'text-yellow-400' : 'text-slate-300'}>
+          {p.toFixed(1)}% dolu
+        </span>
+        {freeVal != null && (
+          <span className="text-slate-400">
+            {freeVal >= 1024 && unit === 'MB'
+              ? `${(freeVal / 1024).toFixed(1)} GB boş`
+              : freeVal >= 1024 && unit === 'GB'
+              ? `${(freeVal / 1024).toFixed(1)} TB boş`
+              : `${freeVal % 1 === 0 ? freeVal : freeVal.toFixed(1)} ${unit} boş`}
+          </span>
+        )}
+      </div>
+      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${barColor} rounded-full transition-all duration-500`}
+          style={{ width: `${Math.min(p, 100)}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
+  const vmwareHvs = hypervisors.filter(hv => hv.type?.toLowerCase() === 'vmware')
+  const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    if (vmwareHvs.length === 0) { setIsLoading(false); return }
+    setIsLoading(true)
+    Promise.all(
+      vmwareHvs.map(hv =>
+        fetch(`${API_BASE_URL}/hypervisors/${hv.id}/host-metrics`)
+          .then(r => r.ok ? r.json() : null)
+          .then((data: EsxHostMetricsResponse | null) =>
+            (data?.hosts || []).map(h => ({ hvName: hv.name, host: h }))
+          )
+          .catch(() => [] as { hvName: string; host: EsxHost }[])
+      )
+    ).then(results => {
+      setAllHosts(results.flat())
+      setIsLoading(false)
+    })
+    const interval = setInterval(() => {
+      Promise.all(
+        vmwareHvs.map(hv =>
+          fetch(`${API_BASE_URL}/hypervisors/${hv.id}/host-metrics`)
+            .then(r => r.ok ? r.json() : null)
+            .then((data: EsxHostMetricsResponse | null) =>
+              (data?.hosts || []).map(h => ({ hvName: hv.name, host: h }))
+            )
+            .catch(() => [] as { hvName: string; host: EsxHost }[])
+        )
+      ).then(results => setAllHosts(results.flat()))
+    }, 15 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [hypervisors.map(h => h.id).join(',')])
+
+  const hasData = allHosts.length > 0
+
+  if (vmwareHvs.length === 0) return null
+
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center">
+            <span className="text-base">🖧</span>
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">ESX Host Kaynak Durumu</h2>
+            <p className="text-slate-400 text-xs mt-0.5">15 dakikada bir güncellenir</p>
+          </div>
+        </div>
+        {isLoading && (
+          <div className="flex items-center gap-2 text-slate-400 text-xs">
+            <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-slate-400" />
+            Yükleniyor...
+          </div>
+        )}
+      </div>
+
+      {!hasData && !isLoading ? (
+        <div className="px-6 py-10 text-center text-slate-500 text-sm">
+          Henüz ESX host metrik verisi yok. İlk veri 15 dakika içinde toplanacak.
+          <br />
+          <span className="text-slate-600 text-xs">Manuel sync için: Hypervisor &gt; host-metrics/sync</span>
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-700/60">
+          {allHosts.map(({ hvName, host }) => {
+            const inMaint = host.maintenance_mode === 1
+            const disconnected = host.connection_state === 'disconnected' || host.connection_state === 'notResponding'
+            const shortName = host.host_name.split('.')[0]
+
+            return (
+              <div
+                key={`${hvName}-${host.host_name}`}
+                className={`px-6 py-4 hover:bg-slate-700/30 transition-colors ${disconnected ? 'opacity-60' : ''}`}
+              >
+                {/* Host başlık satırı */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-medium text-sm">{shortName}</span>
+                    <span className="text-slate-500 text-xs hidden sm:inline">{hvName}</span>
+                    {inMaint && (
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                        Bakım
+                      </span>
+                    )}
+                    {disconnected && (
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-red-500/20 text-red-400 border border-red-500/30">
+                        Bağlantı Yok
+                      </span>
+                    )}
+                  </div>
+                  {(host.vms_running != null || host.vms_total != null) && (
+                    <span className="text-slate-400 text-xs">
+                      {host.vms_running ?? '?'} / {host.vms_total ?? '?'} VM çalışıyor
+                    </span>
+                  )}
+                </div>
+
+                {/* 3 sütun: CPU / RAM / Disk */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* CPU */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                      <span className="font-medium">CPU</span>
+                      <span>
+                        {host.cpu_total_mhz != null
+                          ? `${host.cpu_total_mhz >= 1000
+                              ? (host.cpu_total_mhz / 1000).toFixed(1) + ' GHz'
+                              : host.cpu_total_mhz + ' MHz'} toplam`
+                          : host.cpu_cores != null ? `${host.cpu_cores} core` : ''}
+                      </span>
+                    </div>
+                    <UsageBar
+                      pct={host.cpu_usage_pct}
+                      used={host.cpu_usage_mhz}
+                      total={host.cpu_total_mhz}
+                      unit="MHz"
+                      colorClass="bg-blue-500"
+                    />
+                    {host.cpu_total_mhz != null && host.cpu_usage_mhz != null && (
+                      <p className="text-xs text-slate-500">
+                        {((host.cpu_total_mhz - host.cpu_usage_mhz) >= 1000
+                          ? ((host.cpu_total_mhz - host.cpu_usage_mhz) / 1000).toFixed(1) + ' GHz'
+                          : (host.cpu_total_mhz - host.cpu_usage_mhz).toFixed(0) + ' MHz')}{' '}
+                        boş kapasite
+                      </p>
+                    )}
+                  </div>
+
+                  {/* RAM */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                      <span className="font-medium">RAM</span>
+                      <span>
+                        {host.mem_total_mb != null
+                          ? `${(host.mem_total_mb / 1024).toFixed(0)} GB toplam`
+                          : ''}
+                      </span>
+                    </div>
+                    <UsageBar
+                      pct={host.mem_usage_pct}
+                      used={host.mem_used_mb != null ? host.mem_used_mb / 1024 : null}
+                      total={host.mem_total_mb != null ? host.mem_total_mb / 1024 : null}
+                      unit="GB"
+                      colorClass="bg-purple-500"
+                    />
+                    {host.mem_total_mb != null && host.mem_used_mb != null && (
+                      <p className="text-xs text-slate-500">
+                        {((host.mem_total_mb - host.mem_used_mb) / 1024).toFixed(1)} GB boş kapasite
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Disk */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                      <span className="font-medium">Datastore</span>
+                      <span>
+                        {host.ds_total_gb != null
+                          ? `${host.ds_total_gb >= 1024
+                              ? (host.ds_total_gb / 1024).toFixed(1) + ' TB'
+                              : host.ds_total_gb.toFixed(0) + ' GB'} toplam`
+                          : ''}
+                      </span>
+                    </div>
+                    <UsageBar
+                      pct={host.ds_usage_pct}
+                      used={host.ds_used_gb}
+                      total={host.ds_total_gb}
+                      unit="GB"
+                      colorClass="bg-emerald-500"
+                    />
+                    {host.ds_total_gb != null && host.ds_used_gb != null && (
+                      <p className="text-xs text-slate-500">
+                        {(host.ds_total_gb - host.ds_used_gb) >= 1024
+                          ? ((host.ds_total_gb - host.ds_used_gb) / 1024).toFixed(1) + ' TB'
+                          : (host.ds_total_gb - host.ds_used_gb).toFixed(1) + ' GB'}{' '}
+                        boş kapasite
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Özet sayı badge'leri */}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {host.cpu_usage_pct != null && (
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium border
+                      ${host.cpu_usage_pct >= 90
+                        ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                        : host.cpu_usage_pct >= 75
+                        ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
+                        : 'bg-blue-500/15 text-blue-400 border-blue-500/30'}`}>
+                      CPU {host.cpu_usage_pct.toFixed(1)}%
+                    </span>
+                  )}
+                  {host.mem_usage_pct != null && (
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium border
+                      ${host.mem_usage_pct >= 90
+                        ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                        : host.mem_usage_pct >= 75
+                        ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
+                        : 'bg-purple-500/15 text-purple-400 border-purple-500/30'}`}>
+                      RAM {host.mem_usage_pct.toFixed(1)}%
+                    </span>
+                  )}
+                  {host.ds_usage_pct != null && (
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium border
+                      ${host.ds_usage_pct >= 90
+                        ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                        : host.ds_usage_pct >= 75
+                        ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
+                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'}`}>
+                      Disk {host.ds_usage_pct.toFixed(1)}%
+                    </span>
+                  )}
+                  {host.last_updated && (
+                    <span className="px-2 py-0.5 rounded-full text-xs text-slate-500 border border-slate-700">
+                      {new Date(host.last_updated).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const Dashboard: React.FC = () => {
-  const { data: servers = [], isLoading: serversLoading } = useQuery<Server[]>({
+  const [selectedServer, setSelectedServer] = useState<DashboardServer | null>(null)
+  const { data: servers = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
     queryKey: ['servers'],
     queryFn: async () => {
       const response = await fetch(`${API_BASE_URL}/servers/`)
@@ -76,7 +391,8 @@ const Dashboard: React.FC = () => {
     .filter(s => s.status === 'ONLINE')
     .slice(0, 5)
 
-  return (
+  return (    <>
+
     <div className="space-y-6">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -97,6 +413,11 @@ const Dashboard: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {/* ESX Host Kaynak Doluluk Paneli — stats'ın hemen altında */}
+      {hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
+        <EsxResourcePanel hypervisors={hypervisors} />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Durum Dağılımı */}
@@ -158,7 +479,7 @@ const Dashboard: React.FC = () => {
           <div className="divide-y divide-slate-700">
             {recentOnline.length > 0 ? (
               recentOnline.map((server) => (
-                <div key={server.id} className="px-6 py-4 hover:bg-slate-700/50 transition-colors">
+                <div key={server.id} className="px-6 py-4 hover:bg-slate-700/50 transition-colors cursor-pointer" onClick={() => setSelectedServer(server)}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
@@ -191,7 +512,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Hypervisors */}
+      {/* Hypervisors — küçük özet kartlar */}
       {hypervisors.length > 0 && (
         <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
@@ -217,7 +538,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       )}
+
     </div>
+
+      {selectedServer && (
+        <ServerDetailDrawer server={selectedServer as any} onClose={() => setSelectedServer(null)} />
+      )}
+    </>
   )
 }
 

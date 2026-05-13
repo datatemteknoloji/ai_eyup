@@ -4,6 +4,7 @@ Anomaly Detection API endpoints
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.core.database import get_db
 from app.models.server import Server
 from app.models.metric import MetricData
@@ -181,12 +182,155 @@ async def get_log_summary(hours: int = 24, db: Session = Depends(get_db)):
 
 @router.post("/logs/collect-now")
 async def collect_logs_now(db: Session = Depends(get_db)):
-    """Anlık log toplama - tum sunucular."""
+    """Anlık log toplama - tum sunucular (son 2 saat)."""
     from app.services.log_collector import collect_all_servers_logs
-    result = collect_all_servers_logs(db)
+    result = collect_all_servers_logs(db, since_hours=2)
     return result
 
 
+@router.post("/logs/backfill")
+async def backfill_logs(
+    days: int = Query(default=7, ge=1, le=30),
+    db: Session = Depends(get_db)
+):
+    """Geçmiş N günlük log backfill - tüm sunuculara SSH yaparak geçmişi çeker.
+    Heatmap'i doldurmak için ilk kurulumda veya eksik veri durumunda kullanılır.
+    """
+    import asyncio
+    from app.services.log_collector import collect_all_servers_logs
+    since_hours = days * 24
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: collect_all_servers_logs(db, since_hours=since_hours)
+    )
+    result["backfill_days"] = days
+    result["since_hours"] = since_hours
+    return result
+
+
+
+
+
+
+@router.get("/logs/list")
+async def get_log_anomaly_list(days: int = Query(30, ge=7, le=90), db: Session = Depends(get_db)):
+    """Isı haritası ile aynı veri kaynağından (log_entry) son N gün detay listesi."""
+    from app.models.event import SystemEvent
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=days)
+
+    events = db.query(SystemEvent).join(Server, Server.id == SystemEvent.server_id).filter(
+        func.lower(SystemEvent.event_type).in_(["log_entry", "log"]),
+        SystemEvent.created_at >= since,
+        func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
+    ).order_by(SystemEvent.created_at.desc()).limit(2000).all()
+
+    sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
+    rows = []
+    for ev in events:
+        rows.append({
+            "id": ev.id,
+            "source": "log",
+            "server_id": ev.server_id,
+            "server_name": ev.server.name if ev.server else "-",
+            "ip_address": ev.server.ip_address if ev.server else "-",
+            "severity": ev.severity,
+            "score": sev_weight.get((ev.severity or "").lower(), 1),
+            "title": ev.title,
+            "message": ev.description,
+            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            "date": ev.created_at.date().isoformat() if ev.created_at else None,
+        })
+
+    critical = [r for r in rows if r.get("severity") in ["critical", "emergency"]]
+    warning = [r for r in rows if r.get("severity") in ["warning", "error"]]
+
+    return {
+        "days": days,
+        "total": len(rows),
+        "critical_count": len(critical),
+        "warning_count": len(warning),
+        "anomalies": rows,
+        "generated_at": now.isoformat(),
+    }
+@router.get("/logs/heatmap")
+async def get_log_anomaly_heatmap(days: int = Query(30, ge=7, le=90), db: Session = Depends(get_db)):
+    """Son N gun loglarindan sunucu-gun bazli anomali isi haritasi dondurur."""
+    from app.models.event import SystemEvent
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=days - 1)
+
+    # Heatmap should include all registered servers.
+    # Filtering only ONLINE can hide servers that still have log data.
+    servers = db.query(Server).order_by(Server.name.asc()).all()
+    server_ids = [s.id for s in servers]
+
+    day_labels = [
+        (since + timedelta(days=i)).date().isoformat()
+        for i in range(days)
+    ]
+
+    matrix = {s.id: {d: {"count": 0, "score": 0} for d in day_labels} for s in servers}
+
+    if server_ids:
+        events = db.query(SystemEvent).filter(
+            SystemEvent.server_id.in_(server_ids),
+            func.lower(SystemEvent.event_type).in_(["log_entry", "log"]),
+            SystemEvent.created_at >= since,
+            func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
+        ).all()
+
+        sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
+
+        for ev in events:
+            day = (ev.created_at.date().isoformat() if ev.created_at else None)
+            if not day or day not in day_labels:
+                continue
+            if ev.server_id not in matrix:
+                continue
+            cell = matrix[ev.server_id][day]
+            cell["count"] += 1
+            cell["score"] += sev_weight.get((ev.severity or "").lower(), 1)
+
+    rows = []
+    total_score = 0
+    total_count = 0
+
+    for s in servers:
+        cells = []
+        row_score = 0
+        row_count = 0
+        for d in day_labels:
+            cell = matrix[s.id][d]
+            row_score += cell["score"]
+            row_count += cell["count"]
+            cells.append({"date": d, "count": cell["count"], "score": cell["score"]})
+        total_score += row_score
+        total_count += row_count
+        rows.append({
+            "server_id": s.id,
+            "server_name": s.name,
+            "ip_address": s.ip_address,
+            "total_count": row_count,
+            "total_score": row_score,
+            "cells": cells,
+        })
+
+    max_cell_score = 0
+    if rows:
+        max_cell_score = max((cell["score"] for r in rows for cell in r["cells"]), default=0)
+
+    return {
+        "days": days,
+        "dates": day_labels,
+        "rows": rows,
+        "max_cell_score": max_cell_score,
+        "total_count": total_count,
+        "total_score": total_score,
+        "generated_at": now.isoformat(),
+    }
 @router.get("/combined")
 async def get_combined_anomalies(db: Session = Depends(get_db)):
     """Metrik + log anomalilerini birlikte dondur."""

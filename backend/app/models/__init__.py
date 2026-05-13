@@ -9,10 +9,16 @@ from app.models.credential import GlobalCredential
 from app.models.app_settings import AppSettings
 from app.models.event import SystemEvent, Alert, Incident, BaselineMetric, RunbookExecution
 from app.models.metric import MetricData, MetricAggregation, MetricThreshold
+from app.models.hypervisor_metric import HypervisorHostMetric
+from app.models.package_job import PackageFile, PackageJob
+from app.models.repository import RepoSource, RepoSyncJob, RepoPackage
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatQACache",
     "GlobalCredential", "AppSettings",
     "SystemEvent", "Alert", "Incident", "BaselineMetric", "RunbookExecution",
-    "MetricData", "MetricAggregation", "MetricThreshold"
+    "MetricData", "MetricAggregation", "MetricThreshold",
+    "HypervisorHostMetric",
+    "PackageFile", "PackageJob",
+    "RepoSource", "RepoSyncJob", "RepoPackage",
 ]

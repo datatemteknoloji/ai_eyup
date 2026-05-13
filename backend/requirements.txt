@@ -74,3 +74,4 @@ chromadb==0.4.22
 pypdf==4.0.1
 
 ansible==9.1.0
+zstandard==0.22.0

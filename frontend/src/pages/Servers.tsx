@@ -97,7 +97,7 @@ const SCOLOR: Record<string, string> = {
   error: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
 }
 
-function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
+export function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
   const [tab, setTab] = useState<'info' | 'events' | 'perf'>('info')
   const [analyzeText, setAnalyzeText] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)

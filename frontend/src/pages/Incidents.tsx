@@ -180,7 +180,7 @@ const Incidents: React.FC = () => {
   return (
     <div className="flex gap-5 h-full">
       {/* Left: List */}
-      <div className={`flex-1 space-y-5 ${selectedIncident ? 'max-w-2xl' : ''}`}>
+      <div className={`flex-1 min-w-0 flex flex-col gap-5 overflow-hidden ${selectedIncident ? 'max-w-2xl' : ''}`}>
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -290,7 +290,7 @@ const Incidents: React.FC = () => {
             <p className="text-slate-400">Henüz incident yok</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="mt-3 space-y-3">
             {incidents.map(inc => (
               <div key={inc.id}
                 onClick={() => openDetail(inc)}
@@ -357,7 +357,7 @@ const Incidents: React.FC = () => {
 
       {/* Right: Detail Panel */}
       {selectedIncident && (
-        <div className="w-[420px] shrink-0 bg-slate-800 border border-slate-700 rounded-xl overflow-y-auto max-h-[calc(100vh-120px)] sticky top-0">
+        <div className="flex-1 max-w-[520px] bg-slate-800 border border-slate-700 rounded-xl overflow-y-auto max-h-[calc(100vh-120px)] sticky top-0">
           <div className="p-4 border-b border-slate-700 flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">

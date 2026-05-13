@@ -1,16 +1,33 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
 
+function _cleanCell(raw: string): string {
+  return raw
+    // Markdown bold/italic
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    // HTML <br> tags → newline for readability
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Strip remaining HTML tags
+    .replace(/<[^>]+>/g, '')
+    // Unicode dashes → plain hyphen
+    .replace(/[\u2013\u2014\u2015]/g, '-')
+    .trim()
+}
+
 function _parseMdTable(mdTable: string): string[][] {
   const lines = mdTable.trim().split('\n').map(l => l.trim()).filter(Boolean)
   const rows: string[][] = []
   for (const line of lines) {
     if (line.startsWith('|') && line.endsWith('|')) {
-      const cells = line.split('|').slice(1, -1).map(c => c.trim())
+      const cells = line.split('|').slice(1, -1).map(c => _cleanCell(c.trim()))
       if (cells.length > 0 && cells.some(c => c)) {
         const isSep = cells.every(c => /^:?-+:?$/.test(c))
         if (!isSep) rows.push(cells)
@@ -35,16 +52,12 @@ function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
   const rows = _parseMdTable(mdTable)
   if (rows.length === 0) return
   const ws = XLSX.utils.aoa_to_sheet(rows)
-  // Header satırını kalın yap
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })]
-    if (cell) cell.s = { font: { bold: true } }
-  }
-  // Sütun genişliklerini otomatik ayarla
+  // Sütun genişliklerini otomatik ayarla (stil kütüphane gerektirdiğinden sadece genişlik)
   ws['!cols'] = rows[0].map((_, ci) => ({
-    wch: Math.max(...rows.map(r => String(r[ci] || '').length), 10)
+    wch: Math.max(...rows.map(r => String(r[ci] || '').replace(/\n/g, ' ').length), 12)
   }))
+  // Freeze ilk satır (header)
+  ws['!freeze'] = { xSplit: 0, ySplit: 1, activeCell: 'A2', sqref: 'A2' }
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Tablo')
   XLSX.writeFile(wb, filename)
@@ -67,6 +80,7 @@ function getFirstMarkdownTable(content: string): string | null {
 }
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string }
+interface Hypervisor { id: number; name: string; type?: string; hostname?: string; ip_address?: string }
 interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
@@ -136,6 +150,9 @@ const Chat: React.FC = () => {
   const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
+  const [selectedHypervisors, setSelectedHypervisors] = useState<number[]>([])
+  const [hypervisorSearch, setHypervisorSearch] = useState('')
+  const [hypervisorDropdownOpen, setHypervisorDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [useRag, setUseRag] = useState<boolean>(true)
@@ -149,17 +166,56 @@ const Chat: React.FC = () => {
   }>({ open: false, message: '', onConfirm: () => {} })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
+  const hypervisorDropdownRef = useRef<HTMLDivElement>(null)
+  const serverBtnRef = useRef<HTMLButtonElement>(null)
+  const hypervisorBtnRef = useRef<HTMLButtonElement>(null)
+  const serverMenuRef = useRef<HTMLDivElement>(null)
+  const hypervisorMenuRef = useRef<HTMLDivElement>(null)
+  const [serverMenuRect, setServerMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
+  const [hypervisorMenuRect, setHypervisorMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)  // hangi session için stream çalışıyor
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (serverDropdownRef.current && !serverDropdownRef.current.contains(e.target as Node))
-        setServerDropdownOpen(false)
+      const t = e.target as Node
+      if (
+        serverDropdownRef.current && !serverDropdownRef.current.contains(t) &&
+        serverMenuRef.current && !serverMenuRef.current.contains(t)
+      ) { setServerDropdownOpen(false); setServerMenuRect(null) }
+      if (
+        hypervisorDropdownRef.current && !hypervisorDropdownRef.current.contains(t) &&
+        hypervisorMenuRef.current && !hypervisorMenuRef.current.contains(t)
+      ) { setHypervisorDropdownOpen(false); setHypervisorMenuRect(null) }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  // Reposition portals on scroll/resize
+  useLayoutEffect(() => {
+    if (!serverDropdownOpen) return
+    const update = () => {
+      const el = serverBtnRef.current; if (!el) return
+      const r = el.getBoundingClientRect()
+      setServerMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
+    }
+    update()
+    window.addEventListener('scroll', update, true); window.addEventListener('resize', update)
+    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
+  }, [serverDropdownOpen])
+
+  useLayoutEffect(() => {
+    if (!hypervisorDropdownOpen) return
+    const update = () => {
+      const el = hypervisorBtnRef.current; if (!el) return
+      const r = el.getBoundingClientRect()
+      setHypervisorMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
+    }
+    update()
+    window.addEventListener('scroll', update, true); window.addEventListener('resize', update)
+    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
+  }, [hypervisorDropdownOpen])
 
   const queryClient = useQueryClient()
 
@@ -170,6 +226,19 @@ const Chat: React.FC = () => {
       if (!res.ok) throw new Error('Failed')
       return res.json()
     }
+  })
+
+  const { data: hypervisors = [] } = useQuery<Hypervisor[]>({
+    queryKey: ['hypervisors'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/hypervisors/`)
+      if (!res.ok) {
+        console.warn('Hypervisors fetch failed', res.status)
+        return []
+      }
+      return res.json()
+    },
+    retry: 1,
   })
 
   const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
@@ -303,6 +372,7 @@ const Chat: React.FC = () => {
           message: messageText,
           session_id: selectedSessionId,
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
+          hypervisor_ids: selectedHypervisors.length > 0 ? selectedHypervisors : undefined,
           model: selectedModel,
           use_rag: useRag
         }),
@@ -405,16 +475,23 @@ const Chat: React.FC = () => {
     return s.name.toLowerCase().includes(q) || s.ip_address.toLowerCase().includes(q)
   })
 
+  const filteredHypervisors = hypervisors.filter(h => {
+    if (!hypervisorSearch) return true
+    const q = hypervisorSearch.toLowerCase()
+    return (h.name || '').toLowerCase().includes(q) || (h.hostname || '').toLowerCase().includes(q) || (h.ip_address || '').toLowerCase().includes(q)
+  })
+
   const thinkingLabel =
     thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus)...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
   return (
     <>
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       {/* Üst bar */}
-      <div className="flex-shrink-0 p-4 bg-slate-900 border-b border-slate-700">
+      <div className="flex-shrink-0 p-4 bg-slate-900/70 backdrop-blur border-b border-slate-700/60">
         <div className="flex items-center gap-3 flex-wrap">
+          <div className="px-3 py-1 rounded-full border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 text-xs font-semibold">Modern UI v2</div>
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-slate-400 text-sm font-medium">📚 RAG:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-slate-600'}`}
@@ -439,27 +516,38 @@ const Chat: React.FC = () => {
           </div>
 
           <div className="relative" ref={serverDropdownRef}>
-            <button type="button" onClick={() => setServerDropdownOpen(v => !v)}
+            <button ref={serverBtnRef} type="button"
+              onClick={() => {
+                if (serverDropdownOpen) { setServerDropdownOpen(false); setServerMenuRect(null) }
+                else {
+                  const r = serverBtnRef.current!.getBoundingClientRect()
+                  setServerMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
+                  setServerDropdownOpen(true)
+                }
+              }}
               className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
               <span className="text-slate-300 text-sm">
                 {selectedServers.length === 0 ? 'Sunucu seçin (çoklu)' : `${selectedServers.length} sunucu seçili`}
               </span>
               <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
             </button>
-            {serverDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
-                <div className="p-2 border-b border-slate-700">
+            {serverDropdownOpen && serverMenuRect && createPortal(
+              <div ref={serverMenuRef} className="flex flex-col overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-2xl"
+                style={{ position:'fixed', top: serverMenuRect.top, left: serverMenuRect.left, width: serverMenuRect.width,
+                  maxHeight: `min(20rem, calc(100vh - ${serverMenuRect.top}px - 8px))`, zIndex: 9999 }}>
+                <div className="p-2 border-b border-slate-700 shrink-0">
                   <input type="text" value={serverSearch} onChange={e => setServerSearch(e.target.value)}
                     placeholder="Sunucu ara..." autoFocus
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div className="flex items-center gap-2 p-2 border-b border-slate-700">
+                <div className="flex items-center gap-2 p-2 border-b border-slate-700 shrink-0">
                   <button type="button" onClick={() => setSelectedServers(filteredAiReadyServers.map(s => s.id))}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
                   <button type="button" onClick={() => setSelectedServers([])}
                     className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
+                  <span className="text-xs text-slate-500 ml-auto">{filteredAiReadyServers.length} sunucu</span>
                 </div>
-                <div className="overflow-y-auto flex-1">
+                <div className="overflow-y-auto flex-1 min-h-0">
                   {filteredAiReadyServers.length === 0 ? (
                     <div className="p-4 text-center text-slate-500 text-sm">AI Ready sunucu yok</div>
                   ) : filteredAiReadyServers.map(s => (
@@ -477,15 +565,71 @@ const Chat: React.FC = () => {
                     </label>
                   ))}
                 </div>
-              </div>
+              </div>,
+              document.body
+            )}
+          </div>
+
+          <div className="relative" ref={hypervisorDropdownRef}>
+            <button ref={hypervisorBtnRef} type="button"
+              onClick={() => {
+                if (hypervisorDropdownOpen) { setHypervisorDropdownOpen(false); setHypervisorMenuRect(null) }
+                else {
+                  const r = hypervisorBtnRef.current!.getBoundingClientRect()
+                  setHypervisorMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
+                  setHypervisorDropdownOpen(true)
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <span className="text-slate-300 text-sm">
+                {selectedHypervisors.length === 0 ? 'Hypervisor seçin (çoklu)' : `${selectedHypervisors.length} hypervisor seçili`}
+              </span>
+              <span className="ml-auto text-slate-500">{hypervisorDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+            {hypervisorDropdownOpen && hypervisorMenuRect && createPortal(
+              <div ref={hypervisorMenuRef} className="flex flex-col overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-2xl"
+                style={{ position:'fixed', top: hypervisorMenuRect.top, left: hypervisorMenuRect.left, width: hypervisorMenuRect.width,
+                  maxHeight: `min(20rem, calc(100vh - ${hypervisorMenuRect.top}px - 8px))`, zIndex: 9999 }}>
+                <div className="p-2 border-b border-slate-700 shrink-0">
+                  <input type="text" value={hypervisorSearch} onChange={e => setHypervisorSearch(e.target.value)}
+                    placeholder="Hypervisor ara..." autoFocus
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="flex items-center gap-2 p-2 border-b border-slate-700 shrink-0">
+                  <button type="button" onClick={() => setSelectedHypervisors(filteredHypervisors.map(h => h.id))}
+                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
+                  <button type="button" onClick={() => setSelectedHypervisors([])}
+                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
+                  <span className="text-xs text-slate-500 ml-auto">{filteredHypervisors.length} hypervisor</span>
+                </div>
+                <div className="overflow-y-auto flex-1 min-h-0">
+                  {filteredHypervisors.length === 0 ? (
+                    <div className="p-4 text-center text-slate-500 text-sm">Hypervisor yok</div>
+                  ) : filteredHypervisors.map(h => (
+                    <label key={h.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700 cursor-pointer">
+                      <input type="checkbox" checked={selectedHypervisors.includes(h.id)}
+                        onChange={e => {
+                          if (e.target.checked) setSelectedHypervisors(prev => [...prev, h.id])
+                          else setSelectedHypervisors(prev => prev.filter(id => id !== h.id))
+                        }}
+                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                      <div>
+                        <div className="text-white text-sm font-medium">{h.name}</div>
+                        <div className="text-slate-500 text-xs font-mono">{h.hostname || h.ip_address || '-'}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>,
+              document.body
             )}
           </div>
         </div>
       </div>
 
-      <div className="flex flex-1 gap-4 p-4 overflow-hidden">
+      <div className="flex flex-1 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
-        <div className="w-64 flex-shrink-0 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+        <div className="w-72 flex-shrink-0 bg-slate-800/70 backdrop-blur rounded-2xl border border-slate-700/60 flex flex-col overflow-hidden shadow-2xl">
           <div className="p-3 border-b border-slate-700 flex items-center justify-between flex-shrink-0">
             <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
             <div className="flex items-center gap-1">
@@ -532,15 +676,15 @@ const Chat: React.FC = () => {
         </div>
 
         {/* Sağ Panel */}
-        <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+        <div className="flex-1 bg-slate-800/60 backdrop-blur rounded-2xl border border-slate-700/60 flex flex-col overflow-hidden shadow-2xl">
           {/* Mesajlar */}
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-8">
             {selectedSessionId === null ? (
               <div className="h-full flex flex-col items-center justify-center">
                 <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
                   <span className="text-4xl">🤖</span>
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-2">AI Asistan</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">AINE Assistant</h2>
                 <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
             ) : (messages.length === 0 && !pendingUserMessage) ? (
@@ -548,7 +692,7 @@ const Chat: React.FC = () => {
                 <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
                   <span className="text-4xl">💬</span>
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Yeni Konuşma</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
                 <p className="text-slate-400 text-center max-w-md mb-8">Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.</p>
               </div>
             ) : (
@@ -560,10 +704,10 @@ const Chat: React.FC = () => {
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                    <div className={`max-w-[82%] rounded-3xl px-5 py-4 shadow-lg ${
                       msg.role === 'user'
-                        ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
-                        : 'bg-slate-700 text-slate-200'
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border border-blue-400/30'
+                        : 'bg-slate-700/90 text-slate-100 border border-slate-600/70'
                     }`}>
                       {msg.role === 'user' ? (
                         <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
@@ -640,7 +784,7 @@ const Chat: React.FC = () => {
           </div>
 
           {/* Input */}
-          <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/50">
+          <div className="px-6 py-5 border-t border-slate-700/70 bg-slate-900/70 backdrop-blur">
             {selectedServers.length > 0 && (
               <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
@@ -656,12 +800,27 @@ const Chat: React.FC = () => {
                 })}
               </div>
             )}
-            <form onSubmit={handleSubmit} className="flex items-center space-x-3">
+            {selectedHypervisors.length > 0 && (
+              <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
+                <span className="text-xs text-slate-400">Seçili hypervisorlar:</span>
+                {selectedHypervisors.map(hypervisorId => {
+                  const hypervisor = hypervisors.find(h => h.id === hypervisorId)
+                  return hypervisor ? (
+                    <span key={hypervisorId}
+                      className="inline-flex items-center px-2 py-1 bg-purple-600/20 text-purple-300 text-xs rounded border border-purple-500/30">
+                      {hypervisor.name}
+                      <button onClick={() => setSelectedHypervisors(prev => prev.filter(id => id !== hypervisorId))} className="ml-1 hover:text-purple-200">✕</button>
+                    </span>
+                  ) : null
+                })}
+              </div>
+            )}
+            <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-slate-900/70 border border-slate-700/70 rounded-2xl p-2">
               <div className="flex-1 relative">
                 <input type="text" value={input} onChange={e => setInput(e.target.value)}
                   placeholder={isLoading ? 'AI düşünüyor...' : 'Mesajınızı yazın... (Enter ile gönder)'}
-                  className={`w-full bg-slate-800 border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isLoading ? 'border-blue-500/50 bg-slate-900' : 'border-slate-600'
+                  className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
+                    isLoading ? 'border-blue-500/60' : 'border-slate-700'
                   }`}
                   disabled={isLoading}
                 />
@@ -675,12 +834,12 @@ const Chat: React.FC = () => {
               </div>
               {isLoading ? (
                 <button type="button" onClick={handleAbort}
-                  className="px-5 py-3 bg-red-600/80 text-white rounded-xl hover:bg-red-600 transition-all text-sm font-medium">
+                  className="px-5 py-3 bg-rose-600/90 text-white rounded-xl hover:bg-rose-500 transition-all text-sm font-medium">
                   ⏹ Durdur
                 </button>
               ) : (
                 <button type="submit" disabled={!input.trim()}
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25">
+                  className="px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-500 hover:to-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-500/25">
                   <span className="flex items-center gap-2">
                     <span>Gönder</span><span>→</span>
                   </span>

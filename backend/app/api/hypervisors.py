@@ -317,6 +317,144 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
 
 
+@router.get("/{hypervisor_id}/host-metrics")
+async def get_host_metrics(
+    hypervisor_id: int,
+    host_name: Optional[str] = None,
+    hours: int = 24,
+    db: Session = Depends(get_db),
+):
+    """
+    ESX host kaynak metriklerini döner.
+    - host_name verilmezse tüm host'ların son kaydı döner (özet)
+    - host_name verilirse o host'un son `hours` saatlik geçmişi döner
+    """
+    from app.models.hypervisor_metric import HypervisorHostMetric
+    from sqlalchemy import func as sa_func
+    from datetime import datetime, timezone, timedelta
+
+    hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+    if not hv:
+        raise HTTPException(status_code=404, detail="Hypervisor bulunamadı")
+
+    if host_name:
+        # Belirli bir host'un zaman serisi
+        since = datetime.now(timezone.utc) - timedelta(hours=max(1, min(hours, 720)))
+        rows = (
+            db.query(HypervisorHostMetric)
+            .filter(
+                HypervisorHostMetric.hypervisor_id == hypervisor_id,
+                HypervisorHostMetric.host_name == host_name,
+                HypervisorHostMetric.timestamp >= since,
+            )
+            .order_by(HypervisorHostMetric.timestamp.asc())
+            .all()
+        )
+        return {
+            "hypervisor_id": hypervisor_id,
+            "host_name": host_name,
+            "hours": hours,
+            "count": len(rows),
+            "metrics": [
+                {
+                    "timestamp":        r.timestamp.isoformat(),
+                    "cpu_usage_pct":    r.cpu_usage_pct,
+                    "cpu_usage_mhz":    r.cpu_usage_mhz,
+                    "cpu_total_mhz":    r.cpu_total_mhz,
+                    "cpu_cores":        r.cpu_cores,
+                    "mem_used_mb":      r.mem_used_mb,
+                    "mem_total_mb":     r.mem_total_mb,
+                    "mem_usage_pct":    r.mem_usage_pct,
+                    "ds_used_gb":       r.ds_used_gb,
+                    "ds_total_gb":      r.ds_total_gb,
+                    "ds_usage_pct":     r.ds_usage_pct,
+                    "net_rx_kbps":      r.net_rx_kbps,
+                    "net_tx_kbps":      r.net_tx_kbps,
+                    "vms_running":      r.vms_running,
+                    "vms_total":        r.vms_total,
+                    "connection_state": r.connection_state,
+                    "power_state":      r.power_state,
+                    "maintenance_mode": r.maintenance_mode,
+                }
+                for r in rows
+            ],
+        }
+    else:
+        # Tüm host'ların son kaydı (özet / anlık tablo)
+        subq = (
+            db.query(
+                HypervisorHostMetric.host_name,
+                sa_func.max(HypervisorHostMetric.timestamp).label("last_ts"),
+            )
+            .filter(HypervisorHostMetric.hypervisor_id == hypervisor_id)
+            .group_by(HypervisorHostMetric.host_name)
+            .subquery()
+        )
+        rows = (
+            db.query(HypervisorHostMetric)
+            .join(
+                subq,
+                (HypervisorHostMetric.host_name == subq.c.host_name)
+                & (HypervisorHostMetric.timestamp == subq.c.last_ts),
+            )
+            .filter(HypervisorHostMetric.hypervisor_id == hypervisor_id)
+            .order_by(HypervisorHostMetric.host_name)
+            .all()
+        )
+        return {
+            "hypervisor_id":   hypervisor_id,
+            "hypervisor_name": hv.name,
+            "host_count":      len(rows),
+            "hosts": [
+                {
+                    "host_name":        r.host_name,
+                    "host_ref":         r.host_ref,
+                    "last_updated":     r.timestamp.isoformat(),
+                    "cpu_usage_pct":    r.cpu_usage_pct,
+                    "cpu_usage_mhz":    r.cpu_usage_mhz,
+                    "cpu_total_mhz":    r.cpu_total_mhz,
+                    "cpu_cores":        r.cpu_cores,
+                    "mem_used_mb":      r.mem_used_mb,
+                    "mem_total_mb":     r.mem_total_mb,
+                    "mem_usage_pct":    r.mem_usage_pct,
+                    "ds_used_gb":       r.ds_used_gb,
+                    "ds_total_gb":      r.ds_total_gb,
+                    "ds_usage_pct":     r.ds_usage_pct,
+                    "vms_running":      r.vms_running,
+                    "vms_total":        r.vms_total,
+                    "connection_state": r.connection_state,
+                    "power_state":      r.power_state,
+                    "maintenance_mode": r.maintenance_mode,
+                }
+                for r in rows
+            ],
+        }
+
+
+@router.post("/{hypervisor_id}/host-metrics/sync")
+async def trigger_esx_metric_sync(hypervisor_id: int, db: Session = Depends(get_db)):
+    """
+    Manuel tetikleme: belirli hypervisor için ESX metrik sync yap.
+    (15 dk'yı beklemeden anlık çekmek için)
+    """
+    import asyncio
+    hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+    if not hv:
+        raise HTTPException(status_code=404, detail="Hypervisor bulunamadı")
+    if hv.hypervisor_type != HypervisorType.VMWARE:
+        raise HTTPException(status_code=400, detail="Sadece VMware hypervisor'lar destekleniyor")
+
+    try:
+        from app.services.esx_metric_sync import sync_esx_metrics
+        # Tek hypervisor için çalıştır (DB'den yalnızca bu ID ile filtrele)
+        # sync_esx_metrics tüm VMware'leri çalıştırır; ayrı bir db session açıyoruz
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, sync_esx_metrics, db)
+        return {"success": True, "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{hypervisor_id}", status_code=204)
 async def delete_hypervisor(hypervisor_id: int, db: Session = Depends(get_db)):
     """Hypervisor sil"""

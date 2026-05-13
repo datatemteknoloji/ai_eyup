@@ -90,3 +90,17 @@ try:
     api_router.include_router(ansible.router, prefix="/ansible", tags=["ansible"])
 except Exception as e:
     logger.error(f"Could not load ansible router: {e}", exc_info=True)
+
+# Package Management
+try:
+    from app.api import packages
+    api_router.include_router(packages.router, prefix="/packages", tags=["packages"])
+except Exception as e:
+    logger.error(f"Could not load packages router: {e}", exc_info=True)
+
+# Local Repository Management
+try:
+    from app.api import repositories
+    api_router.include_router(repositories.router, prefix="/repos", tags=["repositories"])
+except Exception as e:
+    logger.error(f"Could not load repositories router: {e}", exc_info=True)

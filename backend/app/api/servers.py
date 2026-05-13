@@ -371,6 +371,9 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Health check error: {str(e)}")
 
 
+# In-memory cache for vCenter metrics (avoids 3s SOAP calls on every refetch)
+_vcenter_cache: dict = {}  # server_id -> (result_dict, expires_at)
+
 @router.get("/{server_id}/metrics-summary")
 async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_db)):
     """Prometheus/Node Exporter verisini doner. Veri yoksa ve sunucu VIRTUAL ise vCenter'dan alir."""
@@ -411,33 +414,42 @@ async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_d
     # ── vCenter fallback: sanal sunucu, Prometheus verisi yok ──────────────
     vcenter_stats: dict = {}
     if not has_prom and server.server_type == "VIRTUAL":
-        import asyncio
-        hypervisors = db.query(Hypervisor).filter(
-            Hypervisor.hypervisor_type == HypervisorType.VMWARE
-        ).all()
-        for hyp in hypervisors:
-            vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
-            if not (hyp.hostname and hyp.username and vc_pass):
-                continue
-            try:
-                from app.services.vmware.vcenter_client import VCenterClient
-                vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
-                if not vc.login():
+        import asyncio, time as _time
+        # 60 saniye cache: vCenter SOAP 3s sürüyor, her 15s refetch'te çağrılmasin
+        cached = _vcenter_cache.get(server_id)
+        if cached and cached[1] > _time.time():
+            vcenter_stats = cached[0]
+        else:
+            hypervisors = db.query(Hypervisor).filter(
+                Hypervisor.hypervisor_type == HypervisorType.VMWARE
+            ).all()
+            for hyp in hypervisors:
+                vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
+                if not (hyp.hostname and hyp.username and vc_pass):
                     continue
-                vm_id = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: vc.find_vm_by_name_or_ip(name=server.name, ip=ip or "")
-                )
-                if vm_id:
-                    stats = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: vc.get_vm_quick_stats(vm_id)
+                try:
+                    from app.services.vmware.vcenter_client import VCenterClient
+                    vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
+                    if not vc.login():
+                        continue
+                    _srv_name, _srv_ip = server.name, ip or ""
+                    vm_id = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: vc.find_vm_by_name_or_ip(name=_srv_name, ip=_srv_ip)
                     )
-                    if stats:
-                        vcenter_stats = stats
-                vc.logout()
-                if vcenter_stats:
-                    break
-            except Exception as e:
-                logger.warning(f"vCenter metrics fallback error: {e}")
+                    if vm_id:
+                        _vm_id = vm_id
+                        stats = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: vc.get_vm_quick_stats(_vm_id)
+                        )
+                        if stats:
+                            vcenter_stats = stats
+                    vc.logout()
+                    if vcenter_stats:
+                        break
+                except Exception as e:
+                    logger.warning(f"vCenter metrics fallback error: {e}")
+            if vcenter_stats:
+                _vcenter_cache[server_id] = (vcenter_stats, _time.time() + 60)
 
     if vcenter_stats:
         mtmb = vcenter_stats.get("mem_total_mb") or 0
