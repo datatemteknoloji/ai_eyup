@@ -27,6 +27,7 @@ interface Step {
   options?: string[]
   allow_multiple?: boolean
   selected?: string | string[]
+  requires_root?: boolean
 }
 interface AgentResponse {
   status: 'done' | 'pending' | 'error' | 'max_steps' | 'question'
@@ -75,6 +76,7 @@ const Agent: React.FC = () => {
   const [pendingActionId, setPendingActionId] = useState<number | null>(null)
   const [questionActionId, setQuestionActionId] = useState<number | null>(null)
   const [choiceSel, setChoiceSel] = useState<string[]>([])
+  const [rootPassword, setRootPassword] = useState('')
   const [sessionId, setSessionId] = useState<number | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -159,14 +161,22 @@ const Agent: React.FC = () => {
     }
   }
 
-  const decide = async (actionId: number, approve: boolean) => {
+  const decide = async (actionId: number, approve: boolean, sudoPassword?: string) => {
     setLoading(true)
     setPendingActionId(null)
     try {
       const res = await fetch(`${API_BASE_URL}/agent/actions/${actionId}/${approve ? 'approve' : 'reject'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(approve ? { sudo_password: sudoPassword || null } : {}),
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setPendingActionId(actionId)
+        setTimeline(prev => [...prev, { kind: 'error', text: err.detail || `Hata: ${res.status}` }])
+        return
+      }
+      setRootPassword('')
       const data: AgentResponse = await res.json()
       applyResponse(data)
     } catch (e) {
@@ -282,11 +292,31 @@ const Agent: React.FC = () => {
                     {s.guard.reason && <span className="text-slate-500">— {s.guard.reason}</span>}
                   </div>
                 )}
+                {isPending && s.requires_root && (
+                  <div className="space-y-1.5 bg-red-500/5 border border-red-500/40 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-xs text-red-300">
+                      <span>🔑 Yetki yükseltme gerekli</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Bu komut root yetkisi gerektiriyor ve kayıtlı sudo yetkisi bulunamadı.
+                      Çalıştırmak için root/sudo şifresini girin. Şifre yalnızca bu işlem için
+                      kullanılır, kaydedilmez.
+                    </p>
+                    <input
+                      type="password"
+                      value={rootPassword}
+                      onChange={e => setRootPassword(e.target.value)}
+                      placeholder="root / sudo şifresi"
+                      autoComplete="new-password"
+                      className="w-full bg-slate-900 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-1.5"
+                    />
+                  </div>
+                )}
                 {isPending ? (
                   <div className="flex gap-2">
                     <button
-                      onClick={() => s.action_id && decide(s.action_id, true)}
-                      disabled={loading}
+                      onClick={() => s.action_id && decide(s.action_id, true, rootPassword)}
+                      disabled={loading || (s.requires_root && !rootPassword.trim())}
                       className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium disabled:opacity-50"
                     >
                       ✓ Onayla & Çalıştır

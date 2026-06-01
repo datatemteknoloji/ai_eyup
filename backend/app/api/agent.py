@@ -34,6 +34,12 @@ class AnswerRequest(BaseModel):
     answer: Any = None
 
 
+class ApproveRequest(BaseModel):
+    # Kullanıcının onay anında girdiği geçici root/sudo şifresi (yetki yükseltme).
+    # Kayıtlı sudo şifresi yoksa istenir; DB'ye yazılmaz, yalnızca o çalıştırma için kullanılır.
+    sudo_password: Optional[str] = None
+
+
 def _action_to_dict(a: AgentAction) -> dict:
     return {
         "id": a.id,
@@ -44,6 +50,7 @@ def _action_to_dict(a: AgentAction) -> dict:
         "risk_level": a.risk_level,
         "status": a.status,
         "preview": a.preview,
+        "requires_root": bool(getattr(a, "requires_root", False)),
         "result": a.result or {},
         "model": a.model,
         "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -87,13 +94,21 @@ async def list_actions(limit: int = 50, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/approve")
-async def approve_action(action_id: int, db: Session = Depends(get_db)):
+async def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
+                         db: Session = Depends(get_db)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
     if action.status != "pending":
         raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
-    return continue_after_decision(db, action, approved=True)
+    # Yetki yükseltme gerekiyorsa root şifresi zorunlu.
+    if getattr(action, "requires_root", False) and not (req.sudo_password or "").strip():
+        raise HTTPException(status_code=400,
+                            detail="Bu işlem için root/sudo şifresi gerekli.")
+    return continue_after_decision(
+        db, action, approved=True,
+        sudo_password=(req.sudo_password or None),
+    )
 
 
 @router.post("/actions/{action_id}/reject")

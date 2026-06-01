@@ -47,6 +47,7 @@ def run_ssh_command(
     allow_sudo: bool = False,
     timeout: int = 30,
     session_id: Optional[int] = None,
+    sudo_password_override: Optional[str] = None,
 ) -> Dict:
     """
     Tek bir sunucuda komut çalıştırır. policy engine'den geçmeyen komut çalışmaz.
@@ -82,7 +83,9 @@ def run_ssh_command(
         password=cred.password,
         private_key=cred.private_key,
         port=cred.port or 22,
-        sudo_password=cred.sudo_password,
+        # Transient override (kullanıcının onayda girdiği root şifresi) varsa onu kullan;
+        # bu şifre DB'ye yazılmaz, yalnızca bu çağrı için bellekte tutulur.
+        sudo_password=sudo_password_override or cred.sudo_password,
     )
 
     if not ssh.connect():

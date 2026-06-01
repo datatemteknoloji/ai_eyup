@@ -60,6 +60,16 @@ async def startup_tasks():
     from app.core.database import engine, Base
     import app.models  # noqa: F401 - modelleri Base.metadata'ya kaydetmek için
     Base.metadata.create_all(bind=engine)
+
+    # Hafif şema güncellemeleri (mevcut tablolara eksik kolon ekle — idempotent)
+    try:
+        from sqlalchemy import text as _sa_text
+        with engine.begin() as _conn:
+            _conn.execute(_sa_text(
+                "ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE"
+            ))
+    except Exception as _mig_e:
+        logger.debug(f"agent_actions migration skip: {_mig_e}")
     
     # TimescaleDB hypertable'ları oluştur
     try:

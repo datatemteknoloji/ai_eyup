@@ -21,9 +21,10 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.config import get_agent_model
+from app.core.config import get_agent_model, settings
 from app.models.agent_action import AgentAction
 from app.services.agent import tools as tool_mod
+from app.services.agent.executor import get_default_credential
 from app.services.agent.guard import guard_command
 from app.services.agent.llm import chat_with_tools
 from app.services.agent.policy import RiskLevel
@@ -77,10 +78,27 @@ def _server_summary(db: Session, server_ids: List[int]) -> str:
     return "\n".join(lines)
 
 
+def _requires_root_prompt(db: Session, tool: tool_mod.Tool, command_str: str) -> bool:
+    """
+    Mutating bir işlem sudo gerektiriyor ama kullanılabilir bir sudo yetkisi yoksa
+    (kayıtlı sudo şifresi yok ya da AGENT_FORCE_ROOT_PROMPT açık), kullanıcıdan
+    onay anında root şifresi istenir.
+    """
+    needs_sudo = bool(getattr(tool, "allow_sudo", False)) and command_str.strip().startswith("sudo ")
+    if not needs_sudo:
+        return False
+    if settings.AGENT_FORCE_ROOT_PROMPT:
+        return True
+    cred = get_default_credential(db)
+    has_sudo = bool(cred and (cred.sudo_password or "").strip())
+    return not has_sudo
+
+
 def _record_action(
     db: Session, ctx: Dict[str, Any], tool: tool_mod.Tool,
     args: Dict[str, Any], status: str, result: Optional[Dict] = None,
     transcript: Optional[List] = None, model: str = "",
+    requires_root: bool = False,
 ) -> AgentAction:
     server = resolve_server(db, args, ctx)
     action = AgentAction(
@@ -91,6 +109,7 @@ def _record_action(
         risk_level=tool.risk_level.value,
         status=status,
         preview=tool.preview(db, args, ctx),
+        requires_root=requires_root,
         result=result or {},
         transcript=transcript or [],
         model=model,
@@ -197,15 +216,18 @@ def _run_loop(
                 continue
 
             # Guard izin verdi (veya devre dışı/degraded) → onay için dur.
+            requires_root = _requires_root_prompt(db, tool, command_str)
             action = _record_action(
                 db, ctx, tool, args, "pending",
                 result={"guard": guard}, transcript=messages, model=model,
+                requires_root=requires_root,
             )
             steps.append({"type": "approval_required", "tool": name, "args": args,
-                          "preview": action.preview, "action_id": action.id, "guard": guard})
+                          "preview": action.preview, "action_id": action.id,
+                          "guard": guard, "requires_root": requires_root})
             return {"status": "pending", "action_id": action.id, "preview": action.preview,
-                    "tool": name, "args": args, "guard": guard, "steps": steps,
-                    "session_id": ctx.get("session_id")}
+                    "tool": name, "args": args, "guard": guard, "requires_root": requires_root,
+                    "steps": steps, "session_id": ctx.get("session_id")}
 
     return {"status": "max_steps", "answer": "Maksimum adım sayısına ulaşıldı.",
             "steps": steps, "session_id": ctx.get("session_id")}
@@ -229,12 +251,18 @@ def start_agent(
 
 
 def continue_after_decision(db: Session, action: AgentAction, approved: bool,
-                            decided_by: str = "user") -> Dict[str, Any]:
-    """Onay/ret sonrası agent döngüsünü kaldığı yerden sürdürür."""
+                            decided_by: str = "user",
+                            sudo_password: Optional[str] = None) -> Dict[str, Any]:
+    """Onay/ret sonrası agent döngüsünü kaldığı yerden sürdürür.
+
+    sudo_password: kullanıcının onay anında girdiği geçici root/sudo şifresi.
+    Yalnızca bu çalıştırma için ctx üzerinden executor'a iletilir; DB'ye YAZILMAZ.
+    """
     ctx = {
         "session_id": action.session_id,
         "server_ids": [action.server_id] if action.server_id else [],
         "server_summary": _server_summary(db, [action.server_id] if action.server_id else []),
+        "sudo_password_override": (sudo_password or None),
     }
     model = action.model or get_agent_model(db)
     messages: List[Dict[str, Any]] = list(action.transcript or [])

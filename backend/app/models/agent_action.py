@@ -9,7 +9,7 @@ Akış:
   executed  → çalıştırıldı (read-only otomatik veya onay sonrası)
   failed    → çalıştırma hata verdi
 """
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -29,6 +29,7 @@ class AgentAction(Base):
     status = Column(String(20), default="pending", index=True)
 
     preview = Column(Text)                        # çalıştırılacak komut/işlem önizlemesi
+    requires_root = Column(Boolean, default=False)  # onayda root/sudo şifresi gerekiyor mu
     result = Column(JSON, default=dict)           # çalıştırma sonucu (stdout/stderr/ok)
 
     # Onay sonrası döngüye kaldığı yerden devam edebilmek için konuşma transcript'i

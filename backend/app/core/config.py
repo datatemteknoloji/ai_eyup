@@ -30,6 +30,9 @@ class Settings:
     AGENT_MODEL: str = os.getenv("AGENT_MODEL", "qwen3.5:35b")
     AGENT_GUARD_ENABLED: bool = os.getenv("AGENT_GUARD_ENABLED", "true").lower() == "true"
     AGENT_GUARD_MODEL: str = os.getenv("AGENT_GUARD_MODEL", "gpt-oss-safeguard:latest")
+    # true ise mutating (sudo) işlemlerde, kayıtlı sudo şifresi olsa bile her zaman
+    # kullanıcıdan root şifresi istenir (yetki yükseltme onayı).
+    AGENT_FORCE_ROOT_PROMPT: bool = os.getenv("AGENT_FORCE_ROOT_PROMPT", "false").lower() == "true"
 
     # Harici AI Sağlayıcıları (isteğe bağlı - API anahtarı varsa kullanılır)
     # Groq - Ücretsiz, çok hızlı (llama3-70b-8192, mixtral-8x7b, gemma2-9b-it)

@@ -83,6 +83,7 @@ class Tool:
             allow_sudo=self.allow_sudo,
             timeout=self.timeout,
             session_id=ctx.get("session_id"),
+            sudo_password_override=ctx.get("sudo_password_override"),
         )
 
 
