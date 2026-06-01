@@ -118,3 +118,10 @@ try:
     api_router.include_router(terminal.router, prefix="/terminal", tags=["terminal"])
 except Exception as e:
     logger.error(f"Could not load terminal router: {e}", exc_info=True)
+
+# Agentic AI (tool-calling + human-in-the-loop onay)
+try:
+    from app.api import agent
+    api_router.include_router(agent.router, prefix="/agent", tags=["agent"])
+except Exception as e:
+    logger.error(f"Could not load agent router: {e}", exc_info=True)

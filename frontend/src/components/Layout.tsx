@@ -35,6 +35,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
     { type: 'link', path: '/chat',         name: 'AI Chat',        icon: '🤖' },
+    { type: 'link', path: '/agent',        name: 'AI Agent',       icon: '🛠️' },
     { type: 'link', path: '/ansible',      name: 'Ansible/AWX',    icon: '⚡' },
     { type: 'link', path: '/system-update', name: 'Sistem Güncelle', icon: '🔄' },
     { type: 'link', path: '/packages',     name: 'Paket & Yama',   icon: '📦' },

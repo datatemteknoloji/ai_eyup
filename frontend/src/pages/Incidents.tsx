@@ -1,7 +1,5 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge, StatusBadge,

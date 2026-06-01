@@ -1,0 +1,100 @@
+"""
+Agentic AI API — tool-calling + insan onayı (human-in-the-loop).
+
+Endpoint'ler:
+  POST /agent/chat                       → agent döngüsünü başlat
+  GET  /agent/actions/pending            → bekleyen onaylar
+  GET  /agent/actions                    → son aksiyonlar (audit)
+  POST /agent/actions/{id}/approve       → onayla ve devam et
+  POST /agent/actions/{id}/reject        → reddet ve devam et
+"""
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.agent_action import AgentAction
+from app.services.agent.orchestrator import start_agent, continue_after_decision
+
+router = APIRouter()
+
+
+class AgentChatRequest(BaseModel):
+    message: str
+    session_id: Optional[int] = None
+    server_ids: Optional[List[int]] = None
+    model: Optional[str] = None
+
+
+def _action_to_dict(a: AgentAction) -> dict:
+    return {
+        "id": a.id,
+        "session_id": a.session_id,
+        "server_id": a.server_id,
+        "tool_name": a.tool_name,
+        "arguments": a.arguments or {},
+        "risk_level": a.risk_level,
+        "status": a.status,
+        "preview": a.preview,
+        "result": a.result or {},
+        "model": a.model,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+        "executed_at": a.executed_at.isoformat() if a.executed_at else None,
+    }
+
+
+@router.post("/chat")
+async def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db)):
+    message = (req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Mesaj boş olamaz")
+    result = start_agent(
+        db, message,
+        session_id=req.session_id,
+        server_ids=req.server_ids,
+        model=req.model,
+    )
+    return result
+
+
+@router.get("/actions/pending")
+async def pending_actions(session_id: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(AgentAction).filter(AgentAction.status == "pending")
+    if session_id:
+        q = q.filter(AgentAction.session_id == session_id)
+    actions = q.order_by(AgentAction.created_at.desc()).all()
+    return {"actions": [_action_to_dict(a) for a in actions], "total": len(actions)}
+
+
+@router.get("/actions")
+async def list_actions(limit: int = 50, db: Session = Depends(get_db)):
+    actions = (
+        db.query(AgentAction)
+        .order_by(AgentAction.created_at.desc())
+        .limit(min(limit, 200))
+        .all()
+    )
+    return {"actions": [_action_to_dict(a) for a in actions]}
+
+
+@router.post("/actions/{action_id}/approve")
+async def approve_action(action_id: int, db: Session = Depends(get_db)):
+    action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
+    if action.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
+    return continue_after_decision(db, action, approved=True)
+
+
+@router.post("/actions/{action_id}/reject")
+async def reject_action(action_id: int, db: Session = Depends(get_db)):
+    action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
+    if action.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
+    return continue_after_decision(db, action, approved=False)

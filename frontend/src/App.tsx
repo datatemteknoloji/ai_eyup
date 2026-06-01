@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Servers from './pages/Servers'
 import Hypervisors from './pages/Hypervisors'
 import Chat from './pages/Chat'
+import Agent from './pages/Agent'
 import LiveMetrics from './pages/LiveMetrics'
 import Settings from './pages/Settings'
 import Events from './pages/Events'
@@ -50,6 +51,7 @@ function App() {
                 <Route path="/servers" element={<Servers />} />
                 <Route path="/hypervisors" element={<Hypervisors />} />
                 <Route path="/chat" element={<Chat />} />
+                <Route path="/agent" element={<Agent />} />
                 <Route path="/metrics" element={<LiveMetrics />} />
                 <Route path="/events" element={<Events />} />
                 <Route path="/incidents" element={<Incidents />} />

@@ -26,6 +26,11 @@ class Settings:
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_AUTO_MODEL_ENABLED: bool = os.getenv("OLLAMA_AUTO_MODEL_ENABLED", "true").lower() == "true"
 
+    # Agentic AI — ana agent (tool-calling) ve guard (safety classifier) modelleri
+    AGENT_MODEL: str = os.getenv("AGENT_MODEL", "qwen3.5:35b")
+    AGENT_GUARD_ENABLED: bool = os.getenv("AGENT_GUARD_ENABLED", "true").lower() == "true"
+    AGENT_GUARD_MODEL: str = os.getenv("AGENT_GUARD_MODEL", "gpt-oss-safeguard:latest")
+
     # Harici AI Sağlayıcıları (isteğe bağlı - API anahtarı varsa kullanılır)
     # Groq - Ücretsiz, çok hızlı (llama3-70b-8192, mixtral-8x7b, gemma2-9b-it)
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
@@ -86,3 +91,24 @@ def get_active_model(db) -> str:
     except Exception:
         pass
     return settings.OLLAMA_DEFAULT_MODEL
+
+
+def _get_setting(db, key: str, default: str) -> str:
+    try:
+        from app.models.app_settings import AppSettings
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row and row.value:
+            return row.value
+    except Exception:
+        pass
+    return default
+
+
+def get_agent_model(db) -> str:
+    """Agent (tool-calling) modeli — app_settings override, yoksa config."""
+    return _get_setting(db, "agent_active_model", settings.AGENT_MODEL)
+
+
+def get_guard_model(db) -> str:
+    """Guard (safety classifier) modeli — app_settings override, yoksa config."""
+    return _get_setting(db, "agent_guard_model", settings.AGENT_GUARD_MODEL)
