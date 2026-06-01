@@ -79,7 +79,7 @@ def run_rhsm_sync(repo_id: int, job_id: int) -> None:
     Background thread'de çalışır.
     SSH ile mirror host'a bağlanır, subscription-manager + reposync çalıştırır.
     """
-    from app.core.database import SessionLocal
+    from app.core.database import ThreadSessionLocal as SessionLocal
     from app.models.repository import RepoSource, RepoSyncJob
 
     db = SessionLocal()

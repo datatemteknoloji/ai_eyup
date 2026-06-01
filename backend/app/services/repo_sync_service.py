@@ -305,35 +305,53 @@ def _copy_repodata(sess: requests.Session, base_url: str,
 
 # ─── Main sync function (runs in thread) ──────────────────────────────────────
 
+def _write_log(job_id: int, log_text: str, synced: int = 0, total: int = 0) -> None:
+    """
+    Log ve ilerlemeyi TAMAMEN BAĞIMSIZ bir session ile yazar.
+    NullPool → her çağrıda yeni bağlantı açılıp kapanır.
+    Ana sync session'ı ile asla çakışmaz.
+    """
+    try:
+        from app.core.database import ThreadSessionLocal
+        from app.models.repository import RepoSyncJob
+        _db = ThreadSessionLocal()
+        try:
+            j = _db.query(RepoSyncJob).filter_by(id=job_id).first()
+            if j:
+                j.log = log_text[-8000:]   # son 8000 karakter
+                if total > 0:
+                    j.total_packages  = total
+                if synced > 0:
+                    j.synced_packages = synced
+                _db.commit()
+        finally:
+            _db.close()
+    except Exception as e:
+        logger.debug(f"_write_log error: {e}")
+
+
 def run_repo_sync(repo_id: int, job_id: int,
                   sync_metadata_only: bool = False) -> None:
     """
     Background thread'de çalışır.
-    sync_metadata_only=True → sadece package listesini DB'ye yazar, RPM indirmez.
+    Ana DB session sadece repo/job metadata için kullanılır.
+    Log yazımı ayrı bağımsız session (_write_log) ile yapılır.
     """
-    from app.core.database import SessionLocal
+    from app.core.database import ThreadSessionLocal as SessionLocal
     from app.models.repository import RepoSource, RepoSyncJob, RepoPackage
 
     db = SessionLocal()
     log_lines: List[str] = []
+    _log_counter = [0]
 
     def log(msg: str):
         line = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}"
         log_lines.append(line)
         logger.info(f"REPO#{repo_id} {msg}")
-        # Her log satırını anında DB'ye yaz — ayrı session ile thread-safe
-        try:
-            from app.core.database import SessionLocal as _SL
-            _db = _SL()
-            try:
-                j = _db.query(RepoSyncJob).filter_by(id=job_id).first()
-                if j:
-                    j.log = "\n".join(log_lines[-100:])
-                    _db.commit()
-            finally:
-                _db.close()
-        except Exception:
-            pass
+        # Her 5 satırda bir DB'ye yaz (bağımsız session ile)
+        _log_counter[0] += 1
+        if _log_counter[0] % 5 == 0:
+            _write_log(job_id, "\n".join(log_lines))
 
     try:
         repo: RepoSource = db.query(RepoSource).filter_by(id=repo_id).first()
@@ -473,18 +491,31 @@ def run_repo_sync(repo_id: int, job_id: int,
                 ok, loc = future.result()
                 if ok:
                     synced += 1
-                    db.query(RepoPackage).filter_by(
-                        repo_id=repo_id, location=loc
-                    ).update({"downloaded": True, "local_path": os.path.join(local_path, loc.lstrip("/"))})
-                    if synced % 5 == 0:
-                        job.synced_packages = synced
-                        db.commit()
+                    # Package durumunu ayrı session ile güncelle
+                    try:
+                        from app.core.database import ThreadSessionLocal as _TSL
+                        _upd = _TSL()
+                        try:
+                            _upd.query(RepoPackage).filter_by(
+                                repo_id=repo_id, location=loc
+                            ).update({"downloaded": True,
+                                      "local_path": os.path.join(local_path, loc.lstrip("/"))})
+                            _upd.commit()
+                        finally:
+                            _upd.close()
+                    except Exception:
+                        pass
                     if synced % 100 == 0:
+                        _write_log(job_id, "\n".join(log_lines), synced=synced, total=len(pkg_dicts))
                         log(f"İlerleme: {synced}/{len(pkg_dicts)}")
                 else:
                     failed += 1
                     log(f"HATA: {loc}")
 
+        # son ilerleme yaz
+        _write_log(job_id, "\n".join(log_lines), synced=synced, total=len(pkg_dicts))
+        # ana session commit (job ve repo state için)
+        job.synced_packages = synced
         db.commit()
 
         # ── 5. repodata kopyala ────────────────────────────────────────────

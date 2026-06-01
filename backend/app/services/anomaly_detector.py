@@ -66,12 +66,19 @@ def _severity(value: float, cfg: Dict[str, Any], z: Optional[float]) -> str:
     warn = cfg.get("warning")
     z_thresh = cfg.get("z_threshold", 3.0)
 
+    # 1) Mutlak eşik kontrolü (en güvenilir sinyal)
     if crit is not None and value >= crit:
         return "critical"
     if warn is not None and value >= warn:
         return "warning"
-    if z is not None and abs(z) >= z_thresh:
-        return "warning" if abs(z) < z_thresh + 1 else "critical"
+
+    # 2) Z-score: yalnızca POZİTİF sapma (değer YÜKSELDİ) anlamlıdır.
+    #    Tüm metriklerimiz "yüksek = kötü" olduğundan değerin düşmesi anomali değildir.
+    #    Ayrıca düşük mutlak değerli istatistiksel spike'ları ele (örn. CPU %2.77).
+    if z is not None and z >= z_thresh:
+        floor = (warn * 0.5) if warn is not None else None
+        if floor is None or value >= floor:
+            return "warning" if z < z_thresh + 3 else "critical"
     return "info"
 
 
@@ -87,8 +94,14 @@ def detect_anomalies_for_server(
     lookback_start = now - timedelta(minutes=lookback_minutes)
     history_start = now - timedelta(minutes=history_minutes)
 
-    for metric_name, cfg in ANOMALY_CONFIG.items():
+    for metric_name, base_cfg in ANOMALY_CONFIG.items():
         try:
+            cfg = dict(base_cfg)
+            # load1 çekirdek sayısına göre dinamik eşik (load == cores → %100 doluluk)
+            if metric_name == "load1" and getattr(server, "cpu_cores", None):
+                cores = max(1, int(server.cpu_cores))
+                cfg["warning"] = cores * 1.0
+                cfg["critical"] = cores * 2.0
             # Son N dakikanin ortalamasini al (mevcut deger)
             recent = db.query(MetricData).filter(
                 MetricData.server_id == server.id,
@@ -119,7 +132,9 @@ def detect_anomalies_for_server(
             severity = _severity(current_value, cfg, z)
             is_iqr_outlier = _iqr_outlier(history_values, current_value) if history_values else False
 
-            if severity in ("warning", "critical") or is_iqr_outlier:
+            # Yalnızca aksiyon alınabilir (warning/critical) anomalileri raporla.
+            # IQR aykırılık bilgisi payload'da tutulur ama tek başına tetiklemez.
+            if severity in ("warning", "critical"):
                 mean_val = statistics.mean(history_values) if history_values else None
                 stdev_val = statistics.stdev(history_values) if len(history_values) >= 2 else None
 

@@ -36,7 +36,7 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from app.models.credential import GlobalCredential
-    from app.core.database import SessionLocal
+    from app.core.database import ThreadSessionLocal as SessionLocal
 
     server_ids = (body or {}).get("server_ids")
     q = db.query(Server)

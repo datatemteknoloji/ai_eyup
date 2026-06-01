@@ -8,6 +8,29 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+def _get_management_ip() -> str:
+    """
+    Yönetim sunucusunun client'lardan erişilebilir IP adresini döner.
+    Öncelik:
+    1. MANAGEMENT_SERVER_IP ortam değişkeni / config
+    2. Varsayılan ağ arayüzünden otomatik tespit (8.8.8.8'e bağlanarak)
+    3. Fallback: 127.0.0.1
+    """
+    import socket
+    from app.core.config import settings
+    if settings.MANAGEMENT_SERVER_IP:
+        return settings.MANAGEMENT_SERVER_IP
+    # Dış ağa bağlanıyormuş gibi yaparak yerel IP'yi bul
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def _resolve_creds(server, global_cred=None,
                    override_username=None, override_password=None,
                    override_sudo_password=None) -> dict:
@@ -68,86 +91,313 @@ def _run(client, cmd, sudo_pass=None, timeout=600, priv_method="sudo"):
     Komutu yetki yükseltme yöntemiyle çalıştırır.
     priv_method: sudo | dzdo | su | pbrun | direct
     """
-    safe_cmd = cmd.replace("'", "'\\''")
-    if priv_method == "dzdo":
-        # Centrify DirectControl — dzdo genellikle AD şifresiyle veya şifresiz çalışır
+    # PTY ile channel aç — sudo şifre prompt'unu doğru handle eder
+    use_pty   = bool(sudo_pass and priv_method in ("sudo", "dzdo", "su"))
+    tool_map  = {"sudo": "sudo", "dzdo": "dzdo", "su": "su", "pbrun": "pbrun"}
+    tool      = tool_map.get(priv_method, "sudo")
+
+    if priv_method == "direct":
+        final_cmd = cmd
+    elif priv_method in ("sudo", "dzdo"):
         if sudo_pass:
-            cmd = f"echo '{sudo_pass}' | dzdo -S sh -c '{safe_cmd}'"
+            # -S: şifreyi stdin'den oku, -k: cache sıfırla
+            esc = cmd.replace("'", "'\\''")
+            final_cmd = f"{tool} -k -S sh -c '{esc}'"
         else:
-            cmd = f"dzdo sh -c '{safe_cmd}'"
+            final_cmd = f"{tool} -n sh -c '{cmd.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'"
     elif priv_method == "su":
         if sudo_pass:
-            cmd = f"echo '{sudo_pass}' | su -c '{safe_cmd}' root"
+            esc = cmd.replace("'", "'\\''")
+            final_cmd = f"su -c '{esc}' root"
         else:
-            cmd = f"su -c '{safe_cmd}' root"
+            final_cmd = f"su -c '{cmd}' root"
     elif priv_method == "pbrun":
-        # Powerbroker / BeyondTrust
-        cmd = f"pbrun sh -c '{safe_cmd}'"
-    elif priv_method == "sudo":
-        if sudo_pass:
-            cmd = f"echo '{sudo_pass}' | sudo -S sh -c '{safe_cmd}'"
-        elif cmd not in ("whoami", "uname -r") and not cmd.startswith("command"):
-            cmd = f"sudo sh -c '{safe_cmd}'"
-    # direct: komut olduğu gibi çalışır (root kullanıcı)
+        final_cmd = f"pbrun sh -c '{cmd}'"
+    else:
+        final_cmd = cmd
 
-    _, stdout, stderr = client.exec_command(cmd, timeout=timeout, get_pty=False)
-    out = stdout.read().decode("utf-8", errors="replace")
-    err = stderr.read().decode("utf-8", errors="replace")
-    code = stdout.channel.recv_exit_status()
-    return code, out, err
+    channel = client.get_transport().open_session()
+    if use_pty:
+        channel.get_pty(term="xterm", width=220, height=50)
+    channel.exec_command(final_cmd)
+
+    # Sudo şifresini stdin'e yaz
+    if sudo_pass and priv_method in ("sudo", "dzdo"):
+        try:
+            channel.sendall((sudo_pass + "\n").encode())
+        except Exception:
+            pass
+
+    # Timeout ile oku
+    import select, time
+    out_buf = b""
+    err_buf = b""
+    deadline = time.time() + timeout
+    channel.setblocking(False)
+
+    while True:
+        if time.time() > deadline:
+            channel.close()
+            return 124, out_buf.decode("utf-8", errors="replace"), "TIMEOUT"
+        if channel.exit_status_ready():
+            # Son verileri oku
+            while channel.recv_ready():
+                out_buf += channel.recv(65536)
+            while channel.recv_stderr_ready():
+                err_buf += channel.recv_stderr(65536)
+            break
+        r, _, _ = select.select([channel], [], [], 0.5)
+        if r:
+            if channel.recv_ready():
+                out_buf += channel.recv(65536)
+            if channel.recv_stderr_ready():
+                err_buf += channel.recv_stderr(65536)
+
+    code = channel.recv_exit_status()
+    channel.close()
+    return code, out_buf.decode("utf-8", errors="replace"), err_buf.decode("utf-8", errors="replace")
+
+
+def _run_streaming(client, cmd: str, sudo_pass=None, timeout=1800,
+                    priv_method="sudo", on_line=None) -> tuple[int, str]:
+    """
+    Komutu çalıştırır ve çıktıyı satır satır on_line callback'e iletir.
+    PTY kullanarak sudo şifresini handle eder.
+    Döner: (exit_code, full_output)
+    """
+    import select, time as _time, re as _re
+
+    # Komutu wrap et
+    if priv_method in ("sudo", "dzdo") and sudo_pass:
+        tool = priv_method
+        safe_cmd = cmd.replace("'", "'\"'\"'")
+        final_cmd = f"{tool} -k -S sh -c '{safe_cmd}'"
+    elif priv_method == "direct":
+        final_cmd = cmd
+    else:
+        final_cmd = cmd
+
+    channel = client.get_transport().open_session()
+    channel.get_pty(term="xterm-256color", width=220, height=50)
+    channel.exec_command(final_cmd)
+
+    # sudo şifresi gönder
+    if sudo_pass and priv_method in ("sudo", "dzdo"):
+        try:
+            channel.sendall((sudo_pass + "\n").encode())
+        except Exception:
+            pass
+
+    out_buf = b""
+    line_buf = b""
+    deadline = _time.time() + timeout
+    channel.setblocking(False)
+    ansi_escape = _re.compile(rb'\x1b\[[0-9;]*[a-zA-Z]|\x1b\([a-zA-Z]|\x1b[=>]|\r')
+
+    while True:
+        if _time.time() > deadline:
+            channel.close()
+            return 124, out_buf.decode("utf-8", errors="replace")
+
+        if channel.exit_status_ready():
+            # Son verileri oku
+            while channel.recv_ready():
+                data = channel.recv(65536)
+                out_buf += data
+                line_buf += data
+            break
+
+        r, _, _ = select.select([channel], [], [], 0.2)
+        if r and channel.recv_ready():
+            data = channel.recv(4096)
+            if data:
+                out_buf  += data
+                line_buf += data
+                # Satır satır işle
+                while b'\n' in line_buf:
+                    line, line_buf = line_buf.split(b'\n', 1)
+                    clean = ansi_escape.sub(b'', line).decode("utf-8", errors="replace").strip()
+                    if clean and on_line:
+                        # Gürültülü satırları filtrele
+                        low = clean.lower()
+                        skip = any(low.startswith(s) for s in (
+                            "[sudo]", "sudo:", "datatem", "updating subscription",
+                        ))
+                        if not skip:
+                            on_line(clean)
+
+    code = channel.recv_exit_status()
+    channel.close()
+    return code, out_buf.decode("utf-8", errors="replace")
 
 
 def _detect_pkg_manager(client) -> str:
-    for mgr in ("dnf", "apt-get", "yum"):
-        code, _, _ = _run(client, f"command -v {mgr}", timeout=5)
-        if code == 0:
-            return "apt" if mgr == "apt-get" else mgr
+    """Paket yöneticisini tespit eder — sudo olmadan direkt exec."""
+    _, stdout, _ = client.exec_command(
+        "command -v dnf && echo DNF || command -v yum && echo YUM || command -v apt-get && echo APT || echo UNKNOWN",
+        timeout=8, get_pty=False
+    )
+    out = stdout.read().decode("utf-8", errors="replace")
+    stdout.channel.recv_exit_status()
+    if "DNF" in out or "/dnf" in out:
+        return "dnf"
+    if "YUM" in out or "/yum" in out:
+        return "yum"
+    if "APT" in out or "/apt" in out:
+        return "apt"
     return "unknown"
 
 
 def check_available_updates(server, update_type: str, global_cred=None) -> List[Dict]:
+    """
+    Güncellemeleri kontrol eder.
+    check-update / apt list --upgradable sudo gerektirmez — normal kullanıcı çalıştırabilir.
+    Sadece metadata refresh (makecache/apt update) gerekebilir.
+    """
     creds = _resolve_creds(server, global_cred)
     sudo  = creds.get("sudo_password")
     try:
         client = _make_client(creds)
         mgr    = _detect_pkg_manager(client)
         result = []
+
         if mgr in ("dnf", "yum"):
-            _run(client, f"{mgr} makecache -q 2>/dev/null || true", sudo_pass=sudo, timeout=60)
+            # makecache sudo ile (metadata refresh root gerektirebilir)
+            _run(client, f"{mgr} makecache -q 2>/dev/null || true",
+                 sudo_pass=sudo, timeout=60)
+
+            # dnf list upgrades: her satır TAB ayrımlı "ad.arch versiyon repo" formatı
+            # --color=never + --noautoremove: temiz çıktı
+            # --disableplugin=subscription-manager: RHSM bekleme bypass
+            base_opts = "--color=never --disableplugin=subscription-manager --setopt=timeout=10 --setopt=retries=1"
             if update_type == "security":
-                _, out, _ = _run(client, f"{mgr} check-update --security 2>/dev/null; true", sudo_pass=sudo, timeout=60)
+                # updateinfo ile güvenlik paketleri
+                cmd = (
+                    f"{mgr} updateinfo list security {base_opts} 2>&1 | "
+                    f"awk '{{print $3}}' | sort -u | "
+                    f"xargs -r {mgr} list {base_opts} 2>/dev/null | "
+                    f"grep -v '^Installed\\|^Available\\|^Last\\|^Updating\\|^subscription' || true"
+                )
+                # Fallback: check-update --security
+                cmd = f"{mgr} check-update --security {base_opts} 2>&1; true"
+            elif update_type == "kernel":
+                cmd = f"{mgr} check-update 'kernel*' {base_opts} 2>&1; true"
+            else:
+                # list upgrades: "paket.arch  versiyon  repo" — her satır tek paket
+                cmd = f"{mgr} list upgrades {base_opts} 2>&1; true"
+
+            code, out, _ = _run(client, cmd, sudo_pass=sudo, timeout=90)
+
+            if update_type == "security":
                 result = _parse_dnf_check_update(out, is_security=True)
             elif update_type == "kernel":
-                _, out, _ = _run(client, f"{mgr} check-update kernel* 2>/dev/null; true", sudo_pass=sudo, timeout=60)
                 result = _parse_dnf_check_update(out, kernel_only=True)
             else:
-                _, out, _ = _run(client, f"{mgr} check-update 2>/dev/null; true", sudo_pass=sudo, timeout=90)
-                result = _parse_dnf_check_update(out)
+                # dnf list upgrades çıktısı: "paket.arch  versiyon  repo"
+                result = _parse_dnf_list_upgrades(out)
+
         elif mgr == "apt":
+            # apt update sudo gerektirir
             _run(client, "apt-get update -qq 2>/dev/null", sudo_pass=sudo, timeout=60)
-            _, out, _ = _run(client, "apt list --upgradable 2>/dev/null | tail -n +2", timeout=30)
-            result = _parse_apt_upgradable(out, update_type)
+            _, stdout2, _ = client.exec_command(
+                "apt list --upgradable 2>/dev/null | tail -n +2", timeout=30, get_pty=False
+            )
+            out2 = stdout2.read().decode("utf-8", errors="replace")
+            stdout2.channel.recv_exit_status()
+            result = _parse_apt_upgradable(out2, update_type)
+
         client.close()
         return result
     except Exception as exc:
         return [{"name": "ERROR", "error": str(exc), "is_security": False, "is_kernel": False}]
 
 
+def _strip_ansi(text: str) -> str:
+    """ANSI escape kodlarını temizler."""
+    import re
+    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\([a-zA-Z]|\x1b[=>]', '', text)
+
+
 def _parse_dnf_check_update(output, is_security=False, kernel_only=False):
+    """dnf check-update çıktısını parse eder. ANSI kodları ve gürültülü satırları filtreler."""
+    output = _strip_ansi(output)
+    SKIP_PREFIXES = (
+        "last metadata", "loading", "loaded", "obsoleting",
+        "updating subscription", "red hat subscription", "subscription",
+        "extra packages", "enabling ", "disabling", "importing",
+        "[sudo]", "sudo:", "password", "warning:", "error:",
+        "repolist:", "repo id", "---",
+    )
     pkgs = []
     for line in output.splitlines():
-        line = line.strip()
-        if not line or any(x in line for x in ["Last metadata", "Loading", "Loaded", "Obsoleting"]):
+        line = line.strip().replace("\r", "")
+        if not line:
+            continue
+        low = line.lower()
+        if any(low.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        if any(x in low for x in ["metadata expiration", "loaded plugins", "no packages",
+                                    "security", "notice:", "problem ", "curl error",
+                                    "mirror", " obsolete", "packages excluded"]):
             continue
         parts = line.split()
-        if len(parts) >= 2 and "." in parts[0]:
+        # dnf check-update çıktısı: "paket.arch  yeni_versiyon  repo"
+        if len(parts) >= 2 and "." in parts[0] and not parts[0].startswith("."):
             name = parts[0].rsplit(".", 1)[0]
+            if not name or len(name) < 2:
+                continue
             is_kern = "kernel" in name.lower()
             if kernel_only and not is_kern:
                 continue
-            pkgs.append({"name": name, "new_version": parts[1] if len(parts) > 1 else "",
-                         "repo": parts[2] if len(parts) > 2 else "",
-                         "is_security": is_security, "is_kernel": is_kern})
+            pkgs.append({
+                "name":        name,
+                "new_version": parts[1] if len(parts) > 1 else "",
+                "repo":        parts[2] if len(parts) > 2 else "",
+                "is_security": is_security,
+                "is_kernel":   is_kern,
+            })
+    return pkgs
+
+
+def _parse_dnf_list_upgrades(output: str) -> list:
+    """
+    `dnf list upgrades` çıktısını parse eder.
+    Format: "paket.arch   versiyon   repo"
+    Başlık satırları: "Upgraded packages:", "Last metadata..."
+    """
+    output = _strip_ansi(output)
+    pkgs = []
+    seen = set()
+    SKIP = ("last metadata", "upgraded", "available", "installed", "loading",
+            "updating subscription", "subscription", "[sudo]", "sudo:", "datatem")
+    for line in output.splitlines():
+        line = line.strip().replace("\r", "")
+        if not line:
+            continue
+        low = line.lower()
+        if any(low.startswith(s) for s in SKIP):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        # "NetworkManager.x86_64   1:1.54.0-4.el9_7   rhel-9-...-baseos-rpms"
+        if "." not in parts[0]:
+            continue
+        full_name = parts[0]
+        name = full_name.rsplit(".", 1)[0]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        version = parts[1] if len(parts) > 1 else ""
+        repo    = parts[2] if len(parts) > 2 else ""
+        is_kern = "kernel" in name.lower()
+        pkgs.append({
+            "name":        name,
+            "new_version": version,
+            "repo":        repo,
+            "is_security": False,
+            "is_kernel":   is_kern,
+        })
     return pkgs
 
 
@@ -171,10 +421,30 @@ def check_reboot_required(client, mgr) -> bool:
     return code2 == 0
 
 
+def _write_job_log(job_id: int, log_text: str) -> None:
+    """Job log'unu DB'ye doğrudan SQL ile yazar — connection overhead minimumda."""
+    try:
+        from app.core.config import settings
+        import psycopg2
+        conn = psycopg2.connect(settings.DATABASE_URL)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE system_update_jobs SET log = %s WHERE id = %s",
+            (log_text[-8000:], job_id)
+        )
+        cur.close()
+        conn.close()
+    except Exception as _e:
+        logger.debug(f"_write_job_log error: {_e}")
+
+
 def apply_updates_to_server(server, update_type, global_cred=None,
                              repo_file_content=None, repo_name=None,
                              override_username=None, override_password=None,
-                             override_sudo_password=None, priv_method="sudo"):
+                             override_sudo_password=None, priv_method="sudo",
+                             custom_packages=None, job_id: int = None,
+                             extra_flags: str = ""):
     t0 = time.time()
     creds = _resolve_creds(server, global_cred,
                            override_username, override_password, override_sudo_password)
@@ -183,7 +453,15 @@ def apply_updates_to_server(server, update_type, global_cred=None,
     log_lines = []
 
     def log(msg):
-        log_lines.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
+        # ANSI kodlarını temizle
+        import re as _re
+        clean_msg = _re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]|\x1b[=>]|\x08|\r', '', str(msg)).strip()
+        if not clean_msg:
+            return
+        line = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {clean_msg}"
+        log_lines.append(line)
+        if job_id:
+            _write_job_log(job_id, "\n".join(log_lines))
 
     try:
         client = _make_client(creds); mgr = _detect_pkg_manager(client)
@@ -197,51 +475,110 @@ def apply_updates_to_server(server, update_type, global_cred=None,
             _run(client, f"echo '{escaped}' | tee {tmp_repo_file} > /dev/null", sudo_pass=sudo, timeout=10)
             log(f"Geçici repo eklendi: {tmp_repo_file}")
             if mgr in ("dnf", "yum"):
-                _run(client, f"{mgr} makecache -q 2>/dev/null || true", sudo_pass=sudo, timeout=60)
+                log("Repo metadata yenileniyor...")
+                _run(client,
+                     f"{mgr} makecache --disableplugin=subscription-manager -q 2>/dev/null || true",
+                     sudo_pass=sudo, timeout=15)
+                log("Metadata hazır")
             elif mgr == "apt":
-                _run(client, "apt-get update -qq 2>/dev/null", sudo_pass=sudo, timeout=60)
+                _run(client, "apt-get update -qq 2>/dev/null", sudo_pass=sudo, timeout=30)
 
         if mgr in ("dnf", "yum"):
-            if update_type == "security":
-                cmd = f"{mgr} update --security -y 2>&1"
-            elif update_type == "kernel":
-                cmd = f"{mgr} update kernel* -y 2>&1"
+            # Local repo seçildiyse sadece o repodan güncelle
+            if repo_name:
+                repo_opts = f"--disablerepo='*' --enablerepo='{repo_name}'"
+                log(f"Sadece '{repo_name}' reposundan güncelleme yapılacak (diğer repolar devre dışı)")
             else:
-                cmd = f"{mgr} update -y 2>&1"
+                repo_opts = ""
+                log("Tüm etkin repolardan güncelleme yapılacak")
+
+            xf = extra_flags.strip()
+            if xf:
+                log(f"Ek parametreler: {xf}")
+
+            if update_type == "security":
+                cmd = f"{mgr} update --security -y {repo_opts} {xf} 2>&1"
+            elif update_type == "kernel":
+                cmd = f"{mgr} update 'kernel*' -y {repo_opts} {xf} 2>&1"
+            elif update_type == "custom" and custom_packages:
+                pkg_list = " ".join(custom_packages)
+                cmd = f"{mgr} install -y {repo_opts} {xf} {pkg_list} 2>&1"
+                log(f"Seçili {len(custom_packages)} paket yüklenecek")
+            else:
+                cmd = f"{mgr} update -y {repo_opts} {xf} 2>&1"
         elif mgr == "apt":
             if update_type == "security":
-                cmd = "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y $(apt-get -s upgrade 2>/dev/null | grep security | awk '{print $2}') 2>&1"
+                cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y $(apt-get -s upgrade 2>/dev/null | grep security | awk '{print $2}') 2>&1"
             elif update_type == "kernel":
-                cmd = "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y linux-image-generic 2>&1"
+                cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y linux-image-generic 2>&1"
+            elif update_type == "custom" and custom_packages:
+                pkg_list = " ".join(custom_packages)
+                cmd = f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_list} 2>&1"
+                log(f"Seçili {len(custom_packages)} paket yüklenecek")
             else:
-                cmd = "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1"
+                cmd = "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1"
         else:
             raise RuntimeError("Paket yöneticisi bulunamadı")
 
         log(f"Güncelleme başlatılıyor ({update_type})...")
-        code, out, err = _run(client, cmd, sudo_pass=sudo, timeout=1800, priv_method=pm)
-        log(f"exit={code}")
-        log_lines.append(out[-3000:])
+        # Streaming çalıştırma — her satır anında log'a yazılır
+        code, out = _run_streaming(client, cmd, sudo_pass=sudo, timeout=1800,
+                                    priv_method=pm, on_line=log)
+        if code not in (0, 100):   # dnf exit 100 = updates available (normal)
+            log(f"⚠️ exit={code}")
+        else:
+            log(f"✓ Tamamlandı (exit={code})")
 
+        # Güncellenen paketleri dnf history ile al (en güvenilir yöntem)
         pkgs_updated = []
-        in_upd = False
-        for line in out.splitlines():
-            if "Upgraded:" in line or "Updated:" in line:
-                in_upd = True; continue
-            if in_upd:
-                if not line.strip() or (line[0].isalpha() and ":" in line):
-                    in_upd = False; continue
-                parts = line.strip().split()
-                if parts:
-                    pkgs_updated.append({"name": parts[0], "version": parts[1] if len(parts) > 1 else ""})
+        if mgr in ("dnf", "yum") and code in (0, 100):
+            try:
+                # Son dnf işleminin güncellenen paketlerini listele
+                _, hist_out, _ = client.exec_command(
+                    "dnf history last 2>/dev/null | grep -E 'Upgrade|Install' | head -100",
+                    timeout=15, get_pty=False
+                )
+                hist_text = hist_out.read().decode("utf-8", errors="replace")
+                hist_out.channel.recv_exit_status()
+                # Alternatif: dnf history info last
+                if not hist_text.strip():
+                    _, hist_out2, _ = client.exec_command(
+                        "dnf history info last 2>/dev/null | grep -E '^ *Upgrade|^ *Install' | awk '{print $2, $3}' | head -100",
+                        timeout=15, get_pty=False
+                    )
+                    hist_text = hist_out2.read().decode("utf-8", errors="replace")
+                    hist_out2.channel.recv_exit_status()
+                for line in hist_text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if parts:
+                        name = parts[0].rsplit(".", 1)[0] if "." in parts[0] else parts[0]
+                        ver  = parts[1] if len(parts) > 1 else ""
+                        if name and not name.startswith("#"):
+                            pkgs_updated.append({"name": name, "version": ver})
+            except Exception:
+                pass
+        elif mgr == "apt" and code == 0:
+            # apt çıktısından "Setting up package" satırları
+            for line in _strip_ansi(out).splitlines():
+                if line.startswith("Setting up ") or line.startswith("Unpacking "):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkgs_updated.append({"name": parts[1].split(":")[0],
+                                              "version": parts[2].strip("()") if len(parts) > 2 else ""})
 
-        reboot_req = check_reboot_required(client, mgr)
-        if reboot_req:
-            log("⚠️ Reboot gerekiyor")
+        # Reboot kontrolü: SADECE başarılı güncelleme sonrası kontrol et
+        reboot_req = False
+        if code in (0, 100) and pkgs_updated:
+            reboot_req = check_reboot_required(client, mgr)
+            if reboot_req:
+                log("⚠️ Güncelleme tamamlandı — sistem yeniden başlatılması gerekiyor")
         if tmp_repo_file:
             _run(client, f"rm -f {tmp_repo_file}", sudo_pass=sudo, timeout=10)
         client.close()
-        return {"status": "success" if code == 0 else "failed", "log": "\n".join(log_lines),
+        return {"status": "success" if code in (0, 100) else "failed", "log": "\n".join(log_lines),
                 "packages_updated": pkgs_updated, "reboot_required": reboot_req,
                 "duration": round(time.time() - t0, 1)}
     except Exception as exc:
@@ -251,12 +588,13 @@ def apply_updates_to_server(server, update_type, global_cred=None,
 
 
 def run_system_update_plan(plan_id: int) -> None:
-    from app.core.database import SessionLocal
+    from app.core.database import ThreadSessionLocal as SessionLocal
     from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
     from app.models.server import Server
     from app.models.credential import GlobalCredential
     from app.models.repository import RepoSource
     from app.services.repo_sync_service import generate_repo_file
+    from app.core.config import settings as _cfg
     import socket
 
     db = SessionLocal()
@@ -275,10 +613,7 @@ def run_system_update_plan(plan_id: int) -> None:
         if plan.repo_id:
             repo = db.query(RepoSource).filter_by(id=plan.repo_id).first()
             if repo:
-                try:
-                    server_ip = socket.gethostbyname(socket.gethostname())
-                except Exception:
-                    server_ip = "127.0.0.1"
+                server_ip = _get_management_ip()
                 repo_file_content = generate_repo_file(repo, server_ip, 8000)
                 repo_name = repo.name
 
@@ -301,9 +636,11 @@ def run_system_update_plan(plan_id: int) -> None:
                 override_password=plan.override_password,
                 override_sudo_password=plan.override_sudo_password,
                 priv_method=plan.priv_method or "sudo",
+                custom_packages=plan.custom_packages or [],
+                job_id=job.id,
             )
             job.status           = result["status"]
-            job.log              = result.get("log", "")
+            job.log              = result.get("log", "") or "\n".join([])  # streaming zaten yazdı
             job.packages_updated = result.get("packages_updated", [])
             job.reboot_required  = result.get("reboot_required", False)
             job.completed_at     = datetime.now(timezone.utc)
@@ -350,8 +687,11 @@ Başarılı: {plan.completed_servers - fail_count} | Başarısız: {fail_count}
 Toplam güncellenen paket: {total_pkgs} | Reboot gereken: {reboot_count}"""
     try:
         from app.core.config import settings
+        from app.models.app_settings import AppSettings as _AS
+        model_row = db.query(_AS).filter_by(key="ollama_active_model").first()
+        active_model = (model_row.value if model_row and model_row.value else None) or settings.OLLAMA_DEFAULT_MODEL
         r = requests.post(f"{settings.OLLAMA_URL}/api/generate",
-                          json={"model": "qwen2.5:latest", "prompt": prompt, "stream": False}, timeout=60)
+                          json={"model": active_model, "prompt": prompt, "stream": False}, timeout=60)
         if r.status_code == 200:
             plan.ai_summary = r.json().get("response", "")
             db.commit()

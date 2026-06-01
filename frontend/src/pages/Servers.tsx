@@ -289,6 +289,17 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
     enabled: tab === 'events',
   })
 
+  // Son güncelleme bilgisi
+  const { data: updateHistory } = useQuery<{ history: any[]; pending_reboot: boolean }>({
+    queryKey: ['server-update-history', server.id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/updates/server-history/${server.id}`)
+      if (!r.ok) return { history: [], pending_reboot: false }
+      return r.json()
+    },
+    staleTime: 30000,
+  })
+
   const startAnalyze = async () => {
     analyzeAbort.current?.abort()
     const ctrl = new AbortController()
@@ -441,6 +452,41 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   </div>
                 ))}
               </div>
+
+              {/* Son Güncelleme Bilgisi */}
+              {updateHistory && (updateHistory.history.length > 0 || updateHistory.pending_reboot) && (
+                <div className={`rounded-xl border p-4 space-y-2 ${updateHistory.pending_reboot ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-slate-800/50 border-slate-700'}`}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-medium text-white">🔄 Güncelleme Geçmişi</h3>
+                    {updateHistory.pending_reboot && (
+                      <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full animate-pulse">
+                        ⚠️ Reboot Gerekiyor
+                      </span>
+                    )}
+                  </div>
+                  {updateHistory.history.slice(0, 3).map((h: any, i: number) => (
+                    <div key={i} className="flex items-center gap-3 text-xs">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        h.status === 'completed' ? 'bg-green-400' :
+                        h.status === 'failed'    ? 'bg-red-400' : 'bg-slate-400'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-slate-200 font-medium">{h.plan_name}</span>
+                        <span className="text-slate-500 ml-2">{h.update_type}</span>
+                      </div>
+                      <span className="text-slate-400 flex-shrink-0">
+                        {h.packages_updated} paket
+                      </span>
+                      {h.reboot_required && !h.rebooted && (
+                        <span className="text-yellow-400 flex-shrink-0">⚠️</span>
+                      )}
+                      <span className="text-slate-500 flex-shrink-0">
+                        {h.completed_at ? new Date(h.completed_at).toLocaleDateString('tr-TR') : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* AI Analiz */}
               <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4">

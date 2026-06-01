@@ -258,7 +258,7 @@ def run_package_job(job_id: int, servers: List[Server],
     Blocking — ThreadPoolExecutor'dan çağrılır.
     Her sunucu için operasyonu çalıştırır ve job kaydını günceller.
     """
-    from app.core.database import SessionLocal
+    from app.core.database import ThreadSessionLocal as SessionLocal
     db: Session = SessionLocal()
 
     try:

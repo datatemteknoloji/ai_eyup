@@ -418,7 +418,7 @@ def list_jobs(repo_id: int, limit: int = 5, db: Session = Depends(get_db)):
             "completed_at":     j.completed_at.isoformat() if j.completed_at else None,
             "log":              j.log,
         }
-        for j in jobs
+        for j in filtered
     ]
 
 

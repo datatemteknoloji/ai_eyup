@@ -33,8 +33,9 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_log_collection()))
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
 
-        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m)")
+        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m)")
 
     async def stop(self):
         if not self.running:
@@ -148,6 +149,7 @@ class BackgroundTaskManager:
                 db = SessionLocal()
                 try:
                     from app.services.anomaly_detector import detect_all_anomalies
+                    from app.services.aiops_engine import run_aiops_cycle
 
                     loop = asyncio.get_event_loop()
                     anomalies = await loop.run_in_executor(
@@ -160,8 +162,21 @@ class BackgroundTaskManager:
                             f"Anomaly scan: {len(anomalies)} anomali -- "
                             f"{len(critical)} kritik, {len(warning)} uyari"
                         )
+
+                    # Kapalı döngü: event üret → incident aç → otomatik RCA
+                    # (Ollama çağrıları blocking olduğu için executor'da çalıştır)
+                    result = await loop.run_in_executor(
+                        None, run_aiops_cycle, db, anomalies
+                    )
+                    if result.get("created") or result.get("incidents") or result.get("rca_done"):
+                        logger.warning(
+                            f"AIOps cycle: {result.get('created',0)} yeni event, "
+                            f"{result.get('resolved',0)} cozuldu, "
+                            f"{result.get('incidents',0)} incident, "
+                            f"{result.get('rca_done',0)} otomatik RCA"
+                        )
                 except Exception as e:
-                    logger.error(f"Anomaly scan error: {e}")
+                    logger.error(f"Anomaly scan error: {e}", exc_info=True)
                 finally:
                     db.close()
 
@@ -286,6 +301,38 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"ESX metric sync task unexpected error: {e}")
                 await asyncio.sleep(900)
+
+
+    async def _periodic_rag_reindex(self):
+        """Her 30 dakikada incident + event kayıtlarını RAG hafızasına indeksler.
+        Böylece AI Chat geçmiş olaylardan haberdar olur (kapalı döngü hafıza)."""
+        logger.info("RAG reindex task started (1800s interval, first run in 300s)")
+        await asyncio.sleep(300)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.rag_service import (
+                        ingest_incidents_from_db,
+                        ingest_events_from_db,
+                    )
+                    n_inc = await ingest_incidents_from_db(db)
+                    n_evt = await ingest_events_from_db(db)
+                    logger.info(f"RAG reindex: {n_inc} incident, {n_evt} event indekslendi")
+                except Exception as e:
+                    logger.error(f"RAG reindex error: {e}")
+                finally:
+                    db.close()
+
+                await asyncio.sleep(1800)
+
+            except asyncio.CancelledError:
+                logger.info("RAG reindex task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"RAG reindex task error: {e}")
+                await asyncio.sleep(1800)
 
 
 # Global instance

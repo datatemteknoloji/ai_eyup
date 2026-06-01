@@ -23,6 +23,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
+from app.models.app_settings import AppSettings
+
+
+def _get_active_model(db: Session) -> str:
+    """Ayarlarda seçili modeli döner; yoksa config default'unu kullanır."""
+    from app.core.config import settings
+    row = db.query(AppSettings).filter_by(key="ollama_active_model").first()
+    return (row.value if row and row.value else None) or settings.OLLAMA_DEFAULT_MODEL
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.models.repository import RepoSource
@@ -39,16 +47,17 @@ class CheckRequest(BaseModel):
 
 class PlanCreateRequest(BaseModel):
     name:                  str
-    update_type:           str
+    update_type:           str          # security | kernel | all | custom
     server_ids:            List[int]
     distro_filter:         Optional[str] = None
     repo_id:               Optional[int] = None
+    custom_packages:       Optional[List[str]] = None  # custom modda seçilen paketler
     # Yetkili kullanıcı override
     override_username:      Optional[str] = None
     override_password:      Optional[str] = None
     override_sudo_password: Optional[str] = None
     # Yetki yükseltme yöntemi
-    priv_method:            Optional[str] = "sudo"  # sudo | dzdo | su | pbrun | direct
+    priv_method:            Optional[str] = "sudo"  # sudo | dzdo | direct
 
 class SuggestRepoRequest(BaseModel):
     server_ids: List[int]
@@ -62,9 +71,10 @@ def _plan_summary(plan: SystemUpdatePlan) -> dict:
         "completed_servers": plan.completed_servers,
         "ai_analysis": plan.ai_analysis, "ai_summary": plan.ai_summary,
         "server_ids": plan.server_ids or [],
-        "has_override_creds": bool(plan.override_username),
-        "override_username":  plan.override_username or None,
-        "priv_method":        plan.priv_method or "sudo",
+        "has_override_creds":  bool(plan.override_username),
+        "override_username":   plan.override_username or None,
+        "priv_method":         plan.priv_method or "sudo",
+        "custom_packages":     plan.custom_packages or [],
         "created_at":   plan.created_at.isoformat()  if plan.created_at   else None,
         "started_at":   plan.started_at.isoformat()  if plan.started_at   else None,
         "completed_at": plan.completed_at.isoformat() if plan.completed_at else None,
@@ -93,6 +103,15 @@ def list_servers_for_update(distro: Optional[str] = None, db: Session = Depends(
         "ubuntu": ["ubuntu"],
         "debian": ["debian"],
         "all":    [],
+    }
+
+    # Reboot gereken sunucu ID'leri
+    reboot_ids = {
+        j.server_id for j in db.query(SystemUpdateJob)
+        .filter(SystemUpdateJob.reboot_required == True,
+                SystemUpdateJob.rebooted == False,
+                SystemUpdateJob.status.in_(["completed", "partial"]))
+        .all()
     }
 
     servers_all = db.query(Server).filter(
@@ -135,6 +154,7 @@ def list_servers_for_update(distro: Optional[str] = None, db: Session = Depends(
             "kernel_version": s.kernel_version or "",
             "status":         s.status,
             "has_os_info":    bool(s.os_release_id or s.os_version),
+            "reboot_required": s.id in reboot_ids,
         }
         for s in filtered
     ]
@@ -245,7 +265,7 @@ Eşleşmeyenler: {len(unmatched)} sunucu
 Güncelleme öncesi dikkat edilmesi gerekenleri belirt."""
             r = http_requests.post(
                 f"{settings.OLLAMA_URL}/api/generate",
-                json={"model": "qwen2.5:latest", "prompt": prompt, "stream": False},
+                json={"model": _get_active_model(db), "prompt": prompt, "stream": False},
                 timeout=60,
             )
             if r.status_code == 200:
@@ -283,6 +303,8 @@ def create_plan(req: PlanCreateRequest, db: Session = Depends(get_db)):
         override_password=req.override_password or None,
         override_sudo_password=req.override_sudo_password or None,
         priv_method=req.priv_method or "sudo",
+        custom_packages=req.custom_packages or [],
+
     )
     db.add(plan)
     db.commit()
@@ -369,7 +391,7 @@ Türkçe, madde madde analiz yap:
         from app.core.config import settings
         r = http_requests.post(
             f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": "qwen2.5:latest", "prompt": prompt, "stream": False},
+            json={"model": _get_active_model(db), "prompt": prompt, "stream": False},
             timeout=120,
         )
         analysis = r.json().get("response", "AI yanıt vermedi") if r.status_code == 200 \
@@ -385,6 +407,420 @@ Türkçe, madde madde analiz yap:
 
 
 # ─── Çalıştır ─────────────────────────────────────────────────────────────────
+
+@router.get("/server-history/{server_id}")
+def get_server_update_history(server_id: int, db: Session = Depends(get_db)):
+    """Sunucunun güncelleme geçmişi: son güncelleme tarihi, güncellenen paketler, reboot durumu."""
+    jobs = (
+        db.query(SystemUpdateJob)
+        .filter_by(server_id=server_id)
+        .order_by(SystemUpdateJob.id.desc())
+        .limit(5)
+        .all()
+    )
+    history = []
+    for j in jobs:
+        plan = db.query(SystemUpdatePlan).filter_by(id=j.plan_id).first()
+        history.append({
+            "job_id":          j.id,
+            "plan_id":         j.plan_id,
+            "plan_name":       plan.name if plan else "?",
+            "update_type":     plan.update_type if plan else "?",
+            "status":          j.status,
+            "packages_updated":len(j.packages_updated or []),
+            "reboot_required": j.reboot_required,
+            "rebooted":        j.rebooted,
+            "started_at":      j.started_at.isoformat() if j.started_at else None,
+            "completed_at":    j.completed_at.isoformat() if j.completed_at else None,
+        })
+    # Reboot bekleyen job var mı?
+    pending_reboot = any(
+        j.reboot_required and not j.rebooted
+        for j in jobs if j.status in ("completed", "partial")
+    )
+    return {"history": history, "pending_reboot": pending_reboot}
+
+
+@router.post("/reboot-servers")
+def reboot_servers(server_ids: List[int], db: Session = Depends(get_db)):
+    """
+    Seçili sunucuları SSH ile yeniden başlatır.
+    Güvenlik için önce 'shutdown -r +1' ile 1 dakika sonra reboot planlar.
+    """
+    from app.models.credential import GlobalCredential
+    from app.services.system_update_service import _resolve_creds, _make_client, _run
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
+    gc = _get_global_cred(db)
+
+    results = {}
+
+    def _reboot_one(srv):
+        try:
+            creds = _resolve_creds(srv, gc)
+            sudo  = creds.get("sudo_password")
+            client = _make_client(creds)
+            # 1 dakika sonra reboot (kullanıcı iptal edebilir)
+            code, out, err = _run(client, "shutdown -r +1 'Sistem güncellemesi sonrası yeniden başlatma'",
+                                  sudo_pass=sudo, timeout=15)
+            client.close()
+            return str(srv.id), {"success": code == 0, "server_name": srv.name,
+                                  "message": "1 dakika sonra yeniden başlatılacak" if code == 0 else err[:200]}
+        except Exception as exc:
+            return str(srv.id), {"success": False, "server_name": srv.name, "message": str(exc)}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_reboot_one, s): s for s in servers}
+        for f in as_completed(futures):
+            sid, result = f.result()
+            results[sid] = result
+
+    # rebooted flag'ini güncelle
+    for srv in servers:
+        if results.get(str(srv.id), {}).get("success"):
+            last_job = (db.query(SystemUpdateJob)
+                        .filter_by(server_id=srv.id, reboot_required=True, rebooted=False)
+                        .order_by(SystemUpdateJob.id.desc()).first())
+            if last_job:
+                last_job.rebooted = True
+    db.commit()
+
+    return {"results": results}
+
+
+@router.post("/cancel-reboot")
+def cancel_reboot(server_ids: List[int], db: Session = Depends(get_db)):
+    """Planlanmış reboot'u iptal eder (shutdown -c)."""
+    from app.services.system_update_service import _resolve_creds, _make_client, _run
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.models.credential import GlobalCredential
+
+    servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
+    gc = _get_global_cred(db)
+    results = {}
+
+    def _cancel_one(srv):
+        try:
+            creds = _resolve_creds(srv, gc)
+            client = _make_client(creds)
+            code, out, err = _run(client, "shutdown -c 'Reboot iptal edildi'",
+                                  sudo_pass=creds.get("sudo_password"), timeout=10)
+            client.close()
+            return str(srv.id), {"success": code == 0, "server_name": srv.name}
+        except Exception as exc:
+            return str(srv.id), {"success": False, "server_name": srv.name, "message": str(exc)}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for f in as_completed({pool.submit(_cancel_one, s): s for s in servers}):
+            sid, res = f.result()
+            results[sid] = res
+
+    return {"results": results}
+
+
+@router.post("/plans/{plan_id}/jobs/{job_id}/rerun")
+def rerun_job(plan_id: int, job_id: int, db: Session = Depends(get_db)):
+    """
+    Tamamlanmış (başarılı veya başarısız) bir job'u orijinal parametrelerle yeniden çalıştırır.
+    """
+    from app.models.credential import GlobalCredential
+    from app.models.repository import RepoSource
+    from app.services.repo_sync_service import generate_repo_file
+    from app.services.system_update_service import _get_management_ip
+    from datetime import datetime, timezone
+    import threading
+
+    plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
+    job  = db.query(SystemUpdateJob).filter_by(id=job_id, plan_id=plan_id).first()
+    if not plan or not job:
+        raise HTTPException(404, "Plan veya iş bulunamadı")
+    if job.status == "running":
+        raise HTTPException(400, "İş zaten çalışıyor")
+
+    srv = db.query(Server).filter_by(id=job.server_id).first()
+    if not srv:
+        raise HTTPException(404, "Sunucu bulunamadı")
+
+    # Job'u sıfırla
+    job.status           = "running"
+    job.started_at       = datetime.now(timezone.utc)
+    job.completed_at     = None
+    job.log              = f"[YENIDEN ÇALIŞTIRILDI] {datetime.now(timezone.utc).strftime('%H:%M:%S')}\n"
+    job.packages_updated = []
+    job.reboot_required  = False
+    db.commit()
+
+    # Thread için snapshot
+    server_id   = srv.id
+    plan_type   = plan.update_type
+    plan_repo   = plan.repo_id
+    over_user   = plan.override_username
+    over_pass   = plan.override_password
+    over_sudo   = plan.override_sudo_password
+    priv_method = plan.priv_method or "sudo"
+    custom_pkgs = list(plan.custom_packages or [])
+
+    def _do_rerun():
+        from app.services.system_update_service import apply_updates_to_server
+        from app.core.database import ThreadSessionLocal
+        from app.models.repository import RepoSource
+        from app.services.repo_sync_service import generate_repo_file
+        from datetime import datetime, timezone
+        _db = ThreadSessionLocal()
+        try:
+            _srv = _db.query(Server).filter_by(id=server_id).first()
+            _gc  = _db.query(GlobalCredential).filter_by(is_default=True).first() \
+                   or _db.query(GlobalCredential).first()
+            _repo_name = None; _repo_content = None
+            if plan_repo:
+                _repo = _db.query(RepoSource).filter_by(id=plan_repo).first()
+                if _repo:
+                    _repo_content = generate_repo_file(_repo, _get_management_ip(), 8000)
+                    _repo_name = _repo.name
+            result = apply_updates_to_server(
+                _srv, plan_type, _gc, _repo_content, _repo_name,
+                override_username=over_user, override_password=over_pass,
+                override_sudo_password=over_sudo, priv_method=priv_method,
+                custom_packages=custom_pkgs, job_id=job_id,
+            )
+            j = _db.query(SystemUpdateJob).filter_by(id=job_id).first()
+            if j:
+                j.status           = result["status"]
+                j.packages_updated = result.get("packages_updated", [])
+                j.reboot_required  = result.get("reboot_required", False)
+                j.completed_at     = datetime.now(timezone.utc)
+                _db.commit()
+        except Exception as exc:
+            logger.error(f"rerun #{job_id}: {exc}", exc_info=True)
+            j = _db.query(SystemUpdateJob).filter_by(id=job_id).first()
+            if j:
+                j.status = "failed"
+                j.log    = (j.log or "") + f"\n[HATA] {exc}"
+                _db.commit()
+        finally:
+            _db.close()
+
+    threading.Thread(target=_do_rerun, daemon=True, name=f"rerun-{job_id}").start()
+    return {"ok": True, "message": f"İş #{job_id} yeniden başlatıldı"}
+
+
+@router.post("/plans/{plan_id}/jobs/{job_id}/fetch-packages")
+def fetch_updated_packages(plan_id: int, job_id: int, db: Session = Depends(get_db)):
+    """Tamamlanmış job için dnf history üzerinden güncellenen paket listesini çeker."""
+    from app.services.system_update_service import _resolve_creds, _make_client
+    job = db.query(SystemUpdateJob).filter_by(id=job_id, plan_id=plan_id).first()
+    if not job:
+        raise HTTPException(404, "İş bulunamadı")
+    if job.packages_updated:
+        return {"packages": job.packages_updated, "count": len(job.packages_updated)}
+
+    srv = db.query(Server).filter_by(id=job.server_id).first()
+    if not srv:
+        raise HTTPException(404, "Sunucu bulunamadı")
+
+    gc = _get_global_cred(db)
+    creds = _resolve_creds(srv, gc)
+    try:
+        client = _make_client(creds)
+        _, out, _ = client.exec_command(
+            "dnf history info last 2>/dev/null | grep -E '^ *Upgrade|^ *Install' | awk '{print $2}' | head -200",
+            timeout=15, get_pty=False
+        )
+        text = out.read().decode("utf-8", errors="replace")
+        out.channel.recv_exit_status()
+        client.close()
+
+        pkgs = []
+        seen = set()
+        for line in text.splitlines():
+            name = line.strip().rsplit(".", 1)[0] if "." in line.strip() else line.strip()
+            if name and name not in seen and not name.startswith("#"):
+                seen.add(name)
+                pkgs.append({"name": name, "version": ""})
+
+        if pkgs:
+            job.packages_updated = pkgs
+            db.commit()
+
+        return {"packages": pkgs, "count": len(pkgs)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/plans/{plan_id}/jobs/{job_id}/retry-with-fix")
+def retry_job_with_fix(plan_id: int, job_id: int, db: Session = Depends(get_db)):
+    """
+    Başarısız job'ı AI önerilen flag'lerle yeniden çalıştırır.
+    Hata içeriğine göre otomatik flag seçer:
+    - "cannot install both" / "obsoletes" → --allowerasing
+    - "skip-broken" önerisi → --skip-broken
+    - "nobest" önerisi → --nobest
+    """
+    from app.models.credential import GlobalCredential
+    from app.models.repository import RepoSource
+    from app.services.repo_sync_service import generate_repo_file
+    from app.services.system_update_service import (
+        _resolve_creds, _make_client, _run_streaming, _detect_pkg_manager,
+        _get_management_ip, _write_job_log,
+    )
+    import threading
+
+    plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
+    job  = db.query(SystemUpdateJob).filter_by(id=job_id, plan_id=plan_id).first()
+    if not plan or not job:
+        raise HTTPException(404, "Plan veya iş bulunamadı")
+    if job.status == "running":
+        raise HTTPException(400, "İş zaten çalışıyor")
+
+    srv = db.query(Server).filter_by(id=job.server_id).first()
+    if not srv:
+        raise HTTPException(404, "Sunucu bulunamadı")
+
+    # Hata log'undan uygulanacak fix'i belirle
+    log_text = job.log or ""
+    extra_flags = ""
+    fix_desc    = "Standart parametrelerle"
+
+    if "cannot install both" in log_text or "obsoletes" in log_text:
+        extra_flags = "--allowerasing"
+        fix_desc    = "--allowerasing (çakışan paketleri değiştir)"
+    elif "skip-broken" in log_text or "broken" in log_text.lower():
+        extra_flags = "--skip-broken --nobest"
+        fix_desc    = "--skip-broken --nobest (sorunlu paketleri atla)"
+    elif "no match" in log_text.lower() or "not found" in log_text.lower():
+        extra_flags = "--skip-unavailable"
+        fix_desc    = "--skip-unavailable (bulunamayan paketleri atla)"
+    else:
+        extra_flags = "--nobest --skip-broken"
+        fix_desc    = "--nobest --skip-broken (genel hata kurtarma)"
+
+    global_cred = _get_global_cred(db)
+
+    # Repo bilgisi
+    repo_name = None
+    repo_file_content = None
+    if plan.repo_id:
+        repo = db.query(RepoSource).filter_by(id=plan.repo_id).first()
+        if repo:
+            repo_file_content = generate_repo_file(repo, _get_management_ip(), 8000)
+            repo_name = repo.name
+
+    # Job'u running yap
+    from datetime import datetime, timezone
+    job.status     = "running"
+    job.started_at = datetime.now(timezone.utc)
+    job.log        = f"[FIX] {fix_desc} ile yeniden deneniyor...\n"
+    db.commit()
+
+    # Thread için snapshot al (detached object hatası önle)
+    server_id_snap  = srv.id
+    plan_type_snap  = plan.update_type
+    plan_repo_snap  = plan.repo_id
+    plan_over_user  = plan.override_username
+    plan_over_pass  = plan.override_password
+    plan_over_sudo  = plan.override_sudo_password
+    plan_priv_snap  = plan.priv_method or "sudo"
+    plan_pkgs_snap  = list(plan.custom_packages or [])
+
+    def _run_fix():
+        from app.services.system_update_service import apply_updates_to_server
+        from app.core.database import ThreadSessionLocal
+        from app.models.repository import RepoSource
+        from app.services.repo_sync_service import generate_repo_file
+        from datetime import datetime, timezone
+        _db = ThreadSessionLocal()
+        try:
+            _srv  = _db.query(Server).filter_by(id=server_id_snap).first()
+            _gc   = _db.query(GlobalCredential).filter_by(is_default=True).first() \
+                    or _db.query(GlobalCredential).first()
+            _repo_name = None; _repo_content = None
+            if plan_repo_snap:
+                _repo = _db.query(RepoSource).filter_by(id=plan_repo_snap).first()
+                if _repo:
+                    from app.services.system_update_service import _get_management_ip
+                    _repo_content = generate_repo_file(_repo, _get_management_ip(), 8000)
+                    _repo_name = _repo.name
+            result = apply_updates_to_server(
+                _srv, plan_type_snap, _gc,
+                _repo_content, _repo_name,
+                override_username=plan_over_user,
+                override_password=plan_over_pass,
+                override_sudo_password=plan_over_sudo,
+                priv_method=plan_priv_snap,
+                custom_packages=plan_pkgs_snap,
+                job_id=job_id,
+                extra_flags=extra_flags,
+            )
+            j = _db.query(SystemUpdateJob).filter_by(id=job_id).first()
+            if j:
+                j.status           = result["status"]
+                j.packages_updated = result.get("packages_updated", [])
+                j.reboot_required  = result.get("reboot_required", False)
+                j.completed_at     = datetime.now(timezone.utc)
+                _db.commit()
+        except Exception as exc:
+            logger.error(f"retry_with_fix #{job_id}: {exc}", exc_info=True)
+            j = _db.query(SystemUpdateJob).filter_by(id=job_id).first()
+            if j:
+                j.status = "failed"
+                j.log    = (j.log or "") + f"\n[RETRY HATA] {exc}"
+                _db.commit()
+        finally:
+            _db.close()
+
+    threading.Thread(target=_run_fix, daemon=True, name=f"retry-{job_id}").start()
+    return {"ok": True, "fix": fix_desc, "extra_flags": extra_flags}
+
+
+@router.post("/plans/{plan_id}/jobs/{job_id}/analyze-error")
+def analyze_job_error(plan_id: int, job_id: int, db: Session = Depends(get_db)):
+    """Başarısız job'ın hata logunu AI ile analiz eder ve çözüm önerir."""
+    from app.core.config import settings
+    job  = db.query(SystemUpdateJob).filter_by(id=job_id, plan_id=plan_id).first()
+    if not job:
+        raise HTTPException(404, "İş bulunamadı")
+    if job.status != "failed":
+        raise HTTPException(400, "Sadece başarısız işler analiz edilebilir")
+    if not job.log:
+        raise HTTPException(400, "Log kaydı yok")
+
+    srv = db.query(Server).filter_by(id=job.server_id).first()
+    srv_name = srv.name if srv else f"Server #{job.server_id}"
+    os_info  = f"{(srv.os_release_id or '').upper()} {srv.os_version_id or ''}" if srv else ""
+
+    # Log'un hata kısmını al
+    log_tail = "\n".join(job.log.splitlines()[-40:])
+
+    prompt = f"""Bir Linux sistem güncellemesi sırasında hata oluştu. Türkçe analiz yap:
+
+Sunucu: {srv_name} {os_info}
+Güncelleme tipi: {db.query(SystemUpdatePlan).filter_by(id=plan_id).first().update_type if db.query(SystemUpdatePlan).filter_by(id=plan_id).first() else '?'}
+
+Hata logu (son 40 satır):
+{log_tail}
+
+Lütfen şunları açıkla:
+1. **Hatanın sebebi nedir?**
+2. **Çözüm önerisi:** Hangi komut/adım ile düzeltilebilir?
+3. **Risk:** Bu hatayı yok sayarsak ne olur?
+
+Kısa ve pratik ol."""
+
+    try:
+        active_model = _get_active_model(db)
+        r = http_requests.post(
+            f"{settings.OLLAMA_URL}/api/generate",
+            json={"model": active_model, "prompt": prompt, "stream": False},
+            timeout=90,
+        )
+        analysis = r.json().get("response", "AI yanıt vermedi") if r.status_code == 200 \
+                   else f"AI servisine ulaşılamadı (HTTP {r.status_code})"
+    except Exception as e:
+        analysis = f"AI analizi yapılamadı: {e}"
+
+    return {"analysis": analysis, "job_id": job_id, "server_name": srv_name}
+
 
 @router.post("/plans/{plan_id}/run")
 def run_plan(plan_id: int, db: Session = Depends(get_db)):

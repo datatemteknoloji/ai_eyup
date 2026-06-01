@@ -37,6 +37,8 @@ interface GeneralSettings {
   ollama_model: string
   prometheus_url: string
   metric_retention_days?: number
+  management_server_ip?: string
+  detected_management_ip?: string
 }
 
 const RagTab: React.FC = () => {
@@ -664,6 +666,45 @@ const Settings: React.FC = () => {
                       <label className="block text-sm text-slate-300 mb-2">Pushgateway URL</label>
                       <input type="text" value="http://pushgateway:9091" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                     </div>
+                    {/* Yönetim Sunucu IP */}
+                    <div className="border-t border-slate-700 pt-4">
+                      <label className="block text-sm text-slate-300 mb-1">
+                        Yönetim Sunucusu IP
+                        <span className="text-xs text-slate-500 ml-2">— Local repo & SSH için</span>
+                      </label>
+                      <p className="text-xs text-slate-500 mb-2">
+                        Sunucuların bu uygulamaya erişmek için kullandığı IP. Local repo .repo dosyasında kullanılır.
+                        {generalSettings?.detected_management_ip && (
+                          <span className="text-blue-400 ml-1">(Otomatik tespit: {generalSettings.detected_management_ip})</span>
+                        )}
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="text"
+                          defaultValue={generalSettings?.management_server_ip || ''}
+                          id="mgmt-ip-input"
+                          placeholder={generalSettings?.detected_management_ip || '192.168.1.x'}
+                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 w-48 font-mono"
+                        />
+                        <button
+                          onClick={async () => {
+                            const val = (document.getElementById('mgmt-ip-input') as HTMLInputElement).value.trim()
+                            const ip = val || generalSettings?.detected_management_ip || ''
+                            if (!ip) { alert('IP girin'); return }
+                            const r = await fetch('/api/v1/settings/management-server-ip', {
+                              method: 'PUT', headers: {'Content-Type':'application/json'},
+                              body: JSON.stringify({ip})
+                            })
+                            if (r.ok) alert(`✓ Yönetim IP kaydedildi: ${ip}`)
+                            else alert('Hata')
+                          }}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium"
+                        >
+                          Kaydet
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="border-t border-slate-700 pt-4">
                       <label className="block text-sm text-slate-300 mb-2">Metrik Saklama Süresi (gün)</label>
                       <div className="flex items-center gap-3">

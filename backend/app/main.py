@@ -74,48 +74,67 @@ async def startup_tasks():
     await background_task_manager.start()
     logger.info("Background tasks started (health checks every 5 minutes)")
 
-    # Yarım kalan repo sync işlerini yeniden başlat
+    # Yarım kalan system update planlarını yeniden başlat
+    try:
+        from app.core.database import SessionLocal as _SL2
+        from app.models.system_update import SystemUpdatePlan as _SUP, SystemUpdateJob as _SUJ
+        from app.services.system_update_service import run_system_update_plan as _rsp
+        import threading as _th
+        _db2 = _SL2()
+        _running_plans = _db2.query(_SUP).filter(_SUP.status == "running").all()
+        for _p in _running_plans:
+            _t = _th.Thread(target=_rsp, args=(_p.id,), daemon=True, name=f"sysupdate-{_p.id}")
+            _t.start()
+            logger.info(f"System update plan #{_p.id} devam ettiriliyor: {_p.name}")
+        _db2.close()
+    except Exception as _e2:
+        logger.debug(f"System update resume: {_e2}")
+
+    # DB'deki ayarları config'e yükle
+    try:
+        from app.core.database import SessionLocal as _SL
+        from app.models.app_settings import AppSettings as _AS
+        _db = _SL()
+        try:
+            _rows = {r.key: r.value for r in _db.query(_AS).all()}
+            from app.core.config import settings as _s
+            if _rows.get("management_server_ip"):
+                _s.MANAGEMENT_SERVER_IP = _rows["management_server_ip"]
+            if _rows.get("ollama_active_model"):
+                _s.OLLAMA_DEFAULT_MODEL = _rows["ollama_active_model"]
+        finally:
+            _db.close()
+    except Exception as _e:
+        logger.debug(f"Settings load: {_e}")
+
+    # Yarım kalan repo sync job'larını "failed" yap — otomatik resume yok
+    # (Birden fazla parallel sync başlatmak SQLAlchemy connection pool sorununa yol açıyor)
     try:
         from app.core.database import SessionLocal
         from app.models.repository import RepoSource, RepoSyncJob
-        from app.api.repositories import _executor
-        from app.services.repo_sync_service import run_repo_sync
-        from app.services.rhsm_sync_service import run_rhsm_sync
-        from datetime import datetime, timezone
 
         db = SessionLocal()
         stuck = db.query(RepoSource).filter(
             RepoSource.sync_status == "syncing"
         ).all()
 
-        resumed = 0
         for repo in stuck:
-            # Eski "running/pending" job'ı failed yap, yeni job aç
             old_jobs = db.query(RepoSyncJob).filter(
                 RepoSyncJob.repo_id == repo.id,
                 RepoSyncJob.status.in_(["running", "pending"])
             ).all()
             for j in old_jobs:
                 j.status = "failed"
-                j.log = (j.log or "") + "\n[Sistem yeniden başlatıldı — otomatik devam]"
-
-            new_job = RepoSyncJob(repo_id=repo.id, status="pending")
-            db.add(new_job)
+                j.log = (j.log or "") + "\n[Sistem yeniden başlatıldı — sync durduruldu]"
+            repo.sync_status = "failed"
             db.commit()
-            db.refresh(new_job)
-
-            if repo.sync_method == "rhsm":
-                _executor.submit(run_rhsm_sync, repo.id, new_job.id)
-            else:
-                _executor.submit(run_repo_sync, repo.id, new_job.id, False)
-            resumed += 1
-            logger.info(f"Repo sync devam ettiriliyor: {repo.name}")
+            logger.info(f"Repo sync durduruldu (restart): {repo.name}")
 
         db.close()
-        if resumed:
-            logger.info(f"✅ {resumed} yarım kalan repo sync yeniden başlatıldı")
+        if stuck:
+            logger.info(f"⚠️ {len(stuck)} yarım kalan sync 'failed' olarak işaretlendi. UI'dan yeniden başlatın.")
     except Exception as e:
-        logger.warning(f"Repo sync resume hatası: {e}")
+        logger.warning(f"Repo sync cleanup hatası: {e}")
 
     # RAG: Varsayılan metrik açıklamalarını arka planda seed et (Ollama hazır olmayabilir)
     async def _rag_seed_metrics():

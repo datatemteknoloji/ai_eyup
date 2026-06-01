@@ -329,13 +329,40 @@ async def get_settings(db: Session = Depends(get_db)):
         metric_retention_days = int(metric_retention_row.value) if metric_retention_row and metric_retention_row.value else 30
     except ValueError:
         metric_retention_days = 30
+    # Yönetim sunucusu IP'si (DB'den al, yoksa otomatik tespit)
+    mgmt_ip_row = db.query(AppSettings).filter(AppSettings.key == "management_server_ip").first()
+    from app.services.system_update_service import _get_management_ip
+    detected_ip = _get_management_ip()
+    management_server_ip = mgmt_ip_row.value if mgmt_ip_row and mgmt_ip_row.value else detected_ip
+
     return {
         "ollama_url": settings.OLLAMA_URL,
         "ollama_model": active_model,
         "prometheus_url": settings.PROMETHEUS_URL,
         "metric_retention_days": metric_retention_days,
+        "management_server_ip": management_server_ip,
+        "detected_management_ip": detected_ip,
         "default_credential": _cred_to_response(default_cred) if default_cred else None
     }
+
+
+@router.put("/management-server-ip")
+async def set_management_server_ip(payload: dict, db: Session = Depends(get_db)):
+    """Yönetim sunucusunun client'lardan erişilebilir IP adresini kaydet."""
+    ip = (payload.get("ip") or "").strip()
+    if not ip:
+        raise HTTPException(status_code=400, detail="IP adresi boş olamaz")
+    row = db.query(AppSettings).filter(AppSettings.key == "management_server_ip").first()
+    if row:
+        row.value = ip
+    else:
+        db.add(AppSettings(key="management_server_ip", value=ip))
+    db.commit()
+    # Config'e de yaz (runtime)
+    from app.core.config import settings
+    settings.MANAGEMENT_SERVER_IP = ip
+    logger.info(f"Yönetim sunucu IP güncellendi: {ip}")
+    return {"success": True, "ip": ip}
 
 
 @router.put("/ollama-model")

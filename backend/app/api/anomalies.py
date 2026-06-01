@@ -41,6 +41,88 @@ async def get_anomalies(
     }
 
 
+@router.get("/aiops-status")
+async def aiops_status(db: Session = Depends(get_db)):
+    """AIOps kapalı-döngü sağlık durumu — frontend dashboard için."""
+    from app.models.event import SystemEvent, Incident
+
+    # Aktif metrik anomali event'leri (çözülmemiş)
+    active_metric = db.query(SystemEvent).filter(
+        SystemEvent.event_type == "metric_anomaly",
+        SystemEvent.resolved == False,  # noqa: E712
+    ).count()
+    active_metric_critical = db.query(SystemEvent).filter(
+        SystemEvent.event_type == "metric_anomaly",
+        SystemEvent.resolved == False,  # noqa: E712
+        SystemEvent.severity == "critical",
+    ).count()
+
+    # Otomatik açılan açık incident'lar
+    auto_open = db.query(Incident).filter(
+        Incident.status.in_(["open", "investigating"]),
+        Incident.source.ilike("auto_%"),
+    ).count()
+    # RCA'sı tamamlanan açık incident'lar
+    open_incidents = db.query(Incident).filter(
+        Incident.status.in_(["open", "investigating"]),
+    ).all()
+    with_rca = sum(1 for i in open_incidents if i.rca_result and i.rca_result.get("analysis"))
+
+    # İzlenen sunucular
+    monitored = db.query(Server).filter(
+        Server.ai_ready == True,  # noqa: E712
+        Server.status == "ONLINE",
+    ).count()
+
+    return {
+        "monitored_servers": monitored,
+        "active_metric_anomalies": active_metric,
+        "active_metric_critical": active_metric_critical,
+        "auto_open_incidents": auto_open,
+        "open_incidents": len(open_incidents),
+        "incidents_with_rca": with_rca,
+        "pipeline": [
+            {"stage": "Metrikler", "ok": monitored > 0},
+            {"stage": "Anomali Tespiti", "ok": True},
+            {"stage": "Event Üretimi", "ok": True},
+            {"stage": "Otomatik Incident", "ok": True},
+            {"stage": "AI RCA", "ok": with_rca > 0 or auto_open == 0},
+        ],
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
+@router.post("/run-cycle")
+async def run_aiops_cycle_now(db: Session = Depends(get_db)):
+    """AIOps döngüsünü manuel tetikle: tara → event → incident.
+    RCA (yavaş olabilir) arka plan thread'inde çalışır, istek hemen döner."""
+    import threading
+    from app.services.aiops_engine import persist_anomalies_as_events, auto_rca_pending_incidents
+    from app.core.database import ThreadSessionLocal
+
+    anomalies = detect_all_anomalies(db)
+    result = persist_anomalies_as_events(db, anomalies)
+
+    def _bg_rca():
+        s = ThreadSessionLocal()
+        try:
+            auto_rca_pending_incidents(s)
+        except Exception:
+            pass
+        finally:
+            s.close()
+
+    threading.Thread(target=_bg_rca, daemon=True).start()
+
+    return {
+        "success": True,
+        "scanned_anomalies": len(anomalies),
+        **result,
+        "rca": "arka planda başlatıldı",
+        "ran_at": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/summary")
 async def get_anomaly_summary(db: Session = Depends(get_db)):
     """Tum sunucularin anlık metrik ozeti ve anomali sayilari."""

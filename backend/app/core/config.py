@@ -14,10 +14,15 @@ class Settings:
         "postgresql://postgres:postgres@postgres:5432/server_management"
     )
     
+    # Yönetim sunucusunun client'lardan erişilebilir IP'si
+    # Repo dosyalarını (.repo) sunuculara göndermede kullanılır
+    # Örnek: MANAGEMENT_SERVER_IP=192.168.1.100
+    MANAGEMENT_SERVER_IP: str = os.getenv("MANAGEMENT_SERVER_IP", "")
+
     # Ollama AI - Docker container'dan host'a erişim için
     OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://192.168.1.222:11434")
     OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
-    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "llama3.2:3b")
+    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "gpt-oss:20b")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_AUTO_MODEL_ENABLED: bool = os.getenv("OLLAMA_AUTO_MODEL_ENABLED", "true").lower() == "true"
 

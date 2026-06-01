@@ -133,10 +133,21 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
     if not inc:
         raise HTTPException(status_code=404, detail="Incident bulunamadı")
 
+    resolved_events = 0
     if data.status:
         inc.status = data.status
         if data.status in ("resolved", "closed"):
             inc.resolved_at = datetime.utcnow()
+            # Incident kapanınca bağlı (çözülmemiş) event'leri de çöz
+            if inc.related_events:
+                events = db.query(SystemEvent).filter(
+                    SystemEvent.id.in_(inc.related_events),
+                    SystemEvent.resolved == False  # noqa: E712
+                ).all()
+                for e in events:
+                    e.resolved = True
+                    e.resolved_at = datetime.utcnow()
+                    resolved_events += 1
     if data.severity:
         inc.severity = data.severity
     if data.assigned_to is not None:
@@ -146,7 +157,7 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
 
     db.commit()
     db.refresh(inc)
-    return {"success": True, "message": "Incident güncellendi"}
+    return {"success": True, "message": "Incident güncellendi", "resolved_events": resolved_events}
 
 
 @router.get("/{incident_id}")

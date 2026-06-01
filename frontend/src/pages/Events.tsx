@@ -3,103 +3,81 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import {
+  NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
+  SearchInput, Select, ActionMenu, Section, EmptyState, Modal, Pagination, MenuItem,
+} from '../components/aiops/ui'
 
 interface SystemEvent {
-  id: number
-  server_id: number | null
-  server_name: string | null
-  event_type: string
-  severity: string
-  source: string | null
-  title: string
-  description: string | null
-  raw_data: any
-  is_acknowledged: boolean
-  is_known: boolean
-  resolved: boolean
-  created_at: string | null
+  id: number; server_id: number | null; server_name: string | null
+  event_type: string; severity: string; source: string | null
+  title: string; description: string | null; raw_data: any
+  is_acknowledged: boolean; is_known: boolean; resolved: boolean; created_at: string | null
 }
-
 interface EventStats {
-  total: number
-  unresolved: number
-  critical: number
-  warning: number
-  emergency: number
-  acknowledged: number
-  known: number
+  total: number; unresolved: number; critical: number; warning: number
+  emergency: number; acknowledged: number; known: number
 }
-
 interface EventGroup {
-  event_type: string
-  title: string
-  severity: string
-  server_id: number | null
-  server_name: string | null
-  event_ids: number[]
-  count: number
-  latest_created_at: string | null
-  resolved?: boolean
-  is_acknowledged?: boolean
-  is_known?: boolean
-}
-
-const SEVERITY_STYLES: Record<string, string> = {
-  critical:  'bg-red-500/20 text-red-400 border-red-500/30',
-  emergency: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
-  warning:   'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  info:      'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  error:     'bg-orange-500/20 text-orange-400 border-orange-500/30',
-}
-const SEVERITY_ICONS: Record<string, string> = {
-  critical: '🔴', emergency: '🚨', warning: '🟡', info: '🔵', error: '🟠'
+  event_type: string; title: string; severity: string
+  server_id: number | null; server_name: string | null
+  event_ids: number[]; count: number; latest_created_at: string | null
+  resolved?: boolean; is_acknowledged?: boolean; is_known?: boolean
 }
 
 const PAGE_SIZE = 50
 
+function fmtDate(d: string | null, short = true) {
+  if (!d) return '-'
+  return new Date(d).toLocaleString('tr-TR', short
+    ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }
+    : undefined)
+}
+
+function StatusPill({ e }: { e: { resolved: boolean; is_known: boolean; is_acknowledged: boolean } }) {
+  if (e.resolved) return <span className="text-[11px] font-medium" style={{ color: NEON.green }}>Çözüldü</span>
+  if (e.is_known) return <span className="text-[11px] font-medium" style={{ color: NEON.cyan }}>Bilinen</span>
+  if (e.is_acknowledged) return <span className="text-[11px] font-medium" style={{ color: NEON.orange }}>İncelemede</span>
+  return <span className="text-[11px] font-medium" style={{ color: NEON.red }}>Yeni</span>
+}
+
 const Events: React.FC = () => {
   const [severityFilter, setSeverityFilter] = useState('')
-  const [typeFilter, setTypeFilter]         = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
-  const [search, setSearch]                 = useState('')
-  const [page, setPage]                     = useState(0)
-  const [selectedIds, setSelectedIds]       = useState<Set<number>>(new Set())
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [showCreateForm, setShowCreateForm] = useState(false)
-  const [expandedRaw, setExpandedRaw]       = useState<number | null>(null)
-  const [newEvent, setNewEvent]             = useState({ title: '', event_type: 'custom', severity: 'info', description: '' })
-  const [groupedView, setGroupedView]       = useState(true)
-  const [sortBy, setSortBy]                 = useState<keyof EventGroup>('latest_created_at')
-  const [sortDir, setSortDir]               = useState<'asc'|'desc'>('desc')
+  const [expandedRaw, setExpandedRaw] = useState<number | null>(null)
+  const [newEvent, setNewEvent] = useState({ title: '', event_type: 'custom', severity: 'info', description: '' })
+  const [groupedView, setGroupedView] = useState(true)
+  const [sortBy, setSortBy] = useState<keyof EventGroup>('latest_created_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [detailGroupIds, setDetailGroupIds] = useState<number[] | null>(null)
-  const [scanning, setScanning]             = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [selectedGroups, setSelectedGroups] = useState<Set<number>>(new Set())
-  const [analyzeGroup, setAnalyzeGroup]     = useState<EventGroup | null>(null)
-  const [analysisText, setAnalysisText]     = useState('')
-  const [isAnalyzing, setIsAnalyzing]       = useState(false)
-  const [incidentModal, setIncidentModal]   = useState<{ event_ids: number[]; group_title?: string } | null>(null)
-  const [incidentForm, setIncidentForm]     = useState({ title: '', description: '', severity: 'medium', assigned_to: '' })
-  const analyzeModel = localStorage.getItem('chat_selected_model') || 'llama3.2:3b'
-  const analyzeAbortRef                     = useRef<AbortController | null>(null)
-  const [scanResult, setScanResult]         = useState<{total_servers:number; servers_with_logs:number; total_saved:number; details:any[]} | null>(null)
+  const [analyzeGroup, setAnalyzeGroup] = useState<EventGroup | null>(null)
+  const [analysisText, setAnalysisText] = useState('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [incidentModal, setIncidentModal] = useState<{ event_ids: number[]; group_title?: string } | null>(null)
+  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium', assigned_to: '' })
+  const analyzeModel = localStorage.getItem('chat_selected_model') || 'gpt-oss:20b'
+  const analyzeAbortRef = useRef<AbortController | null>(null)
+  const [scanResult, setScanResult] = useState<{ total_servers: number; servers_with_logs: number; total_saved: number; details: any[] } | null>(null)
   const queryClient = useQueryClient()
 
   const createIncident = useMutation({
     mutationFn: async (payload: { title: string; description: string; severity: string; assigned_to: string; related_events: number[] }) => {
       const res = await fetch(`${API_BASE_URL}/incidents/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, source: 'manual' })
       })
       if (!res.ok) throw new Error('Incident oluşturulamadı')
       return res.json()
     },
-    onSuccess: (data) => {
-      setIncidentModal(null)
-      alert(`✅ Incident oluşturuldu! ID: ${data.id}\n\nIncidents sayfasından takip edebilirsiniz.`)
-    },
-    onError: () => alert('❌ Incident oluşturulamadı')
+    onSuccess: () => { setIncidentModal(null); invalidate() },
   })
-
 
   const paramsBase = () => {
     const p = new URLSearchParams()
@@ -114,30 +92,25 @@ const Events: React.FC = () => {
     queryKey: ['events', 'list', severityFilter, typeFilter, resolvedFilter, search, page],
     queryFn: async () => {
       const params = paramsBase()
-      params.set('limit', String(PAGE_SIZE))
-      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
       const res = await fetch(`${API_BASE_URL}/events/?${params}`)
       if (!res.ok) return { total: 0, events: [] }
       return res.json()
     },
-    enabled: !groupedView,
-    refetchInterval: 20000
+    enabled: !groupedView, refetchInterval: 20000
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
     queryKey: ['events', 'grouped', severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir],
     queryFn: async () => {
       const params = paramsBase()
-      params.set('limit', String(PAGE_SIZE))
-      params.set('offset', String(page * PAGE_SIZE))
-      params.set('sort_by', sortBy as string)
-      params.set('sort_dir', sortDir)
+      params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
+      params.set('sort_by', sortBy as string); params.set('sort_dir', sortDir)
       const res = await fetch(`${API_BASE_URL}/events/grouped?${params}`)
       if (!res.ok) return { total: 0, groups: [] }
       return res.json()
     },
-    enabled: groupedView,
-    refetchInterval: 20000
+    enabled: groupedView, refetchInterval: 20000
   })
 
   const { data: occurrenceData } = useQuery<{ events: SystemEvent[] }>({
@@ -170,85 +143,42 @@ const Events: React.FC = () => {
     }
   })
 
-  const invalidate = () => {
+  function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['events'] })
     queryClient.invalidateQueries({ queryKey: ['eventStats'] })
   }
 
-  const handleScan = async (onlyAiReady = false) => {
-    setScanning(true)
-    setScanResult(null)
+  const handleScan = async () => {
+    setScanning(true); setScanResult(null)
     try {
-      const res = await fetch(`${API_BASE_URL}/events/scan?only_ai_ready=${onlyAiReady}`, { method: 'POST' })
-      const data = await res.json()
-      setScanResult(data)
-      invalidate()
-    } catch {
-      setScanResult(null)
-    } finally {
-      setScanning(false)
-    }
+      const res = await fetch(`${API_BASE_URL}/events/scan?only_ai_ready=false`, { method: 'POST' })
+      setScanResult(await res.json()); invalidate()
+    } catch { setScanResult(null) } finally { setScanning(false) }
   }
 
   const createEvent = useMutation({
     mutationFn: async (data: typeof newEvent) => {
       const res = await fetch(`${API_BASE_URL}/events/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       })
       if (!res.ok) throw new Error('Oluşturulamadı')
       return res.json()
     },
-    onSuccess: () => {
-      invalidate()
-      setShowCreateForm(false)
-      setNewEvent({ title: '', event_type: 'custom', severity: 'info', description: '' })
-    }
+    onSuccess: () => { invalidate(); setShowCreateForm(false); setNewEvent({ title: '', event_type: 'custom', severity: 'info', description: '' }) }
   })
 
-  const ackEvent = useMutation({
-    mutationFn: async (id: number) => {
-      await fetch(`${API_BASE_URL}/events/${id}/acknowledge`, { method: 'POST' })
-    },
-    onSuccess: invalidate
-  })
-
-  const knownEvent = useMutation({
-    mutationFn: async (id: number) => {
-      await fetch(`${API_BASE_URL}/events/${id}/known`, { method: 'POST' })
-    },
-    onSuccess: invalidate
-  })
-
-  const resolveEvent = useMutation({
-    mutationFn: async (id: number) => {
-      await fetch(`${API_BASE_URL}/events/${id}/resolve`, { method: 'POST' })
-    },
-    onSuccess: invalidate
-  })
-
-  const unresolveEvent = useMutation({
-    mutationFn: async (id: number) => {
-      await fetch(`${API_BASE_URL}/events/${id}/unresolve`, { method: 'POST' })
-    },
-    onSuccess: invalidate
-  })
-
-  const deleteEvent = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API_BASE_URL}/events/${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Silinemedi')
-    },
-    onSuccess: invalidate
-  })
+  const ackEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/acknowledge`, { method: 'POST' }) }, onSuccess: invalidate })
+  const knownEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/known`, { method: 'POST' }) }, onSuccess: invalidate })
+  const resolveEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/resolve`, { method: 'POST' }) }, onSuccess: invalidate })
+  const unresolveEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/unresolve`, { method: 'POST' }) }, onSuccess: invalidate })
+  const deleteEvent = useMutation({ mutationFn: async (id: number) => { const r = await fetch(`${API_BASE_URL}/events/${id}`, { method: 'DELETE' }); if (!r.ok) throw new Error() }, onSuccess: invalidate })
 
   const bulkAction = useMutation({
     mutationFn: async ({ action, ids }: { action: string; ids: number[] }) => {
       const res = await fetch(`${API_BASE_URL}/events/bulk-action`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_ids: ids, action })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_ids: ids, action })
       })
-      if (!res.ok) throw new Error('İşlem başarısız')
+      if (!res.ok) throw new Error()
       return res.json()
     },
     onSuccess: () => { invalidate(); setSelectedIds(new Set()) }
@@ -257,121 +187,65 @@ const Events: React.FC = () => {
   const bulkDelete = useMutation({
     mutationFn: async (ids: number[]) => {
       const res = await fetch(`${API_BASE_URL}/events/bulk-delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_ids: ids, action: 'delete' })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_ids: ids, action: 'delete' })
       })
-      if (!res.ok) throw new Error('Silinemedi')
+      if (!res.ok) throw new Error()
     },
     onSuccess: () => { invalidate(); setSelectedIds(new Set()) }
   })
 
-  const events     = eventsData?.events  || []
-  const groups     = groupedData?.groups || []
-
-  const sortedGroups = groups  // sorting done server-side
+  const events = eventsData?.events || []
+  const groups = groupedData?.groups || []
+  const total = groupedView ? (groupedData?.total ?? 0) : (eventsData?.total ?? 0)
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const isLoadingList = groupedView ? groupedLoading : isLoading
 
   const handleSort = (col: keyof EventGroup) => {
     setPage(0)
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setSortBy(col); setSortDir('desc') }
   }
-  const SortIcon = ({ col }: { col: keyof EventGroup }) => {
-    if (sortBy !== col) return <span className="text-slate-600 ml-1">⇅</span>
-    return <span className="text-blue-400 ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>
-  }
-  const total      = groupedView ? (groupedData?.total ?? 0) : (eventsData?.total ?? 0)
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const isLoadingList = groupedView ? groupedLoading : isLoading
+  const SortIcon = ({ col }: { col: keyof EventGroup }) =>
+    sortBy !== col ? <span className="text-slate-600 ml-1">⇅</span>
+      : <span style={{ color: NEON.cyan }} className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>
 
-  const toggleSelect = (id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
+  const toggleSelect = (id: number) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleSelectAll = () => setSelectedIds(selectedIds.size === events.length ? new Set() : new Set(events.map(e => e.id)))
+  const toggleGroupSelect = (idx: number) => setSelectedGroups(prev => { const n = new Set(prev); n.has(idx) ? n.delete(idx) : n.add(idx); return n })
+  const toggleSelectAllGroups = () => setSelectedGroups(selectedGroups.size === groups.length ? new Set() : new Set(groups.map((_, i) => i)))
+  const selectedGroupEventIds = (): number[] => [...selectedGroups].flatMap(i => groups[i]?.event_ids ?? [])
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === events.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(events.map(e => e.id)))
-    }
-  }
-
-  const sColor = (s: string) => SEVERITY_STYLES[s] || SEVERITY_STYLES.info
-  const sIcon  = (s: string) => SEVERITY_ICONS[s]  || '⚪'
-
-  // Grup toplu seçim
-  const toggleGroupSelect = (idx: number) => {
-    setSelectedGroups(prev => {
-      const next = new Set(prev)
-      next.has(idx) ? next.delete(idx) : next.add(idx)
-      return next
-    })
-  }
-  const toggleSelectAllGroups = () => {
-    if (selectedGroups.size === sortedGroups.length) setSelectedGroups(new Set())
-    else setSelectedGroups(new Set(sortedGroups.map((_, i) => i)))
-  }
-  const selectedGroupEventIds = (): number[] =>
-    [...selectedGroups].flatMap(i => sortedGroups[i]?.event_ids ?? [])
-
-  // Grup toplu işlem
-  const groupBulkAction = async (action: 'acknowledge' | 'known' | 'resolve' | 'unresolve' | 'delete') => {
+  const groupBulkAction = async (action: string) => {
     const ids = selectedGroupEventIds()
     if (!ids.length) return
-    if (action === 'delete') {
-      await fetch(`${API_BASE_URL}/events/bulk-delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_ids: ids, action: 'delete' })
-      })
-    } else {
-      await fetch(`${API_BASE_URL}/events/bulk-action`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_ids: ids, action })
-      })
-    }
-    invalidate()
-    setSelectedGroups(new Set())
+    const url = action === 'delete' ? '/events/bulk-delete' : '/events/bulk-action'
+    await fetch(`${API_BASE_URL}${url}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_ids: ids, action })
+    })
+    invalidate(); setSelectedGroups(new Set())
   }
 
-  // Analiz: grup event'larını AI'ye gönder
   const startAnalyze = async (grp: EventGroup) => {
     analyzeAbortRef.current?.abort()
-    setAnalyzeGroup(grp)
-    setAnalysisText('')
-    setIsAnalyzing(true)
+    setAnalyzeGroup(grp); setAnalysisText(''); setIsAnalyzing(true)
     const prompt = `Aşağıdaki sistem eventi/grubu hakkında detaylı analiz yap ve çözüm önerisi sun:\n\n` +
-      `Başlık: ${grp.title}\n` +
-      `Önem: ${grp.severity}\n` +
-      `Tip: ${grp.event_type}\n` +
-      (grp.server_name ? `Sunucu: ${grp.server_name}\n` : '') +
-      `Adet: ${grp.count}×\n\n` +
-      `Lütfen şunları içeren bir analiz yap:\n` +
-      `1. Bu hatanın/uyarının ne anlama geldiği\n` +
-      `2. Olası nedenleri\n` +
-      `3. Adım adım çözüm önerileri\n` +
-      `4. Tekrar önleme yöntemleri`
-    const ctrl = new AbortController()
-    analyzeAbortRef.current = ctrl
+      `Başlık: ${grp.title}\nÖnem: ${grp.severity}\nTip: ${grp.event_type}\n` +
+      (grp.server_name ? `Sunucu: ${grp.server_name}\n` : '') + `Adet: ${grp.count}×\n\n` +
+      `Lütfen şunları içeren bir analiz yap:\n1. Bu hatanın/uyarının ne anlama geldiği\n2. Olası nedenleri\n3. Adım adım çözüm önerileri\n4. Tekrar önleme yöntemleri`
+    const ctrl = new AbortController(); analyzeAbortRef.current = ctrl
     try {
       const res = await fetch(`${API_BASE_URL}/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt, use_rag: true, model: analyzeModel, skip_server_context: true }),
-        signal: ctrl.signal
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: prompt, use_rag: true, model: analyzeModel, skip_server_context: true }), signal: ctrl.signal
       })
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
+      const reader = res.body.getReader(); const decoder = new TextDecoder()
       let buf = '', acc = ''
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
+        const lines = buf.split('\n'); buf = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           try {
@@ -382,707 +256,368 @@ const Events: React.FC = () => {
         }
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError') setAnalysisText('❌ Analiz başarısız.')
-    } finally {
-      setIsAnalyzing(false)
-    }
+      if (e?.name !== 'AbortError') setAnalysisText('Analiz başarısız.')
+    } finally { setIsAnalyzing(false) }
   }
 
+  const openIncidentForGroup = (grp: EventGroup) => {
+    setIncidentForm({ title: grp.title, description: `${grp.count} event içeren grup`, severity: grp.severity === 'emergency' ? 'critical' : grp.severity, assigned_to: '' })
+    setIncidentModal({ event_ids: grp.event_ids, group_title: grp.title })
+  }
+
+  // group row action menu
+  const groupMenu = (grp: EventGroup): MenuItem[] => [
+    { label: 'Tümünü gör', icon: '📋', onClick: () => setDetailGroupIds(grp.event_ids) },
+    { label: 'İncelemeye al', icon: '👁', onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
+    { label: 'Bilinen olay', icon: '🧠', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
+    { label: 'Kapat (çöz)', icon: '✅', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
+    { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
+    { label: 'Incident oluştur', icon: '🚨', accent: NEON.purple, onClick: () => openIncidentForGroup(grp) },
+  ]
+  const flatMenu = (e: SystemEvent): MenuItem[] => [
+    { label: 'Raw data', icon: '📦', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
+    { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
+    { label: 'Bilinen olay', icon: '🧠', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
+    { label: 'Kapat (çöz)', icon: '✅', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
+    { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
+    { label: 'Sil', icon: '🗑', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },
+  ]
+
+  const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
+  const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">AIOps Events</h1>
-          <p className="text-slate-400 text-sm mt-1">Sistem olaylarını izleyin ve yönetin</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => handleScan(false)} disabled={scanning}
-            className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 transition-all text-sm font-medium disabled:opacity-60 flex items-center gap-2">
-            {scanning ? (
-              <><span className="animate-spin inline-block">⏳</span><span> Taranıyor...</span></>
-            ) : (
-              <><span>🔍</span><span> Şimdi Tara</span></>
-            )}
-          </button>
-          <button onClick={() => setShowCreateForm(!showCreateForm)}
-            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm font-medium">
-            {showCreateForm ? '✕ İptal' : '➕ Yeni Event'}
-          </button>
-        </div>
+    <div className="space-y-4 animate-fade-in">
+      <PageHeader
+        title="Events"
+        subtitle="Sistem olaylarını izleyin, gruplayın ve yönetin"
+        actions={<>
+          <GhostButton accent={NEON.green} onClick={handleScan} disabled={scanning}>
+            {scanning ? 'Taranıyor...' : '🔍 Şimdi Tara'}
+          </GhostButton>
+          <PrimaryButton accent={NEON.blue} onClick={() => setShowCreateForm(v => !v)}>
+            {showCreateForm ? 'İptal' : '+ Yeni Event'}
+          </PrimaryButton>
+        </>}
+      />
+
+      {/* KPI row — tıklayınca filtreler */}
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+        <Kpi label="Toplam" value={stats?.total ?? 0} accent={NEON.cyan}
+          active={!severityFilter && resolvedFilter === ''} onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setPage(0) }} />
+        <Kpi label="Çözülmemiş" value={stats?.unresolved ?? 0} accent={NEON.orange}
+          active={resolvedFilter === 'false' && !severityFilter} onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setPage(0) }} />
+        <Kpi label="Kritik" value={stats?.critical ?? 0} accent={NEON.red}
+          active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setResolvedFilter('false'); setPage(0) }} />
+        <Kpi label="Acil" value={stats?.emergency ?? 0} accent={NEON.pink}
+          active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setPage(0) }} />
+        <Kpi label="Uyarı" value={stats?.warning ?? 0} accent={NEON.orange}
+          active={severityFilter === 'warning'} onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setPage(0) }} />
+        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.purple} />
       </div>
 
-      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
-        {[
-          { label: 'Toplam',     value: stats?.total || 0,        color: 'from-blue-500 to-blue-600',     icon: '📋' },
-          { label: 'Çözülmemiş', value: stats?.unresolved || 0,   color: 'from-orange-500 to-orange-600', icon: '⏳' },
-          { label: 'Kritik',     value: stats?.critical || 0,     color: 'from-red-500 to-red-600',       icon: '🔴' },
-          { label: 'Emergency',  value: stats?.emergency || 0,    color: 'from-pink-500 to-pink-600',     icon: '🚨' },
-          { label: 'Uyarı',      value: stats?.warning || 0,      color: 'from-yellow-500 to-yellow-600', icon: '🟡' },
-          { label: 'İncelemede',  value: stats?.acknowledged || 0, color: 'from-green-500 to-green-600',   icon: '👁' },
-          { label: 'Bilinen Olay', value: stats?.known || 0, color: 'from-teal-500 to-teal-600', icon: '🧠' },
-        ].map((s, i) => (
-          <div key={i} className="bg-slate-800 rounded-xl border border-slate-700 p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-slate-400 text-[10px]">{s.label}</p>
-                <p className="text-xl font-bold text-white mt-0.5">{s.value}</p>
-              </div>
-              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${s.color} flex items-center justify-center text-sm`}>
-                {s.icon}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Scan Result */}
       {scanResult && (
-        <div className={`rounded-xl border px-5 py-4 text-sm flex items-start justify-between gap-4 ${
-          scanResult.total_saved > 0
-            ? 'bg-green-500/10 border-green-500/30'
-            : 'bg-slate-800 border-slate-700'
-        }`}>
+        <div className="px-4 py-3 rounded-xl text-sm flex items-start justify-between gap-4 cyber-card"
+          style={{ borderColor: scanResult.total_saved > 0 ? `rgba(${rgb(NEON.green)},0.3)` : undefined }}>
           <div>
             <p className="font-medium text-white mb-1">
-              {scanResult.total_saved > 0
-                ? `✅ Tarama tamamlandı — ${scanResult.total_saved} yeni event kaydedildi`
-                : '✅ Tarama tamamlandı — yeni event bulunamadı'}
+              {scanResult.total_saved > 0 ? `Tarama tamamlandı — ${scanResult.total_saved} yeni event` : 'Tarama tamamlandı — yeni event yok'}
             </p>
-            <p className="text-slate-400 text-xs">
-              {scanResult.total_servers} sunucu tarandı · {scanResult.servers_with_logs} sunucuda log bulundu
+            <p className="text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>
+              {scanResult.total_servers} sunucu tarandı · {scanResult.servers_with_logs} sunucuda log
             </p>
-            {scanResult.details.length > 0 && (
-              <div className="mt-2 space-y-0.5">
-                {scanResult.details.map((d: any, i: number) => (
-                  <p key={i} className="text-xs text-slate-400">
-                    <span className="text-white font-mono">{d.server}</span>
-                    {' — '}{d.saved} event
-                    {d.critical > 0 && <span className="text-red-400 ml-1">({d.critical} kritik)</span>}
-                    {d.error > 0 && <span className="text-orange-400 ml-1">({d.error} hata)</span>}
-                  </p>
-                ))}
-              </div>
-            )}
           </div>
-          <button onClick={() => setScanResult(null)} className="text-slate-500 hover:text-white text-lg leading-none flex-shrink-0">&times;</button>
+          <button onClick={() => setScanResult(null)} className="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
         </div>
       )}
 
       {showCreateForm && (
-        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-          <h3 className="text-lg font-medium text-white mb-4">Yeni Event Oluştur</h3>
-          <form onSubmit={e => { e.preventDefault(); createEvent.mutate(newEvent) }} className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+        <Section title="Yeni Event Oluştur" accent={NEON.blue}>
+          <form onSubmit={e => { e.preventDefault(); createEvent.mutate(newEvent) }} className="p-5 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Başlık *</label>
-                <input type="text" required value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Başlık *</label>
+                <input type="text" required value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} className={inputCls} style={inputStyle} />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Tip</label>
-                <select value={newEvent.event_type} onChange={e => setNewEvent({ ...newEvent, event_type: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                  <option value="custom">Custom</option>
-                  <option value="cpu_high">CPU High</option>
-                  <option value="memory_high">Memory High</option>
-                  <option value="disk_full">Disk Full</option>
-                  <option value="service_down">Service Down</option>
-                  <option value="network_issue">Network Issue</option>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Tip</label>
+                <select value={newEvent.event_type} onChange={e => setNewEvent({ ...newEvent, event_type: e.target.value })} className={inputCls} style={inputStyle}>
+                  <option value="custom">Custom</option><option value="cpu_high">CPU High</option><option value="memory_high">Memory High</option>
+                  <option value="disk_full">Disk Full</option><option value="service_down">Service Down</option><option value="network_issue">Network Issue</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Önem</label>
-                <select value={newEvent.severity} onChange={e => setNewEvent({ ...newEvent, severity: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                  <option value="info">Info</option>
-                  <option value="warning">Warning</option>
-                  <option value="error">Error</option>
-                  <option value="critical">Critical</option>
-                  <option value="emergency">Emergency</option>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Önem</label>
+                <select value={newEvent.severity} onChange={e => setNewEvent({ ...newEvent, severity: e.target.value })} className={inputCls} style={inputStyle}>
+                  <option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option>
+                  <option value="critical">Critical</option><option value="emergency">Emergency</option>
                 </select>
               </div>
             </div>
             <div>
-              <label className="block text-sm text-slate-300 mb-1">Açıklama</label>
-              <textarea value={newEvent.description} onChange={e => setNewEvent({ ...newEvent, description: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" rows={2} />
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</label>
+              <textarea value={newEvent.description} onChange={e => setNewEvent({ ...newEvent, description: e.target.value })} className={inputCls} style={inputStyle} rows={2} />
             </div>
-            <button type="submit" disabled={createEvent.isPending}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 text-sm disabled:opacity-50">
-              {createEvent.isPending ? 'Oluşturuluyor...' : 'Oluştur'}
-            </button>
+            <PrimaryButton accent={NEON.green} disabled={createEvent.isPending}>{createEvent.isPending ? 'Oluşturuluyor...' : 'Oluştur'}</PrimaryButton>
           </form>
-        </div>
+        </Section>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <input type="text" value={search} onChange={e => { setSearch(e.target.value); setPage(0) }}
-          placeholder="🔍 Başlıkta ara..."
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none w-52" />
-        <select value={severityFilter} onChange={e => { setSeverityFilter(e.target.value); setPage(0) }}
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-          <option value="">Tüm Seviyeler</option>
-          <option value="info">Info</option>
-          <option value="warning">Warning</option>
-          <option value="error">Error</option>
-          <option value="critical">Critical</option>
-          <option value="emergency">Emergency</option>
-        </select>
-        <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(0) }}
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput value={search} onChange={v => { setSearch(v); setPage(0) }} placeholder="Başlıkta ara..." />
+        <Select value={severityFilter} onChange={v => { setSeverityFilter(v); setPage(0) }}>
+          <option value="">Tüm Seviyeler</option><option value="info">Info</option><option value="warning">Warning</option>
+          <option value="error">Error</option><option value="critical">Critical</option><option value="emergency">Emergency</option>
+        </Select>
+        <Select value={typeFilter} onChange={v => { setTypeFilter(v); setPage(0) }}>
           <option value="">Tüm Tipler</option>
           {(eventTypes || []).map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select value={resolvedFilter} onChange={e => { setResolvedFilter(e.target.value); setPage(0) }}
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-          <option value="">Tüm Durumlar</option>
-          <option value="false">Aktif</option>
-          <option value="true">Çözülmüş</option>
-        </select>
-        <label className="flex items-center gap-2 self-center cursor-pointer select-none ml-1">
+        </Select>
+        <Select value={resolvedFilter} onChange={v => { setResolvedFilter(v); setPage(0) }}>
+          <option value="">Tüm Durumlar</option><option value="false">Aktif</option><option value="true">Çözülmüş</option>
+        </Select>
+        <label className="flex items-center gap-2 cursor-pointer select-none ml-1">
           <div onClick={() => { setGroupedView(v => !v); setPage(0) }}
-            className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${groupedView ? 'bg-blue-600' : 'bg-slate-600'}`}>
+            className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
+            style={{ background: groupedView ? NEON.cyan : 'rgba(100,116,139,0.5)' }}>
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${groupedView ? 'translate-x-4' : ''}`} />
           </div>
-          <span className="text-xs text-slate-400">Tekil göster (duplikaları grupla)</span>
+          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>Benzerleri grupla</span>
         </label>
-        <span className="ml-auto text-xs text-slate-500 self-center">{total} {groupedView ? 'grup' : 'sonuç'}</span>
+        <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{total} {groupedView ? 'grup' : 'sonuç'}</span>
       </div>
 
+      {/* Flat bulk toolbar */}
       {!groupedView && selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
-          <span className="text-blue-400 text-sm font-medium">{selectedIds.size} event seçili</span>
-          <button onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })} disabled={bulkAction.isPending}
-            className="px-3 py-1.5 text-xs bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/20 disabled:opacity-50">
-            👁 Toplu İncelemeye Al
-          </button>
-          <button onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })} disabled={bulkAction.isPending}
-            className="px-3 py-1.5 text-xs bg-teal-500/10 text-teal-400 border border-teal-500/30 rounded-lg hover:bg-teal-500/20 disabled:opacity-50">
-            🧠 Bilinen Olay
-          </button>
-          <button onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })} disabled={bulkAction.isPending}
-            className="px-3 py-1.5 text-xs bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/20 disabled:opacity-50">
-            ✅ Toplu Kapat
-          </button>
-          <button onClick={() => bulkAction.mutate({ action: 'unresolve', ids: [...selectedIds] })} disabled={bulkAction.isPending}
-            className="px-3 py-1.5 text-xs bg-orange-500/10 text-orange-400 border border-orange-500/30 rounded-lg hover:bg-orange-500/20 disabled:opacity-50">
-            ↩ Yeniden Aç
-          </button>
-          <button onClick={() => { if (confirm(`${selectedIds.size} event silinecek. Emin misiniz?`)) bulkDelete.mutate([...selectedIds]) }}
-            disabled={bulkDelete.isPending}
-            className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20 disabled:opacity-50">
-            🗑️ Toplu Sil
-          </button>
-          <button onClick={() => {
-            const firstEvent = events.find(e => selectedIds.has(e.id))
-            setIncidentForm({ title: firstEvent ? firstEvent.title : 'Yeni Incident', description: '', severity: 'medium', assigned_to: '' })
+        <div className="flex items-center gap-2 flex-wrap cyber-card px-4 py-2.5" style={{ borderColor: `rgba(${rgb(NEON.cyan)},0.3)` }}>
+          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{selectedIds.size} event seçili</span>
+          <GhostButton accent={NEON.orange} onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })}>İncelemeye al</GhostButton>
+          <GhostButton accent={NEON.cyan} onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })}>Bilinen</GhostButton>
+          <GhostButton accent={NEON.green} onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })}>Kapat</GhostButton>
+          <GhostButton accent={NEON.purple} onClick={() => {
+            const f = events.find(e => selectedIds.has(e.id))
+            setIncidentForm({ title: f ? f.title : 'Yeni Incident', description: '', severity: 'medium', assigned_to: '' })
             setIncidentModal({ event_ids: [...selectedIds] })
-          }}
-            className="px-3 py-1.5 text-xs bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-lg hover:bg-purple-500/20">
-            🚨 Incident Oluştur
-          </button>
-          <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-slate-400 hover:text-white">Seçimi Kaldır</button>
+          }}>Incident</GhostButton>
+          <GhostButton accent={NEON.red} onClick={() => { if (confirm(`${selectedIds.size} event silinecek?`)) bulkDelete.mutate([...selectedIds]) }}>Sil</GhostButton>
+          <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>Seçimi kaldır</button>
         </div>
       )}
 
-      {detailGroupIds && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setDetailGroupIds(null)}>
-          <div className="bg-slate-800 rounded-xl border border-slate-700 max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between flex-shrink-0">
-              <h3 className="text-lg font-semibold text-white">
-                Tüm oluşumlar
-                <span className="ml-2 px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-sm font-medium">
-                  {occurrenceData?.events?.length ?? '...'} kayıt
-                </span>
-              </h3>
-              <button onClick={() => setDetailGroupIds(null)} className="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
-            </div>
-            <div className="overflow-auto flex-1 p-4 space-y-2">
-              {(occurrenceData?.events ?? []).length === 0 ? (
-                <div className="text-center py-8 text-slate-500">Yükleniyor...</div>
-              ) : (occurrenceData?.events ?? []).map(ev => (
-                <div key={ev.id} className="bg-slate-900/70 rounded-lg p-3 border border-slate-700">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${sColor(ev.severity)}`}>
-                      {sIcon(ev.severity)} {ev.severity}
-                    </span>
-                    {ev.server_name && <span className="text-[10px] text-purple-400 font-mono">{ev.server_name}</span>}
-                    <span className="text-[10px] text-slate-400 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{ev.event_type}</span>
-                    {ev.resolved && <span className="text-[10px] text-green-400">✅ Kapatüldü</span>}
-                    {ev.is_acknowledged && !ev.resolved && <span className="text-[10px] text-yellow-400">👁 İncelemede</span>}
-                    {(ev as any).is_known && !ev.resolved && <span className="text-[10px] text-teal-400">🧠 Bilinen Olay</span>}
-                    <span className="ml-auto text-[10px] text-slate-500">
-                      {ev.created_at ? new Date(ev.created_at).toLocaleString('tr-TR') : '-'}
-                    </span>
-                  </div>
-                  <p className="text-white text-xs mt-2 break-words">{ev.title}</p>
-                  {ev.description && ev.description !== ev.title && (
-                    <p className="text-slate-400 text-[11px] mt-1">{ev.description}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+      {/* Group bulk toolbar */}
+      {groupedView && selectedGroups.size > 0 && (
+        <div className="flex items-center gap-2 flex-wrap cyber-card px-4 py-2.5" style={{ borderColor: `rgba(${rgb(NEON.cyan)},0.3)` }}>
+          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{selectedGroups.size} grup ({selectedGroupEventIds().length} event)</span>
+          <GhostButton accent={NEON.orange} onClick={() => groupBulkAction('acknowledge')}>İncelemeye al</GhostButton>
+          <GhostButton accent={NEON.cyan} onClick={() => groupBulkAction('known')}>Bilinen</GhostButton>
+          <GhostButton accent={NEON.green} onClick={() => groupBulkAction('resolve')}>Kapat</GhostButton>
+          <GhostButton accent={NEON.purple} onClick={() => {
+            const ids = selectedGroupEventIds()
+            const title = [...selectedGroups].map(i => groups[i]?.title).filter(Boolean).join(', ')
+            setIncidentForm({ title: title || 'Çoklu Grup Incident', description: '', severity: 'medium', assigned_to: '' })
+            setIncidentModal({ event_ids: ids })
+          }}>Incident</GhostButton>
+          <GhostButton accent={NEON.red} onClick={() => groupBulkAction('delete')}>Sil</GhostButton>
+          <button onClick={() => setSelectedGroups(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>İptal</button>
         </div>
       )}
 
+      {/* List */}
       {isLoadingList ? (
-        <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div></div>
+        <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-slate-700" /></div>
       ) : groupedView ? (
-        groups.length === 0 ? (
-          <div className="text-center py-12 bg-slate-800 rounded-xl border border-dashed border-slate-700">
-            <span className="text-4xl block mb-3">📋</span>
-            <p className="text-slate-400">Henüz event yok</p>
-          </div>
-        ) : (
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-            <table className="w-full text-sm">
-              {/* Toplu işlem toolbar */}
-              {selectedGroups.size > 0 && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-blue-600/10 border-b border-blue-500/30">
-                  <span className="text-xs text-blue-300 font-medium">{selectedGroups.size} grup seçili ({selectedGroupEventIds().length} event)</span>
-                  <div className="ml-auto flex gap-2">
-                    <button onClick={() => groupBulkAction('acknowledge')}
-                      className="px-3 py-1 text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded hover:bg-yellow-500/30">
-                      👁 Tümünü İncelemeye Al
-                    </button>
-                    <button onClick={() => groupBulkAction('known')}
-                      className="px-3 py-1 text-xs bg-teal-500/20 text-teal-300 border border-teal-500/30 rounded hover:bg-teal-500/30">
-                      🧠 Bilinen Olay
-                    </button>
-                    <button onClick={() => groupBulkAction('resolve')}
-                      className="px-3 py-1 text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded hover:bg-green-500/30">
-                      ✅ Tümünü Kapat
-                    </button>
-                    <button onClick={() => groupBulkAction('unresolve')}
-                      className="px-3 py-1 text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/30">
-                      ↩ Yeniden Aç
-                    </button>
-                    <button onClick={() => groupBulkAction('delete')}
-                      className="px-3 py-1 text-xs bg-red-500/20 text-red-300 border border-red-500/30 rounded hover:bg-red-500/30">
-                      🗑 Tümünü Sil
-                    </button>
-                    <button onClick={() => {
-                      const ids = selectedGroupEventIds()
-                      const title = Array.from(selectedGroups).map(i => sortedGroups[i]?.title).filter(Boolean).join(', ')
-                      setIncidentForm({ title: title || 'Çoklu Grup Incident', description: '', severity: 'medium', assigned_to: '' })
-                      setIncidentModal({ event_ids: ids })
-                    }}
-                      className="px-3 py-1 text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-500/30">
-                      🚨 Incident Oluştur
-                    </button>
-                    <button onClick={() => setSelectedGroups(new Set())}
-                      className="px-3 py-1 text-xs bg-slate-600 text-slate-300 border border-slate-500 rounded hover:bg-slate-500">
-                      ✕ İptal
-                    </button>
-                  </div>
-                </div>
-              )}
-              <thead>
-                <tr className="border-b border-slate-700 text-left bg-slate-800/80">
-                  <th className="px-3 py-3 w-8">
-                    <input type="checkbox"
-                      checked={selectedGroups.size === sortedGroups.length && sortedGroups.length > 0}
-                      onChange={toggleSelectAllGroups}
-                      className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('severity')}>
-                    Önem <SortIcon col="severity" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('title')}>
-                    Başlık <SortIcon col="title" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('server_name')}>
-                    Sunucu <SortIcon col="server_name" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('event_type')}>
-                    Tip <SortIcon col="event_type" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('count')}>
-                    Adet <SortIcon col="count" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400 cursor-pointer select-none hover:text-white" onClick={() => handleSort('latest_created_at')}>
-                    Son Oluşum <SortIcon col="latest_created_at" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">İşlem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGroups.map((grp, idx) => (
-                  <tr key={idx} className={`border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors ${selectedGroups.has(idx) ? 'bg-blue-600/10' : ''}`}>
-                    <td className="px-3 py-3 w-8">
-                      <input type="checkbox" checked={selectedGroups.has(idx)} onChange={() => toggleGroupSelect(idx)}
-                        className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${sColor(grp.severity)}`}>
-                        {sIcon(grp.severity)} {grp.severity}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 max-w-md">
-                      <p className="text-white text-xs truncate" title={grp.title}>{grp.title}</p>
-                    </td>
-                    <td className="px-3 py-3 text-xs text-purple-400 font-mono">{grp.server_name || <span className="text-slate-600">-</span>}</td>
-                    <td className="px-3 py-3">
-                      <span className="text-[10px] text-slate-400 font-mono bg-slate-900/50 px-1.5 py-0.5 rounded">{grp.event_type}</span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${grp.count > 1 ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-400'}`}>
-                        {grp.count}×
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-[10px] text-slate-500 whitespace-nowrap">
-                      {grp.latest_created_at
-                        ? new Date(grp.latest_created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                        : '-'}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        <button onClick={() => setDetailGroupIds(grp.event_ids)}
-                          className="px-2 py-1 text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-500/30 transition-colors whitespace-nowrap">
-                          📋 Tümünü gör ({grp.count})
-                        </button>
-                        <button onClick={() => startAnalyze(grp)}
-                          className="px-2 py-1 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-500/30 transition-colors whitespace-nowrap">
-                          🔍 Analiz Et
-                        </button>
-                        <button onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids })}
-                          className="px-2 py-1 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-600/20 rounded hover:bg-yellow-500/20 transition-colors whitespace-nowrap">
-                          👁 İncelemeye Al
-                        </button>
-                        <button onClick={() => bulkAction.mutate({ action: 'known', ids: grp.event_ids })}
-                          className="px-2 py-1 text-[10px] bg-teal-500/10 text-teal-400 border border-teal-600/20 rounded hover:bg-teal-500/20 transition-colors whitespace-nowrap">
-                          🧠 Bilinen Olay
-                        </button>
-                        <button onClick={() => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids })}
-                          className="px-2 py-1 text-[10px] bg-green-500/10 text-green-400 border border-green-600/20 rounded hover:bg-green-500/20 transition-colors whitespace-nowrap">
-                          ✅ Kapat
-                        </button>
-                        <button onClick={() => {
-                          setIncidentForm({ title: grp.title, description: `${grp.count} event içeren grup`, severity: grp.severity === 'emergency' ? 'critical' : grp.severity, assigned_to: '' })
-                          setIncidentModal({ event_ids: grp.event_ids, group_title: grp.title })
-                        }}
-                          className="px-2 py-1 text-[10px] bg-purple-500/10 text-purple-400 border border-purple-600/20 rounded hover:bg-purple-500/20 transition-colors whitespace-nowrap">
-                          🚨 Incident
-                        </button>
-                        {grp.resolved && (
-                          <button onClick={() => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids })}
-                            className="px-2 py-1 text-[10px] bg-orange-500/10 text-orange-400 border border-orange-600/20 rounded hover:bg-orange-500/20 transition-colors whitespace-nowrap">
-                            ↩ Yeniden Aç
-                          </button>
-                        )}
-                      </div>
-                    </td>
+        groups.length === 0 ? <Section><EmptyState icon="📋" text="Henüz event yok" /></Section> : (
+          <Section className="overflow-visible">
+            <div className="overflow-x-auto overflow-y-visible">
+              <table className="cyber-table w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="w-8"><input type="checkbox" checked={selectedGroups.size === groups.length && groups.length > 0} onChange={toggleSelectAllGroups} /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('severity')}>Önem<SortIcon col="severity" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('title')}>Başlık<SortIcon col="title" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('server_name')}>Sunucu<SortIcon col="server_name" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('count')}>Adet<SortIcon col="count" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('latest_created_at')}>Son Oluşum<SortIcon col="latest_created_at" /></th>
+                    <th className="text-right">İşlem</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      ) : (
-        events.length === 0 ? (
-          <div className="text-center py-12 bg-slate-800 rounded-xl border border-dashed border-slate-700">
-            <span className="text-4xl block mb-3">📋</span>
-            <p className="text-slate-400">Henüz event yok</p>
-          </div>
-        ) : (
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-700 text-left bg-slate-800/80">
-                  <th className="px-3 py-3 w-8">
-                    <input type="checkbox" checked={selectedIds.size === events.length && events.length > 0}
-                      onChange={toggleSelectAll}
-                      className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                  </th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Önem</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Başlık</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Sunucu</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Tip</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Kaynak</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Durum</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">Tarih</th>
-                  <th className="px-3 py-3 text-xs font-medium text-slate-400">İşlem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map(event => (
-                  <React.Fragment key={event.id}>
-                    <tr className={`border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors ${selectedIds.has(event.id) ? 'bg-blue-500/5' : ''}`}>
-                      <td className="px-3 py-3">
-                        <input type="checkbox" checked={selectedIds.has(event.id)} onChange={() => toggleSelect(event.id)}
-                          className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${sColor(event.severity)}`}>
-                          {sIcon(event.severity)} {event.severity}
+                </thead>
+                <tbody>
+                  {groups.map((grp, idx) => (
+                    <tr key={idx} style={selectedGroups.has(idx) ? { background: `rgba(${rgb(NEON.cyan)},0.06)` } : undefined}>
+                      <td><input type="checkbox" checked={selectedGroups.has(idx)} onChange={() => toggleGroupSelect(idx)} /></td>
+                      <td><SeverityBadge severity={grp.severity} /></td>
+                      <td className="max-w-md"><p className="text-white truncate" title={grp.title}>{grp.title}</p></td>
+                      <td><span className="font-mono text-xs" style={{ color: grp.server_name ? NEON.purple : 'rgba(148,163,184,0.4)' }}>{grp.server_name || '-'}</span></td>
+                      <td>
+                        <span className="px-2 py-0.5 rounded text-xs font-bold"
+                          style={grp.count > 1 ? { background: `rgba(${rgb(NEON.orange)},0.15)`, color: NEON.orange } : { background: 'rgba(255,255,255,0.05)', color: 'rgba(148,163,184,0.6)' }}>
+                          {grp.count}×
                         </span>
                       </td>
-                      <td className="px-3 py-3 max-w-xs">
-                        <p className="text-white text-xs truncate" title={event.title}>{event.title}</p>
-                        {event.description && event.description !== event.title && (
-                          <p className="text-slate-500 text-[10px] truncate mt-0.5" title={event.description}>{event.description}</p>
-                        )}
-                      </td>
-                      <td className="px-3 py-3">
-                        {event.server_name ? <span className="text-xs text-purple-400 font-mono">{event.server_name}</span>
-                          : <span className="text-xs text-slate-600">-</span>}
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className="text-[10px] text-slate-400 font-mono bg-slate-900/50 px-1.5 py-0.5 rounded">{event.event_type}</span>
-                      </td>
-                      <td className="px-3 py-3 text-xs text-slate-500">{event.source || '-'}</td>
-                      <td className="px-3 py-3">
-                        {event.resolved
-                          ? <span className="flex items-center gap-1">
-                              <span className="text-green-400 text-[10px] font-medium">✅ Kapatüldü</span>
-                              <button onClick={() => unresolveEvent.mutate(event.id)}
-                                className="text-[9px] text-slate-500 hover:text-orange-400 border border-slate-600 hover:border-orange-500/40 px-1 py-0.5 rounded transition-colors" title="Yeniden Aç">
-                                ↩
-                              </button>
-                            </span>
-                          : event.is_known ? <span className="text-teal-400 text-[10px] font-medium">🧠 Bilinen Olay</span>
-                          : event.is_acknowledged ? <span className="text-yellow-400 text-[10px] font-medium">👁 İncelemede</span>
-                          : <span className="text-red-400 text-[10px] font-medium">⏳ Yeni</span>}
-                      </td>
-                      <td className="px-3 py-3 text-[10px] text-slate-500 whitespace-nowrap">
-                        {event.created_at ? new Date(event.created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex gap-1">
-                          {event.raw_data && Object.keys(event.raw_data).length > 0 && (
-                            <button onClick={() => setExpandedRaw(expandedRaw === event.id ? null : event.id)}
-                              className="px-2 py-1 text-[10px] bg-slate-500/10 text-slate-400 border border-slate-500/30 rounded hover:bg-slate-500/20" title="Raw Data">
-                              📦
-                            </button>
-                          )}
-                          {!event.is_acknowledged && !event.resolved && (
-                            <button onClick={() => ackEvent.mutate(event.id)}
-                              className="px-2 py-1 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded hover:bg-yellow-500/20" title="İncelemeye Al">
-                              👁
-                            </button>
-                          )}
-                          {!event.is_known && !event.resolved && (
-                            <button onClick={() => knownEvent.mutate(event.id)}
-                              className="px-2 py-1 text-[10px] bg-teal-500/10 text-teal-400 border border-teal-500/30 rounded hover:bg-teal-500/20" title="Bilinen Olay">
-                              🧠
-                            </button>
-                          )}
-                          {!event.resolved && (
-                            <button onClick={() => resolveEvent.mutate(event.id)}
-                              className="px-2 py-1 text-[10px] bg-green-500/10 text-green-400 border border-green-500/30 rounded hover:bg-green-500/20">
-                              ✅
-                            </button>
-                          )}
-                          <button onClick={() => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(event.id) }}
-                            className="px-2 py-1 text-[10px] bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20">
-                            🗑️
+                      <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(grp.latest_created_at)}</td>
+                      <td>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => startAnalyze(grp)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
+                            style={{ background: `rgba(${rgb(NEON.purple)},0.12)`, color: NEON.purple, border: `1px solid rgba(${rgb(NEON.purple)},0.3)` }}>
+                            🔍 Analiz
                           </button>
+                          <ActionMenu items={groupMenu(grp)} />
                         </div>
                       </td>
                     </tr>
-                    {expandedRaw === event.id && (
-                      <tr className="bg-slate-900/60">
-                        <td colSpan={9} className="px-6 py-3">
-                          <p className="text-xs text-slate-400 mb-1 font-medium">Raw Data:</p>
-                          <pre className="text-[11px] text-green-400 font-mono bg-slate-950 rounded p-3 overflow-auto max-h-40">
-                            {JSON.stringify(event.raw_data, null, 2)}
-                          </pre>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        )
+      ) : (
+        events.length === 0 ? <Section><EmptyState icon="📋" text="Henüz event yok" /></Section> : (
+          <Section className="overflow-visible">
+            <div className="overflow-x-auto overflow-y-visible">
+              <table className="cyber-table w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="w-8"><input type="checkbox" checked={selectedIds.size === events.length && events.length > 0} onChange={toggleSelectAll} /></th>
+                    <th className="text-left">Önem</th><th className="text-left">Başlık</th><th className="text-left">Sunucu</th>
+                    <th className="text-left">Tip</th><th className="text-left">Durum</th><th className="text-left">Tarih</th><th className="text-right">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map(event => (
+                    <React.Fragment key={event.id}>
+                      <tr style={selectedIds.has(event.id) ? { background: `rgba(${rgb(NEON.cyan)},0.06)` } : undefined}>
+                        <td><input type="checkbox" checked={selectedIds.has(event.id)} onChange={() => toggleSelect(event.id)} /></td>
+                        <td><SeverityBadge severity={event.severity} /></td>
+                        <td className="max-w-xs">
+                          <p className="text-white truncate" title={event.title}>{event.title}</p>
+                          {event.description && event.description !== event.title && (
+                            <p className="text-xs truncate mt-0.5" style={{ color: 'rgba(148,163,184,0.5)' }} title={event.description}>{event.description}</p>
+                          )}
                         </td>
+                        <td><span className="font-mono text-xs" style={{ color: event.server_name ? NEON.purple : 'rgba(148,163,184,0.4)' }}>{event.server_name || '-'}</span></td>
+                        <td><span className="font-mono text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{event.event_type}</span></td>
+                        <td><StatusPill e={event} /></td>
+                        <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(event.created_at)}</td>
+                        <td><div className="flex justify-end"><ActionMenu items={flatMenu(event)} /></div></td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      {expandedRaw === event.id && (
+                        <tr>
+                          <td colSpan={8} className="px-5 py-3" style={{ background: 'var(--bg-deep)' }}>
+                            <p className="text-xs mb-1 font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>Raw Data:</p>
+                            <pre className="text-[11px] font-mono rounded p-3 overflow-auto max-h-40" style={{ background: '#05080f', color: NEON.green }}>
+                              {JSON.stringify(event.raw_data, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
         )
       )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">
-            {page * PAGE_SIZE + 1} – {Math.min((page + 1) * PAGE_SIZE, total)} / {total} {groupedView ? 'grup' : 'event'}
-          </span>
-          <div className="flex gap-2">
-            <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
-              className="px-3 py-1.5 text-xs bg-slate-800 border border-slate-700 text-slate-300 rounded-lg hover:bg-slate-700 disabled:opacity-40">
-              ← Önceki
-            </button>
-            {Array.from({ length: Math.min(totalPages, 7) }).map((_, i) => {
-              const p = page < 4 ? i : page - 3 + i
-              if (p >= totalPages) return null
-              return (
-                <button key={p} onClick={() => setPage(p)}
-                  className={`px-3 py-1.5 text-xs border rounded-lg ${p === page ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}`}>
-                  {p + 1}
-                </button>
-              )
-            })}
-            <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
-              className="px-3 py-1.5 text-xs bg-slate-800 border border-slate-700 text-slate-300 rounded-lg hover:bg-slate-700 disabled:opacity-40">
-              Sonraki →
-            </button>
+      <Pagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} unit={groupedView ? 'grup' : 'event'} onPage={setPage} />
+
+      {/* Occurrences modal */}
+      {detailGroupIds && (
+        <Modal title={`Tüm oluşumlar (${occurrenceData?.events?.length ?? '...'})`} onClose={() => setDetailGroupIds(null)}>
+          <div className="p-4 space-y-2">
+            {(occurrenceData?.events ?? []).length === 0 ? (
+              <div className="text-center py-8" style={{ color: 'rgba(148,163,184,0.5)' }}>Yükleniyor...</div>
+            ) : (occurrenceData?.events ?? []).map(ev => (
+              <div key={ev.id} className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.12)' }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <SeverityBadge severity={ev.severity} />
+                  {ev.server_name && <span className="text-[11px] font-mono" style={{ color: NEON.purple }}>{ev.server_name}</span>}
+                  <span className="text-[11px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{ev.event_type}</span>
+                  <StatusPill e={ev} />
+                  <span className="ml-auto text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{fmtDate(ev.created_at, false)}</span>
+                </div>
+                <p className="text-white text-xs mt-2 break-words">{ev.title}</p>
+                {ev.description && ev.description !== ev.title && <p className="text-[11px] mt-1" style={{ color: 'rgba(148,163,184,0.6)' }}>{ev.description}</p>}
+              </div>
+            ))}
           </div>
-        </div>
+        </Modal>
       )}
-      {/* AI Analiz Modalı */}
+
+      {/* AI Analyze modal */}
       {analyzeGroup && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700">
-              <span className="text-xl">🔍</span>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-white font-semibold text-sm truncate">{analyzeGroup.title}</h3>
-                <div className="flex gap-2 mt-1">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${sColor(analyzeGroup.severity)}`}>
-                    {sIcon(analyzeGroup.severity)} {analyzeGroup.severity}
-                  </span>
-                  {analyzeGroup.server_name && (
-                    <span className="text-[10px] text-purple-400 font-mono">{analyzeGroup.server_name}</span>
-                  )}
-                  <span className="text-[10px] text-slate-400 font-mono bg-slate-900/50 px-1.5 py-0.5 rounded">{analyzeGroup.event_type}</span>
-                </div>
-              </div>
-              <button onClick={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText('') }}
-                className="text-slate-400 hover:text-white text-xl leading-none flex-shrink-0">&times;</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-5">
-              {isAnalyzing && !analysisText && (
-                <div className="flex items-center gap-2 text-slate-400 text-sm">
-                  <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                  <span>AI analiz yapıyor...</span>
-                </div>
-              )}
-              {analysisText ? (
-                <div className="prose prose-invert prose-sm max-w-none text-slate-200">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
-                  {isAnalyzing && (
-                    <span className="inline-block w-2 h-4 bg-purple-400 animate-pulse ml-1 rounded-sm" />
-                  )}
-                </div>
-              ) : !isAnalyzing ? (
-                <p className="text-slate-500 text-sm">Analiz başlatılıyor...</p>
-              ) : null}
-            </div>
-            <div className="px-5 py-3 border-t border-slate-700 flex justify-between items-center">
-              <button onClick={() => startAnalyze(analyzeGroup)}
-                disabled={isAnalyzing}
-                className="px-3 py-1.5 text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-600/40 disabled:opacity-50">
-                🔄 Yeniden Analiz Et
-              </button>
+        <Modal
+          title={<span className="flex items-center gap-2">🔍 {analyzeGroup.title}</span>}
+          subtitle={`${analyzeGroup.event_type}${analyzeGroup.server_name ? ' · ' + analyzeGroup.server_name : ''} · ${analyzeGroup.count}×`}
+          onClose={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText('') }}
+          footer={
+            <div className="flex justify-between items-center gap-2">
+              <GhostButton accent={NEON.purple} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>🔄 Yeniden</GhostButton>
               <div className="flex gap-2">
-                <button onClick={() => { bulkAction.mutate({ action: 'acknowledge', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
-                  className="px-3 py-1.5 text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded hover:bg-yellow-500/30">
-                  👁 İncelemeye Al
-                </button>
-                <button onClick={() => { bulkAction.mutate({ action: 'known', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
-                  className="px-3 py-1.5 text-xs bg-teal-500/20 text-teal-300 border border-teal-500/30 rounded hover:bg-teal-500/30">
-                  🧠 Bilinen Olay
-                </button>
-                <button onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
-                  className="px-3 py-1.5 text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded hover:bg-green-500/30">
-                  ✅ Kapat
-                </button>
-                <button onClick={() => { bulkAction.mutate({ action: 'unresolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}
-                  className="px-3 py-1.5 text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/30">
-                  ↩ Yeniden Aç
-                </button>
-                <button onClick={() => {
-                  setIncidentForm({ title: analyzeGroup.title, description: analysisText.slice(0, 300) || `${analyzeGroup.count} event içeren grup`, severity: analyzeGroup.severity === 'emergency' ? 'critical' : analyzeGroup.severity, assigned_to: '' })
+                <GhostButton accent={NEON.green} onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}>Kapat</GhostButton>
+                <GhostButton accent={NEON.purple} onClick={() => {
+                  setIncidentForm({ title: analyzeGroup.title, description: analysisText.slice(0, 300) || `${analyzeGroup.count} event`, severity: analyzeGroup.severity === 'emergency' ? 'critical' : analyzeGroup.severity, assigned_to: '' })
                   setIncidentModal({ event_ids: analyzeGroup.event_ids, group_title: analyzeGroup.title })
-                }}
-                  className="px-3 py-1.5 text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-500/30">
-                  🚨 Incident Oluştur
-                </button>
+                }}>Incident</GhostButton>
               </div>
             </div>
+          }>
+          <div className="p-5">
+            {isAnalyzing && !analysisText && (
+              <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.purple} transparent ${NEON.purple} ${NEON.purple}` }} />
+                AI analiz yapıyor...
+              </div>
+            )}
+            {analysisText && (
+              <div className="prose prose-invert prose-sm max-w-none" style={{ color: 'rgba(226,232,240,0.9)' }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
+                {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.purple }} />}
+              </div>
+            )}
           </div>
-        </div>
+        </Modal>
       )}
 
-
-      {/* Incident Oluştur Modal */}
+      {/* Incident create modal */}
       {incidentModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700">
-              <div>
-                <h2 className="text-white font-semibold text-lg">🚨 Incident Oluştur</h2>
-                <p className="text-slate-400 text-xs mt-0.5">{incidentModal.event_ids.length} event bu incident'a bağlanacak</p>
-              </div>
-              <button onClick={() => setIncidentModal(null)} className="text-slate-400 hover:text-white text-xl">&times;</button>
+        <Modal title="🚨 Incident Oluştur" subtitle={`${incidentModal.event_ids.length} event bağlanacak`} onClose={() => setIncidentModal(null)} maxWidth="max-w-lg"
+          footer={
+            <div className="flex gap-2 justify-end">
+              <GhostButton onClick={() => setIncidentModal(null)}>İptal</GhostButton>
+              <PrimaryButton accent={NEON.purple} disabled={!incidentForm.title.trim() || createIncident.isPending}
+                onClick={() => createIncident.mutate({ title: incidentForm.title, description: incidentForm.description, severity: incidentForm.severity, assigned_to: incidentForm.assigned_to, related_events: incidentModal.event_ids })}>
+                {createIncident.isPending ? 'Oluşturuluyor...' : 'Oluştur'}
+              </PrimaryButton>
             </div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Başlık *</label>
-                <input
-                  value={incidentForm.title}
-                  onChange={e => setIncidentForm(f => ({ ...f, title: e.target.value }))}
-                  placeholder="Incident başlığı..."
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Açıklama</label>
-                <textarea
-                  value={incidentForm.description}
-                  onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Incident açıklaması..."
-                  rows={3}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500 resize-none"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Önem Derecesi</label>
-                  <select
-                    value={incidentForm.severity}
-                    onChange={e => setIncidentForm(f => ({ ...f, severity: e.target.value }))}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500">
-                    <option value="low">🔵 Low</option>
-                    <option value="medium">🟡 Medium</option>
-                    <option value="high">🟠 High</option>
-                    <option value="critical">🔴 Critical</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Atanan Kişi</label>
-                  <input
-                    value={incidentForm.assigned_to}
-                    onChange={e => setIncidentForm(f => ({ ...f, assigned_to: e.target.value }))}
-                    placeholder="İsim..."
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-              </div>
-              <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-3">
-                <p className="text-xs text-slate-400 mb-1">Bağlanacak Eventler</p>
-                <p className="text-white text-sm font-mono">{incidentModal.event_ids.join(', ')}</p>
-              </div>
+          }>
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Başlık *</label>
+              <input value={incidentForm.title} onChange={e => setIncidentForm(f => ({ ...f, title: e.target.value }))} className={inputCls} style={inputStyle} />
             </div>
-            <div className="flex gap-2 p-5 border-t border-slate-700">
-              <button onClick={() => setIncidentModal(null)}
-                className="px-4 py-2 text-sm text-slate-400 border border-slate-600 rounded-lg hover:bg-slate-700">
-                İptal
-              </button>
-              <button
-                disabled={!incidentForm.title.trim() || createIncident.isPending}
-                onClick={() => createIncident.mutate({
-                  title: incidentForm.title,
-                  description: incidentForm.description,
-                  severity: incidentForm.severity,
-                  assigned_to: incidentForm.assigned_to,
-                  related_events: incidentModal.event_ids
-                })}
-                className="flex-1 px-4 py-2 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                {createIncident.isPending ? '⏳ Oluşturuluyor...' : '🚨 Incident Oluştur'}
-              </button>
+            <div>
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</label>
+              <textarea value={incidentForm.description} onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))} rows={3} className={inputCls} style={inputStyle} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Önem</label>
+                <select value={incidentForm.severity} onChange={e => setIncidentForm(f => ({ ...f, severity: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Atanan</label>
+                <input value={incidentForm.assigned_to} onChange={e => setIncidentForm(f => ({ ...f, assigned_to: e.target.value }))} placeholder="İsim..." className={inputCls} style={inputStyle} />
+              </div>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
-
     </div>
   )
 }

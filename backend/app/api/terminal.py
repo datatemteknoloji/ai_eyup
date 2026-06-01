@@ -7,7 +7,7 @@ import io
 import paramiko
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from app.core.database import SessionLocal
+from app.core.database import ThreadSessionLocal as SessionLocal
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 

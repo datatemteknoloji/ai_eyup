@@ -45,9 +45,16 @@ def auto_create_or_link_incident(db: Session, event: SystemEvent) -> Optional[in
         # Aynı event_type içeren açık incident'a bağla
         inc_source = inc.source or ""
         affected = inc.affected_servers or []
-        same_server = (server_id is None) or (server_id in affected) or (not affected)
-        same_type = event_type in inc_source or event_type.lower() in inc.title.lower()
-        if same_server and same_type:
+        same_type = event_type in inc_source or event_type.lower() in (inc.title or "").lower()
+        if not same_type:
+            continue
+        if server_id is not None:
+            # Sunucu bilgisi olan event'ler yalnızca AYNI sunucunun incident'ına bağlanır
+            # (boş affected_servers'a da bağlanabilir — eski davranış korunur).
+            same_server = (server_id in affected) or (not affected)
+        else:
+            same_server = True
+        if same_server:
             matched = inc
             break
 

@@ -10,8 +10,9 @@ from app.core.database import Base
 class SystemUpdatePlan(Base):
     __tablename__ = "system_update_plans"
     id            = Column(Integer, primary_key=True, index=True)
-    name          = Column(String(255), nullable=False)
-    update_type   = Column(String(20), nullable=False)
+    name              = Column(String(255), nullable=False)
+    update_type       = Column(String(20), nullable=False)  # security|kernel|all|custom
+    custom_packages   = Column(JSON, default=list)          # custom modda yüklenecek paket listesi
     distro_filter = Column(String(50))
     repo_id       = Column(Integer, ForeignKey("repo_sources.id", ondelete="SET NULL"), nullable=True)
     server_ids    = Column(JSON, default=list)
