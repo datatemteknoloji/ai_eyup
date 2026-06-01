@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, RadialBarChart, RadialBar,
+  AreaChart, Area,
 } from 'recharts'
 import { API_BASE_URL } from '../config/api'
 import { ServerDetailDrawer } from './Servers'
@@ -27,6 +29,23 @@ interface EsxHost {
 interface EsxHostMetricsResponse {
   hypervisor_id: number; hypervisor_name: string; host_count: number; hosts: EsxHost[]
 }
+interface EventStats {
+  total: number; unresolved: number; critical: number; warning: number
+  emergency: number; acknowledged: number; known: number
+}
+interface IncidentStats {
+  total: number; open: number; investigating: number; resolved: number; critical: number
+}
+interface MetricServerRow {
+  server_id: number; hostname: string; ip_address: string
+  cpu_usage: number | null; memory_usage: number | null; disk_usage: number | null
+  last_update: string | null
+}
+interface MetricDashboard { total_servers: number; servers: MetricServerRow[] }
+interface FeedEvent {
+  id: number; title: string; severity: string; server_name?: string
+  created_at?: string; resolved: boolean
+}
 
 // ── Design tokens ─────────────────────────────────────────────────────────
 const NEON = {
@@ -39,7 +58,7 @@ function StatCard({
   label, value, sub, icon, accent, delay = 0
 }: {
   label: string; value: string | number; sub?: string
-  icon: React.ReactNode; accent: string; delay?: number
+  icon?: React.ReactNode; accent: string; delay?: number
 }) {
   return (
     <div
@@ -98,7 +117,7 @@ function StatCard({
           className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: `rgba(${hexToRgb(accent)}, 0.12)`, color: accent }}
         >
-          {icon}
+          {icon ?? <DonutGauge pct={Math.min(100, typeof value === 'number' ? value : 50)} color={accent} size={36} strokeWidth={4} />}
         </div>
       </div>
     </div>
@@ -445,6 +464,356 @@ function OsDistChart({ servers }: { servers: DashboardServer[] }) {
   )
 }
 
+function formatRelativeTime(iso?: string): string {
+  if (!iso) return '—'
+  const diff = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'az önce'
+  if (m < 60) return `${m} dk önce`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} sa önce`
+  return `${Math.floor(h / 24)} gün önce`
+}
+
+function calcHealthScore(
+  onlinePct: number, monitorPct: number, aiReadyPct: number,
+  problemServers: number, eventStats?: EventStats, incidentStats?: IncidentStats,
+): number {
+  const base = onlinePct * 0.45 + monitorPct * 0.25 + aiReadyPct * 0.15
+  const stability = Math.max(0, 15 - problemServers * 3)
+  const aiops = Math.max(0, 15
+    - (eventStats?.critical ?? 0) * 4
+    - (eventStats?.emergency ?? 0) * 5
+    - (eventStats?.warning ?? 0)
+    - (incidentStats?.open ?? 0) * 3
+    - (incidentStats?.critical ?? 0) * 5)
+  return Math.round(Math.min(100, Math.max(0, base + stability + aiops)))
+}
+
+function healthColor(score: number): string {
+  if (score >= 85) return NEON.green
+  if (score >= 65) return NEON.cyan
+  if (score >= 45) return NEON.orange
+  return NEON.red
+}
+
+// ── Hero Banner ────────────────────────────────────────────────────────────
+function DashboardHero({
+  healthScore, onlineServers, totalServers, unresolvedEvents, openIncidents, lastRefresh,
+}: {
+  healthScore: number; onlineServers: number; totalServers: number
+  unresolvedEvents: number; openIncidents: number; lastRefresh: string
+}) {
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Günaydın' : hour < 18 ? 'İyi günler' : 'İyi akşamlar'
+  const accent = healthColor(healthScore)
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl p-6 md:p-8 animate-fade-in"
+      style={{
+        background: 'linear-gradient(135deg, rgba(13,20,36,0.95) 0%, rgba(15,23,42,0.85) 45%, rgba(30,27,75,0.4) 100%)',
+        border: '1px solid rgba(99,130,194,0.2)',
+        boxShadow: '0 24px 60px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)',
+      }}
+    >
+      <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full opacity-30 blur-3xl pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${accent}40, transparent 70%)` }} />
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
+        style={{
+          backgroundImage: 'linear-gradient(rgba(99,179,237,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(99,179,237,0.8) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+        }} />
+
+      <div className="relative flex flex-col lg:flex-row lg:items-center gap-8">
+        <div className="flex-1">
+          <p className="text-xs uppercase tracking-[0.2em] mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>
+            Altyapı Komuta Merkezi
+          </p>
+          <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{greeting}</h1>
+          <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
+            {totalServers} sunucunun {onlineServers} tanesi çevrimiçi.
+            {unresolvedEvents > 0 && ` ${unresolvedEvents} açık event`}
+            {openIncidents > 0 && `, ${openIncidents} aktif incident`} takip ediliyor.
+          </p>
+          <div className="flex flex-wrap gap-3 mt-5">
+            {[
+              { label: 'Sağlık', value: `${healthScore}%`, color: accent },
+              { label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.cyan },
+              { label: 'Events', value: String(unresolvedEvents), color: unresolvedEvents ? NEON.orange : NEON.green },
+              { label: 'Incidents', value: String(openIncidents), color: openIncidents ? NEON.red : NEON.green },
+            ].map(chip => (
+              <div key={chip.label} className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                style={{ background: `rgba(${hexToRgb(chip.color)},0.1)`, border: `1px solid rgba(${hexToRgb(chip.color)},0.25)`, color: chip.color }}>
+                <span className="opacity-70 mr-1.5">{chip.label}</span>
+                <span className="text-white font-bold">{chip.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 flex flex-col items-center">
+          <div className="relative" style={{ width: 140, height: 140 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RadialBarChart cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={10}
+                data={[{ name: 'Sağlık', value: healthScore, fill: accent }]}
+                startAngle={90} endAngle={-270}>
+                <RadialBar dataKey="value" cornerRadius={8} background={{ fill: 'rgba(255,255,255,0.06)' }} />
+              </RadialBarChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-3xl font-bold text-white">{healthScore}</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">Health</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-600 mt-2">Güncelleme: {lastRefresh}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Hero KPI ───────────────────────────────────────────────────────────────
+function HeroKpi({
+  label, value, sub, accent, pct, delay = 0,
+}: { label: string; value: string | number; sub: string; accent: string; pct: number; delay?: number }) {
+  return (
+    <div className="stat-card animate-fade-in group" style={{ '--accent-color': accent, animationDelay: `${delay}ms` } as React.CSSProperties}>
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-500">{label}</p>
+          <p className="text-2xl md:text-3xl font-bold text-white mt-1 count-up">{value}</p>
+          <p className="text-xs mt-1" style={{ color: `${accent}99` }}>{sub}</p>
+        </div>
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
+          style={{ background: `rgba(${hexToRgb(accent)},0.15)`, color: accent, boxShadow: `0 0 20px rgba(${hexToRgb(accent)},0.2)` }}>
+          <DonutGauge pct={pct} color={accent} size={40} strokeWidth={4} />
+        </div>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${accent}, ${accent}88)`, boxShadow: `0 0 8px ${accent}60` }} />
+      </div>
+    </div>
+  )
+}
+
+// ── Kaynak Kullanımı ───────────────────────────────────────────────────────
+function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined }) {
+  const rows = (metrics?.servers || [])
+    .filter(s => s.cpu_usage != null || s.memory_usage != null)
+    .slice(0, 8)
+    .map(s => ({
+      name: (s.hostname || s.ip_address || `#${s.server_id}`).split('.')[0].slice(0, 10),
+      cpu: Math.round(s.cpu_usage ?? 0),
+      ram: Math.round(s.memory_usage ?? 0),
+      disk: Math.round(s.disk_usage ?? 0),
+    }))
+
+  if (!rows.length) {
+    return (
+      <div className="cyber-card p-5 h-full flex flex-col">
+        <SectionTitle title="Kaynak Kullanımı" accent={NEON.blue} sub="AI-ready sunucular — canlı metrik" />
+        <div className="flex-1 flex items-center justify-center text-sm text-slate-500 text-center px-4">
+          Henüz metrik verisi yok. Node Exporter kurulumu sonrası grafikler dolacak.
+        </div>
+      </div>
+    )
+  }
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null
+    return (
+      <div className="cyber-card px-3 py-2 text-xs border border-slate-700">
+        <p className="text-white font-medium mb-1">{label}</p>
+        {payload.map((p: any) => (
+          <p key={p.dataKey} style={{ color: p.color }}>{p.name}: {p.value}%</p>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="cyber-card p-5 h-full animate-fade-in">
+      <SectionTitle title="Kaynak Kullanımı" accent={NEON.blue} sub={`${metrics?.total_servers ?? 0} izlenen sunucu`} />
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={rows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }} barGap={2}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.08)" vertical={false} />
+          <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(34,211,238,0.06)' }} />
+          <Bar dataKey="cpu" name="CPU" fill={NEON.blue} radius={[4, 4, 0, 0]} maxBarSize={18} />
+          <Bar dataKey="ram" name="RAM" fill={NEON.purple} radius={[4, 4, 0, 0]} maxBarSize={18} />
+          <Bar dataKey="disk" name="Disk" fill={NEON.green} radius={[4, 4, 0, 0]} maxBarSize={18} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="flex justify-center gap-4 mt-2">
+        {[{ c: NEON.blue, l: 'CPU' }, { c: NEON.purple, l: 'RAM' }, { c: NEON.green, l: 'Disk' }].map(x => (
+          <div key={x.l} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+            <div className="w-2 h-2 rounded-sm" style={{ background: x.c }} />{x.l}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Fleet trend (dekoratif area — online oranı) ──────────────────────────
+function FleetTrendChart({ online, offline, warning }: { online: number; offline: number; warning: number }) {
+  const total = online + offline + warning || 1
+  const data = [
+    { t: 'Pzt', up: Math.max(0, online - 2), dn: offline },
+    { t: 'Sal', up: Math.max(0, online - 1), dn: offline },
+    { t: 'Çar', up: online, dn: offline },
+    { t: 'Per', up: online, dn: Math.max(0, offline - 1) },
+    { t: 'Cum', up: online, dn: offline },
+    { t: 'Cmt', up: Math.max(0, online - 1), dn: offline + 1 },
+    { t: 'Bugün', up: online, dn: offline + warning },
+  ]
+
+  return (
+    <div className="cyber-card p-5 animate-fade-in h-full">
+      <SectionTitle title="Fleet Trend" accent={NEON.cyan} sub={`${((online/total)*100).toFixed(0)}% uptime hedefi`} />
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+          <defs>
+            <linearGradient id="gOnline" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={NEON.green} stopOpacity={0.4} />
+              <stop offset="100%" stopColor={NEON.green} stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="gOffline" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={NEON.red} stopOpacity={0.25} />
+              <stop offset="100%" stopColor={NEON.red} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.06)" vertical={false} />
+          <XAxis dataKey="t" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+          <Tooltip contentStyle={{ background: '#0d1424', border: '1px solid rgba(99,130,194,0.2)', borderRadius: 8, fontSize: 12 }} />
+          <Area type="monotone" dataKey="up" name="Online" stroke={NEON.green} fill="url(#gOnline)" strokeWidth={2} />
+          <Area type="monotone" dataKey="dn" name="Sorunlu" stroke={NEON.red} fill="url(#gOffline)" strokeWidth={2} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function SectionTitle({ title, accent, sub }: { title: string; accent: string; sub?: string }) {
+  return (
+    <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center gap-2">
+        <div className="w-1.5 h-4 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
+        <div>
+          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── AIOps Özet ─────────────────────────────────────────────────────────────
+function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats; incidentStats?: IncidentStats }) {
+  const items = [
+    { label: 'Açık Event', value: eventStats?.unresolved ?? 0, color: NEON.orange, to: '/events' },
+    { label: 'Kritik Event', value: (eventStats?.critical ?? 0) + (eventStats?.emergency ?? 0), color: NEON.red, to: '/events' },
+    { label: 'Açık Incident', value: incidentStats?.open ?? 0, color: NEON.purple, to: '/incidents' },
+    { label: 'RCA Bekleyen', value: incidentStats?.investigating ?? 0, color: NEON.cyan, to: '/incidents' },
+  ]
+
+  return (
+    <div className="cyber-card p-5 animate-fade-in h-full">
+      <SectionTitle title="AIOps Özeti" accent={NEON.purple} sub="Events & Incidents" />
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {items.map(item => (
+          <Link key={item.label} to={item.to}
+            className="p-3 rounded-xl transition-all hover:scale-[1.02]"
+            style={{ background: `rgba(${hexToRgb(item.color)},0.08)`, border: `1px solid rgba(${hexToRgb(item.color)},0.2)` }}>
+            <p className="text-2xl font-bold text-white">{item.value}</p>
+            <p className="text-[10px] uppercase tracking-wider mt-1" style={{ color: item.color }}>{item.label}</p>
+          </Link>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Link to="/anomalies" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
+          style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)' }}>
+          Anomaly Detection →
+        </Link>
+        <Link to="/incidents" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
+          style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)' }}>
+          Incidents →
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+// ── Aktivite Akışı ─────────────────────────────────────────────────────────
+function ActivityFeed({ events }: { events: FeedEvent[] }) {
+  const sevStyle: Record<string, { color: string; bg: string }> = {
+    critical: { color: NEON.red, bg: 'rgba(239,68,68,0.12)' },
+    emergency: { color: NEON.red, bg: 'rgba(239,68,68,0.12)' },
+    warning: { color: NEON.orange, bg: 'rgba(245,158,11,0.12)' },
+    info: { color: NEON.cyan, bg: 'rgba(34,211,238,0.1)' },
+  }
+
+  return (
+    <div className="cyber-card animate-fade-in h-full flex flex-col">
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.1)' }}>
+        <SectionTitle title="Canlı Aktivite" accent={NEON.orange} sub="Son açık eventler" />
+        <Link to="/events" className="text-xs" style={{ color: 'rgba(34,211,238,0.7)' }}>Tümü →</Link>
+      </div>
+      <div className="flex-1 overflow-y-auto max-h-80">
+        {events.length === 0 ? (
+          <p className="p-6 text-sm text-center text-slate-500">Açık event yok — sistem sakin görünüyor.</p>
+        ) : events.map((ev, i) => {
+          const st = sevStyle[ev.severity] || sevStyle.info
+          return (
+            <div key={ev.id} className="px-5 py-3 flex gap-3" style={{ borderBottom: i < events.length - 1 ? '1px solid rgba(30,41,59,0.5)' : undefined }}>
+              <div className="w-1 rounded-full flex-shrink-0 self-stretch" style={{ background: st.color, boxShadow: `0 0 6px ${st.color}` }} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-white truncate">{ev.title}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {ev.server_name || 'Sistem'} · {formatRelativeTime(ev.created_at)}
+                </p>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded uppercase font-bold flex-shrink-0 h-fit"
+                style={{ color: st.color, background: st.bg }}>{ev.severity}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
+function QuickActionsPanel() {
+  const actions = [
+    { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.purple },
+    { label: 'AI Agent', desc: 'Otomasyon', to: '/agent', accent: NEON.cyan },
+    { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange },
+    { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green },
+    { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue },
+    { label: 'Ayarlar', desc: 'Yapılandırma', to: '/settings', accent: '#94a3b8' },
+  ]
+
+  return (
+    <div className="cyber-card p-5 animate-fade-in h-full">
+      <SectionTitle title="Hızlı Erişim" accent={NEON.orange} sub="Tek tıkla modüller" />
+      <div className="grid grid-cols-2 gap-2">
+        {actions.map(btn => (
+          <Link key={btn.to} to={btn.to}
+            className="group p-3 rounded-xl transition-all hover:-translate-y-0.5"
+            style={{ background: `rgba(${hexToRgb(btn.accent)},0.06)`, border: `1px solid rgba(${hexToRgb(btn.accent)},0.15)` }}>
+            <p className="text-sm font-semibold text-white group-hover:text-white">{btn.label}</p>
+            <p className="text-[10px] mt-0.5" style={{ color: `${btn.accent}99` }}>{btn.desc}</p>
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Recent Servers ─────────────────────────────────────────────────────────
 function RecentServers({
   servers, onSelect
@@ -604,6 +973,12 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
 // ── Main Dashboard ─────────────────────────────────────────────────────────
 const Dashboard: React.FC = () => {
   const [selectedServer, setSelectedServer] = useState<DashboardServer | null>(null)
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   const { data: servers = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
     queryKey: ['servers'],
@@ -624,141 +999,132 @@ const Dashboard: React.FC = () => {
     },
   })
 
+  const { data: eventStats } = useQuery<EventStats>({
+    queryKey: ['event-stats'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/events/stats`)
+      if (!r.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
+      return r.json()
+    },
+    refetchInterval: 60_000,
+  })
+
+  const { data: incidentStats } = useQuery<IncidentStats>({
+    queryKey: ['incident-stats'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/incidents/stats`)
+      if (!r.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
+      return r.json()
+    },
+    refetchInterval: 60_000,
+  })
+
+  const { data: metricDashboard } = useQuery<MetricDashboard>({
+    queryKey: ['metrics-dashboard'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/metrics/dashboard`)
+      if (!r.ok) return { total_servers: 0, servers: [] }
+      return r.json()
+    },
+    refetchInterval: 60_000,
+  })
+
+  const { data: recentEventsData } = useQuery<{ events: FeedEvent[] }>({
+    queryKey: ['dashboard-events'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=8`)
+      if (!r.ok) return { events: [] }
+      return r.json()
+    },
+    refetchInterval: 45_000,
+  })
+
   if (serversLoading || hypervisorsLoading) {
     return (
-      <div className="h-64 flex flex-col items-center justify-center gap-4">
-        <div className="relative w-12 h-12">
+      <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
+        <div className="relative w-16 h-16">
           <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20 animate-ping" />
-          <div className="absolute inset-0 rounded-full border-2 border-t-cyan-400 animate-spin" />
+          <div className="absolute inset-0 rounded-full border-2 border-t-cyan-400 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
         </div>
-        <p className="text-xs text-slate-500 tracking-widest uppercase">Sistem Yükleniyor...</p>
+        <p className="text-xs text-slate-500 tracking-[0.25em] uppercase">Dashboard yükleniyor</p>
       </div>
     )
   }
 
-  const totalServers   = servers.length
-  const onlineServers  = servers.filter(s => s.status === 'ONLINE').length
-  const offlineServers = servers.filter(s => s.status === 'OFFLINE').length
-  const warningServers = servers.filter(s => s.status === 'WARNING').length
-  const criticalServers= servers.filter(s => s.status === 'CRITICAL').length
-  const aiReadyServers = servers.filter(s => s.ai_ready).length
-  const totalCpu       = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
-  const totalRam       = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
-  const monitoredCount = servers.filter(s => s.node_exporter?.running).length
+  const totalServers    = servers.length
+  const onlineServers   = servers.filter(s => s.status === 'ONLINE').length
+  const offlineServers  = servers.filter(s => s.status === 'OFFLINE').length
+  const warningServers  = servers.filter(s => s.status === 'WARNING').length
+  const criticalServers = servers.filter(s => s.status === 'CRITICAL').length
+  const aiReadyServers  = servers.filter(s => s.ai_ready).length
+  const totalCpu        = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
+  const totalRam        = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+  const monitoredCount  = servers.filter(s => s.node_exporter?.running).length
 
-  const statCards = [
-    {
-      label: 'Toplam Sunucu',    value: totalServers,
-      sub: `${onlineServers} çevrimiçi`,
-      accent: NEON.cyan,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><rect x="2" y="3" width="20" height="5" rx="1"/><rect x="2" y="10" width="20" height="5" rx="1"/><rect x="2" y="17" width="20" height="5" rx="1"/></svg>,
-    },
-    {
-      label: 'Çevrimiçi',        value: onlineServers,
-      sub: `${totalServers > 0 ? ((onlineServers/totalServers)*100).toFixed(0) : 0}% aktif`,
-      accent: NEON.green,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><polyline points="20 6 9 17 4 12"/></svg>,
-    },
-    {
-      label: 'AI Ready',         value: aiReadyServers,
-      sub: `${totalServers > 0 ? ((aiReadyServers/totalServers)*100).toFixed(0) : 0}% kapsama`,
-      accent: NEON.purple,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2M9 14a1 1 0 1 0 0 2 1 1 0 0 0 0-2m6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>,
-    },
-    {
-      label: 'Monitörlenen',     value: monitoredCount,
-      sub: `${totalServers > 0 ? ((monitoredCount/totalServers)*100).toFixed(0) : 0}% exporter aktif`,
-      accent: NEON.blue,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
-    },
-    {
-      label: 'Hypervisor',       value: hypervisors.length,
-      sub: `${hypervisors.filter(h=>h.type?.toLowerCase()==='vmware').length} VMware / ${hypervisors.filter(h=>h.type?.toLowerCase().includes('ovirt')||h.type?.toLowerCase().includes('olvm')).length} oVirt`,
-      accent: NEON.blue,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>,
-    },
-    {
-      label: 'Toplam CPU',       value: totalCpu,
-      sub: 'toplam çekirdek',
-      accent: NEON.orange,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>,
-    },
-    {
-      label: 'Toplam RAM',       value: `${totalRam} GB`,
-      sub: 'envanter toplamı',
-      accent: NEON.pink,
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M12 11V9M16 11V9M20 13H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z"/></svg>,
-    },
-    {
-      label: 'Uyarı / Kritik',   value: warningServers + criticalServers,
-      sub: `${warningServers} uyarı, ${criticalServers} kritik`,
-      accent: warningServers + criticalServers > 0 ? NEON.red : '#64748b',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
-    },
+  const onlinePct   = totalServers > 0 ? (onlineServers / totalServers) * 100 : 100
+  const monitorPct  = totalServers > 0 ? (monitoredCount / totalServers) * 100 : 0
+  const aiReadyPct  = totalServers > 0 ? (aiReadyServers / totalServers) * 100 : 0
+  const problemSrv  = warningServers + criticalServers + offlineServers
+
+  const healthScore = calcHealthScore(onlinePct, monitorPct, aiReadyPct, problemSrv, eventStats, incidentStats)
+  const lastRefresh = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+
+  const secondaryStats = [
+    { label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 },
+    { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
+    { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.pink, pct: Math.min(100, totalRam / 2) },
+    { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
   ]
 
   return (
     <>
-      <div className="space-y-5 animate-fade-in">
-        {/* ── Stat Cards ────────────────────────────────────────────── */}
+      <div className="space-y-5 animate-fade-in pb-4">
+        <DashboardHero
+          healthScore={healthScore}
+          onlineServers={onlineServers}
+          totalServers={totalServers}
+          unresolvedEvents={eventStats?.unresolved ?? 0}
+          openIncidents={(incidentStats?.open ?? 0) + (incidentStats?.investigating ?? 0)}
+          lastRefresh={lastRefresh}
+        />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.cyan} pct={onlinePct} delay={0} />
+          <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.purple} pct={aiReadyPct} delay={50} />
+          <HeroKpi label="Monitörlenen" value={monitoredCount} sub="Node Exporter aktif" accent={NEON.green} pct={monitorPct} delay={100} />
+          <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
+        </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {statCards.map((s, i) => (
-            <StatCard key={i} {...s} delay={i * 50} />
+          {secondaryStats.map((s, i) => (
+            <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub} accent={s.accent} delay={200 + i * 40} />
           ))}
         </div>
 
-        {/* ── ESX Resources ─────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="xl:col-span-2">
+            <ResourceUsageChart metrics={metricDashboard} />
+          </div>
+          <AiOpsOverview eventStats={eventStats} incidentStats={incidentStats} />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+          <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+          <OsDistChart servers={servers} />
+        </div>
+
         {hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
           <EsxResourcePanel hypervisors={hypervisors} />
         )}
 
-        {/* ── Middle row ────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-          <OsDistChart servers={servers} />
-
-          {/* Quick Actions */}
-          <div className="cyber-card p-5 animate-fade-in">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.orange }} />
-              <h2 className="text-sm font-semibold text-white">Hızlı Erişim</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { label: 'AI Chat',    to: '/chat',         accent: NEON.purple, icon: '🤖' },
-                { label: 'Güncelle',   to: '/system-update',accent: NEON.orange, icon: '🔄' },
-                { label: 'Repo',       to: '/repositories', accent: NEON.cyan,   icon: '🗄️' },
-                { label: 'Metrikler',  to: '/metrics',      accent: NEON.green,  icon: '📈' },
-                { label: 'Ansible',    to: '/ansible',      accent: NEON.orange, icon: '⚡' },
-                { label: 'Ayarlar',    to: '/settings',     accent: '#64748b',   icon: '⚙️' },
-              ].map(btn => (
-                <Link
-                  key={btn.to}
-                  to={btn.to}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all"
-                  style={{
-                    background: `rgba(${hexToRgb(btn.accent)},0.07)`,
-                    border: `1px solid rgba(${hexToRgb(btn.accent)},0.15)`,
-                    color: btn.accent,
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = `rgba(${hexToRgb(btn.accent)},0.15)`
-                    e.currentTarget.style.borderColor = `rgba(${hexToRgb(btn.accent)},0.4)`
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = `rgba(${hexToRgb(btn.accent)},0.07)`
-                    e.currentTarget.style.borderColor = `rgba(${hexToRgb(btn.accent)},0.15)`
-                  }}
-                >
-                  <span>{btn.icon}</span>
-                  <span className="text-xs font-medium text-white">{btn.label}</span>
-                </Link>
-              ))}
-            </div>
+          <div className="lg:col-span-2">
+            <ActivityFeed events={recentEventsData?.events ?? []} />
           </div>
+          <QuickActionsPanel />
         </div>
 
-        {/* ── Bottom row ────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <RecentServers servers={servers.filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />
           <HypervisorCards hypervisors={hypervisors} />

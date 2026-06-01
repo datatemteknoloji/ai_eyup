@@ -128,5 +128,25 @@
       "server_name": "gorkem2",
       "job": "node-exporter"
     }
+  },
+  {
+    "targets": [
+      "192.168.1.47:9100"
+    ],
+    "labels": {
+      "server_id": "289",
+      "server_name": "veridata",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.240:9100"
+    ],
+    "labels": {
+      "server_id": "280",
+      "server_name": "opnshftBastion",
+      "job": "node-exporter"
+    }
   }
 ]
