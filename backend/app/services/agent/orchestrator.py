@@ -42,9 +42,16 @@ SYSTEM_PROMPT = (
     "ONAY İÇİN KULLANICIYA METİNLE SORMA. Doğrudan ilgili tool'u çağır. "
     "Sistem, değişiklik yapan tool çağrılarını otomatik olarak duraklatıp insan onayına "
     "sunar; onaylanırsa senin yerine çalıştırır. Yani 'onayınızı bekliyorum' deme, tool'u çağır.\n"
-    "3. Komut çıktısı uydurma; yalnızca tool sonuçlarına dayan.\n"
-    "4. Tool sonuçları döndükten ve işin bittikten sonra TÜRKÇE, kısa ve net bir özet ile bitir.\n"
-    "5. Hangi sunucuda işlem yaptığını belirt."
+    "3. Bir parametreyi (hangi disk, hangi volume group, hangi boyut vb.) KESİN bilmiyorsan "
+    "TAHMİN ETME. Önce salt-okunur tool'larla adayları topla (örn. yeni VG için "
+    "list_free_disks ile diskleri bul). Sonra kullanıcının seçmesi gereken bir durum varsa "
+    "seçenekleri DÜZ METİN olarak yazıp DURMA; bunun yerine MUTLAKA 'ask_user' tool'unu çağır "
+    "ve options dizisine her adayı (örn. '/dev/sdb (64G, boş)') koy. Seçenekleri metinle "
+    "listeleyip yanıtı sonlandırmak YANLIŞTIR — ask_user kullan. Kullanıcı zaten net "
+    "belirttiyse (disk/boyut/ad verdiyse) sormadan doğrudan ilerle.\n"
+    "4. Komut çıktısı uydurma; yalnızca tool sonuçlarına dayan.\n"
+    "5. Tool sonuçları döndükten ve işin bittikten sonra TÜRKÇE, kısa ve net bir özet ile bitir.\n"
+    "6. Hangi sunucuda işlem yaptığını belirt."
 )
 
 
@@ -125,6 +132,32 @@ def _run_loop(
         for tc in tool_calls:
             name = tc["name"]
             args = tc["arguments"] or {}
+
+            # ask_user: shell tool değil — kullanıcıya seçenek sun ve duraklat.
+            if name == "ask_user":
+                question = args.get("question") or "Lütfen seçim yapın"
+                options = args.get("options") or []
+                allow_multiple = bool(args.get("allow_multiple"))
+                action = AgentAction(
+                    session_id=ctx.get("session_id"),
+                    tool_name="ask_user",
+                    arguments={"question": question, "options": options,
+                               "allow_multiple": allow_multiple},
+                    risk_level="read_only",
+                    status="awaiting_input",
+                    preview=question,
+                    transcript=messages,
+                    model=model,
+                )
+                db.add(action)
+                db.commit()
+                db.refresh(action)
+                steps.append({"type": "question", "question": question, "options": options,
+                              "allow_multiple": allow_multiple, "action_id": action.id})
+                return {"status": "question", "action_id": action.id, "question": question,
+                        "options": options, "allow_multiple": allow_multiple,
+                        "steps": steps, "session_id": ctx.get("session_id")}
+
             tool = tool_mod.get_tool(name)
 
             if not tool:
@@ -239,6 +272,29 @@ def continue_after_decision(db: Session, action: AgentAction, approved: bool,
                      "content": json.dumps(result, ensure_ascii=False)[:8000]})
     steps.append({"type": "executed", "tool": action.tool_name,
                   "preview": action.preview, "result": result})
+    return _run_loop(db, messages, model, ctx, steps=steps,
+                     start_step=_step_estimate(messages))
+
+
+def continue_after_answer(db: Session, action: AgentAction, answer) -> Dict[str, Any]:
+    """Kullanıcı ask_user sorusuna yanıt verdikten sonra döngüyü sürdürür."""
+    ctx = {
+        "session_id": action.session_id,
+        "server_ids": [action.server_id] if action.server_id else [],
+        "server_summary": _server_summary(db, [action.server_id] if action.server_id else []),
+    }
+    model = action.model or get_agent_model(db)
+    messages: List[Dict[str, Any]] = list(action.transcript or [])
+
+    action.status = "answered"
+    action.decided_at = datetime.utcnow()
+    action.result = {"selected": answer}
+    db.commit()
+
+    messages.append({"role": "tool", "name": "ask_user",
+                     "content": json.dumps({"selected": answer}, ensure_ascii=False)})
+    steps = [{"type": "answered", "question": (action.arguments or {}).get("question"),
+              "selected": answer}]
     return _run_loop(db, messages, model, ctx, steps=steps,
                      start_step=_step_estimate(messages))
 

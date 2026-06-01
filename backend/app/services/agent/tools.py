@@ -147,6 +147,15 @@ def _lvm_manage_cmd(args: Dict[str, Any]) -> str:
     if op == "create_pv":
         dev = _check(_LVM_DEVICE, args.get("device"), "device")
         return f"sudo pvcreate {dev}"
+    if op == "create_vg":
+        vg = _check(_LVM_NAME, args.get("vg_name"), "vg_name")
+        devices = args.get("devices") or ([args["device"]] if args.get("device") else [])
+        if isinstance(devices, str):
+            devices = [devices]
+        if not devices:
+            raise ValueError("create_vg için en az bir device gerekli")
+        devs = " ".join(_check(_LVM_DEVICE, d, "device") for d in devices)
+        return f"sudo vgcreate {vg} {devs}"
     if op == "extend_vg":
         vg = _check(_LVM_NAME, args.get("vg_name"), "vg_name")
         dev = _check(_LVM_DEVICE, args.get("device"), "device")
@@ -167,6 +176,16 @@ def _lvm_manage_cmd(args: Dict[str, Any]) -> str:
         resize = " -r" if args.get("resize_fs") else ""
         return f"sudo lvextend{resize} {flag} {size} /dev/{vg}/{lv}"
     raise ValueError(f"desteklenmeyen operation: {op!r}")
+
+
+def _free_disks_cmd(args: Dict[str, Any]) -> str:
+    # Tüm blok aygıtları + hangilerinin PV olduğu → LLM boş olanları ayıklar.
+    return (
+        "echo '=== BLOK AYGITLAR (lsblk) ==='; "
+        "lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL; "
+        "echo '=== MEVCUT PV (pvs) ==='; "
+        "sudo pvs --noheadings -o pv_name,vg_name 2>/dev/null || echo 'PV yok'"
+    )
 
 
 def _update_packages_cmd(args: Dict[str, Any]) -> str:
@@ -281,6 +300,23 @@ TOOLS: Dict[str, Tool] = {
         timeout=600,
         allow_sudo=True,
     ),
+    "list_free_disks": Tool(
+        name="list_free_disks",
+        description=(
+            "Sunucudaki tüm blok aygıtları ve mevcut PV'leri SALT-OKUNUR listeler. "
+            "Boş/kullanılmayan diskleri (filesystem'i ve mount'u olmayan, PV olmayan) "
+            "kullanıcıya seçenek olarak sunmadan önce bunu çağır."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_free_disks_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
     "lvm_info": Tool(
         name="lvm_info",
         description=(
@@ -304,9 +340,10 @@ TOOLS: Dict[str, Tool] = {
     "manage_lvm": Tool(
         name="manage_lvm",
         description=(
-            "LVM mantıksal hacim BÜYÜTME/oluşturma işlemleri (MUTATING — insan onayı gerekir). "
-            "Operasyonlar: create_pv (pvcreate), extend_vg (vgextend), create_lv (lvcreate), "
-            "extend_lv (lvextend, opsiyonel resize_fs ile dosya sistemini de büyütür). "
+            "LVM hacim BÜYÜTME/oluşturma işlemleri (MUTATING — insan onayı gerekir). "
+            "Operasyonlar: create_pv (pvcreate), create_vg (vgcreate, bir/birden çok diskten "
+            "yeni volume group), extend_vg (vgextend), create_lv (lvcreate), "
+            "extend_lv (lvextend, opsiyonel resize_fs ile FS de büyür). "
             "Küçültme/silme (lvreduce/lvremove/vgremove) GÜVENLİK NEDENİYLE DESTEKLENMEZ."
         ),
         parameters={
@@ -314,12 +351,14 @@ TOOLS: Dict[str, Tool] = {
             "properties": {
                 "server": {"type": "string", "description": "Sunucu adı veya IP"},
                 "operation": {"type": "string",
-                              "enum": ["create_pv", "extend_vg", "create_lv", "extend_lv"]},
+                              "enum": ["create_pv", "create_vg", "extend_vg", "create_lv", "extend_lv"]},
                 "vg_name": {"type": "string", "description": "Volume group adı"},
                 "lv_name": {"type": "string", "description": "Logical volume adı"},
                 "size": {"type": "string",
                          "description": "Boyut: '10G', '+5G' (büyütme) veya '100%FREE'"},
-                "device": {"type": "string", "description": "Fiziksel aygıt, örn. /dev/sdb1"},
+                "device": {"type": "string", "description": "Tek fiziksel aygıt, örn. /dev/sdb"},
+                "devices": {"type": "array", "items": {"type": "string"},
+                            "description": "create_vg için bir/birden çok aygıt, örn. ['/dev/sdb','/dev/sdc']"},
                 "resize_fs": {"type": "boolean",
                               "description": "extend_lv için dosya sistemini de büyüt (-r)"},
             },
@@ -337,9 +376,38 @@ def get_tool(name: str) -> Optional[Tool]:
     return TOOLS.get(name)
 
 
+# ask_user: gerçek bir shell tool değil — orchestrator tarafından özel işlenir.
+# Agent, kullanıcının somut seçenekler arasından seçim yapmasını istediğinde çağırır.
+ASK_USER_SPEC: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "ask_user",
+        "description": (
+            "Kullanıcıya somut seçenekler sunup seçim yaptırır ve yanıtı bekler. "
+            "Argümanları (hangi disk, hangi boyut vb.) TAHMİN ETME; bunun yerine önce "
+            "list_free_disks/lvm_info gibi salt-okunur tool'larla adayları topla, sonra "
+            "ask_user ile net seçenekler sun. Akış, kullanıcı seçene kadar duraklar."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Kullanıcıya sorulan soru"},
+                "options": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Seçenekler (insan-okur metin), örn. '/dev/sdb (500G, boş)'",
+                },
+                "allow_multiple": {"type": "boolean",
+                                   "description": "Birden çok seçim yapılabilir mi"},
+            },
+            "required": ["question", "options"],
+        },
+    },
+}
+
+
 def tool_specs() -> List[Dict[str, Any]]:
     """LLM'e gönderilecek tool şemaları (Ollama/OpenAI function-calling formatı)."""
-    return [
+    specs = [
         {
             "type": "function",
             "function": {
@@ -350,3 +418,5 @@ def tool_specs() -> List[Dict[str, Any]]:
         }
         for t in TOOLS.values()
     ]
+    specs.append(ASK_USER_SPEC)
+    return specs

@@ -15,17 +15,21 @@ interface StepResult {
 }
 interface GuardVerdict { decision?: string; reason?: string; model?: string; enabled?: boolean; degraded?: boolean }
 interface Step {
-  type: 'read_only' | 'approval_required' | 'executed' | 'rejected' | 'error' | 'blocked'
-  tool: string
+  type: 'read_only' | 'approval_required' | 'executed' | 'rejected' | 'error' | 'blocked' | 'question' | 'answered'
+  tool?: string
   args?: Record<string, unknown>
   preview?: string
   result?: StepResult
   action_id?: number
   detail?: string
   guard?: GuardVerdict
+  question?: string
+  options?: string[]
+  allow_multiple?: boolean
+  selected?: string | string[]
 }
 interface AgentResponse {
-  status: 'done' | 'pending' | 'error' | 'max_steps'
+  status: 'done' | 'pending' | 'error' | 'max_steps' | 'question'
   answer?: string
   steps: Step[]
   action_id?: number
@@ -33,6 +37,9 @@ interface AgentResponse {
   tool?: string
   error?: string
   session_id?: number
+  question?: string
+  options?: string[]
+  allow_multiple?: boolean
 }
 
 type TimelineItem =
@@ -50,8 +57,8 @@ const isToolCapable = (name: string) => {
   return true
 }
 
-const riskBadge = (tool: string) => {
-  const mutating = ['clean_logs', 'restart_service', 'update_packages', 'manage_lvm'].includes(tool)
+const riskBadge = (tool?: string) => {
+  const mutating = ['clean_logs', 'restart_service', 'update_packages', 'manage_lvm'].includes(tool || '')
   return mutating
     ? <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/40">MUTATING</span>
     : <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">READ-ONLY</span>
@@ -66,6 +73,8 @@ const Agent: React.FC = () => {
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
   const [loading, setLoading] = useState(false)
   const [pendingActionId, setPendingActionId] = useState<number | null>(null)
+  const [questionActionId, setQuestionActionId] = useState<number | null>(null)
+  const [choiceSel, setChoiceSel] = useState<string[]>([])
   const [sessionId, setSessionId] = useState<number | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -100,7 +109,28 @@ const Agent: React.FC = () => {
     if (resp.status === 'error') items.push({ kind: 'error', text: resp.error || 'Bilinmeyen hata' })
     setTimeline(prev => [...prev, ...items])
     setPendingActionId(resp.status === 'pending' ? (resp.action_id ?? null) : null)
+    setQuestionActionId(resp.status === 'question' ? (resp.action_id ?? null) : null)
+    if (resp.status === 'question') setChoiceSel([])
     if (resp.session_id) setSessionId(resp.session_id)
+  }
+
+  const submitAnswer = async (actionId: number, answer: string | string[]) => {
+    setLoading(true)
+    setQuestionActionId(null)
+    setTimeline(prev => [...prev, { kind: 'user', text: Array.isArray(answer) ? answer.join(', ') : answer }])
+    try {
+      const res = await fetch(`${API_BASE_URL}/agent/actions/${actionId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer }),
+      })
+      const data: AgentResponse = await res.json()
+      applyResponse(data)
+    } catch (e) {
+      setTimeline(prev => [...prev, { kind: 'error', text: String(e) }])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const send = async () => {
@@ -276,6 +306,58 @@ const Agent: React.FC = () => {
             )
           }
 
+          if (s.type === 'question') {
+            const isActive = questionActionId === s.action_id
+            const multi = s.allow_multiple
+            const toggle = (opt: string) => {
+              if (multi) setChoiceSel(prev => prev.includes(opt) ? prev.filter(x => x !== opt) : [...prev, opt])
+              else setChoiceSel([opt])
+            }
+            return (
+              <div key={i} className="bg-blue-500/5 border border-blue-500/40 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-300 font-medium">❓ Seçim gerekiyor</span>
+                  {multi && <span className="text-[10px] text-slate-400">(birden çok seçilebilir)</span>}
+                </div>
+                <div className="text-sm text-slate-200">{s.question}</div>
+                <div className="space-y-1.5">
+                  {(s.options || []).map(opt => {
+                    const sel = isActive ? choiceSel.includes(opt) : false
+                    return (
+                      <button
+                        key={opt}
+                        onClick={() => isActive && toggle(opt)}
+                        disabled={!isActive || loading}
+                        className={`w-full text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
+                          sel ? 'bg-blue-600 border-blue-500 text-white'
+                              : 'bg-slate-900 border-slate-600 text-slate-300 hover:border-slate-500'
+                        } ${!isActive ? 'opacity-60' : ''}`}
+                      >
+                        <span className="mr-2">{multi ? (sel ? '☑' : '☐') : (sel ? '◉' : '○')}</span>{opt}
+                      </button>
+                    )
+                  })}
+                </div>
+                {isActive && (
+                  <button
+                    onClick={() => s.action_id && choiceSel.length && submitAnswer(s.action_id, multi ? choiceSel : choiceSel[0])}
+                    disabled={loading || choiceSel.length === 0}
+                    className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-50"
+                  >
+                    Seç & Devam
+                  </button>
+                )}
+              </div>
+            )
+          }
+          if (s.type === 'answered') {
+            const sel = Array.isArray(s.selected) ? s.selected.join(', ') : s.selected
+            return (
+              <div key={i} className="text-xs text-slate-400 border-l-2 border-blue-500/40 pl-3">
+                Seçildi: <span className="text-slate-200">{sel}</span>
+              </div>
+            )
+          }
           if (s.type === 'blocked') {
             return (
               <div key={i} className="bg-red-500/5 border border-red-500/40 rounded-xl p-4 space-y-2">

@@ -8,7 +8,7 @@ Endpoint'ler:
   POST /agent/actions/{id}/approve       → onayla ve devam et
   POST /agent/actions/{id}/reject        → reddet ve devam et
 """
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -16,7 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.agent_action import AgentAction
-from app.services.agent.orchestrator import start_agent, continue_after_decision
+from app.services.agent.orchestrator import (
+    start_agent, continue_after_decision, continue_after_answer,
+)
 
 router = APIRouter()
 
@@ -26,6 +28,10 @@ class AgentChatRequest(BaseModel):
     session_id: Optional[int] = None
     server_ids: Optional[List[int]] = None
     model: Optional[str] = None
+
+
+class AnswerRequest(BaseModel):
+    answer: Any = None
 
 
 def _action_to_dict(a: AgentAction) -> dict:
@@ -98,3 +104,15 @@ async def reject_action(action_id: int, db: Session = Depends(get_db)):
     if action.status != "pending":
         raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
     return continue_after_decision(db, action, approved=False)
+
+
+@router.post("/actions/{action_id}/answer")
+async def answer_action(action_id: int, req: AnswerRequest, db: Session = Depends(get_db)):
+    action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
+    if action.status != "awaiting_input":
+        raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
+    if req.answer in (None, "", []):
+        raise HTTPException(status_code=400, detail="Yanıt boş olamaz")
+    return continue_after_answer(db, action, req.answer)
