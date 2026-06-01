@@ -14,6 +14,7 @@ böylece policy engine (sandbox) her durumda devrededir.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -116,6 +117,56 @@ def _restart_service_cmd(args: Dict[str, Any]) -> str:
     if not _service_arg_ok(service):
         raise ValueError("geçersiz servis adı")
     return f"sudo systemctl restart {service}"
+
+
+def _lvm_info_cmd(args: Dict[str, Any]) -> str:
+    scope = (args.get("scope") or "all").strip().lower()
+    cmds = {
+        "pv": "sudo pvs",
+        "vg": "sudo vgs",
+        "lv": "sudo lvs",
+        "all": "sudo pvs; sudo vgs; sudo lvs",
+    }
+    return cmds.get(scope, cmds["all"])
+
+
+_LVM_NAME = re.compile(r"[A-Za-z0-9._+\-]+")
+_LVM_DEVICE = re.compile(r"/dev/[A-Za-z0-9/_\-]+")
+_LVM_SIZE = re.compile(r"\+?(?:\d+(?:\.\d+)?[KMGTPE]?B?|\d+%(?:FREE|VG|PVS|ORIGIN))", re.I)
+
+
+def _check(pattern: re.Pattern, value: str, label: str) -> str:
+    value = (value or "").strip()
+    if not value or not pattern.fullmatch(value):
+        raise ValueError(f"geçersiz {label}: {value!r}")
+    return value
+
+
+def _lvm_manage_cmd(args: Dict[str, Any]) -> str:
+    op = (args.get("operation") or "").strip().lower()
+    if op == "create_pv":
+        dev = _check(_LVM_DEVICE, args.get("device"), "device")
+        return f"sudo pvcreate {dev}"
+    if op == "extend_vg":
+        vg = _check(_LVM_NAME, args.get("vg_name"), "vg_name")
+        dev = _check(_LVM_DEVICE, args.get("device"), "device")
+        return f"sudo vgextend {vg} {dev}"
+    if op == "create_lv":
+        vg = _check(_LVM_NAME, args.get("vg_name"), "vg_name")
+        lv = _check(_LVM_NAME, args.get("lv_name"), "lv_name")
+        size = _check(_LVM_SIZE, args.get("size"), "size")
+        flag = "-l" if size.endswith(("FREE", "VG", "PVS", "ORIGIN", "free", "vg", "pvs", "origin")) else "-L"
+        return f"sudo lvcreate {flag} {size} -n {lv} {vg}"
+    if op == "extend_lv":
+        vg = _check(_LVM_NAME, args.get("vg_name"), "vg_name")
+        lv = _check(_LVM_NAME, args.get("lv_name"), "lv_name")
+        size = _check(_LVM_SIZE, args.get("size"), "size")
+        if size.startswith("-"):
+            raise ValueError("küçültme (negatif boyut) desteklenmez")
+        flag = "-l" if size.endswith(("FREE", "VG", "PVS", "ORIGIN", "free", "vg", "pvs", "origin")) else "-L"
+        resize = " -r" if args.get("resize_fs") else ""
+        return f"sudo lvextend{resize} {flag} {size} /dev/{vg}/{lv}"
+    raise ValueError(f"desteklenmeyen operation: {op!r}")
 
 
 def _update_packages_cmd(args: Dict[str, Any]) -> str:
@@ -228,6 +279,55 @@ TOOLS: Dict[str, Tool] = {
         risk_level=RiskLevel.MUTATING,
         build_command=_update_packages_cmd,
         timeout=600,
+        allow_sudo=True,
+    ),
+    "lvm_info": Tool(
+        name="lvm_info",
+        description=(
+            "LVM durumunu SALT-OKUNUR listeler (pvs/vgs/lvs): fiziksel volume, "
+            "volume group ve logical volume'lar."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "scope": {"type": "string", "enum": ["pv", "vg", "lv", "all"],
+                          "description": "Hangi LVM katmanı (varsayılan all)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_lvm_info_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "manage_lvm": Tool(
+        name="manage_lvm",
+        description=(
+            "LVM mantıksal hacim BÜYÜTME/oluşturma işlemleri (MUTATING — insan onayı gerekir). "
+            "Operasyonlar: create_pv (pvcreate), extend_vg (vgextend), create_lv (lvcreate), "
+            "extend_lv (lvextend, opsiyonel resize_fs ile dosya sistemini de büyütür). "
+            "Küçültme/silme (lvreduce/lvremove/vgremove) GÜVENLİK NEDENİYLE DESTEKLENMEZ."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "operation": {"type": "string",
+                              "enum": ["create_pv", "extend_vg", "create_lv", "extend_lv"]},
+                "vg_name": {"type": "string", "description": "Volume group adı"},
+                "lv_name": {"type": "string", "description": "Logical volume adı"},
+                "size": {"type": "string",
+                         "description": "Boyut: '10G', '+5G' (büyütme) veya '100%FREE'"},
+                "device": {"type": "string", "description": "Fiziksel aygıt, örn. /dev/sdb1"},
+                "resize_fs": {"type": "boolean",
+                              "description": "extend_lv için dosya sistemini de büyüt (-r)"},
+            },
+            "required": ["operation"],
+        },
+        risk_level=RiskLevel.MUTATING,
+        build_command=_lvm_manage_cmd,
+        timeout=300,
         allow_sudo=True,
     ),
 }

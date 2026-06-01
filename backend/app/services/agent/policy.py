@@ -35,6 +35,9 @@ READ_ONLY_COMMANDS = {
     "systemctl",  # yalnızca status/list-* alt komutları için (aşağıda kontrol)
     "rpm", "dpkg", "dnf", "yum", "apt", "apt-get",  # yalnızca sorgu alt komutları
     "ping", "ss", "who", "last", "env", "printenv", "mount", "lsof",
+    # LVM salt-okunur sorgular
+    "pvs", "vgs", "lvs", "pvdisplay", "vgdisplay", "lvdisplay",
+    "pvscan", "vgscan", "lvscan",
 }
 
 # Bazı binary'ler read-only SADECE belirli alt komutlarla (aksi halde mutating/denied).
@@ -67,6 +70,11 @@ DESTRUCTIVE_PATTERNS: List[re.Pattern] = [
     re.compile(r"\biptables\s+-F\b|\bufw\s+disable\b", re.I),
     re.compile(r"\btruncate\b.*\s/(?!var/log)", re.I),   # /var/log dışı truncate riskli
     re.compile(r"\bcrontab\s+-r\b", re.I),
+    # LVM yıkıcı işlemleri (veri kaybı) — asla
+    re.compile(r"\b(lvremove|vgremove|pvremove)\b", re.I),
+    re.compile(r"\blvreduce\b", re.I),
+    re.compile(r"\b(lvresize|lvextend)\b[^|]*-L\s*-", re.I),  # küçültme (-L -<size>)
+    re.compile(r"\bvgreduce\b", re.I),
 ]
 
 # Komut zincirleme / enjeksiyon karakterleri (mutating sayılır, ham komutta).

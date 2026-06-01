@@ -51,7 +51,7 @@ const isToolCapable = (name: string) => {
 }
 
 const riskBadge = (tool: string) => {
-  const mutating = ['clean_logs', 'restart_service', 'update_packages'].includes(tool)
+  const mutating = ['clean_logs', 'restart_service', 'update_packages', 'manage_lvm'].includes(tool)
   return mutating
     ? <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/40">MUTATING</span>
     : <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">READ-ONLY</span>
