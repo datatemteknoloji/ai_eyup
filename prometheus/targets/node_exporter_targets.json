@@ -148,5 +148,35 @@
       "server_name": "opnshftBastion",
       "job": "node-exporter"
     }
+  },
+  {
+    "targets": [
+      "192.168.1.230:9100"
+    ],
+    "labels": {
+      "server_id": "239",
+      "server_name": "rhelcluster01",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.180:9100"
+    ],
+    "labels": {
+      "server_id": "265",
+      "server_name": "olvm manager",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.231:9100"
+    ],
+    "labels": {
+      "server_id": "240",
+      "server_name": "rhelcluster02",
+      "job": "node-exporter"
+    }
   }
 ]
