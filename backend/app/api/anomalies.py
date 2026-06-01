@@ -303,6 +303,7 @@ async def get_log_anomaly_list(days: int = Query(30, ge=7, le=90), db: Session =
     since = now - timedelta(days=days)
 
     events = db.query(SystemEvent).join(Server, Server.id == SystemEvent.server_id).filter(
+        Server.ai_ready == True,  # noqa: E712 — sadece AI Ready sunucular
         func.lower(SystemEvent.event_type).in_(["log_entry", "log"]),
         SystemEvent.created_at >= since,
         func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
@@ -344,9 +345,10 @@ async def get_log_anomaly_heatmap(days: int = Query(30, ge=7, le=90), db: Sessio
     now = datetime.utcnow()
     since = now - timedelta(days=days - 1)
 
-    # Heatmap should include all registered servers.
-    # Filtering only ONLINE can hide servers that still have log data.
-    servers = db.query(Server).order_by(Server.name.asc()).all()
+    # Sadece AI Ready sunucular AIOps ısı haritasında gösterilir.
+    servers = db.query(Server).filter(
+        Server.ai_ready == True  # noqa: E712
+    ).order_by(Server.name.asc()).all()
     server_ids = [s.id for s in servers]
 
     day_labels = [

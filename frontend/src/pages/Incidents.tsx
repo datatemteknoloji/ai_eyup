@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge, StatusBadge,
@@ -326,7 +328,9 @@ const Incidents: React.FC = () => {
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, false)}
                       </p>
-                      <p className="text-xs whitespace-pre-wrap leading-relaxed" style={{ color: 'rgba(226,232,240,0.9)' }}>{selectedIncident.rca_result.analysis}</p>
+                      <div className="prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words" style={{ color: 'rgba(226,232,240,0.9)' }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
+                      </div>
                     </div>
                   </div>
                 )}
