@@ -1,0 +1,49 @@
+---
+description: Cyber/neon görsel tasarım dili — tüm frontend ekranlarına uygula
+globs: frontend/**/*.tsx,frontend/**/*.ts,frontend/**/*.css
+alwaysApply: false
+---
+
+# Cyber/Neon Tasarım Dili
+
+Tüm ekranlar koyu, neon-vurgulu, "SOC/AIOps dashboard" estetiğinde olmalı.
+Yeni sayfa/komponent eklerken bu dili **her zaman** uygula. Düz Tailwind `slate`
+kartlarına geri dönme; `cyber-card` ve neon token'ları kullan.
+
+## Renk Paleti (NEON sabiti)
+```ts
+const NEON = {
+  cyan:'#22d3ee', blue:'#3b82f6', purple:'#a855f7',
+  green:'#10b981', orange:'#f59e0b', red:'#ef4444', pink:'#ec4899',
+}
+```
+Arka plan: `var(--bg-deep)` (#070b14) / `var(--bg-card)` (#0d1424).
+
+## Hazır CSS Sınıfları (frontend/src/index.css)
+- `.cyber-card` — kartlar (ince border + hover glow + üst gradient çizgi)
+- `.stat-card` — metrik kartı (`--accent-color` CSS değişkeniyle renklendir)
+- `.glow-cyan|blue|purple|green|orange|red` — kutu glow
+- `.text-glow-*` — neon yazı
+- `.badge-online|offline|warning|critical|ai` — durum rozetleri
+- `.cyber-table` — th/td neon tablo
+- `.skeleton` — shimmer yükleme
+- `.animate-fade-in`, `.count-up`, `.pulse-dot`
+
+## Zorunlu Desenler
+- **Metrikler**: `StatCard` tarzı — büyük sayı + alt accent çizgisi + hover glow + ikon kutusu (`rgba(accent,0.12)` zemin).
+- **Doluluk/yüzde**: `DonutGauge` (SVG halka, glow layer) veya neon progress bar (`box-shadow: 0 0 6px <renk>`).
+- **Dağılım/oran**: recharts `PieChart` donut (Cell'lere `drop-shadow`) veya neon horizontal bar.
+- **Durum noktaları**: renkli dot + `animate-ping` (online için).
+- **İkonlar**: inline SVG (stroke=currentColor, strokeWidth≈1.5). Emoji yalnızca küçük yardımcı yerlerde.
+- **Başlıklar**: sol tarafta `w-1.5 h-4` renkli dikey bar + `text-sm font-semibold text-white`.
+- **Hover**: border rengini `rgba(accent,0.4-0.5)`'e yükselt + hafif `translateY(-2px)`.
+
+## Yardımcı
+`hexToRgb(hex)` ile `rgba(${hexToRgb(NEON.cyan)},0.2)` üret. Örnek `Dashboard.tsx`'te mevcut.
+
+## YAPMA
+- Düz `bg-slate-800 rounded-xl border border-slate-700` kart deseni (eski stil).
+- Renksiz/glow'suz büyük emoji ikon kutuları.
+
+## İstisna
+Sol menü (`Layout.tsx` sidebar) kullanıcı tercihiyle **eski emoji'li stilde** kalır — değiştirme.
