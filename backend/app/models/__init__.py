@@ -13,7 +13,11 @@ from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.package_job import PackageFile, PackageJob
 from app.models.repository import RepoSource, RepoSyncJob, RepoPackage
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
+from app.models.vm_snapshot import VMSnapshot
 from app.models.agent_action import AgentAction
+from app.models.user import User
+from app.models.audit_log import AuditLog
+from app.models.workflow_run import WorkflowRun
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatQACache",
@@ -24,5 +28,7 @@ __all__ = [
     "PackageFile", "PackageJob",
     "RepoSource", "RepoSyncJob", "RepoPackage",
     "SystemUpdatePlan", "SystemUpdateJob",
+    "VMSnapshot",
     "AgentAction",
+    "User", "AuditLog", "WorkflowRun",
 ]

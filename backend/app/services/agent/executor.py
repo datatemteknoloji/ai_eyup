@@ -48,15 +48,29 @@ def run_ssh_command(
     timeout: int = 30,
     session_id: Optional[int] = None,
     sudo_password_override: Optional[str] = None,
+    actor_name: Optional[str] = None,
 ) -> Dict:
     """
     Tek bir sunucuda komut çalıştırır. policy engine'den geçmeyen komut çalışmaz.
 
     Returns: {ok, stdout, stderr, command, server, error}
     """
+    def _audit(status: str, err: str = "") -> None:
+        try:
+            from app.services.audit import record_audit
+            record_audit(db, category="ssh", action="ssh.exec", status=status,
+                         actor=actor_name, target_type="server",
+                         target_id=getattr(server, "id", None),
+                         server_id=getattr(server, "id", None),
+                         summary=f"{getattr(server, 'name', '?')}: {command[:140]}",
+                         detail={"sudo": allow_sudo, "error": err[:300] if err else None})
+        except Exception:
+            pass
+
     risk = classify_command(command)
     if risk == RiskLevel.DENIED:
         logger.warning(f"[AgentExecutor] DENIED komut ({server.name}): {command[:120]}")
+        _audit("blocked", "policy denied")
         return {
             "ok": False, "stdout": "", "stderr": "",
             "command": command, "server": server.name,
@@ -112,9 +126,11 @@ def run_ssh_command(
             f"[AgentExecutor] {server.name} risk={risk.value} sudo={use_sudo} "
             f"ok={success} cmd={command[:80]}"
         )
+        _audit("success" if success else "failure", "" if success else (stderr or ""))
         return result
     except Exception as e:
         logger.error(f"[AgentExecutor] Komut hatası ({server.name}): {e}")
+        _audit("failure", str(e))
         return {
             "ok": False, "stdout": "", "stderr": "",
             "command": command, "server": server.name, "error": str(e),

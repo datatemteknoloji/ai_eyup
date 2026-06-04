@@ -23,6 +23,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_agent_model, settings
 from app.models.agent_action import AgentAction
+from app.models.chat_session import ChatSession, ChatMessage
+from app.services.audit import record_audit
 from app.services.agent import tools as tool_mod
 from app.services.agent.executor import get_default_credential
 from app.services.agent.guard import guard_command
@@ -65,6 +67,57 @@ def _build_initial_messages(user_message: str, ctx: Dict[str, Any]) -> List[Dict
         {"role": "system", "content": SYSTEM_PROMPT + server_hint},
         {"role": "user", "content": user_message},
     ]
+
+
+def _actor_name(actor) -> str:
+    if actor is None:
+        return "system"
+    if isinstance(actor, str):
+        return actor
+    return getattr(actor, "username", None) or "system"
+
+
+def _ensure_session(db: Session, session_id: Optional[int], first_message: str,
+                    server_ids: List[int]) -> Optional[int]:
+    """Agent konuşması için ChatSession garanti eder; yoksa oluşturur."""
+    try:
+        if session_id:
+            exists = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if exists:
+                return session_id
+        title = (first_message or "Agent").strip()[:60] or "Agent"
+        sess = ChatSession(title=f"[Agent] {title}", server_ids=server_ids or [])
+        db.add(sess)
+        db.commit()
+        db.refresh(sess)
+        return sess.id
+    except Exception as e:
+        logger.warning(f"[Agent] ChatSession oluşturulamadı: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return session_id
+
+
+def _save_msg(db: Session, session_id: Optional[int], role: str, content: str) -> None:
+    if not session_id or not content:
+        return
+    try:
+        db.add(ChatMessage(session_id=session_id, role=role, content=content[:20000]))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[Agent] mesaj kaydedilemedi: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _persist_final(db: Session, result: Dict[str, Any]) -> None:
+    """Tur bittiğinde (done/max_steps) asistan yanıtını konuşmaya yazar."""
+    if result.get("status") in ("done", "max_steps"):
+        _save_msg(db, result.get("session_id"), "assistant", result.get("answer") or "")
 
 
 def _server_summary(db: Session, server_ids: List[int]) -> str:
@@ -126,7 +179,25 @@ def _run_loop(
     db: Session, messages: List[Dict[str, Any]], model: str,
     ctx: Dict[str, Any], steps: List[Dict[str, Any]], start_step: int = 0,
 ) -> Dict[str, Any]:
-    """Tool-calling döngüsünü çalıştırır. pending bir mutating aksiyonda durur."""
+    """Tool-calling döngüsünü çalıştırır. pending bir mutating aksiyonda durur.
+
+    Orkestrasyon LangGraph (agent.graph) üzerinden yürütülür; graph yüklenemezse
+    aşağıdaki doğrudan döngüye (legacy) düşülür.
+    """
+    try:
+        from app.services.agent.graph import run_agent_graph
+        return run_agent_graph(db, messages, model, ctx, steps, start_step=start_step)
+    except Exception as e:
+        logger.error(f"[Agent] LangGraph döngüsü başarısız, legacy döngüye düşülüyor: {e}",
+                     exc_info=True)
+        return _run_loop_legacy(db, messages, model, ctx, steps, start_step=start_step)
+
+
+def _run_loop_legacy(
+    db: Session, messages: List[Dict[str, Any]], model: str,
+    ctx: Dict[str, Any], steps: List[Dict[str, Any]], start_step: int = 0,
+) -> Dict[str, Any]:
+    """Tool-calling döngüsü — LangGraph kullanılamazsa devreye giren yedek."""
     specs = tool_mod.tool_specs()
 
     for step in range(start_step, MAX_STEPS):
@@ -238,16 +309,29 @@ def start_agent(
     session_id: Optional[int] = None,
     server_ids: Optional[List[int]] = None,
     model: Optional[str] = None,
+    actor=None,
 ) -> Dict[str, Any]:
     server_ids = server_ids or []
+    actor_name = _actor_name(actor)
+    session_id = _ensure_session(db, session_id, user_message, server_ids)
+    _save_msg(db, session_id, "user", user_message)
+
+    record_audit(db, category="agent", action="agent.ask", actor=actor,
+                 target_type="session", target_id=session_id,
+                 server_id=server_ids[0] if server_ids else None,
+                 summary=f"Agent'a soruldu: {user_message[:120]}")
+
     ctx = {
         "session_id": session_id,
         "server_ids": server_ids,
         "server_summary": _server_summary(db, server_ids),
+        "actor_name": actor_name,
     }
     use_model = model or get_agent_model(db)
     messages = _build_initial_messages(user_message, ctx)
-    return _run_loop(db, messages, use_model, ctx, steps=[])
+    result = _run_loop(db, messages, use_model, ctx, steps=[])
+    _persist_final(db, result)
+    return result
 
 
 def continue_after_decision(db: Session, action: AgentAction, approved: bool,
@@ -263,6 +347,7 @@ def continue_after_decision(db: Session, action: AgentAction, approved: bool,
         "server_ids": [action.server_id] if action.server_id else [],
         "server_summary": _server_summary(db, [action.server_id] if action.server_id else []),
         "sudo_password_override": (sudo_password or None),
+        "actor_name": decided_by,
     }
     model = action.model or get_agent_model(db)
     messages: List[Dict[str, Any]] = list(action.transcript or [])
@@ -275,12 +360,18 @@ def continue_after_decision(db: Session, action: AgentAction, approved: bool,
     if not approved:
         action.status = "rejected"
         db.commit()
+        record_audit(db, category="agent", action="agent.reject", status="rejected",
+                     actor=decided_by, target_type="action", target_id=action.id,
+                     server_id=action.server_id,
+                     summary=f"Reddedildi: {action.tool_name} — {action.preview or ''}"[:200])
         messages.append({"role": "tool", "name": action.tool_name,
                          "content": json.dumps({"rejected": True,
                                                 "note": "Kullanıcı bu işlemi reddetti."})})
         steps.append({"type": "rejected", "tool": action.tool_name, "preview": action.preview})
-        return _run_loop(db, messages, model, ctx, steps=steps,
-                         start_step=_step_estimate(messages))
+        result = _run_loop(db, messages, model, ctx, steps=steps,
+                           start_step=_step_estimate(messages))
+        _persist_final(db, result)
+        return result
 
     # Onaylandı → tool'u çalıştır
     if not tool:
@@ -290,41 +381,63 @@ def continue_after_decision(db: Session, action: AgentAction, approved: bool,
         return {"status": "error", "error": "Tool bulunamadı", "steps": steps,
                 "session_id": action.session_id}
 
+    record_audit(db, category="agent", action="agent.approve", actor=decided_by,
+                 target_type="action", target_id=action.id, server_id=action.server_id,
+                 summary=f"Onaylandı: {action.tool_name} — {action.preview or ''}"[:200])
+
     result = tool.execute(db, action.arguments or {}, ctx)
     action.status = "executed" if result.get("ok") else "failed"
     action.result = result
     action.executed_at = datetime.utcnow()
     db.commit()
 
+    record_audit(db, category="agent", action="agent.execute",
+                 status="success" if result.get("ok") else "failure",
+                 actor=decided_by, target_type="action", target_id=action.id,
+                 server_id=action.server_id,
+                 summary=f"Çalıştırıldı: {action.tool_name}",
+                 detail={"ok": result.get("ok"), "error": result.get("error")})
+
     messages.append({"role": "tool", "name": action.tool_name,
                      "content": json.dumps(result, ensure_ascii=False)[:8000]})
     steps.append({"type": "executed", "tool": action.tool_name,
                   "preview": action.preview, "result": result})
-    return _run_loop(db, messages, model, ctx, steps=steps,
-                     start_step=_step_estimate(messages))
+    decision_result = _run_loop(db, messages, model, ctx, steps=steps,
+                                start_step=_step_estimate(messages))
+    _persist_final(db, decision_result)
+    return decision_result
 
 
-def continue_after_answer(db: Session, action: AgentAction, answer) -> Dict[str, Any]:
+def continue_after_answer(db: Session, action: AgentAction, answer,
+                          decided_by: str = "user") -> Dict[str, Any]:
     """Kullanıcı ask_user sorusuna yanıt verdikten sonra döngüyü sürdürür."""
     ctx = {
         "session_id": action.session_id,
         "server_ids": [action.server_id] if action.server_id else [],
         "server_summary": _server_summary(db, [action.server_id] if action.server_id else []),
+        "actor_name": decided_by,
     }
     model = action.model or get_agent_model(db)
     messages: List[Dict[str, Any]] = list(action.transcript or [])
 
     action.status = "answered"
+    action.decided_by = decided_by
     action.decided_at = datetime.utcnow()
     action.result = {"selected": answer}
     db.commit()
+
+    record_audit(db, category="agent", action="agent.answer", actor=decided_by,
+                 target_type="action", target_id=action.id, server_id=action.server_id,
+                 summary=f"Soru yanıtlandı: {str(answer)[:120]}")
 
     messages.append({"role": "tool", "name": "ask_user",
                      "content": json.dumps({"selected": answer}, ensure_ascii=False)})
     steps = [{"type": "answered", "question": (action.arguments or {}).get("question"),
               "selected": answer}]
-    return _run_loop(db, messages, model, ctx, steps=steps,
-                     start_step=_step_estimate(messages))
+    result = _run_loop(db, messages, model, ctx, steps=steps,
+                       start_step=_step_estimate(messages))
+    _persist_final(db, result)
+    return result
 
 
 def _step_estimate(messages: List[Dict[str, Any]]) -> int:

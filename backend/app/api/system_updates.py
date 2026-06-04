@@ -22,8 +22,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.auth import get_current_user
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
 from app.models.app_settings import AppSettings
+from app.models.user import User
+from app.services.audit import record_audit
 
 
 def _get_active_model(db: Session) -> str:
@@ -34,7 +37,13 @@ def _get_active_model(db: Session) -> str:
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.models.repository import RepoSource
-from app.services.system_update_service import check_available_updates, run_system_update_plan
+from app.services.system_update_service import (
+    check_available_updates,
+    _get_management_ip,
+    run_system_update_plan,
+    recover_stuck_system_update_plans,
+    cancel_system_update_plan,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,6 +53,11 @@ _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sysupdate")
 class CheckRequest(BaseModel):
     server_ids:  List[int]
     update_type: str = "all"
+    repo_id:     Optional[int] = None
+    override_username:      Optional[str] = None
+    override_password:      Optional[str] = None
+    override_sudo_password: Optional[str] = None
+    priv_method:            Optional[str] = "sudo"
 
 class PlanCreateRequest(BaseModel):
     name:                  str
@@ -58,6 +72,9 @@ class PlanCreateRequest(BaseModel):
     override_sudo_password: Optional[str] = None
     # Yetki yükseltme yöntemi
     priv_method:            Optional[str] = "sudo"  # sudo | dzdo | direct
+    # VM snapshot
+    snapshot_mode:          Optional[str] = "skip"   # take | skip
+    snapshot_retention:     Optional[str] = "1w"     # 1d | 1w | 1m | indefinite
 
 class SuggestRepoRequest(BaseModel):
     server_ids: List[int]
@@ -75,6 +92,8 @@ def _plan_summary(plan: SystemUpdatePlan) -> dict:
         "override_username":   plan.override_username or None,
         "priv_method":         plan.priv_method or "sudo",
         "custom_packages":     plan.custom_packages or [],
+        "snapshot_mode":       plan.snapshot_mode or "skip",
+        "snapshot_retention":  plan.snapshot_retention or "1w",
         "created_at":   plan.created_at.isoformat()  if plan.created_at   else None,
         "started_at":   plan.started_at.isoformat()  if plan.started_at   else None,
         "completed_at": plan.completed_at.isoformat() if plan.completed_at else None,
@@ -155,6 +174,9 @@ def list_servers_for_update(distro: Optional[str] = None, db: Session = Depends(
             "status":         s.status,
             "has_os_info":    bool(s.os_release_id or s.os_version),
             "reboot_required": s.id in reboot_ids,
+            "hypervisor_id":  s.hypervisor_id,
+            "hypervisor_vm_id": s.hypervisor_vm_id or "",
+            "can_snapshot":   bool(s.hypervisor_id and s.hypervisor_vm_id),
         }
         for s in filtered
     ]
@@ -166,10 +188,30 @@ def list_servers_for_update(distro: Optional[str] = None, db: Session = Depends(
 def check_updates(req: CheckRequest, db: Session = Depends(get_db)):
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     global_cred = _get_global_cred(db)
+    repo_content = None
+    repo_name = None
+
+    if req.repo_id:
+        repo = db.query(RepoSource).filter_by(id=req.repo_id).first()
+        if not repo:
+            raise HTTPException(404, "Repo bulunamadı")
+        from app.services.repo_sync_service import generate_repo_file
+        repo_content = generate_repo_file(repo, _get_management_ip(), 8000)
+        repo_name = repo.name
     results = {}
 
     def _check_one(srv):
-        pkgs = check_available_updates(srv, req.update_type, global_cred)
+        pkgs = check_available_updates(
+            srv,
+            req.update_type,
+            global_cred,
+            repo_file_content=repo_content,
+            repo_name=repo_name,
+            override_username=req.override_username,
+            override_password=req.override_password,
+            override_sudo_password=req.override_sudo_password,
+            priv_method=req.priv_method or "sudo",
+        )
         return str(srv.id), {
             "server_name": srv.name, "server_ip": srv.ip_address, "packages": pkgs,
             "count": len([p for p in pkgs if "error" not in p]),
@@ -304,6 +346,8 @@ def create_plan(req: PlanCreateRequest, db: Session = Depends(get_db)):
         override_sudo_password=req.override_sudo_password or None,
         priv_method=req.priv_method or "sudo",
         custom_packages=req.custom_packages or [],
+        snapshot_mode=req.snapshot_mode or "skip",
+        snapshot_retention=req.snapshot_retention or "1w",
 
     )
     db.add(plan)
@@ -823,26 +867,61 @@ Kısa ve pratik ol."""
 
 
 @router.post("/plans/{plan_id}/run")
-def run_plan(plan_id: int, db: Session = Depends(get_db)):
+def run_plan(plan_id: int, db: Session = Depends(get_db),
+             user: User = Depends(get_current_user)):
     plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
     if not plan:
         raise HTTPException(404, "Plan bulunamadı")
     if plan.status == "running":
-        raise HTTPException(400, "Plan zaten çalışıyor")
+        raise HTTPException(400, "Plan zaten çalışıyor — iptal edip yeniden deneyin")
     plan.status = "running"
+    plan.completed_at = None
     db.commit()
+    record_audit(db, category="system_update", action="system_update.run", actor=user,
+                 target_type="plan", target_id=plan_id,
+                 summary=f"Güncelleme planı başlatıldı: {plan.name}"
+                         f" ({plan.total_servers} sunucu)")
     _executor.submit(run_system_update_plan, plan_id)
     return {"ok": True, "status": "running"}
+
+
+@router.post("/plans/{plan_id}/cancel")
+def cancel_plan(plan_id: int, db: Session = Depends(get_db)):
+    """Takılı veya çalışan planı iptal eder."""
+    result = cancel_system_update_plan(plan_id, db)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message", "İptal edilemedi"))
+    return result
+
+
+@router.post("/recover-stuck")
+def recover_stuck_plans(db: Session = Depends(get_db), max_minutes: int = 30):
+    """Takılı kalan güncelleme job/planlarını temizler."""
+    return recover_stuck_system_update_plans(db, max_minutes=max_minutes)
 
 
 # ─── İş listesi ───────────────────────────────────────────────────────────────
 
 @router.get("/plans/{plan_id}/jobs")
 def list_jobs(plan_id: int, db: Session = Depends(get_db)):
+    from app.models.vm_snapshot import VMSnapshot
     jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan_id).all()
     result = []
     for j in jobs:
         srv = db.query(Server).filter_by(id=j.server_id).first()
+        snap = (
+            db.query(VMSnapshot)
+            .filter_by(plan_id=plan_id, server_id=j.server_id)
+            .order_by(VMSnapshot.created_at.desc())
+            .first()
+        )
+        snap_info = None
+        if snap:
+            snap_info = {
+                "status": snap.status,
+                "snapshot_name": snap.snapshot_name,
+                "error_message": snap.error_message,
+            }
         result.append({
             "id": j.id, "server_id": j.server_id,
             "server_name": srv.name if srv else "?",
@@ -856,5 +935,6 @@ def list_jobs(plan_id: int, db: Session = Depends(get_db)):
             "log":          j.log,
             "started_at":   j.started_at.isoformat()  if j.started_at  else None,
             "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            "snapshot": snap_info,
         })
     return result

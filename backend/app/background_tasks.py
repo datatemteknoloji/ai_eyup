@@ -34,8 +34,11 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
+        self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
+        self.tasks.append(asyncio.create_task(self._periodic_node_exporter_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
 
-        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m)")
+        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, sysupdate-recovery:5m)")
 
     async def stop(self):
         if not self.running:
@@ -333,6 +336,115 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"RAG reindex task error: {e}")
                 await asyncio.sleep(1800)
+
+
+    async def _periodic_snapshot_cleanup(self):
+        """Süresi dolmuş VM snapshot kayıtlarını hypervisor'dan siler."""
+        logger.info("Snapshot cleanup task started (3600s interval, first run in 600s)")
+        await asyncio.sleep(600)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.snapshot_service import cleanup_expired_snapshots
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, cleanup_expired_snapshots, db)
+                    if result.get("deleted") or result.get("errors"):
+                        logger.info(
+                            f"Snapshot cleanup: {result.get('deleted', 0)} silindi, "
+                            f"{result.get('errors', 0)} hata"
+                        )
+                except Exception as e:
+                    logger.error(f"Snapshot cleanup error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(3600)
+
+            except asyncio.CancelledError:
+                logger.info("Snapshot cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Snapshot cleanup task error: {e}")
+                await asyncio.sleep(3600)
+
+
+    async def _periodic_system_update_recovery(self):
+        """Takılı kalan system update job/planlarını periyodik temizler."""
+        logger.info("System update recovery task started (300s interval, first run in 120s)")
+        await asyncio.sleep(120)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.system_update_service import recover_stuck_system_update_plans
+                    loop = asyncio.get_event_loop()
+                    stats = await loop.run_in_executor(
+                        None, lambda: recover_stuck_system_update_plans(db, 30)
+                    )
+                    if stats.get("recovered_jobs") or stats.get("finalized_plans"):
+                        logger.warning(
+                            f"System update stuck recovery: {stats.get('recovered_jobs', 0)} job, "
+                            f"{stats.get('finalized_plans', 0)} plan"
+                        )
+                except Exception as e:
+                    logger.error(f"System update recovery error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(300)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"System update recovery task error: {e}")
+                await asyncio.sleep(300)
+
+    async def _periodic_node_exporter_sync(self):
+        """Her 10 dakikada Prometheus up durumuna göre node_exporter_running bayrağını senkronlar."""
+        logger.info("Node exporter sync task started (600s interval, first run in 120s)")
+        await asyncio.sleep(120)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.monitoring.prometheus_metrics import (
+                        sync_node_exporter_running_from_prometheus,
+                        sync_node_exporter_targets_from_db,
+                    )
+                    loop = asyncio.get_event_loop()
+                    target_stats = await loop.run_in_executor(
+                        None, sync_node_exporter_targets_from_db, db
+                    )
+                    stats = await loop.run_in_executor(
+                        None, sync_node_exporter_running_from_prometheus, db
+                    )
+                    if target_stats.get("removed_orphans") or target_stats.get("targets_before") != target_stats.get("targets_after"):
+                        logger.info(
+                            f"Prometheus targets: {target_stats.get('targets_before')} -> "
+                            f"{target_stats.get('targets_after')} "
+                            f"({target_stats.get('removed_orphans', 0)} yetim kaldırıldı)"
+                        )
+                    if stats.get("updated"):
+                        logger.info(
+                            f"Node exporter sync: {stats.get('live', 0)} canlı, "
+                            f"{stats.get('cleared', 0)} temizlendi, {stats.get('promoted', 0)} eklendi"
+                        )
+                except Exception as e:
+                    logger.error(f"Node exporter sync error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(600)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Node exporter sync task error: {e}")
+                await asyncio.sleep(600)
 
 
 # Global instance

@@ -251,6 +251,14 @@ Lütfen şu formatta analiz yap:
         incident.root_cause = rca_text[:500]
         db.commit()
         logger.info(f"[AIOps] Otomatik RCA tamamlandı: incident #{incident.id} ({model})")
+        try:
+            from app.services.audit import record_audit
+            record_audit(db, category="rca", action="rca.auto", actor="system",
+                         target_type="incident", target_id=incident.id,
+                         summary=f"Otomatik RCA: {incident.title}"[:200],
+                         detail={"model": model})
+        except Exception:
+            pass
         return True
     except requests.exceptions.ConnectionError:
         logger.warning("[AIOps] Ollama'ya bağlanılamadı, RCA atlandı")
@@ -286,8 +294,8 @@ def auto_rca_pending_incidents(db: Session) -> int:
 
 
 # ── 3) Tek seferlik tam tur (background_tasks çağırır) ──────────────────────
-def run_aiops_cycle(db: Session, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Anomali listesini işle + bekleyen RCA'ları çalıştır. Özet döner."""
+def _run_aiops_cycle_legacy(db: Session, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """LangGraph kullanılamazsa devreye giren doğrudan zincir (yedek)."""
     persist_result = persist_anomalies_as_events(db, anomalies)
     rca_done = 0
     try:
@@ -295,3 +303,18 @@ def run_aiops_cycle(db: Session, anomalies: List[Dict[str, Any]]) -> Dict[str, A
     except Exception as e:
         logger.error(f"[AIOps] Auto-RCA turu hatası: {e}")
     return {**persist_result, "rca_done": rca_done}
+
+
+def run_aiops_cycle(db: Session, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Anomali listesini işle + bekleyen RCA'ları çalıştır. Özet döner.
+
+    Orkestrasyon LangGraph (aiops_graph) üzerinden yürütülür; graph yüklenemezse
+    eski doğrudan zincire (legacy) düşer.
+    """
+    try:
+        from app.services.aiops_graph import run_aiops_graph
+        return run_aiops_graph(db, anomalies)
+    except Exception as e:
+        logger.error(f"[AIOps] LangGraph turu başarısız, legacy zincire düşülüyor: {e}")
+        return _run_aiops_cycle_legacy(db, anomalies)

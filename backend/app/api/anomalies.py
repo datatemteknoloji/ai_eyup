@@ -97,16 +97,19 @@ async def run_aiops_cycle_now(db: Session = Depends(get_db)):
     """AIOps döngüsünü manuel tetikle: tara → event → incident.
     RCA (yavaş olabilir) arka plan thread'inde çalışır, istek hemen döner."""
     import threading
-    from app.services.aiops_engine import persist_anomalies_as_events, auto_rca_pending_incidents
+    from app.services.aiops_engine import persist_anomalies_as_events
     from app.core.database import ThreadSessionLocal
 
     anomalies = detect_all_anomalies(db)
     result = persist_anomalies_as_events(db, anomalies)
 
     def _bg_rca():
+        # RCA + RAG hafıza güncellemesi LangGraph (aiops_graph) üzerinden çalışır.
+        # anomalies=[] → persist düğümü atlanır (çift kayıt yok), rca+memory işler.
         s = ThreadSessionLocal()
         try:
-            auto_rca_pending_incidents(s)
+            from app.services.aiops_graph import run_aiops_graph
+            run_aiops_graph(s, [])
         except Exception:
             pass
         finally:

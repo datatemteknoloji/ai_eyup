@@ -22,6 +22,7 @@ interface UpdateJob {
   status: 'pending'|'running'|'completed'|'failed'|'skipped'
   packages_to_update: Package[]; packages_updated: Package[]
   reboot_required: boolean; log: string|null
+  snapshot?: { status: string; snapshot_name: string; error_message?: string|null }
   started_at: string|null; completed_at: string|null
 }
 interface UpdatePlan {
@@ -37,6 +38,8 @@ interface UpdatePlan {
   override_username?: string|null
   priv_method?: string
   custom_packages?: string[]
+  snapshot_mode?: string
+  snapshot_retention?: string
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -70,7 +73,14 @@ const STATUS_LABEL: Record<string, string> = {
 const fmtDate = (s: string|null) => s ? new Date(s).toLocaleString('tr-TR') : '—'
 
 // ─── Step bar ─────────────────────────────────────────────────────────────────
-const STEP_NAMES = ['Distro', 'Sunucular', 'Yetkili Kullanıcı', 'Repo', 'Güncelleme Modu', 'AI Analiz', 'Onayla', 'İzle']
+const STEP_NAMES = ['Distro', 'Sunucular', 'Yetkili Kullanıcı', 'Repo', 'Snapshot', 'Güncelleme Modu', 'AI Analiz', 'Onayla', 'İzle']
+
+const SNAPSHOT_RETENTIONS = [
+  { key: '1d', label: '1 Gün', desc: '24 saat sonra otomatik silinir' },
+  { key: '1w', label: '1 Hafta', desc: '7 gün saklanır (önerilen)' },
+  { key: '1m', label: '1 Ay', desc: '30 gün saklanır' },
+  { key: 'indefinite', label: 'Süresiz', desc: 'Manuel silinene kadar kalır' },
+]
 
 const Steps = ({ current, maxReached, onGoTo }: {
   current: number; maxReached: number; onGoTo: (step: number) => void
@@ -172,11 +182,12 @@ const ServerSelector = ({ servers, selected, onChange }: {
 }
 
 // ─── Plan history row ─────────────────────────────────────────────────────────
-const PlanRow = ({ plan, onView, onDelete, onResume }: {
+const PlanRow = ({ plan, onView, onDelete, onResume, onCancel }: {
   plan: UpdatePlan
   onView: (p: UpdatePlan) => void
   onDelete: (id: number) => void
   onResume: (p: UpdatePlan) => void
+  onCancel: (p: UpdatePlan) => void
 }) => {
   const isRunning  = plan.status === 'running' || plan.status === 'ai_analyzing'
   const canResume  = ['draft', 'ai_done', 'ai_analyzing'].includes(plan.status)
@@ -216,6 +227,13 @@ const PlanRow = ({ plan, onView, onDelete, onResume }: {
             </button>
           )}
           {/* Devam Et — draft/ai_done/running planlar için */}
+          {isRunning && (
+            <button onClick={() => onCancel(plan)}
+              className="px-2.5 py-1 text-xs bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 rounded-lg transition-colors"
+              title="Takılı güncellemeyi iptal et">
+              ✕ İptal
+            </button>
+          )}
           {(canResume || isRunning) && (
             <button onClick={() => onResume(plan)}
               className={`px-2.5 py-1 text-xs rounded-lg transition-colors font-medium ${
@@ -800,7 +818,11 @@ const SystemUpdate: React.FC = () => {
   const [repos,           setRepos]            = useState<RepoSource[]>([])
   const [filteredRepos,   setFilteredRepos]    = useState<RepoSource[]>([])
   const [selectedRepo,    setSelectedRepo]     = useState<number|null>(null)
-  // Adım 5 — Mod
+  // Adım 5 — VM Snapshot
+  const [snapshotMode,      setSnapshotMode]      = useState<'take'|'skip'>('take')
+  const [snapshotRetention, setSnapshotRetention] = useState<'1d'|'1w'|'1m'|'indefinite'>('1w')
+  const [snapCapability,    setSnapCapability]    = useState<{total:number; snapshot_ready:number; snapshot_missing:number; servers:{server_id:number; can_snapshot:boolean; server_name?:string; reason?:string}[]} | null>(null)
+  // Adım 6 — Mod
   const [updateType,      setUpdateType]       = useState('')
   const [planName,        setPlanName]         = useState('')
   const [analyzing,       setAnalyzing]        = useState(false)
@@ -867,19 +889,36 @@ const SystemUpdate: React.FC = () => {
     }
   }, [selectedDistro, repos, showWizard])
 
+  // Snapshot uygunluğu — adım 5
+  useEffect(() => {
+    if (step !== 5 || selectedServers.length === 0) return
+    fetch(`/api/v1/snapshots/capability?server_ids=${selectedServers.join(',')}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setSnapCapability(d))
+      .catch(() => setSnapCapability(null))
+  }, [step, selectedServers])
+
   // Auto-refresh current plan jobs
   useEffect(() => {
     if (!currentPlan || currentPlan.status !== 'running') return
-    const t = setInterval(async () => {
+    const refresh = async () => {
       const [pr, jr] = await Promise.all([
         fetch(`${API}/plans/${currentPlan.id}`),
         fetch(`${API}/plans/${currentPlan.id}/jobs`),
       ])
       if (pr.ok) setCurrentPlan(await pr.json())
-      if (jr.ok) setPlanJobs(await jr.json())
-    }, 4000)
+      if (jr.ok) {
+        const jobs: UpdateJob[] = await jr.json()
+        setPlanJobs(jobs)
+        // Çalışan job'u otomatik aç
+        const runningJob = jobs.find(j => j.status === 'running' || j.status === 'pending')
+        if (runningJob) setExpandedJob(prev => prev ?? runningJob.id)
+      }
+    }
+    refresh()
+    const t = setInterval(refresh, 3000)
     return () => clearInterval(t)
-  }, [currentPlan])
+  }, [currentPlan?.id, currentPlan?.status])
 
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handleCreatePlan = async () => {
@@ -899,11 +938,13 @@ const SystemUpdate: React.FC = () => {
     if (updateType === 'custom') {
       body.custom_packages = Array.from(selectedPkgs)
     }
+    body.snapshot_mode = snapshotMode
+    body.snapshot_retention = snapshotRetention
     const r = await fetch(`${API}/plans`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (r.ok) { setCurrentPlan(await r.json()); setStep(6) }
+    if (r.ok) { setCurrentPlan(await r.json()); setStep(7) }
   }
 
   const handleAnalyze = async () => {
@@ -916,7 +957,7 @@ const SystemUpdate: React.FC = () => {
         setAiAnalysis(d.analysis)
         const pr = await fetch(`${API}/plans/${currentPlan.id}`)
         if (pr.ok) setCurrentPlan(await pr.json())
-        setStep(7)
+        setStep(8)
       }
     } finally { setAnalyzing(false) }
   }
@@ -931,7 +972,7 @@ const SystemUpdate: React.FC = () => {
       ])
       if (pr.ok) setCurrentPlan(await pr.json())
       if (jr.ok) setPlanJobs(await jr.json())
-      setStep(8)
+      setStep(9)
       showToast('Güncelleme başlatıldı')
       await loadPlans()
     }
@@ -939,7 +980,7 @@ const SystemUpdate: React.FC = () => {
 
   const handleResumePlan = async (plan: UpdatePlan) => {
     // Plan state'ini geri yükle
-    const resumeMax = plan.status === 'running' ? 8 : plan.status === 'ai_done' ? 7 : plan.ai_analysis ? 6 : 5
+    const resumeMax = plan.status === 'running' ? 9 : plan.status === 'ai_done' ? 8 : plan.ai_analysis ? 7 : 6
     setMaxStep(resumeMax)
     setCurrentPlan(plan)
     setUpdateType(plan.update_type)
@@ -954,6 +995,8 @@ const SystemUpdate: React.FC = () => {
     }
     if ((plan as any).priv_method) setPrivMethod((plan as any).priv_method || 'sudo')
     if ((plan as any).repo_id) setSelectedRepo((plan as any).repo_id)
+    if ((plan as any).snapshot_mode) setSnapshotMode((plan as any).snapshot_mode === 'skip' ? 'skip' : 'take')
+    if ((plan as any).snapshot_retention) setSnapshotRetention((plan as any).snapshot_retention || '1w')
 
     // Jobs'ları yükle
     const jr = await fetch(`${API}/plans/${plan.id}/jobs`)
@@ -966,14 +1009,13 @@ const SystemUpdate: React.FC = () => {
 
     // Duruma göre doğru adıma git
     if (plan.status === 'running' || plan.status === 'ai_analyzing') {
-      setStep(8)   // canlı izleme
+      setStep(9)   // canlı izleme
     } else if (plan.status === 'ai_done') {
-      setStep(7)   // onayla adımı
+      setStep(8)   // onayla adımı
     } else if (['completed','failed','partial'].includes(plan.status)) {
-      // Tamamlanmış plan → onay adımına götür, tekrar çalıştırmaya izin ver
-      setStep(7)
+      setStep(8)
     } else {
-      setStep(plan.ai_analysis ? 6 : 5)   // AI analiz veya güncelleme modu
+      setStep(plan.ai_analysis ? 7 : 6)   // AI analiz veya güncelleme modu
     }
     setShowWizard(true)
   }
@@ -985,11 +1027,28 @@ const SystemUpdate: React.FC = () => {
     else showToast('Hata', 'err')
   }
 
+  const handleCancelPlan = async (plan: UpdatePlan) => {
+    if (!confirm(`"${plan.name}" güncellemesi iptal edilsin mi?`)) return
+    const r = await fetch(`${API}/plans/${plan.id}/cancel`, { method: 'POST' })
+    if (r.ok) {
+      showToast('Güncelleme iptal edildi')
+      if (currentPlan?.id === plan.id) {
+        const pr = await fetch(`${API}/plans/${plan.id}`)
+        if (pr.ok) setCurrentPlan(await pr.json())
+      }
+      await loadPlans()
+    } else {
+      const err = await r.json().catch(() => ({}))
+      showToast(err.detail || 'İptal edilemedi', 'err')
+    }
+  }
+
   const resetWizard = () => {
     setStep(1); setSelectedDistro(''); setSelectedServers([]); setSelectedRepo(null)
     setUpdateType(''); setPlanName(''); setAiAnalysis('')
     setCredMode('stored'); setOverrideUser(''); setOverridePass(''); setOverrideSudo(''); setPrivMethod('sudo')
     setCheckResult({}); setChecking(false); setSelectedPkgs(new Set()); setPkgSearch('')
+    setSnapshotMode('take'); setSnapshotRetention('1w'); setSnapCapability(null)
     setMaxStep(1); setExpandedJob(null); setLiveJobAi({}); setLiveAiLoading(null)
     setCurrentPlan(null); setPlanJobs([]); setShowWizard(false)
     loadPlans()
@@ -1013,7 +1072,7 @@ const SystemUpdate: React.FC = () => {
             {plans.filter(p => p.status === 'running' || p.status === 'ai_analyzing').map(p => (
               <button key={p.id} onClick={() => {
                 setCurrentPlan(p)
-                setStep(8)   // canlı izleme adımına git
+                setStep(9)   // canlı izleme adımına git
                 setShowWizard(true)
                 // Jobs'ları da yükle
                 fetch(`${API}/plans/${p.id}/jobs`).then(r => r.ok ? r.json() : []).then(setPlanJobs)
@@ -1334,14 +1393,104 @@ const SystemUpdate: React.FC = () => {
                 <button onClick={() => setStep(3)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
                 <button onClick={() => setStep(5)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
+                  Snapshot →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Adım 5: VM Snapshot ───────────────────────────────────────── */}
+          {step === 5 && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-base font-semibold text-white">📸 VM Snapshot</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Güncelleme öncesi hypervisor üzerinden sanal makine snapshot'ı alınabilir (oVirt / vCenter).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
+                  onClick={() => setSnapshotMode('take')}
+                  className={`p-5 rounded-xl border-2 text-left transition-all ${
+                    snapshotMode === 'take'
+                      ? 'border-cyan-500 bg-cyan-500/10'
+                      : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="text-3xl mb-2">📸</div>
+                  <div className="text-base font-bold text-white">Snapshot Al</div>
+                  <div className="text-xs text-slate-400 mt-1">Güncelleme başlamadan önce VM yedeği oluştur</div>
+                </button>
+                <button
+                  onClick={() => setSnapshotMode('skip')}
+                  className={`p-5 rounded-xl border-2 text-left transition-all ${
+                    snapshotMode === 'skip'
+                      ? 'border-slate-400 bg-slate-600/20'
+                      : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="text-3xl mb-2">⏭️</div>
+                  <div className="text-base font-bold text-white">Snapshot Alma</div>
+                  <div className="text-xs text-slate-400 mt-1">Doğrudan güncellemeye geç (fiziksel sunucular için)</div>
+                </button>
+              </div>
+
+              {snapshotMode === 'take' && (
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold text-slate-300">Saklama Süresi</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {SNAPSHOT_RETENTIONS.map(r => (
+                      <button
+                        key={r.key}
+                        onClick={() => setSnapshotRetention(r.key as typeof snapshotRetention)}
+                        className={`p-3 rounded-xl border text-left transition-all ${
+                          snapshotRetention === r.key
+                            ? 'border-cyan-500 bg-cyan-500/10'
+                            : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                        }`}
+                      >
+                        <div className="text-sm font-semibold text-white">{r.label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{r.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {snapCapability && snapshotMode === 'take' && (
+                <div className={`rounded-xl border px-4 py-3 text-sm ${
+                  snapCapability.snapshot_ready > 0
+                    ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-200'
+                    : 'border-yellow-500/30 bg-yellow-500/5 text-yellow-200'
+                }`}>
+                  <div className="font-medium">
+                    {snapCapability.snapshot_ready}/{snapCapability.total} sunucu snapshot almaya hazır
+                  </div>
+                  {snapCapability.snapshot_missing > 0 && (
+                    <ul className="mt-2 space-y-1 text-xs opacity-90 max-h-32 overflow-y-auto">
+                      {snapCapability.servers.filter(s => !s.can_snapshot).map(s => (
+                        <li key={s.server_id}>
+                          ⊘ {s.server_name || `#${s.server_id}`}: {s.reason || 'VM bağlantısı yok'}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <button onClick={() => setStep(4)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(6)}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
                   Güncelleme Modu →
                 </button>
               </div>
             </div>
           )}
 
-          {/* ── Adım 5: Güncelleme Modu ───────────────────────────────────── */}
-          {step === 5 && (
+          {/* ── Adım 6: Güncelleme Modu ───────────────────────────────────── */}
+          {step === 6 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-base font-semibold text-white">Güncelleme Modu</h2>
@@ -1407,9 +1556,17 @@ const SystemUpdate: React.FC = () => {
                       onClick={async () => {
                         setChecking(true)
                         try {
+                          const body: any = { server_ids: selectedServers, update_type: updateType }
+                          if (selectedRepo) body.repo_id = selectedRepo
+                          if (credMode === 'override' && overrideUser) {
+                            body.override_username = overrideUser
+                            body.override_password = overridePass || undefined
+                            body.override_sudo_password = overrideSudo || overridePass || undefined
+                            body.priv_method = privMethod
+                          }
                           const r = await fetch(`${API}/check`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ server_ids: selectedServers, update_type: updateType }),
+                            body: JSON.stringify(body),
                           })
                           if (r.ok) setCheckResult(await r.json())
                         } finally { setChecking(false) }
@@ -1521,7 +1678,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(4)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(5)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
                 <button
                   onClick={handleCreatePlan}
                   disabled={!updateType || (updateType === 'custom' && selectedPkgs.size === 0)}
@@ -1535,8 +1692,8 @@ const SystemUpdate: React.FC = () => {
             </div>
           )}
 
-          {/* ── Adım 6: AI Analiz ─────────────────────────────────────────── */}
-          {step === 6 && (
+          {/* ── Adım 7: AI Analiz ─────────────────────────────────────────── */}
+          {step === 7 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-white">🤖 AI Ön Analiz</h2>
@@ -1569,7 +1726,7 @@ const SystemUpdate: React.FC = () => {
                     <div className="text-3xl">⏭️</div>
                     <div className="text-sm font-medium text-white">Analiz Olmadan Devam</div>
                     <div className="text-xs text-slate-400">Direkt onay adımına geç</div>
-                    <button onClick={() => { setCurrentPlan(currentPlan); setStep(7) }}
+                    <button onClick={() => { setCurrentPlan(currentPlan); setStep(8) }}
                       disabled={!currentPlan}
                       className="w-full py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold text-sm rounded-lg transition-colors disabled:opacity-40">
                       Atla & Onayla →
@@ -1597,8 +1754,8 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(5)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
-                <button onClick={() => setStep(7)}
+                <button onClick={() => setStep(6)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(8)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
                   {aiAnalysis ? 'İncele & Onayla →' : 'Onayla →'}
                 </button>
@@ -1606,8 +1763,8 @@ const SystemUpdate: React.FC = () => {
             </div>
           )}
 
-          {/* ── Adım 7: Onay ──────────────────────────────────────────────── */}
-          {step === 7 && currentPlan && (
+          {/* ── Adım 8: Onay ──────────────────────────────────────────────── */}
+          {step === 8 && currentPlan && (
             <div className="space-y-5">
               <h2 className="text-base font-semibold text-white">Güncellemeyi Onayla</h2>
 
@@ -1628,6 +1785,14 @@ const SystemUpdate: React.FC = () => {
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">{selectedRepo ? '📦 Local' : '🌐 Varsayılan'}</div>
                     <div className="text-slate-400 text-xs">Repo</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-sm font-medium text-white">
+                      {snapshotMode === 'take'
+                        ? `📸 ${SNAPSHOT_RETENTIONS.find(r => r.key === snapshotRetention)?.label || snapshotRetention}`
+                        : '⏭️ Yok'}
+                    </div>
+                    <div className="text-slate-400 text-xs">Snapshot</div>
                   </div>
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">
@@ -1667,7 +1832,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(6)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(7)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
                 <button onClick={handleRun}
                   className="px-8 py-3 bg-green-700 hover:bg-green-600 text-white font-bold text-sm rounded-xl transition-colors flex items-center gap-2">
                   ✓ Onayla ve Güncellemeyi Başlat
@@ -1676,8 +1841,8 @@ const SystemUpdate: React.FC = () => {
             </div>
           )}
 
-          {/* ── Adım 8: Canlı İzleme ──────────────────────────────────────── */}
-          {step === 8 && currentPlan && (
+          {/* ── Adım 9: Canlı İzleme ──────────────────────────────────────── */}
+          {step === 9 && currentPlan && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-white">Canlı İzleme</h2>
@@ -1721,6 +1886,12 @@ const SystemUpdate: React.FC = () => {
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{j.packages_updated.length} paket</span>}
                         {j.reboot_required && <span className="text-xs text-yellow-400">⚠️ Reboot</span>}
+                        {j.snapshot?.status === 'active' && (
+                          <span className="text-xs text-cyan-400" title={j.snapshot.snapshot_name}>📸 Snap</span>
+                        )}
+                        {j.snapshot?.status === 'failed' && (
+                          <span className="text-xs text-orange-400" title={j.snapshot.error_message || ''}>📸 Hata</span>
+                        )}
                         <span className="text-slate-500 text-xs">{expandedJob === j.id ? '▲' : '▼'}</span>
                       </div>
                     </button>
@@ -1829,7 +2000,7 @@ const SystemUpdate: React.FC = () => {
               </thead>
               <tbody>
                 {plans.map(p => (
-                  <PlanRow key={p.id} plan={p} onView={setViewPlan} onDelete={handleDeletePlan} onResume={handleResumePlan} />
+                  <PlanRow key={p.id} plan={p} onView={setViewPlan} onDelete={handleDeletePlan} onResume={handleResumePlan} onCancel={handleCancelPlan} />
                 ))}
               </tbody>
             </table>

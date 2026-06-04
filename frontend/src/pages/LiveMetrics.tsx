@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { API_BASE_URL } from '../config/api'
 import {
   AreaChart,
   Area,
@@ -53,16 +54,25 @@ const fetchPrometheusRange = async (
   return data?.data?.result || []
 }
 
-const fetchInstances = async (): Promise<string[]> => {
-  // Sadece up=1 (veri gelen) instance'lari goster
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=up{job="node-exporter"}`)
-  if (!response.ok) throw new Error('Failed to fetch instances')
-  const data = await response.json()
-  const results = data?.data?.result || []
-  return results
-    .filter((r: any) => r.value?.[1] === '1')
-    .map((r: any) => r.metric?.instance || '')
-    .filter(Boolean)
+type MetricServerOverview = {
+  total_installed: number
+  total_online_installed: number
+  total_live: number
+  scrape_errors: number
+  servers: {
+    id: number
+    name: string
+    ip_address: string
+    status: string
+    instance: string
+    live: boolean
+  }[]
+}
+
+const fetchMetricServersOverview = async (): Promise<MetricServerOverview> => {
+  const response = await fetch(`${API_BASE_URL}/monitoring/metrics/servers`)
+  if (!response.ok) throw new Error('Metric sunucu özeti alınamadı')
+  return response.json()
 }
 
 // instance'in up durumunu tutan map
@@ -456,11 +466,16 @@ const LiveMetrics: React.FC = () => {
   const refetchIntervalInstant = realTimeMode ? realTimeRefetchMs : 10000
   const refetchIntervalSlow = realTimeMode ? realTimeRefetchMs : 15000
 
-  const { data: instances = [] } = useQuery({
-    queryKey: ['prometheus-instances', realTimeMode],
-    queryFn: fetchInstances,
-    refetchInterval: refetchIntervalSlow
+  const { data: metricsOverview } = useQuery({
+    queryKey: ['metrics-servers-overview'],
+    queryFn: fetchMetricServersOverview,
+    refetchInterval: refetchIntervalSlow,
   })
+
+  const onlineMetricServers = useMemo(
+    () => (metricsOverview?.servers ?? []).filter((s) => (s.status || '').toUpperCase() === 'ONLINE'),
+    [metricsOverview]
+  )
 
   const { data: instanceLabels = {} } = useQuery({
     queryKey: ['prometheus-instance-labels', realTimeMode],
@@ -675,18 +690,23 @@ const LiveMetrics: React.FC = () => {
   }, [diskRangeResults])
 
   const rows = useMemo(() => {
-    const list = selectedInstances.length === 0 ? instances : selectedInstances
-    return list.map((instance) => ({
-      instance,
-      hostname: instanceLabels[instance] || instance,
-      cpu: cpuMap[instance],
-      memory: memoryMap[instance],
-      disk: diskMap[instance],
-      load: loadMap[instance],
-      netRx: netRxMap[instance],
-      netTx: netTxMap[instance]
+    const base =
+      selectedInstances.length === 0
+        ? onlineMetricServers
+        : onlineMetricServers.filter((s) => selectedInstances.includes(s.instance))
+    return base.map((s) => ({
+      serverId: s.id,
+      instance: s.instance,
+      hostname: s.name,
+      live: s.live,
+      cpu: cpuMap[s.instance],
+      memory: memoryMap[s.instance],
+      disk: diskMap[s.instance],
+      load: loadMap[s.instance],
+      netRx: netRxMap[s.instance],
+      netTx: netTxMap[s.instance],
     }))
-  }, [instances, selectedInstances, instanceLabels, cpuMap, memoryMap, diskMap, loadMap, netRxMap, netTxMap])
+  }, [onlineMetricServers, selectedInstances, cpuMap, memoryMap, diskMap, loadMap, netRxMap, netTxMap])
 
   const filteredRows = useMemo(() => {
 
@@ -766,7 +786,19 @@ const LiveMetrics: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold text-white">Canlı Metrikler</h2>
-          <p className="text-sm text-slate-400">Prometheus üzerinden gerçek zamanlı Node Exporter verileri</p>
+          <p className="text-sm text-slate-400">
+            {metricsOverview ? (
+              <>
+                <span className="text-slate-300">{metricsOverview.total_online_installed}</span> metrik kurulu ·{' '}
+                <span className="text-emerald-400">{metricsOverview.total_live}</span> canlı veri
+                {metricsOverview.scrape_errors > 0 && (
+                  <span className="text-orange-400"> · {metricsOverview.scrape_errors} scrape hatası</span>
+                )}
+              </>
+            ) : (
+              'Prometheus üzerinden gerçek zamanlı Node Exporter verileri'
+            )}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -841,65 +873,62 @@ const LiveMetrics: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      const filtered = instances.filter((instance) => {
-                        if (!instanceSearch.trim()) return true
-                        const q = instanceSearch.toLowerCase()
-                        const host = (instanceLabels[instance] || instance).toLowerCase()
-                        return instance.toLowerCase().includes(q) || host.includes(q)
-                      })
-                      setSelectedInstances(filtered)
+                      const filtered = onlineMetricServers
+                        .filter((s) => {
+                          if (!instanceSearch.trim()) return true
+                          const q = instanceSearch.toLowerCase()
+                          return s.instance.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+                        })
+                        .map((s) => s.instance)
+                      setSelectedInstances([...new Set(filtered)])
                     }}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
                   >
                     Filtreyi seç
                   </button>
                   <span className="text-xs text-slate-500 ml-auto">
-                    {instances.filter((instance) => {
+                    {onlineMetricServers.filter((s) => {
                       if (!instanceSearch.trim()) return true
                       const q = instanceSearch.toLowerCase()
-                      const host = (instanceLabels[instance] || instance).toLowerCase()
-                      return instance.toLowerCase().includes(q) || host.includes(q)
+                      return s.instance.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
                     }).length} sunucu
                   </span>
                 </div>
                 <div className="overflow-y-auto flex-1 p-2">
-                  {instances
-                    .filter((instance) => {
+                  {onlineMetricServers
+                    .filter((s) => {
                       if (!instanceSearch.trim()) return true
                       const q = instanceSearch.toLowerCase()
-                      const host = (instanceLabels[instance] || instance).toLowerCase()
-                      return instance.toLowerCase().includes(q) || host.includes(q)
+                      return s.instance.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
                     })
-                    .map((instance) => (
+                    .map((s) => (
                       <label
-                        key={instance}
+                        key={s.id}
                         className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-700/50"
                       >
                         <input
                           type="checkbox"
-                          checked={selectedInstances.includes(instance)}
+                          checked={selectedInstances.includes(s.instance)}
                           onChange={() => {
                             setSelectedInstances((prev) =>
-                              prev.includes(instance)
-                                ? prev.filter((i) => i !== instance)
-                                : [...prev, instance]
+                              prev.includes(s.instance)
+                                ? prev.filter((i) => i !== s.instance)
+                                : [...prev, s.instance]
                             )
                           }}
                           className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${instanceUpStatus[instance] ? 'bg-green-400' : 'bg-red-400'}`} />
-                            <span className={`text-sm font-medium truncate ${instanceUpStatus[instance] ? 'text-white' : 'text-slate-400'}`}>
-                              {instanceLabels[instance] || instance}
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.live ? 'bg-green-400' : 'bg-orange-400'}`} />
+                            <span className={`text-sm font-medium truncate ${s.live ? 'text-white' : 'text-slate-400'}`}>
+                              {s.name}
                             </span>
-                            {!instanceUpStatus[instance] && (
-                              <span className="text-xs text-red-400/70 flex-shrink-0">veri yok</span>
+                            {!s.live && (
+                              <span className="text-xs text-orange-400/70 flex-shrink-0">scrape yok</span>
                             )}
                           </div>
-                          {instanceLabels[instance] && (
-                            <span className="text-xs text-slate-500 font-mono truncate block pl-3">{instance}</span>
-                          )}
+                          <div className="text-xs text-slate-500 font-mono truncate">{s.instance}</div>
                         </div>
                       </label>
                     ))}
@@ -1058,6 +1087,7 @@ const LiveMetrics: React.FC = () => {
                     Hostname <span className="text-[10px]">{getSortIcon('hostname')}</span>
                   </button>
                 </th>
+                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Durum</th>
                 <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
                   <button onClick={() => toggleSort('cpu')} className="flex items-center gap-1">
                     CPU <span className="text-[10px]">{getSortIcon('cpu')}</span>
@@ -1092,32 +1122,43 @@ const LiveMetrics: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-700">
               {sortedRows.map((row) => (
-                <tr key={row.instance} className="hover:bg-slate-700/30 transition-colors">
+                <tr key={row.serverId} className={`hover:bg-slate-700/30 transition-colors ${!row.live ? 'opacity-70' : ''}`}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                     <div className="font-medium">{row.hostname}</div>
                     <div className="text-xs text-slate-400 font-mono">{row.instance}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
+                    {row.live ? (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Canlı
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-orange-500/15 text-orange-300 border border-orange-500/30">
+                        Scrape hatası
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <MetricBar value={row.cpu ?? 0} color="#60a5fa" />
-                      <span className="text-sm text-slate-200">{(row.cpu ?? 0).toFixed(2)}%</span>
+                      <MetricBar value={row.live ? (row.cpu ?? 0) : 0} color="#60a5fa" />
+                      <span className="text-sm text-slate-200">{row.live ? `${(row.cpu ?? 0).toFixed(2)}%` : '—'}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <MetricBar value={row.memory ?? 0} color="#34d399" />
-                      <span className="text-sm text-slate-200">{(row.memory ?? 0).toFixed(2)}%</span>
+                      <MetricBar value={row.live ? (row.memory ?? 0) : 0} color="#34d399" />
+                      <span className="text-sm text-slate-200">{row.live ? `${(row.memory ?? 0).toFixed(2)}%` : '—'}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <MetricBar value={row.disk ?? 0} color="#fbbf24" />
-                      <span className="text-sm text-slate-200">{(row.disk ?? 0).toFixed(2)}%</span>
+                      <MetricBar value={row.live ? (row.disk ?? 0) : 0} color="#fbbf24" />
+                      <span className="text-sm text-slate-200">{row.live ? `${(row.disk ?? 0).toFixed(2)}%` : '—'}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{(row.load ?? 0).toFixed(2)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{(row.netRx ?? 0).toFixed(0)} B/s</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{(row.netTx ?? 0).toFixed(0)} B/s</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? (row.load ?? 0).toFixed(2) : '—'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netRx ?? 0).toFixed(0)} B/s` : '—'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netTx ?? 0).toFixed(0)} B/s` : '—'}</td>
                 </tr>
               ))}
             </tbody>

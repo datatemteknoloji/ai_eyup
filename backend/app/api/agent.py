@@ -14,8 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.agent_action import AgentAction
+from app.models.user import User
 from app.services.agent.orchestrator import (
     start_agent, continue_after_decision, continue_after_answer,
 )
@@ -53,6 +55,7 @@ def _action_to_dict(a: AgentAction) -> dict:
         "requires_root": bool(getattr(a, "requires_root", False)),
         "result": a.result or {},
         "model": a.model,
+        "decided_by": a.decided_by,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "decided_at": a.decided_at.isoformat() if a.decided_at else None,
         "executed_at": a.executed_at.isoformat() if a.executed_at else None,
@@ -60,7 +63,8 @@ def _action_to_dict(a: AgentAction) -> dict:
 
 
 @router.post("/chat")
-async def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db)):
+async def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
     message = (req.message or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Mesaj boş olamaz")
@@ -69,6 +73,7 @@ async def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db)):
         session_id=req.session_id,
         server_ids=req.server_ids,
         model=req.model,
+        actor=user,
     )
     return result
 
@@ -95,7 +100,8 @@ async def list_actions(limit: int = 50, db: Session = Depends(get_db)):
 
 @router.post("/actions/{action_id}/approve")
 async def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_db),
+                         user: User = Depends(get_current_user)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
@@ -107,22 +113,25 @@ async def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
                             detail="Bu işlem için root/sudo şifresi gerekli.")
     return continue_after_decision(
         db, action, approved=True,
+        decided_by=user.username,
         sudo_password=(req.sudo_password or None),
     )
 
 
 @router.post("/actions/{action_id}/reject")
-async def reject_action(action_id: int, db: Session = Depends(get_db)):
+async def reject_action(action_id: int, db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
     if action.status != "pending":
         raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
-    return continue_after_decision(db, action, approved=False)
+    return continue_after_decision(db, action, approved=False, decided_by=user.username)
 
 
 @router.post("/actions/{action_id}/answer")
-async def answer_action(action_id: int, req: AnswerRequest, db: Session = Depends(get_db)):
+async def answer_action(action_id: int, req: AnswerRequest, db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
@@ -130,4 +139,4 @@ async def answer_action(action_id: int, req: AnswerRequest, db: Session = Depend
         raise HTTPException(status_code=409, detail=f"Aksiyon zaten '{action.status}'")
     if req.answer in (None, "", []):
         raise HTTPException(status_code=400, detail="Yanıt boş olamaz")
-    return continue_after_answer(db, action, req.answer)
+    return continue_after_answer(db, action, req.answer, decided_by=user.username)

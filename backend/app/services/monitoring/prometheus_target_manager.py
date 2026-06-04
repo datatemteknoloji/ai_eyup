@@ -59,25 +59,40 @@ class PrometheusTargetManager:
             logger.error(f"Target dosyası kaydedilemedi: {e}")
             return False
     
-    def add_target(self, instance: str, labels: Optional[Dict[str, str]] = None) -> bool:
-        """Yeni target ekle"""
+    def upsert_target(self, instance: str, labels: Optional[Dict[str, str]] = None) -> bool:
+        """Target ekle veya aynı instance için etiketleri güncelle."""
         targets = self.load_targets()
-        
-        # Mevcut target'ı kontrol et
-        existing = next((t for t in targets if t.get("targets") and t.get("targets", [])[0] == instance), None)
-        
+        labels = labels or {}
+        existing = next(
+            (t for t in targets if t.get("targets") and t.get("targets", [])[0] == instance),
+            None,
+        )
         if existing:
+            existing["labels"] = labels
+            logger.info(f"Target güncellendi: {instance}")
+        else:
+            targets.append({"targets": [instance], "labels": labels})
+            logger.info(f"Target eklendi: {instance}")
+        return self.save_targets(targets)
+
+    def add_target(self, instance: str, labels: Optional[Dict[str, str]] = None) -> bool:
+        """Yeni target ekle (mevcut instance varsa upsert)."""
+        targets = self.load_targets()
+        existing = next(
+            (t for t in targets if t.get("targets") and t.get("targets", [])[0] == instance),
+            None,
+        )
+        if existing:
+            if labels:
+                existing["labels"] = labels
+                return self.save_targets(targets)
             logger.info(f"Target zaten mevcut: {instance}")
             return False
-        
-        # Yeni target ekle
-        new_target = {
-            "targets": [instance],
-            "labels": labels or {}
-        }
-        targets.append(new_target)
-        
-        return self.save_targets(targets)
+        return self.upsert_target(instance, labels)
+
+    def rebuild_targets(self, entries: List[Dict[str, Any]]) -> bool:
+        """Target dosyasını verilen liste ile tamamen yeniden yazar."""
+        return self.save_targets(entries)
     
     def remove_target(self, instance: str) -> bool:
         """Target kaldır"""

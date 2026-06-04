@@ -84,6 +84,7 @@ class Tool:
             timeout=self.timeout,
             session_id=ctx.get("session_id"),
             sudo_password_override=ctx.get("sudo_password_override"),
+            actor_name=ctx.get("actor_name"),
         )
 
 

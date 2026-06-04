@@ -3,6 +3,7 @@ oVirt/RHEV REST API Client
 """
 import requests
 import logging
+import time
 from typing import List, Dict, Optional, Tuple
 from requests.auth import HTTPBasicAuth
 from urllib3.exceptions import InsecureRequestWarning
@@ -159,3 +160,114 @@ class OVirtClient:
         except Exception as e:
             logger.error(f"oVirt list_vms error: {e}", exc_info=True)
             return []
+
+    def _resolve_url(self, href: str) -> str:
+        if not href:
+            return ""
+        if href.startswith("http"):
+            return href
+        base = self.base_url.rsplit("/api", 1)[0]
+        return f"{base}{href}" if href.startswith("/") else f"{self.base_url}/{href}"
+
+    def _wait_job(self, job_href: str, timeout: int = 600) -> Tuple[bool, str]:
+        """oVirt async job tamamlanana kadar bekle."""
+        url = self._resolve_url(job_href)
+        if not url:
+            return False, "Job URL alınamadı"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                r = self.session.get(url, timeout=30)
+                if r.status_code != 200:
+                    return False, f"Job sorgu hatası HTTP {r.status_code}"
+                job = r.json().get("job") or r.json()
+                status = str(job.get("status", "")).lower()
+                if status in ("finished", "complete", "completed"):
+                    if str(job.get("fault", "")).lower() in ("", "none", "null"):
+                        return True, "Tamamlandı"
+                    return False, str(job.get("description") or "Job hata ile bitti")
+                if status in ("failed", "aborted", "cancelled"):
+                    return False, str(job.get("description") or f"Job {status}")
+            except Exception as exc:
+                logger.warning(f"oVirt job poll error: {exc}")
+            time.sleep(3)
+        return False, "Job zaman aşımı"
+
+    def list_snapshots(self, vm_id: str) -> List[Dict]:
+        try:
+            r = self.session.get(f"{self.base_url}/vms/{vm_id}/snapshots", timeout=30)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            snaps = data.get("snapshot") or data.get("snapshots") or []
+            if isinstance(snaps, dict):
+                snaps = [snaps]
+            result = []
+            for s in snaps:
+                if not isinstance(s, dict):
+                    continue
+                sid = s.get("id", "")
+                if sid in ("00000000-0000-0000-0000-000000000000", ""):
+                    continue
+                desc = s.get("description") or s.get("id", "")
+                result.append({
+                    "id": sid,
+                    "name": desc.split("\n")[0] if desc else sid,
+                    "description": desc,
+                    "date": s.get("date"),
+                })
+            return result
+        except Exception as e:
+            logger.error(f"oVirt list_snapshots error: {e}")
+            return []
+
+    def create_snapshot(self, vm_id: str, name: str, description: str = "") -> Tuple[bool, str, Optional[str]]:
+        desc = name if not description else f"{name}\n{description}"
+        payload = {"snapshot": {"description": desc, "persist_memorystate": False}}
+        try:
+            r = self.session.post(
+                f"{self.base_url}/vms/{vm_id}/snapshots",
+                json=payload,
+                timeout=60,
+            )
+            if r.status_code in (200, 201):
+                data = r.json() if r.text else {}
+                snap = data.get("snapshot") or data
+                snap_id = snap.get("id") if isinstance(snap, dict) else None
+                if not snap_id and r.headers.get("Location"):
+                    snap_id = r.headers["Location"].rstrip("/").split("/")[-1]
+                return True, "Snapshot oluşturuldu", snap_id
+
+            if r.status_code == 202:
+                job_href = r.headers.get("Location", "")
+                ok, msg = self._wait_job(job_href)
+                if not ok:
+                    return False, msg, None
+                snaps = self.list_snapshots(vm_id)
+                match = next((s for s in snaps if s["name"] == name or name in s.get("description", "")), None)
+                if match:
+                    return True, msg, match["id"]
+                latest = snaps[-1] if snaps else None
+                return True, msg, latest["id"] if latest else None
+
+            return False, f"HTTP {r.status_code}: {(r.text or '')[:300]}", None
+        except Exception as e:
+            logger.error(f"oVirt create_snapshot error: {e}", exc_info=True)
+            return False, str(e), None
+
+    def delete_snapshot(self, vm_id: str, snapshot_id: str) -> Tuple[bool, str]:
+        try:
+            r = self.session.delete(
+                f"{self.base_url}/vms/{vm_id}/snapshots/{snapshot_id}",
+                timeout=120,
+            )
+            if r.status_code in (200, 204):
+                return True, "Snapshot silindi"
+            if r.status_code == 202:
+                ok, msg = self._wait_job(r.headers.get("Location", ""))
+                return ok, msg
+            return False, f"HTTP {r.status_code}: {(r.text or '')[:200]}"
+        except Exception as e:
+            logger.error(f"oVirt delete_snapshot error: {e}")
+            return False, str(e)
+

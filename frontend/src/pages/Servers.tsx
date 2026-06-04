@@ -297,8 +297,28 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
       if (!r.ok) return { history: [], pending_reboot: false }
       return r.json()
     },
-    staleTime: 30000,
+    enabled: tab === 'info',
   })
+
+  const { data: vmSnapshots, refetch: refetchSnapshots } = useQuery<{
+    tracked: { id: number; snapshot_name: string; status: string; retention: string; created_at: string; expires_at: string | null }[]
+    external: { id: string; name: string; description?: string; created?: string; status?: string }[]
+    can_snapshot: boolean
+    hypervisor_connected: boolean
+    vm_id_missing: boolean
+    platform?: string
+  }>({
+    queryKey: ['server-vm-snapshots', server.id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}`)
+      if (!r.ok) return { tracked: [], external: [], can_snapshot: false, hypervisor_connected: false, vm_id_missing: false }
+      return r.json()
+    },
+    enabled: tab === 'info' && !!server.hypervisor_id,
+  })
+
+  const [snapCreating, setSnapCreating] = useState(false)
+  const [snapRetention, setSnapRetention] = useState('1w')
 
   const startAnalyze = async () => {
     analyzeAbort.current?.abort()
@@ -485,6 +505,142 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       </span>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* VM Snapshot */}
+              {server.hypervisor_id && (
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-medium text-white">📸 VM Snapshot</h3>
+                      {vmSnapshots?.platform && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 uppercase">
+                          {vmSnapshots.platform}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Retention seçici */}
+                      {(vmSnapshots?.can_snapshot || vmSnapshots?.vm_id_missing) && (
+                        <select
+                          value={snapRetention}
+                          onChange={e => setSnapRetention(e.target.value)}
+                          className="text-xs bg-slate-700 border border-slate-600 text-slate-300 rounded px-1.5 py-0.5"
+                        >
+                          <option value="1d">1 Gün</option>
+                          <option value="1w">1 Hafta</option>
+                          <option value="1m">1 Ay</option>
+                          <option value="indefinite">Süresiz</option>
+                        </select>
+                      )}
+                      {/* Snapshot Al butonu — vm_id yoksa uyarıyla göster */}
+                      {(vmSnapshots?.can_snapshot || vmSnapshots?.vm_id_missing) && (
+                        <button
+                          disabled={snapCreating}
+                          title={vmSnapshots?.vm_id_missing ? 'VM ID bulunamıyor — vCenter\'da aranacak (yavaş olabilir)' : 'Snapshot al'}
+                          onClick={async () => {
+                            setSnapCreating(true)
+                            try {
+                              const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ retention: snapRetention, name_prefix: 'manual' }),
+                              })
+                              if (r.ok) refetchSnapshots()
+                              else {
+                                const err = await r.json().catch(() => ({}))
+                                alert(err.detail || 'Snapshot oluşturulamadı')
+                              }
+                            } finally { setSnapCreating(false) }
+                          }}
+                          className={`flex items-center gap-1 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 ${
+                            vmSnapshots?.vm_id_missing
+                              ? 'bg-yellow-700/30 text-yellow-300 border-yellow-600/40 hover:bg-yellow-700/50'
+                              : 'bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50'
+                          }`}
+                        >
+                          {snapCreating
+                            ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Alınıyor...</>
+                            : vmSnapshots?.vm_id_missing
+                              ? '🔍 Ara & Snapshot Al'
+                              : '+ Snapshot Al'
+                          }
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* VM ID yok uyarısı */}
+                  {vmSnapshots?.vm_id_missing && !snapCreating && (
+                    <div className="flex items-start gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/20 rounded-lg px-3 py-2">
+                      <span className="flex-shrink-0 mt-0.5">⚠</span>
+                      <span>VM ID bilinmiyor. "Ara &amp; Snapshot Al" tıklandığında vCenter/oVirt üzerinde arama yapılır ve ID kaydedilir.</span>
+                    </div>
+                  )}
+
+                  {/* Hypervisor bağlı değil */}
+                  {!vmSnapshots?.hypervisor_connected && (
+                    <p className="text-xs text-slate-500">Fiziksel sunucu — snapshot desteklenmiyor.</p>
+                  )}
+
+                  {/* Uygulama tarafından takip edilen snapshotlar */}
+                  {(vmSnapshots?.tracked?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Kayıtlı</p>
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {vmSnapshots!.tracked.map(s => (
+                          <div key={s.id} className="flex items-center gap-2 text-xs bg-slate-700/30 rounded-lg px-3 py-2">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.status === 'active' ? 'bg-cyan-400' : 'bg-red-400'}`} />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-slate-200 truncate font-mono">{s.snapshot_name}</div>
+                              <div className="text-slate-500 text-[10px]">
+                                {s.retention} · {new Date(s.created_at).toLocaleString('tr-TR')}
+                                {s.expires_at && ` · bitiş ${new Date(s.expires_at).toLocaleDateString('tr-TR')}`}
+                              </div>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                if (!confirm('Snapshot silinsin mi? (Hypervisor\'dan da kaldırılır)')) return
+                                const r = await fetch(`${API_BASE_URL}/snapshots/${s.id}`, { method: 'DELETE' })
+                                if (r.ok) refetchSnapshots()
+                                else { const e = await r.json().catch(() => ({})); alert(e.detail || 'Silinemedi') }
+                              }}
+                              className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
+                              title="Snapshot'u sil"
+                            >
+                              Sil
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hypervisor'dan doğrudan okunan harici snapshotlar */}
+                  {(vmSnapshots?.external?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Hypervisor'daki Tüm Snapshotlar</p>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {vmSnapshots!.external.map((s, i) => (
+                          <div key={s.id || i} className="flex items-center gap-2 text-xs bg-slate-700/20 rounded-lg px-3 py-2 border border-slate-700/40">
+                            <span className="text-slate-400 flex-shrink-0">🔖</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-slate-300 truncate">{s.name}</div>
+                              {s.description && <div className="text-slate-500 text-[10px] truncate">{s.description}</div>}
+                              {s.created && <div className="text-slate-500 text-[10px]">{new Date(s.created).toLocaleString('tr-TR')}</div>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hiç snapshot yok */}
+                  {(vmSnapshots?.tracked?.length ?? 0) === 0 && (vmSnapshots?.external?.length ?? 0) === 0 && vmSnapshots?.hypervisor_connected && (
+                    <p className="text-xs text-slate-500">Kayıtlı snapshot yok.</p>
+                  )}
                 </div>
               )}
 
@@ -1371,8 +1527,8 @@ const Servers: React.FC = () => {
                   {/* ── İzleme (AI + Node Exporter) ── */}
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex flex-wrap gap-1.5">
-                      {/* AI Ready */}
-                      {server.ai_ready && (
+                      {/* AI Ready — yalnızca SSH doğrulanmış ve ONLINE sunucular */}
+                      {server.ai_ready && server.status === 'ONLINE' && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
                           🤖 AI
                         </span>

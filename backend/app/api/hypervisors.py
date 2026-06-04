@@ -259,7 +259,20 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
         for vm in vms:
             vm_name = vm.get("name", "Unknown")
             vm_status = _vm_status(vm)
-            existing = db.query(Server).filter(Server.name == vm_name).first()
+            vm_id = (vm.get("vm_id") or "").strip()
+            vm_ip = (vm.get("ip_address") or "").strip()
+
+            existing = None
+            if vm_id:
+                existing = db.query(Server).filter(
+                    Server.hypervisor_id == hypervisor_id,
+                    Server.hypervisor_vm_id == vm_id,
+                ).first()
+            if not existing and vm_ip:
+                existing = db.query(Server).filter(Server.ip_address == vm_ip).first()
+            if not existing:
+                existing = db.query(Server).filter(Server.name == vm_name).first()
+
             if not existing:
                 # Yeni sunucu: Global Credential varsa connection_config'e koy
                 conn_cfg = {}
@@ -297,6 +310,10 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                 synced += 1
             else:
                 # Mevcut sunucuyu güncelle - connection_config ve ai_ready değerlerini KORU
+                if vm_name and existing.name != vm_name:
+                    existing.name = vm_name
+                if vm_name and (not existing.hostname or existing.hostname == existing.name):
+                    existing.hostname = vm_name
                 existing.status = vm_status
                 # hypervisor_id eksikse düzelt
                 if not existing.hypervisor_id:
@@ -315,11 +332,15 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
 
         db.commit()
 
+        from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+        prom_stats = sync_node_exporter_targets_from_db(db)
+
         return {
             "success": len(errors) == 0,
             "hypervisor": hypervisor.name,
             "synced_count": synced,
             "total_vms": len(vms),
+            "prometheus_targets": prom_stats.get("targets_after"),
             "errors": errors
         }
     except HTTPException:

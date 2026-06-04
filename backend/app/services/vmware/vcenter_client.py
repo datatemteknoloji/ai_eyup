@@ -3,7 +3,7 @@ VMware vCenter REST API Client
 """
 import requests
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -143,6 +143,67 @@ class VCenterClient:
         
         logger.info(f"Synced {len(inventory)} VMs from vCenter {self.host}")
         return inventory
+
+    def _api_call_raw(self, method: str, endpoint: str, data: Optional[Dict] = None):
+        """Status code ile birlikte yanıt döner."""
+        if not self.session_id:
+            if not self.login():
+                return None, 0, ""
+        url = f"{self.base_url}{endpoint}"
+        try:
+            if method == "GET":
+                response = self.session.get(url, timeout=60)
+            elif method == "POST":
+                response = self.session.post(url, json=data, timeout=120)
+            elif method == "DELETE":
+                response = self.session.delete(url, timeout=120)
+            else:
+                return None, 0, ""
+            body = response.json() if response.text else {}
+            return body, response.status_code, response.text
+        except Exception as e:
+            logger.error(f"API call error: {e}")
+            return None, 0, str(e)
+
+    def list_snapshots(self, vm_id: str) -> List[Dict]:
+        response = self._api_call("GET", f"/vcenter/vm/{vm_id}/snapshot")
+        if not response:
+            return []
+        items = response if isinstance(response, list) else response.get("value", [])
+        result = []
+        for item in items:
+            snap_id = item.get("snapshot") or item.get("id")
+            if not snap_id:
+                continue
+            result.append({
+                "id": snap_id,
+                "name": item.get("name") or snap_id,
+                "description": item.get("description") or "",
+                "create_time": item.get("create_time"),
+                "state": item.get("state"),
+            })
+        return result
+
+    def create_snapshot(self, vm_id: str, name: str, description: str = "") -> Tuple[bool, str, Optional[str]]:
+        payload = {
+            "name": name,
+            "description": description or name,
+            "memory": False,
+            "quiesce": True,
+        }
+        body, status, text = self._api_call_raw("POST", f"/vcenter/vm/{vm_id}/snapshot", payload)
+        if status in (200, 201) and body:
+            snap_id = body.get("value") if isinstance(body, dict) else None
+            return True, "Snapshot oluşturuldu", snap_id
+        return False, f"HTTP {status}: {(text or '')[:300]}", None
+
+    def delete_snapshot(self, vm_id: str, snapshot_id: str) -> Tuple[bool, str]:
+        _, status, text = self._api_call_raw(
+            "DELETE", f"/vcenter/vm/{vm_id}/snapshot/{snapshot_id}"
+        )
+        if status in (200, 204):
+            return True, "Snapshot silindi"
+        return False, f"HTTP {status}: {(text or '')[:200]}"
 
     def find_vm_by_name_or_ip(self, name: str = "", ip: str = "") -> Optional[str]:
         """VM'i isim veya IP ile bul, vm_id döner."""

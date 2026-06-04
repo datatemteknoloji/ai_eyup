@@ -39,6 +39,160 @@ def node_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str
         logger.debug(f"Prometheus node_exporter up check hatası: {e}")
     return False
 
+
+def get_node_exporter_up_map() -> Dict[str, str]:
+    """Prometheus up{job=node-exporter} sonuçlarını instance -> '0'|'1' map olarak döner."""
+    result_map: Dict[str, str] = {}
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                params={"query": 'up{job="node-exporter"}'},
+            )
+            if resp.status_code != 200:
+                return result_map
+            data = resp.json()
+            if data.get("status") != "success":
+                return result_map
+            for r in data.get("data", {}).get("result", []):
+                instance = (r.get("metric") or {}).get("instance", "")
+                value = r.get("value")
+                if instance and value and len(value) >= 2:
+                    result_map[instance] = str(value[1])
+    except Exception as e:
+        logger.debug(f"Prometheus up map hatası: {e}")
+    return result_map
+
+
+def sync_node_exporter_running_from_prometheus(db) -> Dict[str, int]:
+    """DB'deki node_exporter_running bayrağını Prometheus up durumuna göre günceller."""
+    from app.models.server import Server
+
+    up_map = get_node_exporter_up_map()
+    updated = cleared = promoted = 0
+
+    servers = db.query(Server).filter(
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+    ).all()
+
+    for server in servers:
+        instance = f"{server.ip_address.strip()}:9100"
+        prom_up = up_map.get(instance) == "1"
+
+        if prom_up:
+            changed = False
+            if not server.node_exporter_installed:
+                server.node_exporter_installed = True
+                changed = True
+            if not server.node_exporter_running:
+                server.node_exporter_running = True
+                changed = True
+            if changed:
+                promoted += 1
+                updated += 1
+            continue
+
+        # Prometheus'tan veri yok — kurulu sayılan ama çalışmıyor olarak işaretle
+        if server.node_exporter_installed and server.node_exporter_running:
+            server.node_exporter_running = False
+            cleared += 1
+            updated += 1
+
+    if updated:
+        db.commit()
+
+    return {
+        "updated": updated,
+        "promoted": promoted,
+        "cleared": cleared,
+        "live": sum(1 for v in up_map.values() if v == "1"),
+        "targets": len(up_map),
+    }
+
+
+def _pick_canonical_monitoring_server(servers: list):
+    """Aynı IP için tek kayıt: hypervisor bağlı olan, yoksa en yüksek id."""
+    def score(s):
+        return (1 if getattr(s, "hypervisor_id", None) else 0, s.id or 0)
+    return max(servers, key=score)
+
+
+def sync_node_exporter_targets_from_db(db, reload: bool = True) -> Dict[str, Any]:
+    """
+    DB'deki kurulu ONLINE sunuculardan Prometheus target dosyasını yeniden oluşturur.
+    Silinen sunucuların hedefleri kaldırılır; ad/IP değişiklikleri etiketlere yansır.
+    Aynı IP'de birden fazla kayıt varsa tek hedef kalır (hypervisor kaydı öncelikli).
+    """
+    from app.models.server import Server
+    from app.services.monitoring.prometheus_target_manager import PrometheusTargetManager
+
+    eligible = db.query(Server).filter(
+        Server.node_exporter_installed == True,  # noqa: E712
+        Server.status == "ONLINE",
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+    ).all()
+
+    by_instance: Dict[str, object] = {}
+    duplicate_names: List[str] = []
+
+    for server in eligible:
+        instance = f"{server.ip_address.strip()}:9100"
+        if instance in by_instance:
+            prev = by_instance[instance]
+            winner = _pick_canonical_monitoring_server([prev, server])
+            loser = server if winner is prev else prev
+            duplicate_names.append(getattr(loser, "name", "?"))
+            by_instance[instance] = winner
+        else:
+            by_instance[instance] = server
+
+    new_targets = []
+    for instance, server in sorted(by_instance.items(), key=lambda x: x[1].name.lower()):
+        new_targets.append({
+            "targets": [instance],
+            "labels": {
+                "server_id": str(server.id),
+                "server_name": server.name,
+                "job": "node-exporter",
+            },
+        })
+
+    tm = PrometheusTargetManager()
+    old_targets = tm.load_targets()
+    old_instances = {
+        t.get("targets", [])[0]
+        for t in old_targets
+        if t.get("targets")
+    }
+    new_instances = set(by_instance.keys())
+
+    tm.rebuild_targets(new_targets)
+
+    stats = {
+        "targets_before": len(old_targets),
+        "targets_after": len(new_targets),
+        "servers_eligible": len(eligible),
+        "unique_instances": len(new_targets),
+        "removed_orphans": len(old_instances - new_instances),
+        "added": len(new_instances - old_instances),
+        "duplicate_servers_skipped": duplicate_names,
+        "reloaded": False,
+    }
+
+    if reload:
+        stats["reloaded"] = tm.reload_prometheus_sync()
+
+    logger.info(
+        "Prometheus target sync: %s -> %s hedef (%s yetim kaldırıldı)",
+        stats["targets_before"],
+        stats["targets_after"],
+        stats["removed_orphans"],
+    )
+    return stats
+
+
 class PrometheusMetricsService:
     """Prometheus metriklerini çekmek ve analiz etmek için servis"""
     

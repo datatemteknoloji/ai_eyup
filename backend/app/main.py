@@ -27,6 +27,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global kimlik doğrulama: /auth/* dışındaki tüm /api/v1 endpoint'leri token ister.
+# WebSocket (terminal) ve auth uçları muaf tutulur.
+_AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/", "/api/v1/terminal/")
+
+
+@app.middleware("http")
+async def _require_auth_middleware(request, call_next):
+    from starlette.responses import JSONResponse
+    path = request.url.path
+    method = request.method
+
+    # Muaf: auth uçları, terminal WS, kök/health/docs, OPTIONS (CORS preflight)
+    exempt = (
+        method == "OPTIONS"
+        or path in ("/", "/health", "/docs", "/openapi.json", "/redoc")
+        or path.startswith(_AUTH_EXEMPT_PREFIXES)
+        or path.startswith("/repos")
+        or not path.startswith("/api/v1/")
+    )
+    if exempt:
+        return await call_next(request)
+
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
+    if not token:
+        return JSONResponse(status_code=401, content={"detail": "Kimlik doğrulama gerekli"})
+    from app.core.security import decode_access_token
+    if not decode_access_token(token):
+        return JSONResponse(status_code=401, content={"detail": "Geçersiz veya süresi dolmuş token"})
+    return await call_next(request)
+
+
 # API router'ı ekle (try-except ile hata yönetimi)
 try:
     from app.api.router import api_router
@@ -68,9 +100,41 @@ async def startup_tasks():
             _conn.execute(_sa_text(
                 "ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE"
             ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(10) DEFAULT 'skip'"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_retention VARCHAR(20) DEFAULT '1w'"
+            ))
     except Exception as _mig_e:
         logger.debug(f"agent_actions migration skip: {_mig_e}")
     
+    # Varsayılan admin kullanıcısını oluştur (yoksa) — sistem kilitlenmesin
+    try:
+        import os as _os
+        from app.core.database import SessionLocal as _SLu
+        from app.models.user import User as _User
+        from app.core.security import hash_password as _hp
+        _udb = _SLu()
+        try:
+            if _udb.query(_User).count() == 0:
+                _admin_pw = _os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
+                _udb.add(_User(
+                    username="admin",
+                    full_name="Yönetici",
+                    role="admin",
+                    hashed_password=_hp(_admin_pw),
+                ))
+                _udb.commit()
+                logger.warning(
+                    "👤 Varsayılan admin kullanıcısı oluşturuldu (kullanıcı: admin). "
+                    "İlk girişten sonra parolayı değiştirin!"
+                )
+        finally:
+            _udb.close()
+    except Exception as _ue:
+        logger.error(f"Admin seed hatası: {_ue}")
+
     # TimescaleDB hypertable'ları oluştur
     try:
         from app.core.init_timescale import init_timescaledb
@@ -84,18 +148,33 @@ async def startup_tasks():
     await background_task_manager.start()
     logger.info("Background tasks started (health checks every 5 minutes)")
 
-    # Yarım kalan system update planlarını yeniden başlat
+    # Yarım kalan system update planlarını kurtar / devam ettir
     try:
         from app.core.database import SessionLocal as _SL2
         from app.models.system_update import SystemUpdatePlan as _SUP, SystemUpdateJob as _SUJ
-        from app.services.system_update_service import run_system_update_plan as _rsp
+        from app.services.system_update_service import (
+            recover_stuck_system_update_plans as _recover_sup,
+            run_system_update_plan as _rsp,
+        )
         import threading as _th
         _db2 = _SL2()
+        _rec = _recover_sup(_db2, max_minutes=15)
+        if _rec.get("recovered_jobs") or _rec.get("finalized_plans"):
+            logger.info(
+                f"System update recovery: {_rec.get('recovered_jobs', 0)} takılı job, "
+                f"{_rec.get('finalized_plans', 0)} plan kapatıldı"
+            )
         _running_plans = _db2.query(_SUP).filter(_SUP.status == "running").all()
         for _p in _running_plans:
+            _pending = _db2.query(_SUJ).filter(
+                _SUJ.plan_id == _p.id,
+                _SUJ.status == "pending",
+            ).count()
+            if _pending <= 0:
+                continue
             _t = _th.Thread(target=_rsp, args=(_p.id,), daemon=True, name=f"sysupdate-{_p.id}")
             _t.start()
-            logger.info(f"System update plan #{_p.id} devam ettiriliyor: {_p.name}")
+            logger.info(f"System update plan #{_p.id} devam ettiriliyor ({_pending} bekleyen job)")
         _db2.close()
     except Exception as _e2:
         logger.debug(f"System update resume: {_e2}")

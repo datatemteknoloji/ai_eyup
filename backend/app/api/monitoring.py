@@ -15,6 +15,60 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+@router.get("/metrics/servers")
+async def list_metric_servers(db: Session = Depends(get_db)):
+    """
+    Metrik kurulu sunucuların özeti — DB + Prometheus senkron.
+    Canlı Metrikler ekranı bu listeyi kullanır.
+    """
+    from app.services.monitoring.prometheus_metrics import (
+        get_node_exporter_up_map,
+        sync_node_exporter_running_from_prometheus,
+    )
+
+    sync_stats = sync_node_exporter_running_from_prometheus(db)
+    up_map = get_node_exporter_up_map()
+
+    servers = db.query(Server).filter(
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+        Server.node_exporter_installed == True,  # noqa: E712
+    ).order_by(Server.name).all()
+
+    rows = []
+    scrape_error_count = 0
+
+    for s in servers:
+        instance = f"{s.ip_address.strip()}:9100"
+        live = up_map.get(instance) == "1"
+        if (s.status or "").upper() == "ONLINE" and s.node_exporter_installed and not live:
+            scrape_error_count += 1
+
+        rows.append({
+            "id": s.id,
+            "name": s.name,
+            "ip_address": s.ip_address,
+            "status": s.status,
+            "instance": instance,
+            "live": live,
+            "installed": bool(s.node_exporter_installed),
+            "running_db": bool(s.node_exporter_running),
+        })
+
+    online_installed = [r for r in rows if (r["status"] or "").upper() == "ONLINE"]
+
+    return {
+        "total_installed": len(rows),
+        "total_online_installed": len(online_installed),
+        "total_live": sync_stats.get("live", 0),
+        "total_live_servers": sum(1 for r in rows if r["live"] and (r["status"] or "").upper() == "ONLINE"),
+        "scrape_errors": scrape_error_count,
+        "sync": sync_stats,
+        "servers": rows,
+    }
+
+
 @router.post("/node-exporter/bulk-install")
 async def bulk_install_node_exporter(
     server_ids: Optional[List[int]] = None,
@@ -104,37 +158,24 @@ async def install_node_exporter(server_id: int, db: Session = Depends(get_db)):
         
         # Kurulum başarılıysa Prometheus'a target ekle
         if result.get("success"):
-            instance = f"{server.ip_address}:9100"
-            target_manager = PrometheusTargetManager()
-            added = target_manager.add_target(
-                instance=instance,
-                labels={
-                    "server_id": str(server.id),
-                    "server_name": server.name,
-                    "job": "node-exporter"
-                }
-            )
-            
-            if added:
-                result["prometheus_target_added"] = True
-                result["prometheus_instance"] = instance
-                steps = result.get("steps", [])
-                steps.append({"id": "prometheus", "label": "Prometheus hedefi ekleme", "status": "success", "message": instance})
-                result["steps"] = steps
-            else:
-                result["prometheus_target_warning"] = "Target eklenemedi, manuel olarak eklenmeli"
-                steps = result.get("steps", [])
-                steps.append({"id": "prometheus", "label": "Prometheus hedefi ekleme", "status": "failed", "message": "Target eklenemedi"})
-                result["steps"] = steps
+            server.node_exporter_installed = True
+            server.node_exporter_running = result.get("running", True)
+            db.commit()
 
-            # Async reload (opsiyonel) - fallback to sync
-            try:
-                await target_manager.reload_prometheus_async()
-            except Exception as e:
-                try:
-                    target_manager.reload_prometheus_sync()
-                except Exception as e:
-                    logger.warning(f"Operation failed: {e}")
+            from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+            prom_stats = sync_node_exporter_targets_from_db(db)
+            instance = f"{server.ip_address}:9100"
+            result["prometheus_target_added"] = prom_stats.get("targets_after", 0) >= prom_stats.get("targets_before", 0)
+            result["prometheus_instance"] = instance
+            result["prometheus_sync"] = prom_stats
+            steps = result.get("steps", [])
+            steps.append({
+                "id": "prometheus",
+                "label": "Prometheus hedefi senkron",
+                "status": "success",
+                "message": f"{prom_stats.get('targets_after')} hedef ({instance})",
+            })
+            result["steps"] = steps
         
         # Bağlantıyı kapat
         installer.connector.close()
@@ -283,23 +324,16 @@ async def uninstall_node_exporter(server_id: int, db: Session = Depends(get_db))
         installer = NodeExporterInstaller(server)
         result = installer.uninstall()
         
-        # Prometheus'tan target kaldır
+        # Prometheus hedeflerini DB ile senkronize et
         if result.get("success"):
-            instance = f"{server.ip_address}:9100"
-            target_manager = PrometheusTargetManager()
-            removed = target_manager.remove_target(instance=instance)
-            
-            if removed:
-                result["prometheus_target_removed"] = True
-            
-            # Async reload - fallback to sync
-            try:
-                await target_manager.reload_prometheus_async()
-            except Exception as e:
-                try:
-                    target_manager.reload_prometheus_sync()
-                except Exception as e:
-                    logger.warning(f"Operation failed: {e}")
+            server.node_exporter_installed = False
+            server.node_exporter_running = False
+            db.commit()
+
+            from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+            prom_stats = sync_node_exporter_targets_from_db(db)
+            result["prometheus_target_removed"] = prom_stats.get("removed_orphans", 0) > 0 or prom_stats.get("targets_after", 0) < prom_stats.get("targets_before", 0)
+            result["prometheus_sync"] = prom_stats
         
         # Bağlantıyı kapat
         installer.connector.close()
@@ -463,6 +497,18 @@ async def check_node_exporter_status(server_id: int, db: Session = Depends(get_d
         "installed": installed,
         "running": running
     }
+
+@router.post("/prometheus/sync-targets")
+async def sync_prometheus_targets(db: Session = Depends(get_db)):
+    """DB'deki kurulu sunuculara göre Prometheus hedef dosyasını yeniden oluşturur."""
+    from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+    try:
+        stats = sync_node_exporter_targets_from_db(db)
+        return {"success": True, **stats}
+    except Exception as e:
+        logger.error(f"Prometheus target sync hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/prometheus/sync-ai-ready-targets")
 async def sync_ai_ready_targets(db: Session = Depends(get_db)):

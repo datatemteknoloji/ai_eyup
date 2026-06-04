@@ -31,6 +31,9 @@ class SystemUpdatePlan(Base):
     override_sudo_password= Column(String(512))
     # Yetki yükseltme yöntemi: sudo | dzdo | su | pbrun | direct
     priv_method           = Column(String(20), default="sudo")
+    # VM snapshot: güncelleme öncesi yedek
+    snapshot_mode         = Column(String(10), default="skip")   # take | skip
+    snapshot_retention    = Column(String(20), default="1w")     # 1d | 1w | 1m | indefinite
 
     repo = relationship("RepoSource")
     jobs = relationship("SystemUpdateJob", back_populates="plan", cascade="all, delete-orphan", order_by="SystemUpdateJob.id")

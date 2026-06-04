@@ -331,7 +331,6 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
                     "sudo_password": global_cred.sudo_password or global_cred.password,
                     "port": global_cred.port or 22,
                 }
-                db_server.ai_ready = True
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(db_server, "connection_config")
                 db.commit()
@@ -349,6 +348,7 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
                     port=db_server.connection_config.get("port", 22),
                 )
                 if ssh.connect():
+                    db_server.ai_ready = True
                     db_server.status = "ONLINE"
                     # OS bilgisini al
                     _, os_out, _ = ssh.execute_command(
@@ -371,11 +371,15 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
                         db_server.memory_gb = int(mem_out.strip())
                     ssh.close()
                 else:
+                    db_server.ai_ready = False
                     db_server.status = "OFFLINE"
                 db.commit()
                 db.refresh(db_server)
             except Exception as ssh_err:
+                db_server.ai_ready = False
                 logger.warning(f"SSH connect failed for new server {db_server.name}: {ssh_err}")
+                db.commit()
+                db.refresh(db_server)
         
         return {
             "id": db_server.id,
@@ -414,6 +418,11 @@ async def update_server(server_id: int, server: ServerUpdate, db: Session = Depe
         
         db.commit()
         db.refresh(db_server)
+
+        monitoring_fields = {"name", "ip_address", "status", "node_exporter_installed"}
+        if monitoring_fields.intersection(update_data.keys()):
+            from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+            sync_node_exporter_targets_from_db(db)
         
         return {
             "id": db_server.id,
@@ -447,6 +456,10 @@ async def delete_server(server_id: int, db: Session = Depends(get_db)):
         
         db.delete(db_server)
         db.commit()
+
+        from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
+        sync_node_exporter_targets_from_db(db)
+
         return None
     except HTTPException:
         raise
@@ -471,8 +484,20 @@ async def update_server_credentials(server_id: int, credentials: dict, db: Sessi
 
         if "ai_ready" in credentials:
             server.ai_ready = credentials["ai_ready"]
-        elif server.connection_config.get("username"):
-            server.ai_ready = True
+        elif server.connection_config.get("username") and server.ip_address:
+            from app.services.ssh_manager import SSHManager
+            ssh = SSHManager(
+                host=server.ip_address,
+                username=server.connection_config.get("username"),
+                password=server.connection_config.get("password"),
+                private_key=server.connection_config.get("private_key"),
+                port=int(server.connection_config.get("port", 22) or 22),
+            )
+            try:
+                server.ai_ready = bool(ssh.connect())
+                ssh.close()
+            except Exception:
+                server.ai_ready = False
 
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(server, "connection_config")

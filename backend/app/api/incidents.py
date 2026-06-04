@@ -10,9 +10,11 @@ from pydantic import BaseModel
 from datetime import datetime
 import httpx
 from app.core.database import get_db
+from app.core.auth import get_current_user
 from app.core.config import settings, get_active_model
 from app.models.event import Incident, SystemEvent
 from app.models.server import Server
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -228,11 +230,16 @@ async def link_events(incident_id: int, event_ids: List[int], db: Session = Depe
 
 
 @router.post("/{incident_id}/rca")
-async def run_rca(incident_id: int, db: Session = Depends(get_db)):
+async def run_rca(incident_id: int, db: Session = Depends(get_db),
+                  user: "User" = Depends(get_current_user)):
     """AI ile Root Cause Analysis çalıştır"""
     inc = db.query(Incident).filter(Incident.id == incident_id).first()
     if not inc:
         raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    from app.services.audit import record_audit
+    record_audit(db, category="rca", action="rca.run", actor=user,
+                 target_type="incident", target_id=incident_id,
+                 summary=f"Manuel RCA çalıştırıldı: {inc.title}"[:200])
 
     # İlgili event'leri topla
     event_details = []

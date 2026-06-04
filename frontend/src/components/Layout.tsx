@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -11,7 +12,9 @@ type MenuItem =
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
+  const { user, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ aiops: true })
 
   const isActive = (path: string) =>
@@ -42,6 +45,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { type: 'link', path: '/repositories', name: 'Local Repo',     icon: '🗄️' },
     { type: 'link', path: '/mcp',          name: 'Linux MCP',      icon: '🔧' },
     { type: 'link', path: '/metrics',      name: 'Canlı Metrikler', icon: '📈' },
+    { type: 'link', path: '/audit',        name: 'Audit Log',      icon: '📜' },
     { type: 'link', path: '/settings',     name: 'Ayarlar',        icon: '⚙️' },
   ]
 
@@ -204,8 +208,48 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               <span>Sistem Aktif</span>
             </div>
-            <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-medium">A</span>
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen(o => !o)}
+                className="flex items-center gap-2 group"
+              >
+                {sidebarOpen && (
+                  <div className="text-right leading-tight hidden sm:block">
+                    <div className="text-sm text-white font-medium">{user?.full_name || user?.username || 'Kullanıcı'}</div>
+                    <div className="text-[10px] text-slate-400 uppercase">{user?.role || ''}</div>
+                  </div>
+                )}
+                <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-medium">
+                    {(user?.username || 'A').charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              </button>
+
+              {userMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
+                  <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-20 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-700">
+                      <div className="text-sm text-white font-medium truncate">{user?.username}</div>
+                      <div className="text-xs text-slate-400 truncate">{user?.email || '—'}</div>
+                    </div>
+                    <Link
+                      to="/settings"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                    >
+                      ⚙️ Ayarlar
+                    </Link>
+                    <button
+                      onClick={logout}
+                      className="w-full text-left px-4 py-2.5 text-sm text-red-300 hover:bg-red-500/10"
+                    >
+                      ⎋ Çıkış Yap
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </header>

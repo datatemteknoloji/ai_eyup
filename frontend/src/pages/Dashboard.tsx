@@ -865,7 +865,7 @@ function RecentServers({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-white truncate">{server.name}</p>
-                  {server.ai_ready && (
+                  {server.ai_ready && server.status === 'ONLINE' && (
                     <span className="px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0"
                       style={{ background: 'rgba(168,85,247,0.12)', color: NEON.purple, border: '1px solid rgba(168,85,247,0.25)' }}>
                       AI
@@ -1029,6 +1029,20 @@ const Dashboard: React.FC = () => {
     refetchInterval: 60_000,
   })
 
+  const { data: metricsOverview } = useQuery<{
+    total_online_installed: number
+    total_live: number
+    scrape_errors: number
+  }>({
+    queryKey: ['metrics-servers-overview'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/monitoring/metrics/servers`)
+      if (!r.ok) return { total_online_installed: 0, total_live: 0, scrape_errors: 0 }
+      return r.json()
+    },
+    refetchInterval: 60_000,
+  })
+
   const { data: recentEventsData } = useQuery<{ events: FeedEvent[] }>({
     queryKey: ['dashboard-events'],
     queryFn: async () => {
@@ -1056,13 +1070,16 @@ const Dashboard: React.FC = () => {
   const offlineServers  = servers.filter(s => s.status === 'OFFLINE').length
   const warningServers  = servers.filter(s => s.status === 'WARNING').length
   const criticalServers = servers.filter(s => s.status === 'CRITICAL').length
-  const aiReadyServers  = servers.filter(s => s.ai_ready).length
+  const aiReadyServers  = servers.filter(s => s.ai_ready && s.status === 'ONLINE').length
   const totalCpu        = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
   const totalRam        = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
-  const monitoredCount  = servers.filter(s => s.node_exporter?.running).length
+  const monitoredInstalled = metricsOverview?.total_online_installed
+    ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length
+  const monitoredLive = metricsOverview?.total_live
+    ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length
 
   const onlinePct   = totalServers > 0 ? (onlineServers / totalServers) * 100 : 100
-  const monitorPct  = totalServers > 0 ? (monitoredCount / totalServers) * 100 : 0
+  const monitorPct  = totalServers > 0 ? (monitoredLive / totalServers) * 100 : 0
   const aiReadyPct  = totalServers > 0 ? (aiReadyServers / totalServers) * 100 : 0
   const problemSrv  = warningServers + criticalServers + offlineServers
 
@@ -1091,7 +1108,7 @@ const Dashboard: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.cyan} pct={onlinePct} delay={0} />
           <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.purple} pct={aiReadyPct} delay={50} />
-          <HeroKpi label="Monitörlenen" value={monitoredCount} sub="Node Exporter aktif" accent={NEON.green} pct={monitorPct} delay={100} />
+          <HeroKpi label="Monitörlenen" value={monitoredLive} sub={`${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
           <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
         </div>
 

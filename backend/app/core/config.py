@@ -67,7 +67,9 @@ class Settings:
         sys.exit(1)
     
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))
+    # İlk admin parolası (yalnızca hiç kullanıcı yokken seed'de kullanılır)
+    ADMIN_DEFAULT_PASSWORD: str = os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
     
     # CORS - Production'da sadece frontend domain
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")

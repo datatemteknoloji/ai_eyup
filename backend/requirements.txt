@@ -33,7 +33,7 @@ Mako==1.3.10
 MarkupSafe==3.0.3
 multidict==6.7.1
 numpy==1.26.2
-packaging==26.0
+packaging==24.2
 pandas==2.1.3
 paramiko==3.4.0
 passlib==1.7.4
@@ -72,6 +72,10 @@ websockets==16.0
 yarl==1.22.0
 chromadb==0.4.22
 pypdf==4.0.1
+
+# LangGraph — AIOps kapalı döngüsü ve agent orkestrasyonu (pydantic 2.5 uyumlu sürümler)
+langgraph==0.2.76
+langchain-core==0.2.43
 
 ansible==9.1.0
 zstandard==0.22.0

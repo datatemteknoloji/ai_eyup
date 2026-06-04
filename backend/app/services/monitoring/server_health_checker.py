@@ -66,16 +66,34 @@ class ServerHealthChecker:
         return "ONLINE", ""
 
     @staticmethod
+    def _sync_ai_ready(server: Server, status: str, reason: str) -> bool:
+        """SSH erişilemeyen sunucularda ai_ready bayrağını temizle."""
+        if not server.ai_ready:
+            return False
+        if status == "OFFLINE":
+            server.ai_ready = False
+            return True
+        if status == "WARNING" and reason.startswith(("ssh_", "ssh_hata")):
+            server.ai_ready = False
+            return True
+        return False
+
+    @staticmethod
     def update_server_statuses(db: Session) -> Dict[str, int]:
         """Tüm sunucuların durumlarını kontrol et ve güncelle"""
         try:
             servers = db.query(Server).all()
-            stats = {"checked": 0, "updated": 0, "online": 0, "offline": 0, "warning": 0}
+            stats = {"checked": 0, "updated": 0, "online": 0, "offline": 0, "warning": 0, "ai_ready_cleared": 0}
 
             for server in servers:
                 stats["checked"] += 1
                 old_status = server.status
                 new_status, reason = ServerHealthChecker.check_server_status(server)
+
+                if ServerHealthChecker._sync_ai_ready(server, new_status, reason):
+                    stats["ai_ready_cleared"] += 1
+                    stats["updated"] += 1
+                    logger.info(f"Server {server.name}: ai_ready cleared ({new_status}, {reason})")
 
                 if old_status != new_status:
                     server.status = new_status

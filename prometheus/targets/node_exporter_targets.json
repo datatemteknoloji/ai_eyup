@@ -1,31 +1,11 @@
 [
   {
     "targets": [
-      "192.168.1.62:9100"
+      "192.168.1.46:9100"
     ],
     "labels": {
-      "server_id": "2",
-      "server_name": "enesapp-clone",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.67:9100"
-    ],
-    "labels": {
-      "server_id": "31",
-      "server_name": "enesapp",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.106:9100"
-    ],
-    "labels": {
-      "server_id": "82",
-      "server_name": "gorkem",
+      "server_id": "257",
+      "server_name": "ahmet-test2",
       "job": "node-exporter"
     }
   },
@@ -34,58 +14,8 @@
       "192.168.1.45:9100"
     ],
     "labels": {
-      "server_id": "99",
-      "server_name": "rhel94-awx-test",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.129:9100"
-    ],
-    "labels": {
-      "server_id": "111",
-      "server_name": "datatemengine",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.46:9100"
-    ],
-    "labels": {
-      "server_id": "115",
-      "server_name": "ahmet-test2",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.44:9100"
-    ],
-    "labels": {
-      "server_id": "123",
-      "server_name": "Zabbix01",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.103:9100"
-    ],
-    "labels": {
-      "server_id": "236",
-      "server_name": "learn-terraform-renamed",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.61:9100"
-    ],
-    "labels": {
-      "server_id": "130",
-      "server_name": "enesappeski",
+      "server_id": "271",
+      "server_name": "datatem-wiki",
       "job": "node-exporter"
     }
   },
@@ -111,6 +41,36 @@
   },
   {
     "targets": [
+      "192.168.1.67:9100"
+    ],
+    "labels": {
+      "server_id": "256",
+      "server_name": "enesapp",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.61:9100"
+    ],
+    "labels": {
+      "server_id": "130",
+      "server_name": "enesappeski",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.190:9100"
+    ],
+    "labels": {
+      "server_id": "264",
+      "server_name": "gorkem2",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
       "192.168.1.202:9100"
     ],
     "labels": {
@@ -121,21 +81,21 @@
   },
   {
     "targets": [
-      "192.168.1.170:9100"
+      "192.168.1.204:9100"
     ],
     "labels": {
-      "server_id": "264",
-      "server_name": "gorkem2",
+      "server_id": "238",
+      "server_name": "minio4",
       "job": "node-exporter"
     }
   },
   {
     "targets": [
-      "192.168.1.47:9100"
+      "192.168.1.180:9100"
     ],
     "labels": {
-      "server_id": "289",
-      "server_name": "veridata",
+      "server_id": "265",
+      "server_name": "olvm manager",
       "job": "node-exporter"
     }
   },
@@ -161,21 +121,21 @@
   },
   {
     "targets": [
-      "192.168.1.180:9100"
-    ],
-    "labels": {
-      "server_id": "265",
-      "server_name": "olvm manager",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
       "192.168.1.231:9100"
     ],
     "labels": {
       "server_id": "240",
       "server_name": "rhelcluster02",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.47:9100"
+    ],
+    "labels": {
+      "server_id": "289",
+      "server_name": "veridata",
       "job": "node-exporter"
     }
   }

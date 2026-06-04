@@ -248,45 +248,65 @@ def _detect_pkg_manager(client) -> str:
     return "unknown"
 
 
-def check_available_updates(server, update_type: str, global_cred=None) -> List[Dict]:
+def check_available_updates(
+    server,
+    update_type: str,
+    global_cred=None,
+    repo_file_content: Optional[str] = None,
+    repo_name: Optional[str] = None,
+    override_username: Optional[str] = None,
+    override_password: Optional[str] = None,
+    override_sudo_password: Optional[str] = None,
+    priv_method: str = "sudo",
+) -> List[Dict]:
     """
     Güncellemeleri kontrol eder.
     check-update / apt list --upgradable sudo gerektirmez — normal kullanıcı çalıştırabilir.
     Sadece metadata refresh (makecache/apt update) gerekebilir.
     """
-    creds = _resolve_creds(server, global_cred)
+    creds = _resolve_creds(
+        server,
+        global_cred,
+        override_username=override_username,
+        override_password=override_password,
+        override_sudo_password=override_sudo_password,
+    )
     sudo  = creds.get("sudo_password")
     try:
         client = _make_client(creds)
         mgr    = _detect_pkg_manager(client)
         result = []
+        tmp_repo_file = None
 
         if mgr in ("dnf", "yum"):
-            # makecache sudo ile (metadata refresh root gerektirebilir)
-            _run(client, f"{mgr} makecache -q 2>/dev/null || true",
-                 sudo_pass=sudo, timeout=60)
-
-            # dnf list upgrades: her satır TAB ayrımlı "ad.arch versiyon repo" formatı
-            # --color=never + --noautoremove: temiz çıktı
-            # --disableplugin=subscription-manager: RHSM bekleme bypass
-            base_opts = "--color=never --disableplugin=subscription-manager --setopt=timeout=10 --setopt=retries=1"
-            if update_type == "security":
-                # updateinfo ile güvenlik paketleri
-                cmd = (
-                    f"{mgr} updateinfo list security {base_opts} 2>&1 | "
-                    f"awk '{{print $3}}' | sort -u | "
-                    f"xargs -r {mgr} list {base_opts} 2>/dev/null | "
-                    f"grep -v '^Installed\\|^Available\\|^Last\\|^Updating\\|^subscription' || true"
-                )
-                # Fallback: check-update --security
-                cmd = f"{mgr} check-update --security {base_opts} 2>&1; true"
-            elif update_type == "kernel":
-                cmd = f"{mgr} check-update 'kernel*' {base_opts} 2>&1; true"
+            repo_opts = ""
+            # /tmp altında geçici reposdir kullan — sudo gerektirmez
+            tmp_reposdir = None
+            if repo_file_content and repo_name:
+                tmp_reposdir = f"/tmp/ainew-check-{repo_name}"
+                esc = repo_file_content.replace("'", "'\\''")
+                _run(client, f"mkdir -p {tmp_reposdir} && echo '{esc}' > {tmp_reposdir}/{repo_name}.repo", timeout=10)
+                tmp_repo_file = tmp_reposdir  # temizlik için
+                # Sadece bu temp reposdir'i kullan; RHSM/diğer repoları devre dışı bırak
+                repo_opts = f"--setopt=reposdir={tmp_reposdir}"
+                base_opts = f"--color=never --disableplugin=subscription-manager --setopt=timeout=15 --setopt=retries=2"
             else:
-                # list upgrades: "paket.arch  versiyon  repo" — her satır tek paket
-                cmd = f"{mgr} list upgrades {base_opts} 2>&1; true"
+                # Local repo seçilmedi: RHSM repolarını olduğu gibi kullan
+                # subscription-manager plugin'i ETKİN bırak — RHSM repoları cert ile çalışır
+                base_opts = "--color=never --setopt=timeout=20 --setopt=retries=2"
 
-            code, out, _ = _run(client, cmd, sudo_pass=sudo, timeout=90)
+            # makecache — sudo gerekmez, başarısız olursa atla
+            _run(client, f"{mgr} makecache -q {repo_opts} 2>/dev/null || true",
+                 timeout=60, priv_method="direct")
+
+            if update_type == "security":
+                cmd = f"{mgr} check-update --security {base_opts} {repo_opts} 2>&1; true"
+            elif update_type == "kernel":
+                cmd = f"{mgr} check-update 'kernel*' {base_opts} {repo_opts} 2>&1; true"
+            else:
+                cmd = f"{mgr} list upgrades {base_opts} {repo_opts} 2>&1; true"
+
+            code, out, _ = _run(client, cmd, timeout=120, priv_method="direct")
 
             if update_type == "security":
                 result = _parse_dnf_check_update(out, is_security=True)
@@ -297,8 +317,14 @@ def check_available_updates(server, update_type: str, global_cred=None) -> List[
                 result = _parse_dnf_list_upgrades(out)
 
         elif mgr == "apt":
-            # apt update sudo gerektirir
-            _run(client, "apt-get update -qq 2>/dev/null", sudo_pass=sudo, timeout=60)
+            if repo_file_content and repo_name:
+                # /tmp altına yaz — sudo gerektirmez
+                tmp_repo_file = f"/tmp/ainew-check-{repo_name}"
+                esc = repo_file_content.replace("'", "'\\''")
+                _run(client, f"mkdir -p {tmp_repo_file} && echo '{esc}' > {tmp_repo_file}/sources.list", timeout=10)
+                _run(client, f"apt-get update -qq -o Dir::Etc::sourcelist={tmp_repo_file}/sources.list -o Dir::Etc::sourceparts=- 2>/dev/null", sudo_pass=sudo, timeout=60, priv_method=priv_method)
+            else:
+                _run(client, "apt-get update -qq 2>/dev/null", sudo_pass=sudo, timeout=60, priv_method=priv_method)
             _, stdout2, _ = client.exec_command(
                 "apt list --upgradable 2>/dev/null | tail -n +2", timeout=30, get_pty=False
             )
@@ -306,6 +332,12 @@ def check_available_updates(server, update_type: str, global_cred=None) -> List[
             stdout2.channel.recv_exit_status()
             result = _parse_apt_upgradable(out2, update_type)
 
+        if tmp_repo_file:
+            try:
+                # tmp_repo_file artık /tmp/ainew-check-<name> dizini — rm -rf ile sil
+                _run(client, f"rm -rf {tmp_repo_file}", timeout=10)
+            except Exception:
+                pass
         client.close()
         return result
     except Exception as exc:
@@ -618,16 +650,65 @@ def run_system_update_plan(plan_id: int) -> None:
                 repo_name = repo.name
 
         jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan_id).all()
-        success_count = fail_count = 0
+        success_count = sum(1 for j in jobs if j.status == "success")
+        fail_count = sum(1 for j in jobs if j.status == "failed")
 
         for job in jobs:
+            if job.status in ("success", "skipped"):
+                continue
+            if job.status == "failed":
+                continue
+
             server = db.query(Server).filter_by(id=job.server_id).first()
             if not server:
-                job.status = "skipped"; db.commit(); continue
+                job.status = "skipped"
+                db.commit()
+                continue
 
             job.status = "running"
             job.started_at = datetime.now(timezone.utc)
+            job.log = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Güncelleme başlatılıyor...\n"
             db.commit()
+
+            snap_log_lines = []
+            if (plan.snapshot_mode or "skip") == "take":
+                from app.services.snapshot_service import create_snapshot_for_server, server_can_snapshot
+                if not server_can_snapshot(server):
+                    # hypervisor_vm_id boş — vCenter taraması yapmadan atla
+                    snap_log_lines.append(
+                        f"[SNAPSHOT] ⊘ Atlandı: VM ID bilinmiyor (hypervisor sync gerekli)"
+                    )
+                    job.log = (job.log or "") + f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Snapshot atlandı (VM ID yok)\n"
+                    db.commit()
+                else:
+                    job.log = (job.log or "") + f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Snapshot alınıyor...\n"
+                    db.commit()
+                    import concurrent.futures as _cf
+                    with _cf.ThreadPoolExecutor(max_workers=1) as _snap_pool:
+                        _snap_future = _snap_pool.submit(
+                            create_snapshot_for_server, server, db,
+                            source="system_update",
+                            plan_id=plan.id,
+                            retention=plan.snapshot_retention or "1w",
+                            name_prefix=f"pre-update-p{plan.id}",
+                        )
+                        try:
+                            snap_result = _snap_future.result(timeout=90)
+                        except _cf.TimeoutError:
+                            snap_result = {"success": False, "message": "Snapshot zaman aşımı (90s)"}
+                    if snap_result.get("success"):
+                        snap = snap_result.get("snapshot") or {}
+                        snap_log_lines.append(
+                            f"[SNAPSHOT] ✓ {snap.get('snapshot_name', 'snapshot')} alındı"
+                        )
+                    elif snap_result.get("skipped"):
+                        snap_log_lines.append(
+                            f"[SNAPSHOT] ⊘ Atlandı: {snap_result.get('message', 'VM bağlantısı yok')}"
+                        )
+                    else:
+                        snap_log_lines.append(
+                            f"[SNAPSHOT] ✗ Hata: {snap_result.get('message', 'bilinmiyor')}"
+                        )
 
             result = apply_updates_to_server(
                 server, plan.update_type, global_cred,
@@ -640,7 +721,7 @@ def run_system_update_plan(plan_id: int) -> None:
                 job_id=job.id,
             )
             job.status           = result["status"]
-            job.log              = result.get("log", "") or "\n".join([])  # streaming zaten yazdı
+            job.log              = "\n".join(snap_log_lines + [result.get("log", "") or ""]).strip()
             job.packages_updated = result.get("packages_updated", [])
             job.reboot_required  = result.get("reboot_required", False)
             job.completed_at     = datetime.now(timezone.utc)
@@ -653,9 +734,7 @@ def run_system_update_plan(plan_id: int) -> None:
             plan.completed_servers = success_count + fail_count
             db.commit()
 
-        plan.status = "completed" if fail_count == 0 else ("failed" if success_count == 0 else "partial")
-        plan.completed_at = datetime.now(timezone.utc)
-        db.commit()
+        _finalize_plan_status(plan, jobs, db)
 
         try:
             _generate_ai_summary(plan_id, db)
@@ -666,11 +745,107 @@ def run_system_update_plan(plan_id: int) -> None:
         try:
             plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
             if plan:
-                plan.status = "failed"; db.commit()
+                jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan_id).all()
+                for job in jobs:
+                    if job.status == "running":
+                        job.status = "failed"
+                        job.completed_at = datetime.now(timezone.utc)
+                        job.log = (job.log or "") + "\n[HATA] Plan beklenmedik şekilde sonlandı."
+                _finalize_plan_status(plan, jobs, db)
         except Exception:
             pass
     finally:
         db.close()
+
+
+def _finalize_plan_status(plan, jobs, db) -> None:
+    """Plan durumunu job sonuçlarına göre kapatır."""
+    success_count = sum(1 for j in jobs if j.status == "success")
+    fail_count = sum(1 for j in jobs if j.status == "failed")
+    plan.completed_servers = success_count + fail_count
+    if fail_count == 0 and success_count > 0:
+        plan.status = "completed"
+    elif success_count == 0 and fail_count > 0:
+        plan.status = "failed"
+    elif success_count > 0 and fail_count > 0:
+        plan.status = "partial"
+    else:
+        plan.status = "failed"
+    plan.completed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def recover_stuck_system_update_plans(db, max_minutes: int = 30) -> dict:
+    """
+    Uzun süredir 'running' kalan job/planları başarısız olarak işaretler.
+    Backend yeniden başlatıldığında veya periyodik görevde çağrılır.
+    """
+    from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_minutes)
+    recovered_jobs = 0
+    finalized_plans = 0
+
+    stuck_jobs = db.query(SystemUpdateJob).filter(
+        SystemUpdateJob.status == "running",
+        SystemUpdateJob.started_at.isnot(None),
+        SystemUpdateJob.started_at < cutoff,
+        SystemUpdateJob.completed_at.is_(None),
+    ).all()
+
+    for job in stuck_jobs:
+        job.status = "failed"
+        job.completed_at = datetime.now(timezone.utc)
+        suffix = f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Sistem: {max_minutes} dk içinde tamamlanmadı — takılı iş durduruldu."
+        job.log = ((job.log or "").rstrip() + suffix)[-8000:]
+        recovered_jobs += 1
+    if recovered_jobs:
+        db.commit()
+
+    running_plans = db.query(SystemUpdatePlan).filter(
+        SystemUpdatePlan.status == "running",
+    ).all()
+
+    for plan in running_plans:
+        jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan.id).all()
+        still_running = [j for j in jobs if j.status in ("running", "pending")]
+        if still_running:
+            continue
+        _finalize_plan_status(plan, jobs, db)
+        finalized_plans += 1
+
+    return {
+        "recovered_jobs": recovered_jobs,
+        "finalized_plans": finalized_plans,
+    }
+
+
+def cancel_system_update_plan(plan_id: int, db) -> dict:
+    """Çalışan planı iptal eder — running job'ları failed yapar."""
+    from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
+
+    plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
+    if not plan:
+        return {"ok": False, "message": "Plan bulunamadı"}
+    if plan.status != "running":
+        return {"ok": False, "message": f"Plan '{plan.status}' durumunda — iptal edilemez"}
+
+    jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan_id).all()
+    cancelled = 0
+    for job in jobs:
+        if job.status in ("running", "pending"):
+            job.status = "failed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.log = ((job.log or "").rstrip() + "\n[Kullanıcı] Güncelleme iptal edildi.")[-8000:]
+            cancelled += 1
+    _finalize_plan_status(plan, jobs, db)
+    return {"ok": True, "cancelled_jobs": cancelled, "status": plan.status}
+
+
+def resume_system_update_plan(plan_id: int) -> None:
+    """Yalnızca bekleyen job'ları çalıştırır."""
+    run_system_update_plan(plan_id)
 
 
 def _generate_ai_summary(plan_id, db):

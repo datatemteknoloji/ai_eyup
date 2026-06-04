@@ -116,12 +116,12 @@ class NodeExporterInstaller:
             add_step("systemd_service", "success")
 
             # 6. Servisi başlat
-            # nohup_mode: systemd service yok, nohup ile direkt baslat
-            nohup_mode = service_result.get("nohup_mode", False)
+            service_scope = service_result.get("service_scope", "system")
+            nohup_mode = service_result.get("nohup_mode", False) or service_scope == "nohup"
             if nohup_mode:
-                start_result = self._start_manual()
+                start_result = self._start_manual(install_path=service_result.get("install_path"))
             else:
-                start_result = self._start_service()
+                start_result = self._start_service(service_scope=service_scope, install_path=service_result.get("install_path"))
             if not start_result.get("success"):
                 add_step("start_service", "failed", start_result.get("error"))
                 return {**start_result, "steps": steps}
@@ -505,11 +505,24 @@ EOFSERVICE
             
             result = self.connector.execute_command(create_cmd)
             if result.get("success"):
-                return {"success": True, "message": f"Systemd servisi oluşturuldu ({'root' if is_root else 'user'})", "service_file": service_file, "install_path": install_path}
-            else:
-                error_msg = result.get('stderr', result.get('stdout', 'Bilinmeyen hata'))
-                # Sudo denemesi
-                if not is_root:
+                verify = self.connector.execute_command(f"test -f {service_file} && echo exists || echo missing")
+                if "exists" in verify.get("stdout", ""):
+                    scope = "system" if is_root else "user"
+                    return {
+                        "success": True,
+                        "message": f"Systemd servisi oluşturuldu ({scope})",
+                        "service_file": service_file,
+                        "install_path": install_path,
+                        "service_scope": scope,
+                    }
+                logger.warning(f"Service file missing after create: {service_file}")
+
+            if is_root:
+                return {"success": False, "error": "Systemd unit dosyası oluşturulamadı"}
+
+            error_msg = result.get('stderr', result.get('stdout', 'Bilinmeyen hata'))
+            # Sudo denemesi (non-root)
+            if not is_root:
                     password = self.connector.sudo_password or ""
                     sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
                     sudo_cmd = f"""
@@ -532,34 +545,29 @@ EOFSERVICE
                     """
                     sudo_result = self.connector.execute_command(sudo_cmd)
                     if sudo_result.get("success"):
-                        return {"success": True, "message": "Systemd servisi oluşturuldu (sudo ile)", "service_file": "/etc/systemd/system/node_exporter.service", "install_path": install_path}
-                    else:
-                        sudo_error = sudo_result.get('stderr', sudo_result.get('stdout', 'Bilinmeyen hata'))
-                        if "password is required" in sudo_error or "sudo: a password is required" in sudo_error or "not in the sudoers" in sudo_error:
-                            # Sudo yok - user service de olmadi - nohup ile devam et
-                            return {"success": True, "message": "Systemd service olusturulamadi (sudo yok), nohup ile baslatilacak", "nohup_mode": True}
-                        return {"success": False, "error": f"Servis oluşturma hatası: {sudo_error}"}
-                return {"success": True, "message": "User systemd service olusturulamadi, nohup ile baslatilacak", "nohup_mode": True}
+                        verify = self.connector.execute_command("test -f /etc/systemd/system/node_exporter.service && echo exists || echo missing")
+                        if "exists" in verify.get("stdout", ""):
+                            return {
+                                "success": True,
+                                "message": "Systemd servisi oluşturuldu (sudo ile)",
+                                "service_file": "/etc/systemd/system/node_exporter.service",
+                                "install_path": install_path,
+                                "service_scope": "system",
+                            }
+                    sudo_error = sudo_result.get('stderr', sudo_result.get('stdout', 'Bilinmeyen hata'))
+                    if "password is required" in sudo_error or "sudo: a password is required" in sudo_error or "not in the sudoers" in sudo_error:
+                        return {"success": True, "message": "Systemd service olusturulamadi (sudo yok), nohup ile baslatilacak", "nohup_mode": True, "service_scope": "nohup", "install_path": install_path}
+                    return {"success": False, "error": f"Servis oluşturma hatası: {sudo_error}"}
+            return {"success": True, "message": "User systemd service olusturulamadi, nohup ile baslatilacak", "nohup_mode": True, "service_scope": "nohup", "install_path": install_path}
                 
         except Exception as e:
             logger.error(f"Service creation hatası: {e}", exc_info=True)
             return {"success": False, "error": f"Servis oluşturma hatası: {str(e)}"}
     
-    def _start_service(self) -> Dict[str, Any]:
-        """Servisi başlat ve enable et (root veya user service)"""
+    def _start_service(self, service_scope: str = "system", install_path: Optional[str] = None) -> Dict[str, Any]:
+        """Servisi başlat ve enable et (root, user veya nohup fallback)."""
         try:
-            is_root = self.connector.username == "root"
-            
-            if is_root:
-                # Root kullanıcı - systemd service
-                start_cmd = """
-                    systemctl enable node_exporter && \
-                    systemctl start node_exporter && \
-                    systemctl status node_exporter --no-pager | head -5
-                """
-            else:
-                # Kullanıcı service - önce systemctl --user dene
-                # loginctl enable-linger: logout sonra da servis calissin
+            if service_scope == "user":
                 start_cmd = f"""
                     loginctl enable-linger {self.connector.username} 2>/dev/null || true && \
                     systemctl --user daemon-reload && \
@@ -567,43 +575,55 @@ EOFSERVICE
                     systemctl --user start node_exporter && \
                     systemctl --user status node_exporter --no-pager | head -5
                 """
-            
-            result = self.connector.execute_command(start_cmd)
-            stdout_text = result.get("stdout", "").lower()
-            if result.get("success") or "active (running)" in stdout_text or "enabled" in stdout_text:
-                return {"success": True, "message": f"Servis başlatıldı ({'root' if is_root else 'user'})"}
+                result = self.connector.execute_command(start_cmd)
+                stdout_text = (result.get("stdout", "") + result.get("stderr", "")).lower()
+                if result.get("success") or "active (running)" in stdout_text or "active: active" in stdout_text:
+                    return {"success": True, "message": "Servis başlatıldı (user systemd)"}
+                logger.warning(f"User systemd start failed, falling back to manual: {stdout_text[:200]}")
+                return self._start_manual(install_path=install_path)
+
+            # system scope (root veya sudo ile oluşturulmuş unit)
+            is_root = self.connector.username == "root"
+            if is_root:
+                start_cmd = """
+                    systemctl daemon-reload && \
+                    systemctl enable node_exporter && \
+                    systemctl start node_exporter && \
+                    systemctl status node_exporter --no-pager | head -5
+                """
+                result = self.connector.execute_command(start_cmd)
             else:
-                error_msg = result.get('stderr', result.get('stdout', 'Bilinmeyen hata'))
-                # Sudo denemesi
-                if not is_root:
-                    password = self.connector.sudo_password or ""
-                    sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
-                    sudo_cmd = f"""
-                        {sudo_prefix} systemctl enable node_exporter && \
-                        {sudo_prefix} systemctl start node_exporter && \
-                        {sudo_prefix} systemctl status node_exporter --no-pager | head -5
-                    """
-                    sudo_result = self.connector.execute_command(sudo_cmd)
-                    if sudo_result.get("success") or "active (running)" in sudo_result.get("stdout", "").lower():
-                        return {"success": True, "message": "Servis başlatıldı (sudo ile)"}
-                    else:
-                        sudo_error = sudo_result.get('stderr', sudo_result.get('stdout', 'Bilinmeyen hata'))
-                        if "password is required" in sudo_error or "sudo: a password is required" in sudo_error or "not in the sudoers" in sudo_error:
-                            # Son çare: nohup ile manuel başlat
-                            return self._start_manual()
-                        return {"success": False, "error": f"Servis başlatma hatası: {sudo_error}"}
-                return {"success": False, "error": f"Servis başlatma hatası: {error_msg}"}
+                password = self.connector.sudo_password or ""
+                sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
+                start_cmd = f"""
+                    {sudo_prefix} systemctl daemon-reload && \
+                    {sudo_prefix} systemctl enable node_exporter && \
+                    {sudo_prefix} systemctl start node_exporter && \
+                    {sudo_prefix} systemctl status node_exporter --no-pager | head -5
+                """
+                result = self.connector.execute_command(start_cmd)
+
+            stdout_text = (result.get("stdout", "") + result.get("stderr", "")).lower()
+            if result.get("success") or "active (running)" in stdout_text or "active: active" in stdout_text:
+                return {"success": True, "message": "Servis başlatıldı (systemd)"}
+
+            error_msg = result.get('stderr', result.get('stdout', 'Bilinmeyen hata'))
+            if "does not exist" in error_msg.lower() or "not found" in error_msg.lower():
+                return self._start_manual(install_path=install_path)
+            if not is_root and ("password is required" in error_msg or "not in the sudoers" in error_msg):
+                return self._start_manual(install_path=install_path)
+            return {"success": False, "error": f"Servis başlatma hatası: {error_msg}"}
                 
         except Exception as e:
             logger.error(f"Service start hatası: {e}", exc_info=True)
-            return {"success": False, "error": f"Servis başlatma hatası: {str(e)}"}
+            return self._start_manual(install_path=install_path)
     
-    def _start_manual(self) -> Dict[str, Any]:
+    def _start_manual(self, install_path: Optional[str] = None) -> Dict[str, Any]:
         """Node Exporter'i nohup ile baslatir ve crontab ile kalici yapar."""
         try:
-            # Binary yolunu bul
-            which_result = self.connector.execute_command("which node_exporter 2>/dev/null || echo ''")
-            install_path = which_result.get("stdout", "").strip()
+            if not install_path:
+                which_result = self.connector.execute_command("which node_exporter 2>/dev/null || echo ''")
+                install_path = which_result.get("stdout", "").strip()
             if not install_path:
                 home_check = self.connector.execute_command("echo $HOME")
                 user_home = home_check.get("stdout", f"/home/{self.connector.username}").strip() or f"/home/{self.connector.username}"
@@ -692,6 +712,11 @@ SVCEOF"""
             status_result = self.connector.execute_command(status_cmd)
             
             is_running = status_result.get("success") and "active" in status_result.get("stdout", "").lower()
+
+            # User systemd / nohup fallback
+            if not is_running:
+                proc_check = self.connector.execute_command("pgrep -f '[n]ode_exporter' && echo running || echo stopped")
+                is_running = "running" in proc_check.get("stdout", "").lower()
             
             # Binary varlığı (farklı konumları kontrol et)
             binary_check = self.connector.execute_command("which node_exporter 2>/dev/null || test -f /usr/local/bin/node_exporter && echo 'exists' || test -f ~/bin/node_exporter && echo 'exists' || echo 'not found'")

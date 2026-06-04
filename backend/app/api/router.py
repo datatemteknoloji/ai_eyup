@@ -7,6 +7,20 @@ from fastapi import APIRouter
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
 
+# Auth (login, kullanıcı yönetimi)
+try:
+    from app.api import auth
+    api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+except Exception as e:
+    logger.error(f"Could not load auth router: {e}", exc_info=True)
+
+# Audit Log
+try:
+    from app.api import audit
+    api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
+except Exception as e:
+    logger.error(f"Could not load audit router: {e}", exc_info=True)
+
 # Monitoring
 try:
     from app.api import monitoring
@@ -111,6 +125,13 @@ try:
     api_router.include_router(system_updates.router, prefix="/updates", tags=["system-updates"])
 except Exception as e:
     logger.error(f"Could not load system_updates router: {e}", exc_info=True)
+
+# VM Snapshots
+try:
+    from app.api import snapshots
+    api_router.include_router(snapshots.router, prefix="/snapshots", tags=["snapshots"])
+except Exception as e:
+    logger.error(f"Could not load snapshots router: {e}", exc_info=True)
 
 # SSH Web Terminal
 try:
