@@ -65,7 +65,13 @@ async def list_tools(host: Optional[str] = Query(default=None), db: Session = De
 
     mcp_tools, warning = await list_linux_mcp_tools(selected_host, _to_mcp_credential(cred))
     normalized_mcp = [
-        {"name": t.get("name"), "description": t.get("description") or ""}
+        {
+            "name": t.get("name"),
+            "description": t.get("description") or "",
+            "category": "mcp",
+            "icon": "🔌",
+            "schema": t.get("inputSchema") or t.get("input_schema"),
+        }
         for t in mcp_tools
         if t.get("name")
     ]
