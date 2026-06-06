@@ -439,11 +439,11 @@ const Settings: React.FC = () => {
   }
 
   const tabs = [
-    { id: 'credentials', name: 'Global Credentials', icon: '🔑' },
-    { id: 'ai', name: 'AI Ayarları', icon: '🤖' },
-    { id: 'rag', name: 'RAG (Bilgi Tabanı)', icon: '📚' },
-    { id: 'monitoring', name: 'Monitoring', icon: '📊' },
-    { id: 'about', name: 'Hakkında', icon: 'ℹ️' },
+    { id: 'credentials', name: 'Global Credentials' },
+    { id: 'ai', name: 'AI Ayarları' },
+    { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
+    { id: 'monitoring', name: 'Monitoring' },
+    { id: 'about', name: 'Hakkında' },
   ]
 
   return (
@@ -456,10 +456,9 @@ const Settings: React.FC = () => {
         <nav className="p-3">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-left transition-all ${
+              className={`w-full flex items-center px-4 py-2.5 rounded-lg text-left transition-all text-sm ${
                 activeTab === tab.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}>
-              <span className="text-xl">{tab.icon}</span>
               <span className="font-medium">{tab.name}</span>
             </button>
           ))}
@@ -601,15 +600,6 @@ const Settings: React.FC = () => {
                 </div>
               )}
 
-              <div className="mt-6 bg-slate-900/30 rounded-xl border border-slate-700 p-4">
-                <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl Kullanılır?</h4>
-                <ul className="text-xs text-slate-500 space-y-1">
-                  <li>1. <strong>Yeni Credential</strong> ekleyin (SSH kullanıcı adı, şifre veya private key)</li>
-                  <li>2. <strong>Uygula</strong> butonuyla tüm sunuculara veya seçili sunuculara toplu atayın</li>
-                  <li>3. <strong>Varsayılan</strong> olarak işaretlerseniz yeni sunucularda otomatik kullanılır</li>
-                  <li>4. Credential uygulandığında sunucular otomatik olarak <strong>AI Ready</strong> olur</li>
-                </ul>
-              </div>
             </div>
           )}
 
