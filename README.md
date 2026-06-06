@@ -1,164 +1,98 @@
-# Server Management / AIOps Platform
+# ainew — AI-Powered Infrastructure Management
 
-Merkezi sunucu yönetimi, AI Chat asistanı, Prometheus metrikleri, RAG (runbook/incident/metrik) ve Linux MCP araçları.
+**ainew** is a self-hosted platform for managing Linux servers and VMware hypervisors at scale. It combines SSH-based automation, real-time monitoring, and local AI (Ollama) to give operations teams a single control plane — without sending data to external cloud services.
 
-## Gereksinimler
+[![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/frontend-React%2FTypeScript-61DAFB)](https://react.dev)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#)
 
-- Docker ve Docker Compose (veya Podman)
-- (Opsiyonel) Ollama – AI Chat için; host'ta çalışıyor olmalı
+---
 
-## Tek komutla çalıştırma
+## What it does
 
-```bash
-# Tüm servisleri build edip başlat (arka planda)
-./run.sh
+| Capability | Description |
+|---|---|
+| **Server Inventory** | SSH-based server discovery, status monitoring, remote command execution |
+| **Hypervisor Management** | VMware ESXi VM sync, snapshot management, resource tracking |
+| **AIOps Pipeline** | Anomaly detection → Events → Incidents → AI Root Cause Analysis |
+| **AI Chat** | RAG-powered chat using local Ollama LLM with server context |
+| **Agentic AI** | Tool-calling AI agent with human-in-the-loop approval gate |
+| **Ansible / AWX** | Ad-hoc commands and playbook execution across server groups |
+| **Package Management** | RPM/DEB package deployment with AI error analysis |
+| **Repository Management** | Local Yum/APT repository creation and client config push |
+| **System Updates** | AI-guided update planning with pre/post VM snapshot support |
+| **Web Terminal** | WebSocket SSH terminal directly in the browser |
+| **MCP Tools** | Model Context Protocol server integration |
+| **Audit Log** | Full audit trail for all operations |
 
-# veya ön planda (logları görmek için)
-./run.sh -f
-```
+---
 
-İlk çalıştırmada image'lar build edilir; birkaç dakika sürebilir.
-
-## Servisler
-
-| Servis      | Port | Açıklama |
-|------------|------|----------|
-| **Frontend** | 3000 | React arayüz: http://localhost:3000 |
-| **Backend**  | 8000 | FastAPI API (host network) |
-| **PostgreSQL** | 5432 | TimescaleDB |
-| **Redis**   | 6379 | Önbellek / kuyruk |
-| **Prometheus** | 9090 | Metrikler |
-| **Pushgateway** | 9091 | Push metrikleri |
-
-## Ortam değişkenleri (opsiyonel)
-
-Backend için `docker-compose.yml` içinde veya `.env` ile:
-
-- `OLLAMA_URL` – Ollama adresi (varsayılan: http://127.0.0.1:11434). Uzaktan Ollama kullanıyorsanız: `http://<ollama-sunucusu-ip>:11434`
-- `OLLAMA_DEFAULT_MODEL` – Chat modeli (örn. llama3.2:3b)
-- `PROMETHEUS_URL` – Prometheus adresi
-- `RAG_CHROMA_PATH` – RAG vektör veritabanı dizini
-
-## Ollama (AI Chat için)
-
-AI Chat'in yanıt verebilmesi için Ollama'nın çalışıyor olması gerekir.
-
-### Sadece bu makinede (localhost)
+## Quick start
 
 ```bash
-ollama serve
-ollama pull llama3.2:3b
-ollama pull nomic-embed-text   # RAG için (opsiyonel)
+# 1. Clone and configure
+git clone <repo-url> ainew && cd ainew
+cp .env.example .env          # edit SECRET_KEY, POSTGRES_PASSWORD, OLLAMA_URL
+
+# 2. Start all services
+docker compose up -d
+
+# 3. Open the UI
+open http://localhost:3000     # default login: admin / admin123
 ```
 
-### Dışarıdan / ağdaki başkalarının da kullanması
+Full setup guide: [docs/getting-started.md](docs/getting-started.md)
 
-Ollama'yı **tüm ağ arayüzlerinde** dinletebilirsiniz; böylece aynı ağdaki diğer bilgisayarlar da bu sunucudaki Ollama'ya bağlanabilir.
+---
 
-**Seçenek 1 – Host'ta (sistemde kurulu Ollama):**
-
-```bash
-# 0.0.0.0 = tüm IP'lerde dinle (sadece güvendiğiniz ağda kullanın)
-OLLAMA_HOST=0.0.0.0 ollama serve
-```
-
-Diğer makineler: `http://<bu-sunucunun-ip>:11434` (örn. `http://192.168.1.100:11434`).
-
-**Seçenek 2 – Docker ile Ollama:**
-
-```bash
-# Ollama container'ını başlat (OLLAMA_HOST=0.0.0.0 ile aynı davranış)
-docker compose --profile ollama up -d ollama
-```
-
-Yine `http://<sunucu-ip>:11434` adresinden erişilir. Backend aynı host'ta çalışıyorsa `OLLAMA_URL=http://127.0.0.1:11434` yeterli; backend farklı makinedeyse `OLLAMA_URL=http://<ollama-sunucusu-ip>:11434` verin.
-
-**Backend'in kullandığı adres:** `OLLAMA_URL` ortam değişkeni (docker-compose veya `.env`). Örnek: `OLLAMA_URL=http://192.168.1.100:11434`.
-
-**Bağlantı kurulamıyorsa (curl: Failed to connect):**
-
-1. **Ollama sadece localhost'ta dinliyor olabilir.** Systemd ile kalıcı çözüm (sunucuda bir kez çalıştırın; proje dizininden veya `PROJE` yerine proje yolunu yazın):
-   ```bash
-   cd /path/to/ainew   # proje dizinine geçin
-   sudo cp scripts/ollama-listen-all.conf /etc/systemd/system/ollama.service.d/ && sudo systemctl daemon-reload && sudo systemctl restart ollama
-   ```
-   Veya tek satırda tam yol: `sudo cp /path/to/ainew/scripts/ollama-listen-all.conf /etc/systemd/system/ollama.service.d/ && sudo systemctl daemon-reload && sudo systemctl restart ollama`
-   Sonra `ss -tlnp | grep 11434` ile `0.0.0.0:11434` görünmeli.
-2. **Ollama hiç çalışmıyorsa:** Docker: `docker compose --profile ollama up -d ollama` (proje dizininde). Host: `OLLAMA_HOST=0.0.0.0 ollama serve`.
-3. **Firewall:** Dışarıdan hâlâ bağlanamıyorsanız 11434'ü açın: `sudo ufw allow 11434/tcp && sudo ufw status` veya `sudo firewall-cmd --add-port=11434/tcp --permanent && sudo firewall-cmd --reload`.
-
-## Ansible/AWX Entegrasyonu (Opsiyonel)
-
-**Toplu komut çalıştırma** ve **playbook yönetimi** için Ansible + AWX entegrasyonu mevcuttur.
-
-### Ansible Ad-Hoc Komut (Yerelde)
-
-Backend'de Ansible kurulu. Seçili sunucularda ad-hoc komut çalıştırabilirsiniz:
-
-- **Ansible/AWX** sayfasından sunucu seçin
-- Modül (shell, yum, apt vb.) + argümanları yazın
-- "Komutu Çalıştır" ile tüm sunucularda aynı anda çalışır
-
-**Örnek kullanımlar:**
-- Module: `shell`, Args: `"uptime"`
-- Module: `yum`, Args: `"name=vim state=present"`, Become: ✓
-- Module: `service`, Args: `"name=nginx state=restarted"`, Become: ✓
-
-### AWX Job Template (Playbook)
-
-AWX URL/credential ayarlandığında AWX'teki job template'leri listeleyip çalıştırabilirsiniz.
-
-1. `.env` veya docker-compose environment'a ekleyin:
-   ```bash
-   AWX_URL=https://awx.example.com
-   AWX_USERNAME=admin
-   AWX_PASSWORD=your-password
-   AWX_VERIFY_SSL=true
-   ```
-
-2. **Ansible/AWX** sayfasından:
-   - Job Template seçin
-   - (Opsiyonel) Sunucu seçimi → limit parametresi
-   - (Opsiyonel) Extra Vars (JSON)
-   - "Job Başlat" → AWX'te job çalışır, durum takibi yapılır
-
-**Faydaları:**
-- Ansible ping ile SSH check (Global Credential uygulamada kullanılabilir)
-- Toplu komut: tüm sunuculara aynı anda `uptime`, paket kurma, servis yönetimi
-- AWX playbook: karmaşık otomasyon (örn: patch, backup, config deploy)
-
-## Özellikler
-
-- **Sunucular:** CRUD, health check, AI Ready, Node Exporter kurulumu
-- **AI Chat:** Ollama, RAG (runbook / incident / metrik), Markdown + tablo, CSV indirme
-- **Ansible/AWX:** Toplu komut çalıştırma (ad-hoc), playbook çalıştırma (AWX job template), SSH check
-- **RAG:** Runbook ingest, incident/event indexleme, metrik açıklamaları; Ayarlar → RAG
-- **Canlı metrikler:** Prometheus grafikleri
-- **Hypervisor'lar:** oVirt / VMware entegrasyonu
-- **Events / Incidents:** Olay ve incident yönetimi
-
-## Dizin yapısı
+## Architecture
 
 ```
-ainew/
-├── backend/          # FastAPI (app/api, app/services, app/models)
-├── frontend/         # React + Vite + Tailwind
-├── prometheus/       # prometheus.yml, targets
-├── docs/             # RAG_KULLANIM.md vb.
-├── docker-compose.yml
-└── run.sh            # Tek komutla başlatma
+Browser ──► Nginx (port 3000) ──► React SPA
+                │
+                └──► FastAPI (port 8000, network_mode=host)
+                          │
+                          ├──► PostgreSQL / TimescaleDB  (metrics + data)
+                          ├──► Redis                     (task queue / cache)
+                          ├──► Ollama                    (local LLM inference)
+                          ├──► ChromaDB                  (vector search / RAG)
+                          ├──► Prometheus / Pushgateway  (metrics scraping)
+                          └──► SSH                       (server management)
 ```
 
-## RAG kullanımı
+Full architecture: [docs/architecture.md](docs/architecture.md)
 
-- **Ayarlar → RAG:** Metrik açıklamalarını yükle, incident/event indexle
-- **Chat:** RAG açık/kapalı toggle; tablolar Markdown + "CSV / Excel olarak indir"
-- Detay: [docs/RAG_KULLANIM.md](docs/RAG_KULLANIM.md)
+---
 
-## Durdurma
+## Documentation
 
-```bash
-docker-compose down
-```
+| Document | Content |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Install, configure, first login |
+| [Architecture](docs/architecture.md) | System design, data flow, component overview |
+| [Deployment](docs/deployment.md) | Docker Compose config, env vars, production tips |
+| [API Reference](docs/api-reference.md) | All REST endpoints with parameters and responses |
+| [AIOps Pipeline](docs/features/aiops.md) | Anomaly detection → Incidents → RCA explanation |
+| [AI Chat & RAG](docs/features/ai-chat.md) | Chat setup, RAG ingestion, model selection |
+| [Agentic AI](docs/features/agent.md) | Tool-calling agent, approval flow, guard rails |
+| [Server Management](docs/features/server-management.md) | Adding servers, SSH credentials, metrics |
+| [Package & Repo Management](docs/features/package-management.md) | RPM/DEB deployment, local repos |
 
-Veriler (PostgreSQL, Redis, Prometheus, Chroma) volume'larda kalır; tekrar `./run.sh` ile aynı verilerle devam edersin.
+---
+
+## Tech stack
+
+**Backend:** Python 3.11, FastAPI 0.104, SQLAlchemy, Alembic, Paramiko (SSH), LangGraph (agent), ChromaDB (RAG)
+
+**Frontend:** React 18, TypeScript, Tailwind CSS, Vite, TanStack Query, Recharts
+
+**Infrastructure:** PostgreSQL 15 + TimescaleDB, Redis 7, Ollama, Prometheus, Docker Compose
+
+---
+
+## Requirements
+
+- Docker + Docker Compose v2
+- Ollama running locally or on a reachable host (for AI features)
+- Linux host with SSH access to managed servers
+- VMware ESXi with API access (for hypervisor features, optional)
