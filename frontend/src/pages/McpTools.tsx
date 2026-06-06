@@ -543,9 +543,9 @@ const McpTools: React.FC = () => {
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Sunucular</span>
             <div className="flex gap-1">
-              <button onClick={selectAiReady} title="AI Ready seç" className="text-[9px] px-1.5 py-0.5 rounded border border-cyan-700/60 text-cyan-400 hover:bg-cyan-700/20">AI</button>
-              <button onClick={selectAll} title="Tümünü seç" className="text-[9px] px-1.5 py-0.5 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">Tümü</button>
-              <button onClick={clearSel} title="Seçimi temizle" className="text-[9px] px-1.5 py-0.5 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">✕</button>
+              <button onClick={selectAiReady} title="AI Ready seç" className="text-xs px-2 py-1 rounded border border-cyan-700/60 text-cyan-400 hover:bg-cyan-700/20">AI</button>
+              <button onClick={selectAll} title="Tümünü seç" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">Tümü</button>
+              <button onClick={clearSel} title="Seçimi temizle" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">✕</button>
             </div>
           </div>
 

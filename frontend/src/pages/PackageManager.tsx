@@ -147,10 +147,10 @@ const ServerSelector = ({
 
       {/* Hızlı seçim */}
       <div className="bg-slate-800/60 px-3 py-1.5 flex items-center gap-2 border-b border-slate-700/60">
-        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2 py-0.5 hover:bg-slate-700 rounded">🤖 AI Ready Aktifler</button>
-        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2 py-0.5 hover:bg-slate-700 rounded">Tüm Aktifler</button>
-        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2 py-0.5 hover:bg-slate-700 rounded">Tümü</button>
-        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2 py-0.5 hover:bg-slate-700 rounded">Temizle</button>
+        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">AI Ready Aktifler</button>
+        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tüm Aktifler</button>
+        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tümü</button>
+        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Temizle</button>
         <span className="text-xs text-slate-500 ml-auto">{selected.length} seçili</span>
       </div>
 

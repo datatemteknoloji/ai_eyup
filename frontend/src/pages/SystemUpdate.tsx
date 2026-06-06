@@ -143,11 +143,11 @@ const ServerSelector = ({ servers, selected, onChange }: {
           placeholder="Sunucu veya IP ara..."
           className="flex-1 min-w-[160px] bg-slate-700 text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
         <button onClick={() => onChange(filtered.map(s => s.id))}
-          className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-slate-700 rounded">Tümü</button>
+          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tümü</button>
         <button onClick={() => onChange(filtered.filter(s => s.status === 'ONLINE').map(s => s.id))}
-          className="text-xs text-green-400 hover:text-green-300 px-2 py-1 hover:bg-slate-700 rounded">Aktifler</button>
+          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Aktifler</button>
         <button onClick={() => onChange([])}
-          className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 hover:bg-slate-700 rounded">Temizle</button>
+          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Temizle</button>
         <span className="text-xs text-slate-500 ml-auto">{selected.length} / {servers.length} seçili</span>
       </div>
       <div className="max-h-64 overflow-y-auto divide-y divide-slate-700/40">
