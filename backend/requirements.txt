@@ -79,3 +79,7 @@ langchain-core==0.2.43
 
 ansible==9.1.0
 zstandard==0.22.0
+
+# Testing
+pytest==9.0.3
+pytest-asyncio==0.24.0
