@@ -117,7 +117,7 @@ const Hypervisors: React.FC = () => {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
-      alert(`✅ ${data.synced_count} VM senkronize edildi!\n\nToplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
+      alert(`${data.synced_count} VM senkronize edildi!\n\nToplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
     },
     onError: (error: Error) => {
       alert(`❌ Sync hatası: ${error.message}`)
@@ -166,7 +166,7 @@ const Hypervisors: React.FC = () => {
     
     // Bağlantı testi yapılmadıysa veya başarısız olduysa uyar
     if (!connectionTest?.tested) {
-      alert('⚠️ Lütfen önce "Bağlantıyı Test Et" butonuna basarak credential\'ları doğrulayın!')
+      alert('Lütfen önce "Bağlantıyı Test Et" butonuna basarak credential\'ları doğrulayın!')
       return
     }
     
@@ -196,7 +196,7 @@ const Hypervisors: React.FC = () => {
       vmware: 'from-green-500 to-green-600',
       hyperv: 'from-blue-500 to-blue-600',
       kvm: 'from-orange-500 to-orange-600',
-      xen: 'from-purple-500 to-purple-600',
+      xen: 'from-blue-600 to-blue-700',
       proxmox: 'from-red-500 to-red-600'
     }
     return colors[type.toLowerCase()] || 'from-slate-500 to-slate-600'
@@ -245,7 +245,7 @@ const Hypervisors: React.FC = () => {
           {hypervisors.map((hv) => (
             <div
               key={hv.id}
-              className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
+              className="bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
             >
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -269,7 +269,7 @@ const Hypervisors: React.FC = () => {
                     className="text-slate-500 hover:text-red-400 transition-colors p-1"
                     title="Sil"
                   >
-                    🗑️
+                    ✕
                   </button>
                 </div>
                 <div className="space-y-2 text-sm">
@@ -288,7 +288,7 @@ const Hypervisors: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between">
+                <div className="mt-4 pt-4 border-t border-white/[0.06] flex justify-between">
                   <button 
                     onClick={() => syncVMsMutation.mutate(hv.id)}
                     disabled={syncVMsMutation.isPending}
@@ -301,7 +301,7 @@ const Hypervisors: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        <span>🔄</span>
+                        <span className="inline-block animate-spin text-sm">↺</span>
                         <span>Sync VMs</span>
                       </>
                     )}
@@ -315,9 +315,9 @@ const Hypervisors: React.FC = () => {
           ))}
         </div>
       ) : (
-        <div className="bg-slate-800 rounded-xl border border-slate-700 p-12 text-center">
+        <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] p-12 text-center">
           <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-3xl">☁️</span>
+            <span className="text-xs font-bold text-blue-400">HV</span>
           </div>
           <h3 className="text-lg font-medium text-white mb-2">Henüz hypervisor eklenmemiş</h3>
           <p className="text-slate-400 mb-4">Sanal makinelerinizi yönetmek için bir hypervisor ekleyin</p>
@@ -334,7 +334,7 @@ const Hypervisors: React.FC = () => {
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-md shadow-2xl">
+          <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-white">Yeni Hypervisor Ekle</h2>
               <button
@@ -421,11 +421,11 @@ const Hypervisors: React.FC = () => {
                   type="button"
                   onClick={testConnection}
                   disabled={testing || !formData.username || !formData.password}
-                  className="w-full py-2.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-lg hover:bg-purple-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
                 >
                   {testing ? (
                     <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-400"></div>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
                       <span>Test Ediliyor...</span>
                     </>
                   ) : (
@@ -445,7 +445,7 @@ const Hypervisors: React.FC = () => {
                     : 'bg-red-500/10 border-red-500/30'
                 }`}>
                   <div className="flex items-start gap-3">
-                    <span className="text-2xl">{connectionTest.success ? '✅' : '❌'}</span>
+                    <span className="text-sm font-bold" style={{color: connectionTest.success ? 'var(--success)' : 'var(--error)'}}>{connectionTest.success ? 'OK' : 'ERR'}</span>
                     <div className="flex-1">
                       <p className={`font-medium ${
                         connectionTest.success ? 'text-green-400' : 'text-red-400'

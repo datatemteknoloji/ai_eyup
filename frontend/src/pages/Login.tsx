@@ -28,7 +28,7 @@ const Login: React.FC = () => {
     <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-start px-4 pt-[20vh] pb-8">
       <div className="w-full max-w-sm">
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
             <span className="text-white font-bold text-lg">DT</span>
           </div>
           <span className="text-white font-semibold text-xl">datatem AI</span>

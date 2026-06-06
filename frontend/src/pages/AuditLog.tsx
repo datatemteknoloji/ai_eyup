@@ -53,10 +53,10 @@ interface AuditRow {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const TYPE_META: Record<string, { label: string; icon: string; color: string }> = {
-  snapshot: { label: 'Snapshot', icon: '💾', color: 'text-cyan-300' },
-  agent:    { label: 'Agent',    icon: '🤖', color: 'text-purple-300' },
-  package:  { label: 'Paket',   icon: '📦', color: 'text-orange-300' },
-  update:   { label: 'Güncelleme', icon: '🔄', color: 'text-blue-300' },
+  snapshot: { label: 'Snapshot', icon: '', color: 'text-cyan-300' },
+  agent: { label: 'Agent', icon: '', color: 'text-blue-300' },
+  package: { label: 'Paket', icon: '', color: 'text-orange-300' },
+  update:   { label: 'Güncelleme', icon: '', color: 'text-blue-300' },
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -84,7 +84,7 @@ const CAT_LABEL: Record<string, string> = {
 }
 
 const CAT_COLOR: Record<string, string> = {
-  auth: 'text-sky-300', agent: 'text-purple-300', system_update: 'text-blue-300',
+  auth: 'text-sky-300', agent: 'text-blue-300', system_update: 'text-blue-300',
   ssh: 'text-emerald-300', rca: 'text-cyan-300', snapshot: 'text-pink-300', package: 'text-orange-300',
 }
 
@@ -94,7 +94,7 @@ const fmt = (s: string | null | undefined) =>
   s ? new Date(s).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 
 const StatusBadge = ({ status }: { status: string }) => (
-  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_STYLE[status] || 'bg-slate-600/20 text-slate-300 border-slate-600/40'}`}>
+  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_STYLE[status] || 'bg-white/[0.04] text-slate-300 border-white/[0.08]'}`}>
     {status === 'pending' && <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
     {status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
     {STATUS_TR[status] || status}
@@ -105,7 +105,7 @@ const StatusBadge = ({ status }: { status: string }) => (
 
 const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) => {
   const [expanded, setExpanded] = useState(false)
-  const meta = TYPE_META[task.type] || { label: task.type, icon: '⚙️', color: 'text-slate-300' }
+  const meta = TYPE_META[task.type] || { label: task.type, icon: '', color: 'text-slate-300' }
   const isPending = task.status === 'pending' || task.status === 'running'
 
   return (
@@ -117,7 +117,7 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
           ? 'border-red-500/25 bg-red-500/5'
           : task.status === 'active' || task.status === 'executed' || task.status === 'success'
           ? 'border-green-500/20 bg-green-500/5'
-          : 'border-slate-700/50 bg-slate-800/40'
+          : 'border-white/[0.06] bg-cyber-card'
       }`}
     >
       <div
@@ -138,7 +138,7 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
             <span className={`text-xs font-semibold uppercase tracking-wider ${meta.color}`}>{meta.label}</span>
             <StatusBadge status={task.status} />
             {task.platform && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-400 border border-slate-600/30">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400 border border-white/[0.06]">
                 {task.platform.toUpperCase()}
               </span>
             )}
@@ -167,7 +167,7 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="px-4 pb-3 border-t border-slate-700/40 pt-3 space-y-2">
+        <div className="px-4 pb-3 border-t border-white/[0.05] pt-3 space-y-2">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
             <div><span className="text-slate-500">Oluşturuldu: </span><span className="text-slate-300">{fmt(task.created_at)}</span></div>
             {task.decided_at && <div><span className="text-slate-500">Karar: </span><span className="text-slate-300">{fmt(task.decided_at)}</span></div>}
@@ -229,10 +229,10 @@ const TasksPanel = () => {
       {/* Özet kartları */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Toplam', value: summary.total, color: 'text-white', bg: 'bg-slate-800/60', border: 'border-slate-700' },
-          { label: 'Bekliyor', value: summary.pending + summary.running, color: 'text-yellow-300', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30', icon: '⏳' },
-          { label: 'Başarısız', value: summary.failed, color: 'text-red-300', bg: 'bg-red-500/10', border: 'border-red-500/30', icon: '❌' },
-          { label: 'Tamamlandı', value: summary.active, color: 'text-green-300', bg: 'bg-green-500/10', border: 'border-green-500/30', icon: '✅' },
+          { label: 'Toplam', value: summary.total, color: 'text-white', bg: 'bg-cyber-card', border: 'border-white/[0.06]' },
+          { label: 'Bekliyor', value: summary.pending + summary.running, color: 'text-yellow-300', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+          { label: 'Başarısız', value: summary.failed, color: 'text-red-300', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+          { label: 'Tamamlandı', value: summary.active, color: 'text-green-300', bg: 'bg-green-500/10', border: 'border-green-500/30' },
         ].map(c => (
           <button
             key={c.label}
@@ -242,37 +242,37 @@ const TasksPanel = () => {
               : c.label === 'Tamamlandı' ? (statusFilter === 'active' ? '' : 'active')
               : ''
             )}
-            className={`${c.bg} border ${c.border} rounded-xl p-4 text-left hover:brightness-110 transition-all`}
+            className={`${c.bg} border ${c.border} rounded-[10px] p-4 text-left hover:brightness-110 transition-all`}
           >
             <div className={`text-2xl font-bold ${c.color}`}>{c.value}</div>
-            <div className="text-xs text-slate-400 mt-0.5">{c.icon} {c.label}</div>
+            <div className="text-xs text-slate-400 mt-0.5">{c.label}</div>
           </button>
         ))}
       </div>
 
       {/* Filtre bar */}
-      <div className="bg-slate-800/60 border border-slate-700 rounded-xl px-3 py-2.5 flex flex-wrap gap-2 items-center">
-        <div className="flex rounded-lg overflow-hidden border border-slate-600/50">
-          {[['', 'Tümü'], ['snapshot', '💾 Snapshot'], ['agent', '🤖 Agent'], ['package', '📦 Paket'], ['update', '🔄 Güncelleme']].map(([v, l]) => (
+      <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] px-3 py-2.5 flex flex-wrap gap-2 items-center">
+        <div className="flex rounded-lg overflow-hidden border border-white/[0.08]">
+          {[['', 'Tümü'], ['snapshot', 'Snapshot'], ['agent', 'Agent'], ['package', 'Paket'], ['update', 'Güncelleme']].map(([v, l]) => (
             <button
               key={v}
               onClick={() => setTypeFilter(v)}
-              className={`px-3 py-1.5 text-xs transition-colors ${typeFilter === v ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+              className={`px-3 py-1.5 text-xs transition-colors ${typeFilter === v ? 'bg-blue-600 text-white' : 'bg-cyber-card text-slate-400 hover:text-slate-200'}`}
             >{l}</button>
           ))}
         </div>
-        <div className="flex rounded-lg overflow-hidden border border-slate-600/50 ml-auto">
+        <div className="flex rounded-lg overflow-hidden border border-white/[0.08] ml-auto">
           {[['1', '1s'], ['6', '6s'], ['24', '24s'], ['72', '3g'], ['168', '7g']].map(([v, l]) => (
             <button
               key={v}
               onClick={() => setHours(Number(v))}
-              className={`px-2.5 py-1.5 text-xs transition-colors ${hours === Number(v) ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+              className={`px-2.5 py-1.5 text-xs transition-colors ${hours === Number(v) ? 'bg-white/[0.10] text-white' : 'bg-cyber-card text-slate-400 hover:text-slate-200'}`}
             >{l}</button>
           ))}
         </div>
         <button
           onClick={() => setAutoRefresh(!autoRefresh)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${autoRefresh ? 'bg-green-500/15 text-green-300 border-green-500/30' : 'bg-slate-700 text-slate-400 border-slate-600'}`}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${autoRefresh ? 'bg-green-500/15 text-green-300 border-green-500/30' : 'bg-white/[0.05] text-slate-400 border-white/[0.07]'}`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
           {autoRefresh ? 'Canlı' : 'Durdur'}
@@ -288,8 +288,8 @@ const TasksPanel = () => {
 
       {/* Görev listesi */}
       {tasks.length === 0 ? (
-        <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-12 text-center text-slate-500">
-          <div className="text-4xl mb-3">✅</div>
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-12 text-center text-slate-500">
+          <div className="text-2xl font-bold text-green-400 mb-3">✓</div>
           Son {hours} saatte görev bulunamadı
         </div>
       ) : (
@@ -311,7 +311,7 @@ const TasksPanel = () => {
           {tasks.filter(t => t.status === 'failed').length > 0 && (
             <div className="space-y-2 mt-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-red-400 uppercase tracking-wider px-1">
-                ❌ Başarısız ({tasks.filter(t => t.status === 'failed').length})
+                Başarısız ({tasks.filter(t => t.status === 'failed').length})
               </div>
               {tasks.filter(t => t.status === 'failed').map(t => (
                 <TaskCard key={t.id} task={t} onRefresh={refetch} />
@@ -382,36 +382,36 @@ const AuditPanel = () => {
       {/* Stats */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4">
+          <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-2xl font-bold text-white">{stats.total}</div>
             <div className="text-xs text-slate-400 mt-0.5">Toplam kayıt ({stats.days}g)</div>
           </div>
           <div className="bg-green-500/10 border border-green-500/25 rounded-xl p-4">
             <div className="text-2xl font-bold text-green-300">{stats.by_status?.success || 0}</div>
-            <div className="text-xs text-slate-400 mt-0.5">✅ Başarılı</div>
+            <div className="text-xs text-slate-400 mt-0.5">Başarılı</div>
           </div>
           <div className="bg-red-500/10 border border-red-500/25 rounded-xl p-4">
             <div className="text-2xl font-bold text-red-300">
               {(stats.by_status?.failure || 0) + (stats.by_status?.blocked || 0) + (stats.by_status?.rejected || 0)}
             </div>
-            <div className="text-xs text-slate-400 mt-0.5">❌ Başarısız / Engellendi</div>
+            <div className="text-xs text-slate-400 mt-0.5">Başarısız / Engellendi</div>
           </div>
-          <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4">
+          <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-sm font-bold text-white truncate">{Object.keys(stats.top_actors || {})[0] || '—'}</div>
-            <div className="text-xs text-slate-400 mt-0.5">👤 En aktif kullanıcı</div>
+            <div className="text-xs text-slate-400 mt-0.5">En aktif kullanıcı</div>
           </div>
         </div>
       )}
 
       {/* Filtreler */}
-      <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3 flex flex-wrap gap-2 items-center">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-3 flex flex-wrap gap-2 items-center">
         <select value={category} onChange={e => { setOffset(0); setCategory(e.target.value) }}
-          className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
+          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
           <option value="">Tüm kategoriler</option>
           {Object.entries(CAT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         <select value={status} onChange={e => { setOffset(0); setStatus(e.target.value) }}
-          className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
+          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
           <option value="">Tüm durumlar</option>
           <option value="success">Başarılı</option>
           <option value="failure">Başarısız</option>
@@ -420,7 +420,7 @@ const AuditPanel = () => {
           <option value="pending">Bekliyor</option>
         </select>
         <select value={days} onChange={e => { setOffset(0); setDays(e.target.value) }}
-          className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
+          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
           <option value="1">Son 1 gün</option>
           <option value="7">Son 7 gün</option>
           <option value="30">Son 30 gün</option>
@@ -428,10 +428,10 @@ const AuditPanel = () => {
         </select>
         <input value={actor} onChange={e => { setOffset(0); setActor(e.target.value) }}
           placeholder="Kullanıcı..."
-          className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-slate-200 w-32" />
+          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 w-32" />
         <input value={q} onChange={e => { setOffset(0); setQ(e.target.value) }}
           placeholder="Özet ara..."
-          className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-slate-200 flex-1 min-w-[120px]" />
+          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 flex-1 min-w-[120px]" />
         <button onClick={() => refetch()} disabled={isFetching}
           className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-50">
           {isFetching ? '...' : '↺ Yenile'}
@@ -439,10 +439,10 @@ const AuditPanel = () => {
       </div>
 
       {/* Tablo */}
-      <div className="bg-slate-800/60 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900/60 text-slate-400 text-xs">
+            <thead className="bg-cyber-deep/60 text-slate-400 text-xs">
               <tr>
                 <th className="text-left px-3 py-2.5 font-medium">Zaman</th>
                 <th className="text-left px-3 py-2.5 font-medium">Kullanıcı</th>
@@ -454,11 +454,11 @@ const AuditPanel = () => {
                 <th className="px-3 py-2.5" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/40">
+            <tbody className="divide-y divide-white/[0.04]">
               {rows.map(r => (
                 <React.Fragment key={r.id}>
                   <tr
-                    className="hover:bg-slate-700/20 cursor-pointer"
+                    className="hover:bg-white/[0.03] cursor-pointer"
                     onClick={() => setExpanded(expanded === r.id ? null : r.id)}
                   >
                     <td className="px-3 py-2 text-slate-400 whitespace-nowrap text-xs">{fmt(r.created_at)}</td>
@@ -473,7 +473,7 @@ const AuditPanel = () => {
                     <td className="px-3 py-2 text-slate-600 text-xs">{expanded === r.id ? '▲' : '▼'}</td>
                   </tr>
                   {expanded === r.id && r.detail && (
-                    <tr className="bg-slate-900/40">
+                    <tr className="bg-cyber-deep/60">
                       <td colSpan={8} className="px-4 py-3">
                         <pre className="text-xs text-slate-400 whitespace-pre-wrap font-mono bg-slate-900/60 rounded-lg p-3 max-h-48 overflow-y-auto">
                           {JSON.stringify(r.detail, null, 2)}
@@ -491,13 +491,13 @@ const AuditPanel = () => {
         </div>
 
         {/* Sayfalama */}
-        <div className="flex items-center justify-between px-3 py-2.5 border-t border-slate-700/50 text-xs text-slate-400">
+        <div className="flex items-center justify-between px-3 py-2.5 border-t border-white/[0.05] text-xs text-slate-400">
           <span>{total} kayıt{total > 0 ? ` · ${offset + 1}–${Math.min(offset + limit, total)}` : ''}</span>
           <div className="flex gap-2">
             <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}
-              className="px-2.5 py-1 rounded-lg bg-slate-700 disabled:opacity-40 hover:bg-slate-600 text-slate-200">← Önceki</button>
+              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">← Önceki</button>
             <button disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}
-              className="px-2.5 py-1 rounded-lg bg-slate-700 disabled:opacity-40 hover:bg-slate-600 text-slate-200">Sonraki →</button>
+              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">Sonraki →</button>
           </div>
         </div>
       </div>
@@ -535,7 +535,7 @@ const ActivityCenter: React.FC = () => {
       </div>
 
       {/* Tab bar */}
-      <div className="flex border-b border-slate-700">
+      <div className="flex border-b border-white/[0.07]">
         <button
           onClick={() => setTab('tasks')}
           className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
@@ -544,7 +544,7 @@ const ActivityCenter: React.FC = () => {
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          ⚙️ Görev İzleme
+          Görev İzleme
           {badge && badge.count > 0 && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-yellow-500 text-black font-bold">
               {badge.count}
@@ -559,7 +559,7 @@ const ActivityCenter: React.FC = () => {
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          📋 Audit Log
+          Audit Log
         </button>
       </div>
 

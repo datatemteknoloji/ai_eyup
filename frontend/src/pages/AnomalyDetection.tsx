@@ -44,9 +44,9 @@ function formatDayLabel(isoDate: string) {
 
 function PipelineFlow({ status }: { status?: AiopsStatus }) {
   const stages = [
-    { key: 'metric', label: 'Metrikler', icon: '📊', color: NEON.cyan, value: status?.monitored_servers ?? 0, unit: 'sunucu' },
+    { key: 'metric', label: 'Metrikler', icon: '', color: NEON.cyan, value: status?.monitored_servers ?? 0, unit: 'sunucu' },
     { key: 'anomaly', label: 'Anomali', icon: '🔍', color: NEON.blue, value: status?.active_metric_anomalies ?? 0, unit: 'aktif' },
-    { key: 'event', label: 'Event', icon: '⚡', color: NEON.purple, value: status?.active_metric_critical ?? 0, unit: 'kritik' },
+    { key: 'event', label: 'Event', icon: '', color: NEON.blue, value: status?.active_metric_critical ?? 0, unit: 'kritik' },
     { key: 'incident', label: 'Incident', icon: '🚨', color: NEON.orange, value: status?.auto_open_incidents ?? 0, unit: 'otomatik' },
     { key: 'rca', label: 'AI RCA', icon: '🧠', color: NEON.green, value: status?.incidents_with_rca ?? 0, unit: 'analiz' },
   ]
@@ -170,9 +170,9 @@ const AnomalyDetection: React.FC = () => {
       <PageHeader title="Anomaly Detection" subtitle="Otonom tespit · otomatik incident · yapay zeka kök neden analizi"
         actions={<>
           <PrimaryButton accent={NEON.cyan} onClick={() => cycleMutation.mutate()} disabled={cycleMutation.isPending}>
-            {cycleMutation.isPending ? 'Çalışıyor...' : '⚡ Döngüyü Çalıştır'}
+            {cycleMutation.isPending ? 'Çalışıyor...' : 'Döngüyü Çalıştır'}
           </PrimaryButton>
-          <Link to="/events"><GhostButton accent={NEON.purple}>Events →</GhostButton></Link>
+          <Link to="/events"><GhostButton accent={NEON.blue}>Events →</GhostButton></Link>
           <Link to="/incidents"><GhostButton accent={NEON.orange}>Incidents →</GhostButton></Link>
         </>} />
 
@@ -303,7 +303,7 @@ const AnomalyDetection: React.FC = () => {
 
       {/* TAB: List */}
       {tab === 'list' && (
-        <Section title="Log Anomali Listesi" accent={NEON.purple}
+        <Section title="Log Anomali Listesi" accent={NEON.blue}
           right={<span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{data?.generated_at ? new Date(data.generated_at).toLocaleString('tr-TR') : '-'}</span>}>
           {isLoading ? (
             <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Yükleniyor...</div>

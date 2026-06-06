@@ -110,7 +110,7 @@ const StreamingText = ({ text }: { text: string }) => (
         code: ({ className, children }) => className
           ? <code className={className}>{children}</code>
           : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
-        pre: ({ children }) => <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
       }}
     >{text}</ReactMarkdown>
     <span className="inline-block w-1.5 h-4 bg-blue-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
@@ -503,9 +503,9 @@ const Chat: React.FC = () => {
           </label>
 
           <div className="flex items-center gap-2">
-            <span className="text-slate-400 text-sm font-medium">🤖 Model:</span>
+            <span className="text-slate-400 text-sm font-medium">Model:</span>
             <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
-              className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 border border-purple-500 rounded-xl text-white text-sm font-medium hover:from-purple-500 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer min-w-[200px]"
+              className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 border border-blue-500 rounded-xl text-white text-sm font-medium hover:from-blue-500 hover:to-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[200px]"
               style={{ appearance: 'auto' }}>
               {availableModels.map(m => (
                 <option key={m.name} value={m.name} className="bg-slate-900 text-white">
@@ -681,15 +681,15 @@ const Chat: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-8">
             {selectedSessionId === null ? (
               <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
-                  <span className="text-4xl">🤖</span>
+                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
+                  <span className="text-2xl font-bold text-white">AI</span>
                 </div>
                 <h2 className="text-3xl font-bold text-white mb-2">AINE Assistant</h2>
                 <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
             ) : (messages.length === 0 && !pendingUserMessage) ? (
               <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/25">
+                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
                   <span className="text-4xl">💬</span>
                 </div>
                 <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
@@ -726,7 +726,7 @@ const Chat: React.FC = () => {
                             code: ({ className, children }) => className
                               ? <code className={className}>{children}</code>
                               : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
-                            pre: ({ children }) => <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
                           }}>{msg.content}</ReactMarkdown>
                           {getFirstMarkdownTable(msg.content) && (
                             <div className="mt-2 flex gap-2">
@@ -738,7 +738,7 @@ const Chat: React.FC = () => {
                               <button type="button"
                                 onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
                                 className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
-                                📊 Excel indir
+                                Excel İndir
                               </button>
                             </div>
                           )}
@@ -784,7 +784,7 @@ const Chat: React.FC = () => {
           </div>
 
           {/* Input */}
-          <div className="px-6 py-5 border-t border-slate-700/70 bg-slate-900/70 backdrop-blur">
+          <div className="px-6 py-5 border-t border-white/[0.06]/70 bg-slate-900/70 backdrop-blur">
             {selectedServers.length > 0 && (
               <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
@@ -807,9 +807,9 @@ const Chat: React.FC = () => {
                   const hypervisor = hypervisors.find(h => h.id === hypervisorId)
                   return hypervisor ? (
                     <span key={hypervisorId}
-                      className="inline-flex items-center px-2 py-1 bg-purple-600/20 text-purple-300 text-xs rounded border border-purple-500/30">
+                      className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-300 text-xs rounded border border-blue-500/30">
                       {hypervisor.name}
-                      <button onClick={() => setSelectedHypervisors(prev => prev.filter(id => id !== hypervisorId))} className="ml-1 hover:text-purple-200">✕</button>
+                      <button onClick={() => setSelectedHypervisors(prev => prev.filter(id => id !== hypervisorId))} className="ml-1 hover:text-blue-200">✕</button>
                     </span>
                   ) : null
                 })}

@@ -430,8 +430,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
   const sshUser = server.connection_config?.username
   const cpuColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 60 ? 'bg-yellow-500' : 'bg-green-500'
-  const memColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-yellow-500' : 'bg-blue-500'
-  const diskColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-yellow-500' : 'bg-purple-500'
+  const memColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-amber-500' : 'bg-blue-500'
+  const diskColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-amber-500' : 'bg-blue-500'
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -440,7 +440,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700 bg-slate-800/50">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${server.status === 'ONLINE' ? 'bg-gradient-to-br from-green-500 to-green-600' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
-            <span className="text-white text-lg">🖥️</span>
+            <span className="text-xs font-bold text-blue-400">SRV</span>
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-white font-semibold text-base truncate">{server.name}</h2>
@@ -506,7 +506,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   ['RAM', server.memory_gb ? `${server.memory_gb} GB` : '-'],
                   ['SSH Kullanıcı', sshUser || '-'],
                   ['AI Ready', '__AI_READY_TOGGLE__'],
-                  ['Node Exporter', server.node_exporter?.running ? '✅ Çalışıyor' : server.node_exporter?.installed ? '⚠️ Kurulu/Durdurulmuş' : '❌ Kurulu Değil'],
+                  ['Node Exporter', server.node_exporter?.running ? 'Çalışıyor' : server.node_exporter?.installed ? 'Kurulu/Durdurulmuş' : 'Kurulu Değil'],
                 ].map(([label, value]) => (
                   <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">{label}</p>
@@ -548,7 +548,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     <h3 className="text-sm font-medium text-white">🔄 Güncelleme Geçmişi</h3>
                     {updateHistory.pending_reboot && (
                       <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full animate-pulse">
-                        ⚠️ Reboot Gerekiyor
+                        Reboot Gerekiyor
                       </span>
                     )}
                   </div>
@@ -566,7 +566,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         {h.packages_updated} paket
                       </span>
                       {h.reboot_required && !h.rebooted && (
-                        <span className="text-yellow-400 flex-shrink-0">⚠️</span>
+                        <span className="text-yellow-400 flex-shrink-0 font-bold">!</span>
                       )}
                       <span className="text-slate-500 flex-shrink-0">
                         {h.completed_at ? new Date(h.completed_at).toLocaleDateString('tr-TR') : '—'}
@@ -581,7 +581,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-medium text-white flex items-center gap-1.5">
-                      🖥️ VM Detayları
+                      VM Detayları
                       {vmDetails?.vm_last_sync && (
                         <span className="text-[10px] text-slate-500 font-normal">
                           son sync: {new Date(vmDetails.vm_last_sync).toLocaleString('tr-TR')}
@@ -825,18 +825,18 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-white">AI Analiz</h3>
                   <button onClick={startAnalyze} disabled={isAnalyzing}
-                    className="px-3 py-1 text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-600/40 disabled:opacity-50">
+                    className="px-3 py-1 text-xs bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-600/40 disabled:opacity-50">
                     {isAnalyzing ? 'Analiz ediliyor...' : analyzeText ? 'Yeniden' : 'Analiz Et'}
                   </button>
                 </div>
                 {analyzeText ? (
                   <div className="prose prose-invert prose-sm max-w-none text-slate-200 text-xs">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{analyzeText}</ReactMarkdown>
-                    {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-purple-400 animate-pulse ml-0.5 rounded-sm" />}
+                    {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 rounded-sm" />}
                   </div>
                 ) : isAnalyzing ? (
                   <div className="flex items-center gap-2 text-slate-400 text-xs">
-                    <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
                     <span>AI analiz yapıyor...</span>
                   </div>
                 ) : (
@@ -867,13 +867,13 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* Data source badge */}
                   <div className="flex items-center gap-2 text-xs">
                     {metrics.source === 'vcenter' ? (
-                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">📊 vCenter</span>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">vCenter</span>
                     ) : metrics.source === 'prometheus' ? (
                       <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">📈 Prometheus / Node Exporter</span>
                     ) : null}
                     {metrics.power_state && (
                       <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${metrics.power_state === 'POWERED_ON' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-                        {metrics.power_state === 'POWERED_ON' ? '⚡ Açık' : '⏹ Kapalı'}
+                        {metrics.power_state === 'POWERED_ON' ? 'Açık' : 'Kapalı'}
                       </span>
                     )}
                   </div>
@@ -881,9 +881,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* Gauge cards */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: 'CPU', value: metrics.cpu_percent, icon: '⚡', color: 'text-yellow-400' },
+                      { label: 'CPU', value: metrics.cpu_percent, icon: '', color: 'text-yellow-400' },
                       { label: 'RAM', value: metrics.mem_percent, icon: '🧠', color: 'text-blue-400' },
-                      { label: 'Disk', value: metrics.disk_percent, icon: '💾', color: 'text-purple-400' },
+                      { label: 'Disk', value: metrics.disk_percent, icon: '', color: 'text-blue-400' },
                     ].map(({ label, value, icon, color }) => (
                       <div key={label} className="bg-slate-800/50 rounded-xl border border-slate-700 p-3 text-center">
                         <p className={`text-2xl font-bold ${value !== null ? (value > 85 ? 'text-red-400' : value > 60 ? 'text-yellow-400' : 'text-green-400') : 'text-slate-600'}`}>
@@ -933,7 +933,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 </div>
               ) : !eventsData?.groups?.length ? (
                 <div className="text-center py-10 text-slate-500">
-                  <p className="text-3xl mb-3">✅</p>
+                  <p className="text-2xl font-bold text-green-400 mb-3">✓</p>
                   <p className="text-sm">Bu sunucuya ait aktif event bulunmuyor.</p>
                 </div>
               ) : (
@@ -1402,7 +1402,7 @@ const Servers: React.FC = () => {
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
       {isError && servers.length > 0 && (
         <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2.5 text-sm">
-          <span className="text-red-400">⚠️ Yenileme hatası:</span>
+          <span className="text-red-400">Yenileme hatası:</span>
           <span className="text-red-300">{error instanceof Error ? error.message : 'Bilinmeyen hata'}</span>
           <button onClick={() => refetch()} className="ml-auto text-xs text-red-400 underline">Tekrar dene</button>
         </div>
@@ -1602,7 +1602,7 @@ const Servers: React.FC = () => {
                           ? 'bg-slate-700/50 ring-1 ring-slate-600/40'
                           : 'bg-yellow-500/20 ring-1 ring-yellow-500/40'
                       }`}>
-                        {server.server_type === 'PHYSICAL' ? '🖥️' : '💻'}
+                        <span className="text-[10px] font-bold text-slate-400">{server.server_type === 'PHYSICAL' ? 'PHY' : 'VM'}</span>
                       </div>
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors truncate max-w-[180px]">
@@ -1645,15 +1645,15 @@ const Servers: React.FC = () => {
                   {/* ── OS / Kernel ── */}
                   <td className="px-4 py-3">
                     {(() => {
-                      const icon = server.os_release_id === 'rhel'   ? '🔴' :
-                                   server.os_release_id === 'ol'     ? '🟠' :
-                                   server.os_release_id === 'rocky'  ? '🟢' :
-                                   server.os_release_id === 'ubuntu' ? '🟡' :
-                                   server.os_release_id === 'debian' ? '🌀' :
-                                   server.os_version?.toLowerCase().includes('red hat') ? '🔴' :
-                                   server.os_version?.toLowerCase().includes('oracle')  ? '🟠' :
-                                   server.os_version?.toLowerCase().includes('rocky')   ? '🟢' :
-                                   server.os_version?.toLowerCase().includes('ubuntu')  ? '🟡' : '🐧'
+                      const icon = server.os_release_id === 'rhel'   ? 'RH' :
+                                   server.os_release_id === 'ol'     ? 'OE' :
+                                   server.os_release_id === 'rocky'  ? 'RK' :
+                                   server.os_release_id === 'ubuntu' ? 'UB' :
+                                   server.os_release_id === 'debian' ? 'DEB' :
+                                   server.os_version?.toLowerCase().includes('red hat') ? 'RH' :
+                                   server.os_version?.toLowerCase().includes('oracle')  ? 'OE' :
+                                   server.os_version?.toLowerCase().includes('rocky')   ? 'RK' :
+                                   server.os_version?.toLowerCase().includes('ubuntu')  ? 'UB' : 'LNX'
                       const osName = server.os_release_id
                         ? `${server.os_release_id.toUpperCase()} ${server.os_version_id || ''}`
                         : server.os_version?.replace('(Plow)','').replace('(Ootpa)','').replace('(Ootpa)','').trim() || null
@@ -1707,7 +1707,7 @@ const Servers: React.FC = () => {
                     <div className="flex flex-wrap gap-1.5">
                       {/* AI Ready — yalnızca SSH doğrulanmış ve ONLINE sunucular */}
                       {server.ai_ready && server.status === 'ONLINE' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/25">
                           AI
                         </span>
                       )}
@@ -1765,7 +1765,7 @@ const Servers: React.FC = () => {
                   <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       {installNodeExporterMutation.isError && installingNodeExporter === server.id && (
-                        <span className="text-red-400 text-xs" title={installNodeExporterMutation.error?.message}>❌</span>
+                        <span className="text-red-400 text-xs font-bold" title={installNodeExporterMutation.error?.message}>ERR</span>
                       )}
                       {server.status === 'ONLINE' && server.ip_address && (
                         <button

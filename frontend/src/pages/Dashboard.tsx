@@ -208,7 +208,7 @@ function EsxHostCard({ hvName, host }: { hvName: string; host: EsxHost }) {
           )}
         </div>
         <div className="flex flex-col items-center gap-1.5">
-          <DonutGauge pct={ramPct} color={NEON.purple} size={68} strokeWidth={6} />
+          <DonutGauge pct={ramPct} color={NEON.blue} size={68} strokeWidth={6} />
           <span className="text-[10px] text-slate-500 font-medium">RAM</span>
           {host.mem_total_mb != null && (
             <span className="text-[9px] text-slate-600">{(host.mem_total_mb/1024).toFixed(0)}GB</span>
@@ -613,12 +613,12 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
           <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(34,211,238,0.06)' }} />
           <Bar dataKey="cpu" name="CPU" fill={NEON.blue} radius={[4, 4, 0, 0]} maxBarSize={18} />
-          <Bar dataKey="ram" name="RAM" fill={NEON.purple} radius={[4, 4, 0, 0]} maxBarSize={18} />
+          <Bar dataKey="ram" name="RAM" fill={NEON.blue} radius={[4, 4, 0, 0]} maxBarSize={18} />
           <Bar dataKey="disk" name="Disk" fill={NEON.green} radius={[4, 4, 0, 0]} maxBarSize={18} />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-4 mt-2">
-        {[{ c: NEON.blue, l: 'CPU' }, { c: NEON.purple, l: 'RAM' }, { c: NEON.green, l: 'Disk' }].map(x => (
+        {[{ c: NEON.blue, l: 'CPU' }, { c: NEON.blue, l: 'RAM' }, { c: NEON.green, l: 'Disk' }].map(x => (
           <div key={x.l} className="flex items-center gap-1.5 text-[10px] text-slate-500">
             <div className="w-2 h-2 rounded-sm" style={{ background: x.c }} />{x.l}
           </div>

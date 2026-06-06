@@ -196,10 +196,10 @@ const Agent: React.FC = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       {/* Controls */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">🤖</span>
+            <span className="text-sm font-bold text-blue-400">AI</span>
             <div>
               <h2 className="text-white font-semibold">AI Agent</h2>
               <p className="text-xs text-slate-400">Otonom teşhis + onaylı düzeltme (human-in-the-loop)</p>
@@ -257,7 +257,7 @@ const Agent: React.FC = () => {
           }
           if (item.kind === 'answer') {
             return (
-              <div key={i} className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-slate-200 whitespace-pre-wrap">
+              <div key={i} className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4 text-slate-200 whitespace-pre-wrap">
                 {item.text}
               </div>
             )
@@ -265,7 +265,7 @@ const Agent: React.FC = () => {
           if (item.kind === 'error') {
             return (
               <div key={i} className="bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-red-300 text-sm">
-                ⚠️ {item.text}
+                {item.text}
               </div>
             )
           }
@@ -282,7 +282,7 @@ const Agent: React.FC = () => {
                 <div className="text-sm text-slate-300">
                   <span className="text-slate-400">Tool:</span> <code className="text-amber-200">{s.tool}</code>
                 </div>
-                <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 overflow-x-auto">{s.preview}</pre>
+                <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-3 text-xs text-slate-200 overflow-x-auto">{s.preview}</pre>
                 {s.guard && s.guard.enabled && (
                   <div className="text-xs flex items-start gap-2 bg-slate-900/60 border border-slate-700 rounded-lg p-2">
                     <span className="text-slate-400">🛡️ Guard:</span>
@@ -295,7 +295,7 @@ const Agent: React.FC = () => {
                 {isPending && s.requires_root && (
                   <div className="space-y-1.5 bg-red-500/5 border border-red-500/40 rounded-lg p-3">
                     <div className="flex items-center gap-2 text-xs text-red-300">
-                      <span>🔑 Yetki yükseltme gerekli</span>
+                      <span>Yetki yükseltme gerekli</span>
                     </div>
                     <p className="text-[11px] text-slate-400">
                       Bu komut root yetkisi gerektiriyor ve kayıtlı sudo yetkisi bulunamadı.
@@ -395,7 +395,7 @@ const Agent: React.FC = () => {
                   <span className="text-red-300 font-medium">🛡️ Guard engelledi</span>
                   <code className="text-red-200 text-sm">{s.tool}</code>
                 </div>
-                {s.preview && <pre className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-300 overflow-x-auto">{s.preview}</pre>}
+                {s.preview && <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-2 text-xs text-slate-300 overflow-x-auto">{s.preview}</pre>}
                 {s.guard?.reason && <div className="text-xs text-red-300">Gerekçe: {s.guard.reason}</div>}
                 <div className="text-[11px] text-slate-500">Bu işlem güvenlik politikası nedeniyle çalıştırılmadı; agent alternatif arayacak.</div>
               </div>
@@ -405,7 +405,7 @@ const Agent: React.FC = () => {
           const okColor = s.result?.ok ? 'text-emerald-300' : 'text-red-300'
           const label = s.type === 'read_only' ? 'Teşhis' : s.type === 'executed' ? 'Çalıştırıldı' : s.type === 'rejected' ? 'Reddedildi' : 'Hata'
           return (
-            <details key={i} className="bg-slate-800 border border-slate-700 rounded-xl p-3" open={s.type !== 'read_only'}>
+            <details key={i} className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-3" open={s.type !== 'read_only'}>
               <summary className="cursor-pointer flex items-center gap-2 text-sm">
                 <span className="text-slate-400">{label}</span>
                 <code className="text-cyan-300">{s.tool}</code>
@@ -441,7 +441,7 @@ const Agent: React.FC = () => {
             placeholder="Örn: web01 sunucusunda disk doluluğunu kontrol et, gerekirse eski logları temizle"
             rows={2}
             disabled={loading}
-            className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 text-sm resize-none focus:outline-none focus:border-blue-500 disabled:opacity-60"
+            className="flex-1 bg-cyber-card border border-white/[0.06] rounded-[10px] px-4 py-3 text-slate-200 text-sm resize-none focus:outline-none focus:border-blue-500 disabled:opacity-60"
           />
           <button
             onClick={send}

@@ -42,7 +42,7 @@ const Log: React.FC = () => {
         Sistemdeki işlemler (sync, kurulum, event vb.) kronolojik sırayla listelenir.
       </p>
 
-      <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500 mx-auto"></div>
@@ -50,7 +50,7 @@ const Log: React.FC = () => {
           </div>
         ) : events.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
-            <span className="text-4xl block mb-4">📜</span>
+            //
             <p>Henüz kayıt yok</p>
             <p className="text-sm mt-2">VM sync, envanter sync veya diğer işlemler burada görünecek</p>
           </div>
@@ -59,7 +59,7 @@ const Log: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 bg-slate-900/50">
+                  <tr className="border-b border-white/[0.06] bg-cyber-deep/60">
                     <th className="text-left py-3 px-4 text-slate-400 font-medium">Tarih</th>
                     <th className="text-left py-3 px-4 text-slate-400 font-medium">Tip</th>
                     <th className="text-left py-3 px-4 text-slate-400 font-medium">Başlık</th>
@@ -69,7 +69,7 @@ const Log: React.FC = () => {
                 </thead>
                 <tbody>
                   {events.map((e) => (
-                    <tr key={e.id} className="border-b border-slate-700/50 hover:bg-slate-700/30">
+                    <tr key={e.id} className="border-b border-white/[0.04] hover:bg-white/[0.03]">
                       <td className="py-3 px-4 text-slate-300 font-mono text-xs">
                         {e.created_at ? new Date(e.created_at).toLocaleString('tr-TR') : '-'}
                       </td>
@@ -95,7 +95,7 @@ const Log: React.FC = () => {
               </table>
             </div>
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700">
+              <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
                 <span className="text-slate-500 text-sm">{total} kayıt</span>
                 <div className="flex gap-2">
                   <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}

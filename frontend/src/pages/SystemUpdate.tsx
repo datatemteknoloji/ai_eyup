@@ -53,18 +53,18 @@ const authHeaders = (): Record<string, string> => {
 }
 
 const DISTRO_LIST = [
-  { key: 'rhel',   label: 'Red Hat Enterprise Linux', short: 'RHEL',   icon: '🔴', color: 'border-red-500/60 bg-red-500/10',    match: ['rhel'] },
-  { key: 'oel',    label: 'Oracle Enterprise Linux',  short: 'OEL',    icon: '🟠', color: 'border-orange-500/60 bg-orange-500/10', match: ['ol', 'oel'] },
-  { key: 'rocky',  label: 'Rocky Linux',              short: 'Rocky',  icon: '🟢', color: 'border-green-500/60 bg-green-500/10',  match: ['rocky'] },
-  { key: 'ubuntu', label: 'Ubuntu',                   short: 'Ubuntu', icon: '🟡', color: 'border-yellow-500/60 bg-yellow-500/10', match: ['ubuntu'] },
-  { key: '',       label: 'Tüm Dağıtımlar',           short: 'Tümü',   icon: '🌐', color: 'border-slate-500/60 bg-slate-700/30',  match: [] },
+  { key: 'rhel',   label: 'Red Hat Enterprise Linux', short: 'RHEL',   icon: 'RH', color: 'border-red-500/60 bg-red-500/10',    match: ['rhel'] },
+  { key: 'oel',    label: 'Oracle Enterprise Linux',  short: 'OEL',    icon: 'OE', color: 'border-orange-500/60 bg-orange-500/10', match: ['ol', 'oel'] },
+  { key: 'rocky',  label: 'Rocky Linux',              short: 'Rocky',  icon: 'RK', color: 'border-green-500/60 bg-green-500/10',  match: ['rocky'] },
+  { key: 'ubuntu', label: 'Ubuntu',                   short: 'Ubuntu', icon: 'UB', color: 'border-yellow-500/60 bg-yellow-500/10', match: ['ubuntu'] },
+  { key: '',       label: 'Tüm Dağıtımlar',           short: 'Tümü',   icon: '', color: 'border-slate-500/60 bg-slate-700/30',  match: [] },
 ]
 
 const UPDATE_TYPES = [
-  { key: 'security', label: 'Güvenlik',       desc: 'Yalnızca CVE & güvenlik yamaları',  icon: '🔒', color: 'border-orange-500 bg-orange-500/10 text-orange-300' },
-  { key: 'kernel',   label: 'Kernel',         desc: 'Linux çekirdeği güncellemesi',       icon: '⚡', color: 'border-purple-500 bg-purple-500/10 text-purple-300' },
-  { key: 'all',      label: 'Tüm Paketler',   desc: 'Sistemdeki tüm paketleri güncelle',  icon: '⬆️', color: 'border-blue-500   bg-blue-500/10   text-blue-300'   },
-  { key: 'custom',   label: 'Seçili Paketler',desc: 'Listeden belirli paketleri seç',     icon: '📋', color: 'border-cyan-500   bg-cyan-500/10   text-cyan-300'    },
+  { key: 'security', label: 'Güvenlik',       desc: 'Yalnızca CVE & güvenlik yamaları',  icon: 'SEC', color: 'border-orange-500 bg-orange-500/10 text-orange-300' },
+  { key: 'kernel',   label: 'Kernel',         desc: 'Linux çekirdeği güncellemesi',       icon: 'KRN', color: 'border-blue-500 bg-blue-500/10 text-blue-300' },
+  { key: 'all',      label: 'Tüm Paketler',   desc: 'Sistemdeki tüm paketleri güncelle',  icon: 'ALL', color: 'border-blue-500   bg-blue-500/10   text-blue-300'   },
+  { key: 'custom',   label: 'Seçili Paketler',desc: 'Listeden belirli paketleri seç',     icon: 'SEÇ', color: 'border-cyan-500   bg-cyan-500/10   text-cyan-300'    },
 ]
 
 const STATUS_COLOR: Record<string, string> = {
@@ -150,10 +150,10 @@ const ServerSelector = ({ servers, selected, onChange }: {
           className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Temizle</button>
         <span className="text-xs text-slate-500 ml-auto">{selected.length} / {servers.length} seçili</span>
       </div>
-      <div className="max-h-64 overflow-y-auto divide-y divide-slate-700/40">
+      <div className="max-h-64 overflow-y-auto divide-y divide-white/[0.04]">
         {filtered.map(srv => (
           <label key={srv.id}
-            className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors hover:bg-slate-700/30 ${selected.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
+            className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors hover:bg-white/[0.03] ${selected.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
             <input type="checkbox" checked={selected.includes(srv.id)} onChange={() => toggle(srv.id)}
               className="accent-blue-500 w-4 h-4 flex-shrink-0" />
             <span className={`w-2 h-2 rounded-full flex-shrink-0 ${srv.status === 'ONLINE' ? 'bg-green-400' : 'bg-slate-500'}`} />
@@ -205,12 +205,12 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
   const ut = UPDATE_TYPES.find(t => t.key === plan.update_type)
 
   return (
-    <tr className="border-b border-slate-700/50 hover:bg-slate-800/40 transition-colors">
+    <tr className="border-b border-white/[0.04] hover:bg-slate-800/40 transition-colors">
       <td className="px-4 py-3">
         <div className="text-sm font-medium text-white">{plan.name}</div>
         <div className="text-xs text-slate-500">{fmtDate(plan.created_at)}</div>
       </td>
-      <td className="px-3 py-3 text-xs whitespace-nowrap">{ut?.icon} {ut?.label}</td>
+      <td className="px-3 py-3 text-xs whitespace-nowrap">{ut?.label}</td>
       <td className="px-3 py-3 whitespace-nowrap">
         <span className={`text-xs font-medium flex items-center gap-1 ${STATUS_COLOR[plan.status]}`}>
           {isRunning && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />}
@@ -328,25 +328,25 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
           <div className="w-64 border-r border-slate-700 overflow-y-auto flex-shrink-0">
             {plan.ai_analysis && (
               <div className="p-3 border-b border-slate-700 bg-cyan-500/5">
-                <div className="text-xs font-semibold text-cyan-400 mb-1">🤖 AI Analiz</div>
+                <div className="text-xs font-semibold text-cyan-400 mb-1">AI Analiz</div>
                 <div className="text-xs text-slate-300 line-clamp-5 leading-relaxed">{plan.ai_analysis}</div>
               </div>
             )}
             {plan.ai_summary && (
               <div className="p-3 border-b border-slate-700 bg-green-500/5">
-                <div className="text-xs font-semibold text-green-400 mb-1">✅ AI Özet</div>
+                <div className="text-xs font-semibold text-green-400 mb-1">AI Özet</div>
                 <AiMarkdown text={plan.ai_summary} />
               </div>
             )}
             {jobs.map(j => (
               <button key={j.id} onClick={() => setSel(j)}
-                className={`w-full text-left px-4 py-3 hover:bg-slate-700/30 border-b border-slate-700/30 transition-colors ${sel?.id === j.id ? 'bg-blue-600/10' : ''}`}>
+                className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] border-b border-slate-700/30 transition-colors ${sel?.id === j.id ? 'bg-blue-600/10' : ''}`}>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs ${STATUS_COLOR[j.status]}`}>
                     {(j.status==='running'||j.status==='pending') && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse mr-1" />}
                     {STATUS_LABEL[j.status]}
                   </span>
-                  {j.reboot_required && <span className="text-yellow-400 text-xs">⚠️</span>}
+                  {j.reboot_required && <span className="text-yellow-400 text-xs font-bold">!</span>}
                 </div>
                 <div className="text-sm font-medium text-white truncate">{j.server_name}</div>
                 <div className="text-xs text-slate-400">{j.server_ip}</div>
@@ -365,7 +365,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                 </div>
                 {sel.reboot_required && (
                   <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                    ⚠️ Sistem yeniden başlatma gerekiyor
+                    Sistem yeniden başlatma gerekiyor
                   </div>
                 )}
                 {sel.packages_to_update.length > 0 && (
@@ -375,7 +375,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                       {sel.packages_to_update.slice(0,30).map((p,i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
                           {p.is_security && <span className="text-red-400">🔒</span>}
-                          {p.is_kernel   && <span className="text-purple-400">⚡</span>}
+                          {p.is_kernel   && <span className="text-blue-400">⚡</span>}
                           <span className="text-slate-200 font-mono">{p.name}</span>
                           {p.new_version && <span className="text-slate-400">→ {p.new_version}</span>}
                         </div>
@@ -411,7 +411,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                         >
                           {analyzingJob === sel.id
                             ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />Analiz ediliyor...</>
-                            : '🤖 Hatayı Analiz Et'}
+                            : 'Hatayı Analiz Et'}
                         </button>
                       )}
                     </div>
@@ -419,7 +419,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                         {jobAnalysis[sel.id] && (
                       <div className="mb-3 space-y-2">
                         <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-3">
-                          <div className="text-xs font-semibold text-cyan-400 mb-2">🤖 AI Analiz</div>
+                          <div className="text-xs font-semibold text-cyan-400 mb-2">AI Analiz</div>
                           <AiMarkdown text={jobAnalysis[sel.id]} />
                         </div>
                         <button
@@ -436,7 +436,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                           }}
                           className="flex items-center gap-2 px-3 py-2 text-xs bg-green-700/30 hover:bg-green-700/50 text-green-300 border border-green-600/30 rounded-lg transition-colors w-full justify-center font-medium"
                         >
-                          🔧 AI Önerilen Çözümü Uygula & Yeniden Başlat
+                          AI Önerilen Çözümü Uygula & Yeniden Başlat
                         </button>
                       </div>
                     )}
@@ -478,7 +478,7 @@ const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId
         <span className="text-xs text-slate-500">Güncellenen paket listesi yüklenmedi</span>
         <button onClick={fetchPackages} disabled={loading}
           className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-slate-700 rounded transition-colors disabled:opacity-40">
-          {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />Getiriliyor...</> : '📦 SSH ile Listele'}
+          {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />Getiriliyor...</> : 'SSH ile Listele'}
         </button>
       </div>
     )
@@ -545,7 +545,7 @@ const LiveJobLog: React.FC<{
         {job.status === 'failed' && (
           <button onClick={onAnalyze} disabled={analyzing}
             className="flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-700/30 hover:bg-cyan-700/50 text-cyan-300 border border-cyan-600/30 rounded transition-colors disabled:opacity-40">
-            {analyzing ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />...</> : '🤖 Hatayı Analiz Et'}
+            {analyzing ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />...</> : 'Hatayı Analiz Et'}
           </button>
         )}
       </div>
@@ -566,7 +566,7 @@ const LiveJobLog: React.FC<{
                             }}
                             className="flex items-center gap-2 px-3 py-2 text-xs bg-green-700/30 hover:bg-green-700/50 text-green-300 border border-green-600/30 rounded-lg transition-colors w-full justify-center font-medium"
                           >
-                            🔧 AI Önerilen Çözümü Uygula & Güncellemeyi Yeniden Başlat
+                            AI Önerilen Çözümü Uygula & Güncellemeyi Yeniden Başlat
                           </button>
                         </div>
                       )}
@@ -774,7 +774,7 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
           <span className="text-sm font-semibold text-yellow-300">
-            ⚠️ Reboot Bekleyen Sunucular ({rebootJobs.length})
+            Reboot Bekleyen Sunucular ({rebootJobs.length})
           </span>
           <span className="text-xs text-yellow-500">Kernel güncellemesi tamamlandı — yeniden başlatma gerekiyor</span>
         </div>
@@ -785,7 +785,7 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
           </button>
           <button onClick={handleReboot} disabled={rebooting || selected.size === 0}
             className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
-            {rebooting ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Yeniden Başlatılıyor...</> : `🔄 ${selected.size > 0 ? selected.size + ' ' : ''}Seçiliyi Yeniden Başlat`}
+            {rebooting ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Yeniden Başlatılıyor...</> : `${selected.size > 0 ? selected.size + ' ' : ''}Seçiliyi Yeniden Başlat`}
           </button>
         </div>
       </div>
@@ -1186,7 +1186,7 @@ const SystemUpdate: React.FC = () => {
                       className={`p-5 rounded-xl border-2 text-left transition-all ${
                         isSelected ? d.color + ' border-2' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500 hover:bg-slate-700/40'
                       }`}>
-                      <div className="text-4xl mb-3">{d.icon}</div>
+                      <div className="text-xs font-bold text-slate-400 mb-1">{d.icon}</div>
                       <div className="text-base font-bold text-white">{d.short}</div>
                       <div className="text-xs text-slate-400 mt-0.5">{d.label}</div>
                     </button>
@@ -1208,7 +1208,7 @@ const SystemUpdate: React.FC = () => {
           {step === 2 && (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <span className="text-3xl">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</span>
+                <span className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</span>
                 <div>
                   <h2 className="text-base font-semibold text-white">
                     {DISTRO_LIST.find(d=>d.key===selectedDistro)?.label} Sunucuları
@@ -1224,7 +1224,7 @@ const SystemUpdate: React.FC = () => {
               {servers.some(s => !s.has_os_info) && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-xs text-yellow-300 flex items-start justify-between gap-3">
                   <div>
-                    <span className="font-medium">⚠️ {servers.filter(s => !s.has_os_info).length} sunucuda OS bilgisi yok</span>
+                    <span className="font-medium">{servers.filter(s => !s.has_os_info).length} sunucuda OS bilgisi yok</span>
                     <div className="text-slate-400 mt-0.5">
                       Bu sunucular da listelendi. Doğru distro'ya ait olduklarını doğrulamak için
                       <strong className="text-yellow-300 mx-1">Sunucular → OS Bilgisini Yenile</strong>
@@ -1271,7 +1271,7 @@ const SystemUpdate: React.FC = () => {
                     className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div>
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
-                      🔑 Sunucu Kayıtlı Kimlik Bilgilerini Kullan
+                      Kayıtlı Kimlik Bilgilerini Kullan
                     </div>
                     <div className="text-xs text-slate-400 mt-1">
                       Her sunucu için kendi connection_config veya global credentials kullanılır.
@@ -1288,7 +1288,7 @@ const SystemUpdate: React.FC = () => {
                     className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
-                      👤 Özel Yetkili Kullanıcı Belirt
+                      Özel Yetkili Kullanıcı Belirt
                     </div>
                     <div className="text-xs text-slate-400 mt-1 mb-3">
                       Tüm seçili sunucularda bu kullanıcı ile bağlanılır (root veya sudo yetkili kullanıcı).
@@ -1337,9 +1337,9 @@ const SystemUpdate: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { key: 'sudo',   label: 'sudo',   desc: 'Standart Linux yetki yükseltme', icon: '🔑' },
-                    { key: 'dzdo',   label: 'dzdo',   desc: 'Centrify DirectControl (AD)',     icon: '🏢' },
-                    { key: 'direct', label: 'Direct', desc: 'Direkt root kullanıcı',           icon: '⚡' },
+                    { key: 'sudo',   label: 'sudo',   desc: 'Standart Linux yetki yükseltme', icon: 'key' },
+                    { key: 'dzdo',   label: 'dzdo',   desc: 'Centrify DirectControl (AD)',     icon: 'org' },
+                    { key: 'direct', label: 'Direct', desc: 'Direkt root kullanıcı',           icon: 'RT' },
                   ] as const).map(m => (
                     <button key={m.key} onClick={() => setPrivMethod(m.key)}
                       className={`p-3 rounded-xl border text-left transition-all ${
@@ -1348,7 +1348,7 @@ const SystemUpdate: React.FC = () => {
                           : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
                       }`}>
                       <div className="flex items-center gap-2">
-                        <span className="text-base">{m.icon}</span>
+                        <span className="text-xs font-bold text-slate-400">{m.icon}</span>
                         <span className={`text-sm font-bold ${privMethod === m.key ? 'text-white' : 'text-slate-300'}`}>
                           {m.label}
                         </span>
@@ -1364,7 +1364,7 @@ const SystemUpdate: React.FC = () => {
                   )}
                   {privMethod === 'direct' && (
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-xs text-yellow-300">
-                      ⚡ Direkt root kullanıcı — ekstra yetki yükseltme yapılmaz.
+                      Direkt root kullanıcı — ekstra yetki yükseltme yapılmaz.
                     </div>
                   )}
               </div>
@@ -1554,7 +1554,7 @@ const SystemUpdate: React.FC = () => {
                     className={`p-5 rounded-xl border-2 text-left transition-all ${
                       updateType === t.key ? t.color + ' border-2' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500 hover:bg-slate-700/40'
                     }`}>
-                    <div className="text-4xl mb-3">{t.icon}</div>
+                    <div className="text-xs font-bold text-slate-400 mb-1">{t.icon}</div>
                     <div className="text-base font-bold text-white">{t.label}</div>
                     <div className="text-xs text-slate-400 mt-1">{t.desc}</div>
                   </button>
@@ -1567,7 +1567,7 @@ const SystemUpdate: React.FC = () => {
                   <div className="text-xs font-semibold text-slate-300 mb-2">Plan Özeti</div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                     <div className="bg-slate-700/50 rounded-lg p-2 text-center">
-                      <div className="text-xl">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
+                      <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
                       <div className="text-slate-400 mt-0.5">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.short}</div>
                     </div>
                     <div className="bg-slate-700/50 rounded-lg p-2 text-center">
@@ -1575,11 +1575,11 @@ const SystemUpdate: React.FC = () => {
                       <div className="text-slate-400">Sunucu</div>
                     </div>
                     <div className="bg-slate-700/50 rounded-lg p-2 text-center">
-                      <div className="text-lg">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
+                      <div className="text-xs font-bold text-blue-400">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
                       <div className="text-slate-400 mt-0.5">{UPDATE_TYPES.find(t=>t.key===updateType)?.label}</div>
                     </div>
                     <div className="bg-slate-700/50 rounded-lg p-2 text-center">
-                      <div className="text-xs text-white font-medium">{selectedRepo ? '📦 Local' : '🌐 Varsayılan'}</div>
+                      <div className="text-xs text-white font-medium">{selectedRepo ? 'Local' : 'Varsayılan'}</div>
                       <div className="text-slate-400">Repo</div>
                     </div>
                   </div>
@@ -1594,7 +1594,7 @@ const SystemUpdate: React.FC = () => {
 
               {updateType === 'kernel' && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                  ⚠️ Kernel güncellemesi sonrası sunucular yeniden başlatılmalıdır.
+                  Kernel güncellemesi sonrası sunucular yeniden başlatılmalıdır.
                 </div>
               )}
 
@@ -1645,7 +1645,7 @@ const SystemUpdate: React.FC = () => {
                   )}
 
                   {Object.keys(checkResult).length > 0 && !checking && (
-                    <div className="divide-y divide-slate-700/50 max-h-[50vh] overflow-y-auto">
+                    <div className="divide-y divide-white/[0.04] max-h-[50vh] overflow-y-auto">
                   {Object.entries(checkResult).map(([sid, data]: [string, any]) => (
                     <div key={sid} className="px-4 py-3">
                       <div className="flex items-center justify-between mb-1.5">
@@ -1657,8 +1657,8 @@ const SystemUpdate: React.FC = () => {
                             </span>
                           )}
                           {data.kernel_count > 0 && (
-                            <span className="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full">
-                              ⚡ {data.kernel_count}
+                            <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                              kernel: {data.kernel_count}
                             </span>
                           )}
                           <span className="text-slate-400">{data.count} toplam</span>
@@ -1688,12 +1688,12 @@ const SystemUpdate: React.FC = () => {
                             {data.packages
                               .filter((p: any) => !pkgSearch || p.name.toLowerCase().includes(pkgSearch.toLowerCase()))
                               .map((p: any, i: number) => (
-                              <label key={i} className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-slate-700/30 ${selectedPkgs.has(p.name) ? 'bg-blue-600/10' : ''}`}>
+                              <label key={i} className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/[0.03] ${selectedPkgs.has(p.name) ? 'bg-blue-600/10' : ''}`}>
                                 <input type="checkbox" checked={selectedPkgs.has(p.name)}
                                   onChange={() => setSelectedPkgs(prev => { const next = new Set(prev); next.has(p.name) ? next.delete(p.name) : next.add(p.name); return next })}
                                   className="accent-blue-500 w-3.5 h-3.5 flex-shrink-0" />
-                                <span className={`text-xs font-mono ${p.is_security ? 'text-red-300' : p.is_kernel ? 'text-purple-300' : 'text-slate-200'}`}>
-                                  {p.is_security && '🔒 '}{p.is_kernel && '⚡ '}{p.name}
+                                <span className={`text-xs font-mono ${p.is_security ? 'text-red-300' : p.is_kernel ? 'text-blue-300' : 'text-slate-200'}`}>
+                                  {p.is_security && <span className="text-[9px] font-bold text-red-400 mr-1">SEC</span>}{p.is_kernel && <span className="text-[9px] font-bold text-blue-400 mr-1">KRN</span>}{p.name}
                                 </span>
                                 {p.new_version && <span className="text-[10px] text-slate-500 ml-auto">{p.new_version.split('-')[0]}</span>}
                               </label>
@@ -1706,7 +1706,7 @@ const SystemUpdate: React.FC = () => {
                           {data.packages.slice(0, 12).map((p: any, i: number) => (
                             <span key={i} className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
                               p.is_security ? 'bg-red-500/15 text-red-300' :
-                              p.is_kernel   ? 'bg-purple-500/15 text-purple-300' :
+                              p.is_kernel   ? 'bg-blue-500/15 text-blue-300' :
                               'bg-slate-700 text-slate-300'
                             }`}>
                               {p.name}
@@ -1747,7 +1747,7 @@ const SystemUpdate: React.FC = () => {
           {step === 7 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-white">🤖 AI Ön Analiz</h2>
+                <h2 className="text-base font-semibold text-white">AI Ön Analiz</h2>
                 <span className="text-xs text-slate-500 italic">İsteğe bağlı — atlayabilirsiniz</span>
               </div>
 
@@ -1755,7 +1755,7 @@ const SystemUpdate: React.FC = () => {
               {!aiAnalysis && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className={`border rounded-xl p-5 text-center space-y-3 ${analyzing ? 'border-blue-500/30 bg-blue-500/5' : 'border-slate-600 bg-slate-700/20'}`}>
-                    <div className="text-3xl">{analyzing ? '' : '🤖'}</div>
+                    <div className="text-xl font-bold text-blue-400">{analyzing ? '...' : 'AI'}</div>
                     {analyzing ? (
                       <>
                         <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -1791,7 +1791,7 @@ const SystemUpdate: React.FC = () => {
                 <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-cyan-500/15 bg-cyan-500/5">
                     <div className="flex items-center gap-2 text-xs font-semibold text-cyan-400">
-                      <span>🤖</span> AI Analiz Sonucu
+                      AI Analiz Sonucu
                     </div>
                     <button onClick={() => setAiAnalysis('')}
                       className="text-slate-500 hover:text-slate-300 text-xs transition-colors">
@@ -1822,7 +1822,7 @@ const SystemUpdate: React.FC = () => {
               <div className="bg-slate-700/50 rounded-xl p-5">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                   <div className="text-center">
-                    <div className="text-3xl mb-1">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
+                    <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
                     <div className="text-slate-400 text-xs">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.label}</div>
                   </div>
                   <div className="text-center">
@@ -1830,11 +1830,11 @@ const SystemUpdate: React.FC = () => {
                     <div className="text-slate-400 text-xs">Sunucu</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
+                    <div className="text-xs font-bold text-blue-400">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
                     <div className="text-slate-400 text-xs">{UPDATE_TYPES.find(t=>t.key===updateType)?.label}</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-sm font-medium text-white">{selectedRepo ? '📦 Local' : '🌐 Varsayılan'}</div>
+                    <div className="text-sm font-medium text-white">{selectedRepo ? 'Local' : 'Varsayılan'}</div>
                     <div className="text-slate-400 text-xs">Repo</div>
                   </div>
                   <div className="text-center">
@@ -1847,13 +1847,13 @@ const SystemUpdate: React.FC = () => {
                   </div>
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">
-                      {credMode === 'override' && overrideUser ? `👤 ${overrideUser}` : '🔑 Kayıtlı'}
+                      {credMode === 'override' && overrideUser ? overrideUser : 'Kayıtlı'}
                     </div>
                     <div className="text-slate-400 text-xs">Kullanıcı</div>
                   </div>
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">
-                      {privMethod === 'sudo' ? '🔑 sudo' : privMethod === 'dzdo' ? '🏢 dzdo' : '⚡ direct'}
+                      {privMethod === 'sudo' ? 'sudo' : privMethod === 'dzdo' ? 'dzdo' : 'direct'}
                     </div>
                   </div>
                   {updateType === 'custom' && (
@@ -1867,14 +1867,14 @@ const SystemUpdate: React.FC = () => {
 
               {updateType === 'kernel' && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                  ⚠️ Kernel güncellemesi sonrası reboot gerekecek — bunu önceden planlayın.
+                  Kernel güncellemesi sonrası reboot gerekecek — bunu önceden planlayın.
                 </div>
               )}
 
               {aiAnalysis && (
                 <details className="bg-slate-700/30 border border-slate-600 rounded-xl">
                   <summary className="px-4 py-3 text-sm text-cyan-400 cursor-pointer select-none">
-                    🤖 AI Analiz Özetini Göster
+                    AI Analiz Özetini Göster
                   </summary>
                   <div className="px-4 pb-4 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap border-t border-slate-600 pt-3 mt-0">
                     {aiAnalysis}
@@ -1920,7 +1920,7 @@ const SystemUpdate: React.FC = () => {
                   <div key={j.id} className="bg-slate-700/40 rounded-xl overflow-hidden border border-slate-700/50">
                     {/* Satır başlığı — tıkla */}
                     <button
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/30 transition-colors text-left"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors text-left"
                       onClick={() => setExpandedJob(expandedJob === j.id ? null : j.id)}
                     >
                       <span className={`text-xs font-medium w-20 flex-shrink-0 ${STATUS_COLOR[j.status]}`}>
@@ -1936,7 +1936,7 @@ const SystemUpdate: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{j.packages_updated.length} paket</span>}
-                        {j.reboot_required && <span className="text-xs text-yellow-400">⚠️ Reboot</span>}
+                        {j.reboot_required && <span className="text-xs text-yellow-400">REBOOT</span>}
                         {j.snapshot?.status === 'active' && (
                           <span className="text-xs text-cyan-400" title={j.snapshot.snapshot_name}>📸 Snap</span>
                         )}
@@ -1949,7 +1949,7 @@ const SystemUpdate: React.FC = () => {
 
                     {/* Genişletilmiş detay */}
                     {expandedJob === j.id && (
-                      <div className="px-4 pb-4 border-t border-slate-700/50 space-y-3 pt-3">
+                      <div className="px-4 pb-4 border-t border-white/[0.05] space-y-3 pt-3">
                     {j.status === 'completed' && (
                       <PackageList job={j} planId={currentPlan?.id || 0} />
                     )}
@@ -2003,7 +2003,7 @@ const SystemUpdate: React.FC = () => {
 
               {currentPlan.ai_summary && (
                 <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
-                  <div className="text-xs font-semibold text-green-400 mb-2">✅ AI Güncelleme Özeti</div>
+                  <div className="text-xs font-semibold text-green-400 mb-2">AI Güncelleme Özeti</div>
                   <AiMarkdown text={currentPlan.ai_summary} />
                 </div>
               )}
@@ -2024,7 +2024,7 @@ const SystemUpdate: React.FC = () => {
 
       {/* ── GEÇMİŞ ──────────────────────────────────────────────────────── */}
       {!showWizard && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Güncelleme Geçmişi</h2>
             <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors">↻ Yenile</button>

@@ -123,7 +123,7 @@ const Mem: React.FC<{ s: string }> = ({ s }) => {
       {rows.map((r, i) => (
         <div key={i} className="bg-slate-900/50 rounded-lg p-2.5 space-y-1">
           <div className="flex justify-between text-xs">
-            <span className="text-purple-300 font-semibold">{r.label === 'Mem' ? '🧠 RAM' : '💿 Swap'}</span>
+            <span className="text-blue-300 font-semibold">{r.label === 'Mem' ? 'RAM' : 'Swap'}</span>
             <span className="text-slate-400 font-mono">{r.used}/{r.total}</span>
           </div>
           <Pct v={r.pct} />
@@ -136,13 +136,13 @@ const Mem: React.FC<{ s: string }> = ({ s }) => {
 const ProcTable: React.FC<{ rows: { pid: string; user: string; cpu: string; mem: string; cmd: string }[] }> = ({ rows }) => (
   <table className="w-full text-xs">
     <thead className="text-[10px] text-slate-500 uppercase">
-      <tr className="border-b border-slate-700/50"><th className="text-left py-1 pr-2">PID</th><th className="text-left py-1 pr-2">User</th><th className="text-right py-1 pr-2">CPU%</th><th className="text-right py-1 pr-2">MEM%</th><th className="text-left py-1">Komut</th></tr>
+      <tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">PID</th><th className="text-left py-1 pr-2">User</th><th className="text-right py-1 pr-2">CPU%</th><th className="text-right py-1 pr-2">MEM%</th><th className="text-left py-1">Komut</th></tr>
     </thead>
-    <tbody className="divide-y divide-slate-700/20">
+    <tbody className="divide-y divide-white/[0.05]/20">
       {rows.map((r, i) => {
         const cpu = parseFloat(r.cpu)
         return (
-          <tr key={i} className="hover:bg-slate-700/20">
+          <tr key={i} className="hover:bg-white/[0.03]">
             <td className="py-0.5 pr-2 text-slate-500 font-mono">{r.pid}</td>
             <td className="py-0.5 pr-2 text-cyan-300">{r.user}</td>
             <td className="py-0.5 pr-2 text-right font-mono"><span className={cpu > 50 ? 'text-red-300' : cpu > 10 ? 'text-yellow-300' : 'text-slate-300'}>{r.cpu}</span></td>
@@ -159,10 +159,10 @@ const Ports: React.FC<{ s: string }> = ({ s }) => {
   const rows = parseSs(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-slate-700/50"><th className="text-left py-1 pr-2">Proto</th><th className="text-left py-1 pr-2">Yerel</th><th className="text-left py-1">Süreç</th></tr></thead>
-      <tbody className="divide-y divide-slate-700/20">
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Proto</th><th className="text-left py-1 pr-2">Yerel</th><th className="text-left py-1">Süreç</th></tr></thead>
+      <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
-          <tr key={i} className="hover:bg-slate-700/20">
+          <tr key={i} className="hover:bg-white/[0.03]">
             <td className="py-0.5 pr-2"><span className={`px-1 rounded text-[10px] font-mono ${r.proto.startsWith('tcp') ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>{r.proto.toUpperCase()}</span></td>
             <td className="py-0.5 pr-2 font-mono text-cyan-300 text-[11px]">{r.local}</td>
             <td className="py-0.5 font-mono text-emerald-300 text-[11px] truncate max-w-[180px]">{r.process}</td>
@@ -192,10 +192,10 @@ const Logins: React.FC<{ s: string }> = ({ s }) => {
   const rows = parseLast(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-slate-700/50"><th className="text-left py-1 pr-2">Kullanıcı</th><th className="text-left py-1 pr-2">Terminal</th><th className="text-left py-1 pr-2">Kaynak</th><th className="text-left py-1 pr-2">Zaman</th><th className="text-left py-1">Durum</th></tr></thead>
-      <tbody className="divide-y divide-slate-700/20">
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Kullanıcı</th><th className="text-left py-1 pr-2">Terminal</th><th className="text-left py-1 pr-2">Kaynak</th><th className="text-left py-1 pr-2">Zaman</th><th className="text-left py-1">Durum</th></tr></thead>
+      <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
-          <tr key={i} className="hover:bg-slate-700/20">
+          <tr key={i} className="hover:bg-white/[0.03]">
             <td className="py-0.5 pr-2 text-cyan-300 font-medium">{r.user}</td>
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.term}</td>
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.host}</td>
@@ -212,10 +212,10 @@ const Services: React.FC<{ s: string }> = ({ s }) => {
   const rows = parseServices(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-slate-700/50"><th className="text-left py-1 pr-2">Servis</th><th className="text-left py-1 pr-2">Durum</th><th className="text-left py-1">Açıklama</th></tr></thead>
-      <tbody className="divide-y divide-slate-700/20">
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Servis</th><th className="text-left py-1 pr-2">Durum</th><th className="text-left py-1">Açıklama</th></tr></thead>
+      <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
-          <tr key={i} className="hover:bg-slate-700/20">
+          <tr key={i} className="hover:bg-white/[0.03]">
             <td className="py-0.5 pr-2 text-cyan-300 font-mono truncate max-w-[140px]">{r.name}</td>
             <td className="py-0.5 pr-2"><span className={`px-1.5 rounded-full text-[10px] ${r.active === 'active' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>{r.active}</span></td>
             <td className="py-0.5 text-slate-400 truncate max-w-[180px]">{r.desc}</td>
@@ -316,7 +316,7 @@ const ArgsForm: React.FC<{ tool: McpTool; args: Record<string, string>; onChange
 const CAT: Record<string, { label: string; color: string }> = {
   system:   { label: 'Sistem',   color: 'text-cyan-400' },
   storage:  { label: 'Depolama', color: 'text-amber-400' },
-  process:  { label: 'Süreçler', color: 'text-violet-400' },
+  process:  { label: 'Süreçler', color: 'text-blue-400' },
   network:  { label: 'Ağ',       color: 'text-blue-400' },
   security: { label: 'Güvenlik', color: 'text-rose-400' },
   mcp:      { label: 'MCP',      color: 'text-emerald-400' },
@@ -379,18 +379,18 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
   return (
     <div className="bg-slate-800/70 border border-slate-700 rounded-xl overflow-hidden">
       <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700/30 transition-colors">
+        className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-white hover:bg-white/[0.03] transition-colors">
         <span className="flex items-center gap-2">
-          <span className="text-base">🤖</span>
+          <span className="text-[10px] font-bold text-blue-400 bg-blue-500/15 border border-blue-500/30 px-1 rounded">AI</span>
           <span>AI Analiz</span>
-          {analyzing && <span className="w-3 h-3 border-2 border-purple-400/40 border-t-purple-400 rounded-full animate-spin" />}
+          {analyzing && <span className="w-3 h-3 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />}
           {!open && answer && <span className="text-[10px] text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5">yanıt hazır</span>}
         </span>
         <span className="text-slate-400 text-xs">{open ? '▲ Kapat' : '▼ Aç'}</span>
       </button>
 
       {open && (
-        <div className="border-t border-slate-700/60">
+        <div className="border-t border-white/[0.06]/60">
           {/* Quick prompts */}
           <div className="flex gap-1.5 flex-wrap px-4 pt-3 pb-1">
             {[
@@ -400,7 +400,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
               'Performans iyileştirme önerisi ver',
             ].map(q => (
               <button key={q} onClick={() => { setQuestion(q); analyze(q) }}
-                className="text-[10px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:border-purple-500/50 hover:text-purple-300 transition-colors">
+                className="text-[10px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:border-blue-500/50 hover:text-blue-300 transition-colors">
                 {q}
               </button>
             ))}
@@ -411,9 +411,9 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
             <input ref={inputRef} value={question} onChange={e => setQuestion(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !analyzing && analyze()}
               placeholder="Soru sor... (ör. 'Disk %90 üstündeki sunucular hangileri?')"
-              className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-purple-500 outline-none" />
+              className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-blue-500 outline-none" />
             <button onClick={() => analyze()} disabled={analyzing}
-              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 disabled:opacity-40 text-white text-xs font-medium transition-all">
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-600 hover:from-blue-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-medium transition-all">
               {analyzing ? '...' : 'Analiz Et'}
             </button>
           </div>
@@ -431,11 +431,11 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
                       </div>
                     )
                   })}
-                  {analyzing && <span className="inline-block w-2 h-4 bg-purple-400 animate-pulse ml-0.5" />}
+                  {analyzing && <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-0.5" />}
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-slate-500 text-xs">
-                  <span className="w-3 h-3 border-2 border-slate-600 border-t-purple-400 rounded-full animate-spin" />
+                  <span className="w-3 h-3 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
                   Analiz ediliyor...
                 </div>
               )}
@@ -571,7 +571,7 @@ const McpTools: React.FC = () => {
           )}
 
           {selectedIds.size > 0 && (
-            <div className="mt-2 pt-2 border-t border-slate-700/50 text-[10px] text-slate-400 text-center">
+            <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-slate-400 text-center">
               {selectedIds.size} sunucu seçili
             </div>
           )}
@@ -606,7 +606,7 @@ const McpTools: React.FC = () => {
               ))}
             </div>
           )}
-          {toolsData?.warning && <div className="mt-2 text-[9px] text-amber-400/70 border-t border-slate-700/50 pt-2">{toolsData.warning}</div>}
+          {toolsData?.warning && <div className="mt-2 text-[9px] text-amber-400/70 border-t border-white/[0.05] pt-2">{toolsData.warning}</div>}
         </div>
       </div>
 
@@ -658,7 +658,7 @@ const McpTools: React.FC = () => {
             <div className="flex items-center gap-0.5 px-3 pt-2 pb-0 border-b border-slate-700/60 overflow-x-auto shrink-0">
               {results.map(r => (
                 <button key={r.server_id} onClick={() => { setActiveTab(r.server_id); setRawMode(false) }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs transition-all shrink-0 ${activeTab === r.server_id ? 'bg-slate-900/60 text-white border-x border-t border-slate-700/60' : 'text-slate-400 hover:text-slate-200'}`}>
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs transition-all shrink-0 ${activeTab === r.server_id ? 'bg-slate-900/60 text-white border-x border-t border-white/[0.06]/60' : 'text-slate-400 hover:text-slate-200'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${r.ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
                   <span className="font-medium">{r.server_name}</span>
                   <span className="text-[10px] text-slate-500">{r.elapsed_ms}ms</span>
@@ -704,7 +704,7 @@ const McpTools: React.FC = () => {
         {/* Empty state */}
         {results.length === 0 && !error && !running && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center">
-            <div className="w-16 h-16 bg-slate-800/60 rounded-2xl flex items-center justify-center text-4xl opacity-40">🔧</div>
+            <div className="w-16 h-16 bg-slate-800/60 rounded-2xl flex items-center justify-center opacity-40"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
             <div className="space-y-1">
               <div className="text-sm text-slate-500">Sunucu(lar) ve araç seçip çalıştırın</div>
               <div className="text-xs text-slate-600">Çoklu sunucu seçimi destekleniyor · Paralel çalışır · AI analiz eder</div>

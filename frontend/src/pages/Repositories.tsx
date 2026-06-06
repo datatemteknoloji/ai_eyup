@@ -106,16 +106,16 @@ const TYPE_BADGE: Record<string, string> = {
   oel:    'bg-red-700/20 text-orange-300 border-orange-500/40',
   rocky:  'bg-green-500/20 text-green-300 border-green-500/40',
   alma:   'bg-blue-500/20 text-blue-300 border-blue-500/40',
-  centos: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+  centos: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
   custom: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
 }
 
 const TYPE_ICON: Record<string, string> = {
-  rhel:   '🔴',
-  oel:    '🟠',
-  rocky:  '🟢',
-  ubuntu: '🟠',
-  custom: '⚙️',
+  rhel:   'RH',
+  oel:    'OE',
+  rocky:  'RK',
+  ubuntu: 'UB',
+  custom: 'CS',
 }
 
 const JOB_STATUS_COLOR: Record<string, string> = {
@@ -129,7 +129,7 @@ const JOB_STATUS_COLOR: Record<string, string> = {
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 const StatCard = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
-  <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+  <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
     <div className="text-xs text-slate-400 mb-1">{label}</div>
     <div className="text-xl font-bold text-white">{value}</div>
     {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
@@ -315,14 +315,14 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             }`}
                           >
                             <div className="flex items-center gap-2">
-                              <span className="text-xl">{TYPE_ICON[p.icon] || TYPE_ICON[p.repo_type] || '📦'}</span>
+                              <span className="text-xl">{TYPE_ICON[p.icon] || TYPE_ICON[p.repo_type] || 'PKG'}</span>
                               <div>
                                 <div className="text-sm font-semibold text-white leading-tight">{p.product}</div>
                                 <div className="text-xs text-slate-400 mt-0.5">{p.arch}</div>
                               </div>
                             </div>
                             {p.auth_type !== 'none' && (
-                              <div className="mt-1.5 text-xs text-orange-400">🔑 Kimlik gerekli</div>
+                              <div className="mt-1.5 text-xs text-orange-400">Kimlik gerekli</div>
                             )}
                           </button>
                         ))}
@@ -340,18 +340,18 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                               onClick={() => selectProduct(p)}
                               className={`text-left p-3 rounded-xl border transition-all ${
                                 selectedProduct?.product === p.product
-                                  ? 'border-purple-500 bg-purple-600/15'
+                                  ? 'border-blue-500 bg-blue-600/15'
                                   : 'border-slate-600 bg-slate-700/30 hover:border-slate-500 hover:bg-slate-700/50'
                               }`}
                             >
                               <div className="flex items-center gap-2">
-                                <span className="text-xl">{TYPE_ICON[p.repo_type] || '📦'}</span>
+                                <span className="text-xl">{TYPE_ICON[p.repo_type] || 'PKG'}</span>
                                 <div>
                                   <div className="text-sm font-semibold text-white leading-tight">{p.product}</div>
                                   <div className="text-xs text-slate-400 mt-0.5">{p.arch}</div>
                                 </div>
                               </div>
-                              <div className="mt-1.5 text-xs text-purple-400">📋 Sadece katalog</div>
+                              <div className="mt-1.5 text-xs text-blue-400">Sadece katalog</div>
                             </button>
                           ))}
                         </div>
@@ -363,7 +363,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
               {/* Channels + credentials */}
               {selectedProduct && (
-                <div className="space-y-4 pt-2 border-t border-slate-700">
+                <div className="space-y-4 pt-2 border-t border-white/[0.06]">
 
                   {/* Version selector */}
                   <div>
@@ -408,7 +408,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
                   <div>
                     <div className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
-                      <span>{TYPE_ICON[selectedProduct.repo_type] || '📦'}</span>
+                      <span>{TYPE_ICON[selectedProduct.repo_type] || 'PKG'}</span>
                       {selectedProduct.product} {selectedVersion !== 'latest' ? selectedVersion : ''} — Kanallar
                       <span className="text-xs text-slate-400 font-normal ml-1">
                         ({selectedChannels.size} seçili)
@@ -452,7 +452,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                       {([
                         { key: 'date',    label: '📅 Günlük',  example: today.toISOString().slice(0,10) },
                         { key: 'monthly', label: '📆 Aylık',   example: `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}` },
-                        { key: 'custom',  label: '✏️ Özel',    example: '' },
+                        { key: 'custom',  label: 'Özel',    example: '' },
                         { key: 'none',    label: '🚫 Etiket yok', example: '' },
                       ] as const).map(m => (
                         <button
@@ -490,7 +490,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                     )}
                     {snapshotMode === 'none' && (
                       <div className="text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
-                        ⚠️ Etiket olmadan aynı ürün tekrar eklenirse çakışma hatası alırsınız
+                        Dikkat: Etiket olmadan aynı ürün tekrar eklenirse çakışma hatası alırsınız
                       </div>
                     )}
                   </div>
@@ -498,7 +498,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   {/* Ubuntu/apt uyarısı */}
                   {selectedProduct.format_note === 'apt' && (
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-xs text-yellow-300 space-y-1">
-                      <div className="font-semibold">⚠️ apt Repo Formatı</div>
+                      <div className="font-semibold">apt Repo Formatı</div>
                       <div>Ubuntu depo metadata kaydı oluşturulur ancak paket indirme (sync) özelliği şu an sadece RPM (repomd.xml) formatını desteklemektedir. apt desteği yakında eklenecek.</div>
                     </div>
                   )}
@@ -706,9 +706,9 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
                   <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-24">Durum</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/30">
+              <tbody className="divide-y divide-white/[0.05]/30">
                 {packages.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-700/20 transition-colors">
+                  <tr key={p.id} className="hover:bg-white/[0.03] transition-colors">
                     <td className="px-4 py-2">
                       <div className="font-medium text-white">{p.name}</div>
                       <div className="text-xs text-slate-400 truncate max-w-xs">{p.summary}</div>
@@ -730,7 +730,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
 
         {/* Pagination */}
         {total > limit && (
-          <div className="px-6 py-3 border-t border-slate-700 flex items-center justify-between flex-shrink-0">
+          <div className="px-6 py-3 border-t border-white/[0.06] flex items-center justify-between flex-shrink-0">
             <span className="text-xs text-slate-400">{page * limit + 1}–{Math.min((page+1)*limit, total)} / {total}</span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}
@@ -803,7 +803,7 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
             </div>
             <div className="flex items-end">
               <button onClick={generateConfig}
-                className="px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white text-sm rounded-lg transition-colors">
+                className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white text-sm rounded-lg transition-colors">
                 Oluştur
               </button>
             </div>
@@ -824,9 +824,9 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
 
               <div>
                 <label className="text-xs text-slate-400 block mb-2">SSH ile sunuculara gönder</label>
-                <div className="max-h-40 overflow-y-auto border border-slate-700 rounded-xl divide-y divide-slate-700/50">
+                <div className="max-h-40 overflow-y-auto border border-slate-700 rounded-xl divide-y divide-white/[0.04]">
                   {servers.map((srv: any) => (
-                    <label key={srv.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-700/30 ${selectedServers.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
+                    <label key={srv.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-white/[0.03] ${selectedServers.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
                       <input type="checkbox" checked={selectedServers.includes(srv.id)}
                         onChange={() => setSelectedServers(p => p.includes(srv.id) ? p.filter(x => x !== srv.id) : [...p, srv.id])}
                         className="accent-blue-500 w-4 h-4" />
@@ -923,7 +923,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
             ) : (
               jobs.map(j => (
                 <button key={j.id} onClick={() => setSelectedJob(j)}
-                  className={`w-full text-left px-4 py-3 hover:bg-slate-700/30 transition-colors border-b border-slate-700/50 ${selectedJob?.id === j.id ? 'bg-blue-600/10' : ''}`}>
+                  className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] transition-colors border-b border-white/[0.04] ${selectedJob?.id === j.id ? 'bg-blue-600/10' : ''}`}>
                   <div className="flex items-center gap-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full border ${JOB_STATUS_COLOR[j.status]}`}>{j.status}</span>
                     {(j.status === 'running' || j.status === 'pending') && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
@@ -1131,7 +1131,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
         <div className="p-6 space-y-5">
           {/* Açıklama */}
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-xs text-blue-300 space-y-1.5">
-            <div className="font-semibold text-sm">📋 subscription-manager + reposync</div>
+            <div className="font-semibold text-sm">subscription-manager + reposync</div>
             <div>Bu mod, belirtilen mirror host'a SSH bağlanır ve <code>subscription-manager</code> + <code>reposync</code> komutlarını çalıştırır.</div>
             <div>Mirror host varsayılan olarak <strong>127.0.0.1</strong> (bu yönetim sunucusu). Host RHEL/OEL ise subscription-manager kurulu olmalıdır.</div>
           </div>
@@ -1213,7 +1213,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
             </button>
             <button onClick={listRepos} disabled={testing}
               className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
-              {testing ? '...' : '📋 Mevcut Repo\'ları Listele'}
+              {testing ? '...' : 'Mevcut Repoları Listele'}
             </button>
           </div>
 
@@ -1246,7 +1246,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
 
           <button onClick={save} disabled={saving}
             className="w-full py-3 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-500 text-white transition-all disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kaydediliyor...</> : '💾 Kaydet'}
+            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kaydediliyor...</> : 'Kaydet'}
           </button>
         </div>
       </div>
@@ -1284,7 +1284,7 @@ const RepoRow: React.FC<{
       {/* Dağıtım + ad */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-lg flex-shrink-0">{TYPE_ICON[repo.repo_type] || '📦'}</span>
+          <span className="text-lg flex-shrink-0">{TYPE_ICON[repo.repo_type] || 'PKG'}</span>
           <div className="min-w-0">
             <div className="text-sm font-medium text-white truncate max-w-[220px]">{repo.display_name}</div>
             <div className="text-xs text-slate-500 font-mono truncate max-w-[220px]">{repo.name}</div>
@@ -1356,7 +1356,7 @@ const RepoRow: React.FC<{
           ) : (
             <button onClick={() => onFetchCerts(repo.id)}
               className="text-xs text-orange-300 bg-orange-500/10 border border-orange-500/30 px-2 py-1 rounded-lg hover:bg-orange-500/20 transition-colors whitespace-nowrap">
-              ⚠️ Sertifika Al
+              Sertifika Al
             </button>
           )
         ) : (
@@ -1377,7 +1377,7 @@ const RepoRow: React.FC<{
             </button>
           ) : repo.sync_method === 'rhsm' ? (
             <button onClick={() => onSyncRhsm(repo.id)}
-              className="px-2.5 py-1 text-xs bg-purple-700 hover:bg-purple-600 text-white rounded-lg transition-colors">
+              className="px-2.5 py-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded-lg transition-colors">
               Sync
             </button>
           ) : (
@@ -1414,7 +1414,7 @@ const RepoRow: React.FC<{
           {/* RHSM ayarları */}
           {repo.repo_type === 'rhel' && (
             <button onClick={() => onRhsmSettings(repo)}
-              className="px-2.5 py-1 text-xs bg-purple-900/50 hover:bg-purple-800/60 text-purple-300 border border-purple-700/40 rounded-lg transition-colors">
+              className="px-2.5 py-1 text-xs bg-blue-900/50 hover:bg-blue-800/60 text-blue-300 border border-blue-700/40 rounded-lg transition-colors">
               RHSM
             </button>
           )}
@@ -1618,7 +1618,7 @@ const Repositories: React.FC = () => {
         </div>
       ) : repos.length === 0 ? (
         <div className="bg-slate-800 border border-slate-700 rounded-2xl p-16 text-center">
-          <div className="text-6xl mb-4">📦</div>
+          <div className="text-3xl font-bold text-blue-400 mb-4">PKG</div>
           <h3 className="text-lg font-semibold text-white">Henüz repo yok</h3>
           <p className="text-slate-400 text-sm mt-2">OEL, RHEL veya Rocky Linux mirror'ı ekleyin</p>
           <button onClick={() => setShowAdd(true)}
@@ -1627,7 +1627,7 @@ const Repositories: React.FC = () => {
           </button>
         </div>
       ) : (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-700/60 border-b border-slate-600">

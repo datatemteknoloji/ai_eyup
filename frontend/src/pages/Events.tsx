@@ -267,18 +267,18 @@ const Events: React.FC = () => {
 
   // group row action menu
   const groupMenu = (grp: EventGroup): MenuItem[] => [
-    { label: 'Tümünü gör', icon: '📋', onClick: () => setDetailGroupIds(grp.event_ids) },
+    { label: 'Tümünü gör', icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
     { label: 'İncelemeye al', icon: '👁', onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
     { label: 'Bilinen olay', icon: '🧠', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
-    { label: 'Kapat (çöz)', icon: '✅', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
+    { label: 'Kapat (çöz)', icon: '', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
     { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
-    { label: 'Incident oluştur', icon: '🚨', accent: NEON.purple, onClick: () => openIncidentForGroup(grp) },
+    { label: 'Incident oluştur', icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
   ]
   const flatMenu = (e: SystemEvent): MenuItem[] => [
-    { label: 'Raw data', icon: '📦', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
+    { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
     { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
     { label: 'Bilinen olay', icon: '🧠', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
-    { label: 'Kapat (çöz)', icon: '✅', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
+    { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
     { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
     { label: 'Sil', icon: '🗑', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },
   ]
@@ -313,7 +313,7 @@ const Events: React.FC = () => {
           active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setPage(0) }} />
         <Kpi label="Uyarı" value={stats?.warning ?? 0} accent={NEON.orange}
           active={severityFilter === 'warning'} onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setPage(0) }} />
-        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.purple} />
+        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.blue} />
       </div>
 
       {scanResult && (
@@ -395,7 +395,7 @@ const Events: React.FC = () => {
           <GhostButton accent={NEON.orange} onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })}>İncelemeye al</GhostButton>
           <GhostButton accent={NEON.cyan} onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })}>Bilinen</GhostButton>
           <GhostButton accent={NEON.green} onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })}>Kapat</GhostButton>
-          <GhostButton accent={NEON.purple} onClick={() => {
+          <GhostButton accent={NEON.blue} onClick={() => {
             const f = events.find(e => selectedIds.has(e.id))
             setIncidentForm({ title: f ? f.title : 'Yeni Incident', description: '', severity: 'medium', assigned_to: '' })
             setIncidentModal({ event_ids: [...selectedIds] })
@@ -412,7 +412,7 @@ const Events: React.FC = () => {
           <GhostButton accent={NEON.orange} onClick={() => groupBulkAction('acknowledge')}>İncelemeye al</GhostButton>
           <GhostButton accent={NEON.cyan} onClick={() => groupBulkAction('known')}>Bilinen</GhostButton>
           <GhostButton accent={NEON.green} onClick={() => groupBulkAction('resolve')}>Kapat</GhostButton>
-          <GhostButton accent={NEON.purple} onClick={() => {
+          <GhostButton accent={NEON.blue} onClick={() => {
             const ids = selectedGroupEventIds()
             const title = [...selectedGroups].map(i => groups[i]?.title).filter(Boolean).join(', ')
             setIncidentForm({ title: title || 'Çoklu Grup Incident', description: '', severity: 'medium', assigned_to: '' })
@@ -427,7 +427,7 @@ const Events: React.FC = () => {
       {isLoadingList ? (
         <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-slate-700" /></div>
       ) : groupedView ? (
-        groups.length === 0 ? <Section><EmptyState icon="📋" text="Henüz event yok" /></Section> : (
+        groups.length === 0 ? <Section><EmptyState icon="" text="Henüz event yok" /></Section> : (
           <Section className="overflow-visible">
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table w-full text-sm">
@@ -448,7 +448,7 @@ const Events: React.FC = () => {
                       <td><input type="checkbox" checked={selectedGroups.has(idx)} onChange={() => toggleGroupSelect(idx)} /></td>
                       <td><SeverityBadge severity={grp.severity} /></td>
                       <td className="max-w-md"><p className="text-white truncate" title={grp.title}>{grp.title}</p></td>
-                      <td><span className="font-mono text-xs" style={{ color: grp.server_name ? NEON.purple : 'rgba(148,163,184,0.4)' }}>{grp.server_name || '-'}</span></td>
+                      <td><span className="font-mono text-xs" style={{ color: grp.server_name ? NEON.blue : 'rgba(148,163,184,0.4)' }}>{grp.server_name || '-'}</span></td>
                       <td>
                         <span className="px-2 py-0.5 rounded text-xs font-bold"
                           style={grp.count > 1 ? { background: `rgba(${rgb(NEON.orange)},0.15)`, color: NEON.orange } : { background: 'rgba(255,255,255,0.05)', color: 'rgba(148,163,184,0.6)' }}>
@@ -460,7 +460,7 @@ const Events: React.FC = () => {
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => startAnalyze(grp)}
                             className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
-                            style={{ background: `rgba(${rgb(NEON.purple)},0.12)`, color: NEON.purple, border: `1px solid rgba(${rgb(NEON.purple)},0.3)` }}>
+                            style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.3)` }}>
                             🔍 Analiz
                           </button>
                           <ActionMenu items={groupMenu(grp)} />
@@ -474,7 +474,7 @@ const Events: React.FC = () => {
           </Section>
         )
       ) : (
-        events.length === 0 ? <Section><EmptyState icon="📋" text="Henüz event yok" /></Section> : (
+        events.length === 0 ? <Section><EmptyState icon="" text="Henüz event yok" /></Section> : (
           <Section className="overflow-visible">
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table w-full text-sm">
@@ -497,7 +497,7 @@ const Events: React.FC = () => {
                             <p className="text-xs truncate mt-0.5" style={{ color: 'rgba(148,163,184,0.5)' }} title={event.description}>{event.description}</p>
                           )}
                         </td>
-                        <td><span className="font-mono text-xs" style={{ color: event.server_name ? NEON.purple : 'rgba(148,163,184,0.4)' }}>{event.server_name || '-'}</span></td>
+                        <td><span className="font-mono text-xs" style={{ color: event.server_name ? NEON.blue : 'rgba(148,163,184,0.4)' }}>{event.server_name || '-'}</span></td>
                         <td><span className="font-mono text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{event.event_type}</span></td>
                         <td><StatusPill e={event} /></td>
                         <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(event.created_at)}</td>
@@ -534,7 +534,7 @@ const Events: React.FC = () => {
               <div key={ev.id} className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.12)' }}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <SeverityBadge severity={ev.severity} />
-                  {ev.server_name && <span className="text-[11px] font-mono" style={{ color: NEON.purple }}>{ev.server_name}</span>}
+                  {ev.server_name && <span className="text-[11px] font-mono" style={{ color: NEON.blue }}>{ev.server_name}</span>}
                   <span className="text-[11px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{ev.event_type}</span>
                   <StatusPill e={ev} />
                   <span className="ml-auto text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{fmtDate(ev.created_at, false)}</span>
@@ -555,10 +555,10 @@ const Events: React.FC = () => {
           onClose={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText('') }}
           footer={
             <div className="flex justify-between items-center gap-2">
-              <GhostButton accent={NEON.purple} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>🔄 Yeniden</GhostButton>
+              <GhostButton accent={NEON.blue} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>Yeniden</GhostButton>
               <div className="flex gap-2">
                 <GhostButton accent={NEON.green} onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}>Kapat</GhostButton>
-                <GhostButton accent={NEON.purple} onClick={() => {
+                <GhostButton accent={NEON.blue} onClick={() => {
                   setIncidentForm({ title: analyzeGroup.title, description: analysisText.slice(0, 300) || `${analyzeGroup.count} event`, severity: analyzeGroup.severity === 'emergency' ? 'critical' : analyzeGroup.severity, assigned_to: '' })
                   setIncidentModal({ event_ids: analyzeGroup.event_ids, group_title: analyzeGroup.title })
                 }}>Incident</GhostButton>
@@ -568,14 +568,14 @@ const Events: React.FC = () => {
           <div className="p-5">
             {isAnalyzing && !analysisText && (
               <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
-                <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.purple} transparent ${NEON.purple} ${NEON.purple}` }} />
+                <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.blue} transparent ${NEON.blue} ${NEON.blue}` }} />
                 AI analiz yapıyor...
               </div>
             )}
             {analysisText && (
               <div className="prose prose-invert prose-sm max-w-none" style={{ color: 'rgba(226,232,240,0.9)' }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
-                {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.purple }} />}
+                {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
               </div>
             )}
           </div>
@@ -584,11 +584,11 @@ const Events: React.FC = () => {
 
       {/* Incident create modal */}
       {incidentModal && (
-        <Modal title="🚨 Incident Oluştur" subtitle={`${incidentModal.event_ids.length} event bağlanacak`} onClose={() => setIncidentModal(null)} maxWidth="max-w-lg"
+        <Modal title="Incident Oluştur" subtitle={`${incidentModal.event_ids.length} event bağlanacak`} onClose={() => setIncidentModal(null)} maxWidth="max-w-lg"
           footer={
             <div className="flex gap-2 justify-end">
               <GhostButton onClick={() => setIncidentModal(null)}>İptal</GhostButton>
-              <PrimaryButton accent={NEON.purple} disabled={!incidentForm.title.trim() || createIncident.isPending}
+              <PrimaryButton accent={NEON.blue} disabled={!incidentForm.title.trim() || createIncident.isPending}
                 onClick={() => createIncident.mutate({ title: incidentForm.title, description: incidentForm.description, severity: incidentForm.severity, assigned_to: incidentForm.assigned_to, related_events: incidentModal.event_ids })}>
                 {createIncident.isPending ? 'Oluşturuluyor...' : 'Oluştur'}
               </PrimaryButton>

@@ -121,7 +121,7 @@ const Incidents: React.FC = () => {
   const rowMenu = (inc: Incident) => {
     const items = []
     if (inc.status === 'open') items.push({ label: 'İncelemeye al', icon: '🔍', accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
-    if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '✅', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
+    if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
     if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: '🔒', accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
     items.push({ label: 'Sil', icon: '🗑', accent: NEON.red, onClick: () => { if (confirm('Bu incident silinecek?')) deleteIncident.mutate(inc.id) } })
     return items
@@ -205,14 +205,14 @@ const Incidents: React.FC = () => {
                         <SeverityBadge severity={inc.severity} />
                         <StatusBadge status={inc.status} />
                         <span className="text-[11px]" style={{ color: 'rgba(148,163,184,0.4)' }}>#{inc.id}</span>
-                        {inc.assigned_to && <span className="text-[11px]" style={{ color: 'rgba(148,163,184,0.6)' }}>👤 {inc.assigned_to}</span>}
+                        {inc.assigned_to && <span className="text-[11px]" style={{ color: 'rgba(148,163,184,0.6)' }}>{inc.assigned_to}</span>}
                       </div>
                       <h3 className="text-white font-medium text-sm truncate">{inc.title}</h3>
                       {inc.description && <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(148,163,184,0.6)' }}>{inc.description}</p>}
                       <div className="flex items-center gap-3 mt-2 text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                        {inc.affected_server_details?.length > 0 && <span>🖥 {inc.affected_server_details.map(s => s.name).join(', ')}</span>}
-                        {inc.related_events?.length > 0 && <span>📋 {inc.related_events.length} event</span>}
-                        {inc.rca_result?.analysis && <span style={{ color: NEON.purple }}>🤖 RCA</span>}
+                        {inc.affected_server_details?.length > 0 && <span>{inc.affected_server_details.map(s => s.name).join(', ')}</span>}
+                        {inc.related_events?.length > 0 && <span>{inc.related_events.length} event</span>}
+                        {inc.rca_result?.analysis && <span className="text-[10px] font-bold text-blue-400">AI RCA</span>}
                         <span className="ml-auto">{fmt(inc.created_at)}</span>
                       </div>
                     </div>
@@ -271,7 +271,7 @@ const Incidents: React.FC = () => {
                     <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>Etkilenen Sunucular</p>
                     <div className="flex flex-wrap gap-1.5">
                       {selectedIncident.affected_server_details.map(s => (
-                        <span key={s.id} className="text-[11px] px-2 py-0.5 rounded" style={{ background: `rgba(${rgb(NEON.purple)},0.12)`, color: NEON.purple, border: `1px solid rgba(${rgb(NEON.purple)},0.25)` }}>
+                        <span key={s.id} className="text-[11px] px-2 py-0.5 rounded" style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.25)` }}>
                           {s.name}{s.ip ? ` (${s.ip})` : ''}
                         </span>
                       ))}
@@ -286,14 +286,14 @@ const Incidents: React.FC = () => {
                   )}
                   {(selectedIncident.status === 'open' || selectedIncident.status === 'investigating') && (
                     <>
-                      <GhostButton accent={NEON.purple} onClick={() => runRCA.mutate(selectedIncident.id)} disabled={runRCA.isPending}>
-                        {runRCA.isPending ? '⏳ Analiz...' : '🤖 AI RCA Çalıştır'}
+                      <GhostButton accent={NEON.blue} onClick={() => runRCA.mutate(selectedIncident.id)} disabled={runRCA.isPending}>
+                        {runRCA.isPending ? 'Analiz...' : 'AI RCA Çalıştır'}
                       </GhostButton>
-                      <GhostButton accent={NEON.green} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'resolved' } })}>✅ Çözüldü</GhostButton>
+                      <GhostButton accent={NEON.green} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'resolved' } })}>Çözüldü</GhostButton>
                     </>
                   )}
                   {selectedIncident.status === 'resolved' && (
-                    <GhostButton accent={NEON.slate} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'closed' } })}>🔒 Kapat</GhostButton>
+                    <GhostButton accent={NEON.slate} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'closed' } })}>Kapat</GhostButton>
                   )}
                 </div>
 
@@ -312,7 +312,7 @@ const Incidents: React.FC = () => {
                   <textarea value={resolutionText} onChange={e => setResolutionText(e.target.value)} placeholder="Çözüm adımları..." rows={3} className={inputCls} style={inputStyle} />
                   <div className="mt-1.5">
                     <GhostButton accent={NEON.blue} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { resolution: resolutionText } })} disabled={updateIncident.isPending}>
-                      {updateIncident.isPending ? 'Kaydediliyor...' : '💾 Kaydet'}
+                      {updateIncident.isPending ? 'Kaydediliyor...' : 'Kaydet'}
                     </GhostButton>
                   </div>
                 </div>
@@ -320,11 +320,11 @@ const Incidents: React.FC = () => {
                 {/* RCA */}
                 {selectedIncident.rca_result?.analysis && (
                   <div>
-                    <p className="text-xs font-medium mb-1.5 flex items-center gap-1.5" style={{ color: NEON.purple }}>
-                      🤖 AI Kök Neden Analizi
-                      {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.purple)},0.15)` }}>OTOMATİK</span>}
+                    <p className="text-xs font-medium mb-1.5 flex items-center gap-1.5" style={{ color: NEON.blue }}>
+                      AI Kök Neden Analizi
+                      {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>OTOMATİK</span>}
                     </p>
-                    <div className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: `1px solid rgba(${rgb(NEON.purple)},0.2)` }}>
+                    <div className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: `1px solid rgba(${rgb(NEON.blue)},0.2)` }}>
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, false)}
                       </p>

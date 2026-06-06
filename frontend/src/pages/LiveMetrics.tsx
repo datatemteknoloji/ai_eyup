@@ -277,7 +277,7 @@ const _TimeSeriesChart: React.FC<{
   const range = maxVal - minVal || 1
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+    <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
       <div className="text-sm font-medium text-slate-300 mb-2">{title}</div>
       <svg width={width} height={height} className="overflow-visible">
         <text x={padding.left - 8} y={padding.top + chartHeight / 2} textAnchor="end" fill="#94a3b8" fontSize="10">
@@ -970,7 +970,7 @@ const LiveMetrics: React.FC = () => {
       {/* Down sunucu uyarısı */}
       {selectedInstances.length > 0 && selectedInstances.some(i => instanceUpStatus[i] === false) && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-amber-400 text-lg mt-0.5">⚠️</span>
+          <span className="text-[10px] font-bold text-amber-400 mt-0.5 bg-amber-500/15 border border-amber-500/30 px-1 rounded leading-4 self-start">!</span>
           <div>
             <p className="text-amber-300 text-sm font-medium">Seçili sunucularda veri yok</p>
             <p className="text-amber-400/70 text-xs mt-0.5">
@@ -982,7 +982,7 @@ const LiveMetrics: React.FC = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
           <div className="text-xs text-slate-400">CPU Ortalama ({timeRangeLabel})</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
@@ -991,7 +991,7 @@ const LiveMetrics: React.FC = () => {
             <Sparkline values={cpuTrend} color="#60a5fa" />
           </div>
         </div>
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
           <div className="text-xs text-slate-400">Memory Ortalama ({timeRangeLabel})</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
@@ -1000,7 +1000,7 @@ const LiveMetrics: React.FC = () => {
             <Sparkline values={memoryTrend} color="#34d399" />
           </div>
         </div>
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
           <div className="text-xs text-slate-400">Disk (/) ({timeRangeLabel})</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
@@ -1009,13 +1009,13 @@ const LiveMetrics: React.FC = () => {
             <Sparkline values={diskTrend} color="#fbbf24" />
           </div>
         </div>
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
           <div className="text-xs text-slate-400">Load Ortalama</div>
           <div className="text-2xl font-semibold text-white">
             {averageOfMap(loadMap).toFixed(2)}
           </div>
         </div>
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
           <div className="text-xs text-slate-400">Network Ortalama</div>
           <div className="text-sm text-slate-300">
             RX: {averageOfMap(netRxMap).toFixed(0)} B/s
@@ -1077,7 +1077,7 @@ const LiveMetrics: React.FC = () => {
       </div>
 
       {/* Table */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1120,9 +1120,9 @@ const LiveMetrics: React.FC = () => {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700">
+            <tbody className="divide-y divide-white/[0.05]">
               {sortedRows.map((row) => (
-                <tr key={row.serverId} className={`hover:bg-slate-700/30 transition-colors ${!row.live ? 'opacity-70' : ''}`}>
+                <tr key={row.serverId} className={`hover:bg-white/[0.03] transition-colors ${!row.live ? 'opacity-70' : ''}`}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                     <div className="font-medium">{row.hostname}</div>
                     <div className="text-xs text-slate-400 font-mono">{row.instance}</div>
