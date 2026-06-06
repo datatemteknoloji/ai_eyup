@@ -548,7 +548,7 @@ const PackageManager: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-white">Paket & Yama Yönetimi</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Linux sunucularına .deb/.rpm yükle, sistem güncellemesi yap, mevcut güncellemeleri kontrol et
+            Linux sunucularına .deb/.rpm paket yükle ve mevcut güncellemeleri kontrol et
           </p>
         </div>
         {runningCount > 0 && (

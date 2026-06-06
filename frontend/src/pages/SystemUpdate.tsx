@@ -226,12 +226,12 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
           </div>
         )}
       </td>
-      <td className="px-3 py-3">
+      <td className="px-3 py-3 whitespace-nowrap">
         <div className="flex gap-1 flex-wrap">
           {/* Yeniden Çalıştır — başarısız/kısmi planlar için direkt başlat */}
           {['failed','partial'].includes(plan.status) && (
             <button onClick={() => onRerunFailed(plan)}
-              className="px-2.5 py-1 text-xs bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/30 rounded-lg transition-colors"
+              className="px-2.5 py-1 text-xs bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/30 rounded-lg transition-colors whitespace-nowrap"
               title="Başarısız işleri yeniden başlat">
               ↻ Tekrar
             </button>
@@ -2046,7 +2046,7 @@ const SystemUpdate: React.FC = () => {
                   <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Mod</th>
                   <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Durum</th>
                   <th className="text-center px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">İlerleme</th>
-                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">İşlem</th>
+                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide w-[130px]">İşlem</th>
                 </tr>
               </thead>
               <tbody>
