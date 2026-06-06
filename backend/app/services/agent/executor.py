@@ -110,10 +110,59 @@ def run_ssh_command(
             "error": "SSH bağlantısı kurulamadı.",
         }
 
+    def _perm_denied(out: str, err: str) -> bool:
+        combined = (out + err).lower()
+        return "permission denied" in combined or "permision denied" in combined
+
     try:
         success, stdout, stderr = ssh.execute_command(
             exec_cmd, use_sudo=use_sudo, cmd_timeout=timeout
         )
+
+        # ── Permission-denied auto-retry ───────────────────────────────────
+        # READ_ONLY araçlar (journalctl, dmesg…) allow_sudo=True ile işaretlenir;
+        # sudo prefix olmasa da erişim reddedilirse stored/override şifresiyle retry.
+        if (
+            not success
+            and allow_sudo
+            and not use_sudo
+            and _perm_denied(stdout, stderr)
+        ):
+            sudo_pwd = sudo_password_override or (cred.sudo_password if cred else None)
+
+            if sudo_pwd:
+                logger.info(f"[AgentExecutor] Permission denied → sudo retry: {server.name} {exec_cmd[:60]}")
+                try:
+                    success2, stdout2, stderr2 = ssh.execute_command(
+                        exec_cmd, use_sudo=True, cmd_timeout=timeout
+                    )
+                    result = {
+                        "ok": bool(success2),
+                        "stdout": _truncate(stdout2),
+                        "stderr": _truncate(stderr2),
+                        "command": command,
+                        "server": server.name,
+                        "error": "" if success2 else (stderr2.strip()[:500] if stderr2 else "Komut başarısız"),
+                        "ran_as_sudo": True,
+                    }
+                    _audit("success" if success2 else "failure", "" if success2 else (stderr2 or ""))
+                    return result
+                except Exception as re_exc:
+                    logger.warning(f"[AgentExecutor] Sudo retry exception: {re_exc}")
+                    # Retry başarısız → orijinal sonucu döndür
+            else:
+                # Sudo şifresi yok → needs_sudo sinyali gönder
+                _audit("failure", "permission denied — needs_sudo")
+                return {
+                    "ok": False,
+                    "stdout": _truncate(stdout),
+                    "stderr": _truncate(stderr),
+                    "command": command,
+                    "server": server.name,
+                    "error": "Bu komut root yetkisi gerektiriyor (permission denied).",
+                    "needs_sudo": True,
+                }
+
         result = {
             "ok": bool(success),
             "stdout": _truncate(stdout),

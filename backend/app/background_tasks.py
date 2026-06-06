@@ -4,7 +4,7 @@ Tüm blocking (SSH, socket, vCenter) çağrılar run_in_executor ile thread pool
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.services.monitoring.server_health_checker import ServerHealthChecker
@@ -37,8 +37,9 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
         self.tasks.append(asyncio.create_task(self._periodic_node_exporter_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
+        self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
 
-        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, sysupdate-recovery:5m)")
+        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, sysupdate-recovery:5m, vm-sync:2h)")
 
     async def stop(self):
         if not self.running:
@@ -382,8 +383,21 @@ class BackgroundTaskManager:
                     from app.services.system_update_service import recover_stuck_system_update_plans
                     loop = asyncio.get_event_loop()
                     stats = await loop.run_in_executor(
-                        None, lambda: recover_stuck_system_update_plans(db, 30)
+                        None, lambda: recover_stuck_system_update_plans(db, 20)
                     )
+                    # Package jobs için de cleanup
+                    from app.models.package_job import PackageJob as _PJ
+                    _pkg_cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+                    _stuck_pkgs = db.query(_PJ).filter(
+                        _PJ.status == "running",
+                        _PJ.created_at < _pkg_cutoff,
+                    ).all()
+                    for _pj in _stuck_pkgs:
+                        _pj.status = "failed"
+                        _pj.completed_at = datetime.now(timezone.utc)
+                    if _stuck_pkgs:
+                        db.commit()
+                        logger.warning(f"Package job cleanup: {len(_stuck_pkgs)} takılı iş temizlendi")
                     if stats.get("recovered_jobs") or stats.get("finalized_plans"):
                         logger.warning(
                             f"System update stuck recovery: {stats.get('recovered_jobs', 0)} job, "
@@ -445,6 +459,93 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Node exporter sync task error: {e}")
                 await asyncio.sleep(600)
+
+
+    async def _periodic_vm_sync(self):
+        """
+        hypervisor_id var ama hypervisor_vm_id eksik sunucular için otomatik VM arama.
+        İlk çalışma: 60sn, sonra her 2 saatte bir.
+        Ek olarak vm_last_sync'i 24 saatten eski olanları da yeniler.
+        """
+        logger.info("VM auto-sync task started (first run in 60s, then every 2h)")
+        await asyncio.sleep(60)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, _run_vm_sync_batch, db
+                    )
+                except Exception as e:
+                    logger.error(f"VM auto-sync error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(7200)
+
+            except asyncio.CancelledError:
+                logger.info("VM auto-sync task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"VM auto-sync task error: {e}")
+                await asyncio.sleep(7200)
+
+
+def _run_vm_sync_batch(db) -> None:
+    """
+    Blocking işlev — thread pool'da çalışır.
+    1. hypervisor_id var, hypervisor_vm_id yok → hemen sync et
+    2. hypervisor_vm_id var ama vm_last_sync > 24 saat önce → yenile
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.models.server import Server
+    from app.services.snapshot_service import search_and_sync_vm_details
+
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(hours=24)
+
+    # Henüz VM ID'si bilinmeyen sunucular
+    missing = (
+        db.query(Server)
+        .filter(
+            Server.hypervisor_id.isnot(None),
+            Server.hypervisor_vm_id.is_(None),
+        )
+        .all()
+    )
+
+    # VM ID'si var ama son senkronizasyon 24 saatten eski
+    stale = (
+        db.query(Server)
+        .filter(
+            Server.hypervisor_id.isnot(None),
+            Server.hypervisor_vm_id.isnot(None),
+            (Server.vm_last_sync.is_(None)) | (Server.vm_last_sync < stale_cutoff),
+        )
+        .all()
+    )
+
+    targets = missing + stale
+    if not targets:
+        return
+
+    logger.info(f"VM auto-sync: {len(missing)} eksik ID, {len(stale)} eski kayıt — toplam {len(targets)}")
+
+    ok_count = 0
+    for srv in targets:
+        try:
+            result = search_and_sync_vm_details(srv, db)
+            if result.get("found"):
+                ok_count += 1
+                logger.debug(f"VM sync OK: {srv.name} → {result.get('vm_id')}")
+            else:
+                logger.debug(f"VM sync miss: {srv.name} — {result.get('message', '')}")
+        except Exception as e:
+            logger.warning(f"VM sync hata ({srv.name}): {e}")
+
+    if ok_count:
+        logger.info(f"VM auto-sync tamamlandı: {ok_count}/{len(targets)} güncellendi")
 
 
 # Global instance

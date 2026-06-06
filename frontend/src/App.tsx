@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import ErrorBoundary from './components/ErrorBoundary'
 import Login from './pages/Login'
 import AuditLog from './pages/AuditLog'
 import Dashboard from './pages/Dashboard'
@@ -67,25 +68,27 @@ function App() {
             <Route path="/*" element={
               <RequireAuth>
                 <WithLayout>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/servers" element={<Servers />} />
-                    <Route path="/hypervisors" element={<Hypervisors />} />
-                    <Route path="/chat" element={<Chat />} />
-                    <Route path="/agent" element={<Agent />} />
-                    <Route path="/metrics" element={<LiveMetrics />} />
-                    <Route path="/events" element={<Events />} />
-                    <Route path="/incidents" element={<Incidents />} />
-                    <Route path="/anomalies" element={<AnomalyDetection />} />
-                    <Route path="/ansible" element={<Ansible />} />
-                    <Route path="/mcp" element={<McpTools />} />
-                    <Route path="/packages" element={<PackageManager />} />
-                    <Route path="/repositories" element={<Repositories />} />
-                    <Route path="/system-update" element={<SystemUpdate />} />
-                    <Route path="/audit" element={<AuditLog />} />
-                    <Route path="/settings" element={<Settings />} />
-                  </Routes>
+                  <ErrorBoundary>
+                    <Routes>
+                      <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+                      <Route path="/dashboard" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+                      <Route path="/servers" element={<ErrorBoundary><Servers /></ErrorBoundary>} />
+                      <Route path="/hypervisors" element={<ErrorBoundary><Hypervisors /></ErrorBoundary>} />
+                      <Route path="/chat" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
+                      <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
+                      <Route path="/metrics" element={<ErrorBoundary><LiveMetrics /></ErrorBoundary>} />
+                      <Route path="/events" element={<ErrorBoundary><Events /></ErrorBoundary>} />
+                      <Route path="/incidents" element={<ErrorBoundary><Incidents /></ErrorBoundary>} />
+                      <Route path="/anomalies" element={<ErrorBoundary><AnomalyDetection /></ErrorBoundary>} />
+                      <Route path="/ansible" element={<ErrorBoundary><Ansible /></ErrorBoundary>} />
+                      <Route path="/mcp" element={<ErrorBoundary><McpTools /></ErrorBoundary>} />
+                      <Route path="/packages" element={<ErrorBoundary><PackageManager /></ErrorBoundary>} />
+                      <Route path="/repositories" element={<ErrorBoundary><Repositories /></ErrorBoundary>} />
+                      <Route path="/system-update" element={<ErrorBoundary><SystemUpdate /></ErrorBoundary>} />
+                      <Route path="/audit" element={<ErrorBoundary><AuditLog /></ErrorBoundary>} />
+                      <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
+                    </Routes>
+                  </ErrorBoundary>
                 </WithLayout>
               </RequireAuth>
             } />

@@ -39,6 +39,7 @@ class PackageJob(Base):
     package_file_id   = Column(Integer, ForeignKey("package_files.id", ondelete="SET NULL"), nullable=True)
     server_ids        = Column(JSON, default=list)
     results           = Column(JSON, default=dict)       # {str(server_id): {...}}
+    live_log          = Column(JSON, default=dict)       # {str(server_id): "partial output..."}
     total_servers     = Column(Integer, default=0)
     completed_servers = Column(Integer, default=0)
     created_at        = Column(DateTime(timezone=True), server_default=func.now())

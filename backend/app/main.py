@@ -29,7 +29,8 @@ app.add_middleware(
 
 # Global kimlik doğrulama: /auth/* dışındaki tüm /api/v1 endpoint'leri token ister.
 # WebSocket (terminal) ve auth uçları muaf tutulur.
-_AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/", "/api/v1/terminal/")
+_AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/",)
+# Terminal WS kendi JWT doğrulamasını query param üzerinden yapıyor
 
 
 @app.middleware("http")
@@ -106,8 +107,28 @@ async def startup_tasks():
             _conn.execute(_sa_text(
                 "ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_retention VARCHAR(20) DEFAULT '1w'"
             ))
+            # VM detay kolonları — hypervisor'dan senkronize edilen tüm VM bilgileri
+            for _col_sql in [
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_name VARCHAR(255)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_guest_hostname VARCHAR(255)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_guest_ip VARCHAR(45)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_cpu_count INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_memory_mb INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_disk_gb INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_power_state VARCHAR(30)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_tools_status VARCHAR(50)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_network_info JSONB",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_cluster VARCHAR(255)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_datastore VARCHAR(255)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_hardware_version VARCHAR(50)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_last_sync TIMESTAMPTZ",
+            ]:
+                _conn.execute(_sa_text(_col_sql))
+            _conn.execute(_sa_text(
+                "ALTER TABLE package_jobs ADD COLUMN IF NOT EXISTS live_log JSONB DEFAULT '{}'"
+            ))
     except Exception as _mig_e:
-        logger.debug(f"agent_actions migration skip: {_mig_e}")
+        logger.debug(f"schema migration skip: {_mig_e}")
     
     # Varsayılan admin kullanıcısını oluştur (yoksa) — sistem kilitlenmesin
     try:

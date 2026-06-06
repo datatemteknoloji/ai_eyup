@@ -5,6 +5,29 @@ import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+// ─── Shared Confirm Modal ──────────────────────────────────────────────────────
+const ConfirmModal = ({ message, onConfirm, onCancel }: {
+  message: string; onConfirm: () => void; onCancel: () => void
+}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+      <div className="flex items-start gap-3 mb-5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <span className="text-yellow-400 text-base">⚠</span>
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
+        </div>
+      </div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+      </div>
+    </div>
+  </div>
+)
+
 interface Server {
   id: number
   name: string
@@ -33,12 +56,14 @@ interface Server {
 const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{success: number; failed: number} | null>(null)
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const notRunning = servers.filter(s => s.status === 'ONLINE' && s.ai_ready && !s.node_exporter?.running)
 
   const handleClick = async () => {
     if (notRunning.length === 0) { alert('Node Exporter çalışmayan aktif AI-Ready sunucu yok'); return }
-    if (!confirm(`${notRunning.length} sunucuya Node Exporter kurulacak/başlatılacak. Devam?`)) return
+    if (!await showConfirm(`${notRunning.length} sunucuya Node Exporter kurulacak/başlatılacak. Devam?`)) return
 
     setLoading(true); setResult(null)
     try {
@@ -57,7 +82,9 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
   }
 
   return (
-    <button
+    <>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
+      <button
       onClick={handleClick}
       disabled={loading || notRunning.length === 0}
       className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-cyan-700 text-white rounded-lg hover:from-cyan-500 hover:to-cyan-600 transition-all disabled:opacity-50"
@@ -77,6 +104,7 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
         </>
       )}
     </button>
+    </>
   )
 }
 
@@ -84,12 +112,12 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
 const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{ai_ready: number; not_ready: number; tested: number} | null>(null)
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
-    if (!confirm(
-      'Tüm sunucularda SSH bağlantısı test edilecek.\n' +
-      'Global Credential ile bağlanabilen sunucular → AI Ready = ✅\n' +
-      'Bağlanamayanlar → AI Ready = ❌\n\nDevam?'
+    if (!await showConfirm(
+      'Tüm sunucularda SSH bağlantısı test edilecek. Global Credential ile bağlanabilen sunucular → AI Ready = ✅, bağlanamayanlar → AI Ready = ❌. Devam?'
     )) return
 
     setLoading(true); setResult(null)
@@ -105,26 +133,29 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   }
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={loading}
-      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg hover:from-indigo-500 hover:to-indigo-600 transition-all disabled:opacity-50"
-      title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
-    >
-      {loading ? (
-        <>
-          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-          <span>Test ediliyor...</span>
-        </>
-      ) : result ? (
-        <span>🤖 {result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
-      ) : (
-        <>
-          <span>🤖</span>
-          <span>AI Ready Güncelle</span>
-        </>
-      )}
-    </button>
+    <>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
+      <button
+        onClick={handleClick}
+        disabled={loading}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg hover:from-indigo-500 hover:to-indigo-600 transition-all disabled:opacity-50"
+        title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
+      >
+        {loading ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            <span>Test ediliyor...</span>
+          </>
+        ) : result ? (
+          <span>🤖 {result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+        ) : (
+          <>
+            <span>🤖</span>
+            <span>AI Ready Güncelle</span>
+          </>
+        )}
+      </button>
+    </>
   )
 }
 
@@ -132,13 +163,14 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{updated: number; failed: number} | null>(null)
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
-    // AI ready veya tümü?
     const aiReadyIds = servers.filter(s => s.ai_ready).map(s => s.id)
     const ids = aiReadyIds.length > 0 ? aiReadyIds : servers.map(s => s.id)
 
-    const confirmed = window.confirm(
+    const confirmed = await showConfirm(
       aiReadyIds.length > 0
         ? `${aiReadyIds.length} AI-Ready sunucuya SSH bağlanıp OS/Kernel bilgisi güncellenecek. Devam?`
         : `Tüm ${ids.length} sunucuya SSH bağlanıp OS bilgisi güncellenecek. Devam?`
@@ -164,26 +196,29 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ 
   }
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={loading}
-      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-500 hover:to-purple-600 transition-all disabled:opacity-50"
-      title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
-    >
-      {loading ? (
-        <>
-          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-          <span>OS Güncelleniyor...</span>
-        </>
-      ) : result ? (
-        <span>✓ {result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
-      ) : (
-        <>
-          <span>💻</span>
-          <span>OS Bilgisini Yenile</span>
-        </>
-      )}
-    </button>
+    <>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
+      <button
+        onClick={handleClick}
+        disabled={loading}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-500 hover:to-purple-600 transition-all disabled:opacity-50"
+        title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
+      >
+        {loading ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            <span>OS Güncelleniyor...</span>
+          </>
+        ) : result ? (
+          <span>✓ {result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
+        ) : (
+          <>
+            <span>💻</span>
+            <span>OS Bilgisini Yenile</span>
+          </>
+        )}
+      </button>
+    </>
   )
 }
 
@@ -319,6 +354,46 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
   const [snapCreating, setSnapCreating] = useState(false)
   const [snapRetention, setSnapRetention] = useState('1w')
+  const [vmSearching, setVmSearching] = useState(false)
+
+  const { data: vmDetails, refetch: refetchVmDetails } = useQuery<{
+    hypervisor_vm_id?: string
+    vm_name?: string
+    vm_guest_hostname?: string
+    vm_guest_ip?: string
+    vm_cpu_count?: number
+    vm_memory_mb?: number
+    vm_disk_gb?: number
+    vm_power_state?: string
+    vm_tools_status?: string
+    vm_network_info?: Array<{ name: string; mac: string; ips: Array<{ address: string; version: string }> }>
+    vm_cluster?: string
+    vm_datastore?: string
+    vm_hardware_version?: string
+    vm_last_sync?: string
+    can_snapshot: boolean
+  }>({
+    queryKey: ['server-vm-details', server.id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}/vm-details`)
+      if (!r.ok) return { can_snapshot: false }
+      return r.json()
+    },
+    enabled: tab === 'info' && !!server.hypervisor_id,
+    refetchInterval: false,
+  })
+
+  const handleSearchVm = async () => {
+    setVmSearching(true)
+    try {
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}/search-vm`, { method: 'POST' })
+      await r.json().catch(() => ({}))
+      refetchVmDetails()
+      refetchSnapshots()
+    } catch { /* ignore */ } finally {
+      setVmSearching(false)
+    }
+  }
 
   const startAnalyze = async () => {
     analyzeAbort.current?.abort()
@@ -508,6 +583,97 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 </div>
               )}
 
+              {/* VM Detayları Kartı */}
+              {server.hypervisor_id && (
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium text-white flex items-center gap-1.5">
+                      🖥️ VM Detayları
+                      {vmDetails?.vm_last_sync && (
+                        <span className="text-[10px] text-slate-500 font-normal">
+                          son sync: {new Date(vmDetails.vm_last_sync).toLocaleString('tr-TR')}
+                        </span>
+                      )}
+                    </h3>
+                    {/* Manuel yenileme — otomatik sync 2 saatte bir, gerekirse elle çalıştırılır */}
+                    <button
+                      onClick={handleSearchVm}
+                      disabled={vmSearching}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-slate-700/40 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors disabled:opacity-50"
+                      title="VM bilgilerini hypervisor'dan yenile"
+                    >
+                      {vmSearching
+                        ? <><span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" /> Yenileniyor...</>
+                        : '↻ Yenile'
+                      }
+                    </button>
+                  </div>
+
+                  {/* VM detay grid */}
+                  {vmDetails?.hypervisor_vm_id ? (
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                      {[
+                        { label: 'VM ID',       val: vmDetails.hypervisor_vm_id },
+                        { label: 'VM Adı',      val: vmDetails.vm_name },
+                        { label: 'Guest Host',  val: vmDetails.vm_guest_hostname },
+                        { label: 'Guest IP',    val: vmDetails.vm_guest_ip },
+                        { label: 'vCPU',        val: vmDetails.vm_cpu_count != null ? `${vmDetails.vm_cpu_count} core` : undefined },
+                        { label: 'RAM',         val: vmDetails.vm_memory_mb != null ? `${(vmDetails.vm_memory_mb / 1024).toFixed(1)} GB` : undefined },
+                        { label: 'Disk',        val: vmDetails.vm_disk_gb != null ? `${vmDetails.vm_disk_gb} GB` : undefined },
+                        { label: 'Cluster',     val: vmDetails.vm_cluster },
+                        { label: 'Datastore',   val: vmDetails.vm_datastore },
+                        { label: 'HW Versiyonu',val: vmDetails.vm_hardware_version },
+                      ].map(({ label, val }) => val ? (
+                        <div key={label} className="flex gap-1.5">
+                          <span className="text-slate-500 flex-shrink-0 w-24">{label}</span>
+                          <span className="text-slate-200 truncate font-mono text-[11px]">{val}</span>
+                        </div>
+                      ) : null)}
+
+                      {/* Güç durumu */}
+                      {vmDetails.vm_power_state && (
+                        <div className="flex gap-1.5 col-span-2">
+                          <span className="text-slate-500 w-24 flex-shrink-0">Güç Durumu</span>
+                          <span className={`font-medium ${
+                            ['up', 'poweredon', 'running'].includes((vmDetails.vm_power_state || '').toLowerCase())
+                              ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {vmDetails.vm_power_state}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">
+                      VM ID henüz kaydedilmemiş. "VM Ara &amp; Kaydet" ile hypervisor'dan çekin.
+                    </p>
+                  )}
+
+                  {/* Ağ adaptörleri */}
+                  {(vmDetails?.vm_network_info?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Ağ Adaptörleri</p>
+                      <div className="space-y-1">
+                        {vmDetails!.vm_network_info!.map((nic, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs bg-slate-700/20 rounded px-2 py-1.5">
+                            <span className="text-slate-400 flex-shrink-0">🔌</span>
+                            <div className="min-w-0">
+                              <span className="text-slate-300">{nic.name || `NIC ${i + 1}`}</span>
+                              {nic.mac && <span className="text-slate-500 ml-2 font-mono text-[10px]">{nic.mac}</span>}
+                              {nic.ips?.map(ip => (
+                                <div key={ip.address} className="text-cyan-400/80 font-mono text-[10px]">
+                                  {ip.address} <span className="text-slate-600">{ip.version}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* VM Snapshot */}
               {server.hypervisor_id && (
                 <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
@@ -522,8 +688,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* Retention seçici */}
-                      {(vmSnapshots?.can_snapshot || vmSnapshots?.vm_id_missing) && (
+                      {/* Retention seçici — hypervisor_id varsa her zaman göster */}
+                      {vmSnapshots?.hypervisor_connected !== false && server.hypervisor_id && (
                         <select
                           value={snapRetention}
                           onChange={e => setSnapRetention(e.target.value)}
@@ -535,37 +701,39 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           <option value="indefinite">Süresiz</option>
                         </select>
                       )}
-                      {/* Snapshot Al butonu — vm_id yoksa uyarıyla göster */}
-                      {(vmSnapshots?.can_snapshot || vmSnapshots?.vm_id_missing) && (
+                      {/* Snapshot Al butonu — VM ID yoksa backend otomatik arar */}
+                      {server.hypervisor_id && (
                         <button
                           disabled={snapCreating}
-                          title={vmSnapshots?.vm_id_missing ? 'VM ID bulunamıyor — vCenter\'da aranacak (yavaş olabilir)' : 'Snapshot al'}
+                          title="Snapshot al (arka planda çalışır)"
                           onClick={async () => {
                             setSnapCreating(true)
                             try {
                               const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ retention: snapRetention, name_prefix: 'manual' }),
+                                body: JSON.stringify({ retention: snapRetention, name_prefix: 'DTT' }),
                               })
-                              if (r.ok) refetchSnapshots()
-                              else {
-                                const err = await r.json().catch(() => ({}))
-                                alert(err.detail || 'Snapshot oluşturulamadı')
+                              const data = await r.json().catch(() => ({}))
+                              if (r.ok) {
+                                // Accepted — backend'de arka planda devam ediyor
+                                refetchSnapshots()
+                                // Pending kaydı görmek için 5sn'de bir polling yap
+                                const poll = setInterval(() => { refetchSnapshots() }, 5000)
+                                setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
+                              } else {
+                                alert(data.detail || 'Snapshot başlatılamadı')
                               }
-                            } finally { setSnapCreating(false) }
+                            } finally {
+                              // Buton 3sn sonra tekrar aktif olsun
+                              setTimeout(() => setSnapCreating(false), 3000)
+                            }
                           }}
-                          className={`flex items-center gap-1 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 ${
-                            vmSnapshots?.vm_id_missing
-                              ? 'bg-yellow-700/30 text-yellow-300 border-yellow-600/40 hover:bg-yellow-700/50'
-                              : 'bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50'
-                          }`}
+                          className="flex items-center gap-1 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50"
                         >
                           {snapCreating
-                            ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Alınıyor...</>
-                            : vmSnapshots?.vm_id_missing
-                              ? '🔍 Ara & Snapshot Al'
-                              : '+ Snapshot Al'
+                            ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Başlatılıyor...</>
+                            : '+ Snapshot Al'
                           }
                         </button>
                       )}
@@ -591,27 +759,42 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Kayıtlı</p>
                       <div className="space-y-1.5 max-h-48 overflow-y-auto">
                         {vmSnapshots!.tracked.map(s => (
-                          <div key={s.id} className="flex items-center gap-2 text-xs bg-slate-700/30 rounded-lg px-3 py-2">
-                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.status === 'active' ? 'bg-cyan-400' : 'bg-red-400'}`} />
+                          <div key={s.id} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
+                            s.status === 'pending' ? 'bg-yellow-900/20 border border-yellow-700/30'
+                            : s.status === 'failed' ? 'bg-red-900/20 border border-red-700/30'
+                            : 'bg-slate-700/30'
+                          }`}>
+                            {s.status === 'pending'
+                              ? <span className="w-3 h-3 border border-yellow-400/60 border-t-yellow-400 rounded-full animate-spin flex-shrink-0" />
+                              : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                  s.status === 'active' ? 'bg-cyan-400'
+                                  : s.status === 'failed' ? 'bg-red-400'
+                                  : 'bg-slate-400'
+                                }`} />
+                            }
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-200 truncate font-mono">{s.snapshot_name}</div>
-                              <div className="text-slate-500 text-[10px]">
-                                {s.retention} · {new Date(s.created_at).toLocaleString('tr-TR')}
-                                {s.expires_at && ` · bitiş ${new Date(s.expires_at).toLocaleDateString('tr-TR')}`}
+                              <div className="text-slate-500 text-[10px] flex items-center gap-1.5">
+                                {s.status === 'pending' && <span className="text-yellow-400">vCenter'da oluşturuluyor...</span>}
+                                {s.status === 'failed' && <span className="text-red-400">Başarısız</span>}
+                                <span>{s.retention} · {new Date(s.created_at).toLocaleString('tr-TR')}</span>
+                                {s.expires_at && <span>· bitiş {new Date(s.expires_at).toLocaleDateString('tr-TR')}</span>}
                               </div>
                             </div>
-                            <button
-                              onClick={async () => {
-                                if (!confirm('Snapshot silinsin mi? (Hypervisor\'dan da kaldırılır)')) return
-                                const r = await fetch(`${API_BASE_URL}/snapshots/${s.id}`, { method: 'DELETE' })
-                                if (r.ok) refetchSnapshots()
-                                else { const e = await r.json().catch(() => ({})); alert(e.detail || 'Silinemedi') }
-                              }}
-                              className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
-                              title="Snapshot'u sil"
-                            >
-                              Sil
-                            </button>
+                            {s.status !== 'pending' && (
+                              <button
+                                onClick={async () => {
+                                  if (!await showConfirm('Snapshot silinsin mi? (Hypervisor\'dan da kaldırılır)')) return
+                                  const r = await fetch(`${API_BASE_URL}/snapshots/${s.id}`, { method: 'DELETE' })
+                                  if (r.ok) refetchSnapshots()
+                                  else { const e = await r.json().catch(() => ({})); alert(e.detail || 'Silinemedi') }
+                                }}
+                                className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
+                                title="Snapshot'u sil"
+                              >
+                                Sil
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -797,6 +980,8 @@ const Servers: React.FC = () => {
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all') // Varsayılan olarak tüm durumlar
   const [showOffline, setShowOffline] = useState(false) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
@@ -1218,6 +1403,7 @@ const Servers: React.FC = () => {
 
   return (
     <>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     <div className="space-y-6">
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
       {isError && servers.length > 0 && (
@@ -1617,8 +1803,8 @@ const Servers: React.FC = () => {
                         Detay
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
+                        onClick={async () => {
+                          if (await showConfirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
                             deleteMutation.mutate(server.id)
                           }
                         }}

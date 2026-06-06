@@ -63,12 +63,36 @@ def _make_ssh(creds: dict) -> paramiko.SSHClient:
 
 
 @router.websocket("/ws/{server_id}")
-async def ssh_terminal(websocket: WebSocket, server_id: int):
+async def ssh_terminal(websocket: WebSocket, server_id: int, token: str = ""):
     """
     WebSocket üzerinden SSH terminal.
     İstemciden gelen data → SSH stdin
     SSH stdout/stderr → istemciye gönder
+    Token query param: ?token=<jwt>
     """
+    # JWT doğrulama — WebSocket query param olarak alınır
+    from app.core.security import decode_access_token
+    from app.models.user import User
+
+    payload = decode_access_token(token) if token else None
+    if not payload:
+        await websocket.accept()
+        await websocket.send_text("\r\n\033[31mYetkilendirme hatası: geçerli bir token gerekli.\033[0m\r\n")
+        await websocket.close(code=4401)
+        return
+
+    db = SessionLocal()
+    try:
+        uid = payload.get("uid")
+        user = db.query(User).filter(User.id == uid, User.is_active == True).first() if uid else None
+        if not user:
+            await websocket.accept()
+            await websocket.send_text("\r\n\033[31mYetkilendirme hatası: kullanıcı bulunamadı.\033[0m\r\n")
+            await websocket.close(code=4401)
+            return
+    finally:
+        db.close()
+
     await websocket.accept()
     db = SessionLocal()
     ssh_client = None

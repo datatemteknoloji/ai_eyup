@@ -165,45 +165,559 @@ class VCenterClient:
             logger.error(f"API call error: {e}")
             return None, 0, str(e)
 
-    def list_snapshots(self, vm_id: str) -> List[Dict]:
-        response = self._api_call("GET", f"/vcenter/vm/{vm_id}/snapshot")
-        if not response:
+    # ── Snapshot — REST + SOAP fallback ─────────────────────────────────────
+
+    def _soap_wait_task(self, soap_session, soap_url: str, task_id: str,
+                        timeout: int = 300) -> Tuple[bool, str]:
+        """
+        Verilen Task MOR tamamlanana kadar polling yapar. (success, message/result)
+
+        SOAP RetrieveProperties yanıtı:
+          <propSet>
+            <name>info.state</name>
+            <val xsi:type="TaskInfoState">success|error|running|queued</val>
+          </propSet>
+        """
+        import xml.etree.ElementTree as ET, time
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>Task</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>info.state</vim25:pathSet>
+          <vim25:pathSet>info.error</vim25:pathSet>
+          <vim25:pathSet>info.result</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Task">{task_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(soap_url, data=body,
+                                         headers={"Content-Type": "text/xml; charset=utf-8"},
+                                         verify=self.verify_ssl, timeout=15)
+                if resp.status_code == 200:
+                    root = ET.fromstring(resp.text)
+
+                    def _tag(el): return el.tag.split("}")[-1]
+
+                    # propSet'leri key→value sözlüğüne çevir
+                    props: dict = {}
+                    for ps in root.iter():
+                        if _tag(ps) != "propSet":
+                            continue
+                        name_el = next((c for c in ps if _tag(c) == "name"), None)
+                        val_el  = next((c for c in ps if _tag(c) == "val"),  None)
+                        if name_el is not None and val_el is not None:
+                            key = (name_el.text or "").strip()
+                            # val direkt text ya da alt elementlerin birleşimi
+                            val_text = (val_el.text or "").strip()
+                            if not val_text:
+                                # localizedMessage, message vb. alt elemandan al
+                                for child in val_el:
+                                    if _tag(child) in ("localizedMessage", "message", "fault"):
+                                        val_text = (child.text or "").strip()
+                                        break
+                            props[key] = val_text
+
+                    state      = props.get("info.state", "").lower()
+                    err_msg    = props.get("info.error", "task hata ile bitti")
+                    result_val = props.get("info.result", "")
+
+                    logger.debug(f"_soap_wait_task {task_id}: state={state!r}")
+
+                    if state == "success":
+                        return True, result_val or "success"
+                    if state == "error":
+                        return False, err_msg or "task hata ile bitti"
+                    # running / queued → bekle
+                    elif state not in ("running", "queued", ""):
+                        # Bilinmeyen durum — yine bekle
+                        logger.warning(f"_soap_wait_task unknown state: {state!r}")
+            except Exception as e:
+                logger.debug(f"_soap_wait_task poll error: {e}")
+            time.sleep(4)
+        return False, "task zaman aşımı"
+
+    def _list_snapshots_soap(self, vm_id: str) -> List[Dict]:
+        """SOAP RetrieveProperties ile snapshot listesini okur."""
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
             return []
-        items = response if isinstance(response, list) else response.get("value", [])
-        result = []
-        for item in items:
-            snap_id = item.get("snapshot") or item.get("id")
-            if not snap_id:
-                continue
-            result.append({
-                "id": snap_id,
-                "name": item.get("name") or snap_id,
-                "description": item.get("description") or "",
-                "create_time": item.get("create_time"),
-                "state": item.get("state"),
-            })
-        return result
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>snapshot</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=20)
+            if resp.status_code != 200:
+                return []
+            root = ET.fromstring(resp.text)
+
+            def _tag(el): return el.tag.split("}")[-1]
+
+            result: List[Dict] = []
+            for snap_el in root.iter():
+                if _tag(snap_el) not in ("VirtualMachineSnapshotTree", "rootSnapshotList"):
+                    continue
+                snap_id = ""
+                snap_name = ""
+                snap_desc = ""
+                snap_time = ""
+                for child in snap_el:
+                    ct = _tag(child)
+                    if ct == "snapshot" and child.text:
+                        snap_id = child.text
+                    elif ct == "name":
+                        snap_name = child.text or ""
+                    elif ct == "description":
+                        snap_desc = child.text or ""
+                    elif ct == "createTime":
+                        snap_time = child.text or ""
+                if snap_id:
+                    result.append({
+                        "id": snap_id,
+                        "name": snap_name or snap_id,
+                        "description": snap_desc,
+                        "create_time": snap_time,
+                        "state": "SUCCEEDED",
+                    })
+            return result
+        except Exception as e:
+            logger.error(f"_list_snapshots_soap error: {e}")
+            return []
+
+    def _create_snapshot_soap(self, vm_id: str, name: str,
+                               description: str = "") -> Tuple[bool, str, Optional[str]]:
+        """SOAP CreateSnapshot_Task ile snapshot oluşturur."""
+        import xml.etree.ElementTree as ET
+        import html as _html
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return False, "SOAP oturumu açılamadı", None
+
+        safe_name = _html.escape(name)
+        safe_desc = _html.escape(description or name)
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:CreateSnapshot_Task>
+      <vim25:_this type="VirtualMachine">{vm_id}</vim25:_this>
+      <vim25:name>{safe_name}</vim25:name>
+      <vim25:description>{safe_desc}</vim25:description>
+      <vim25:memory>false</vim25:memory>
+      <vim25:quiesce>false</vim25:quiesce>
+    </vim25:CreateSnapshot_Task>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code != 200:
+                return False, f"SOAP HTTP {resp.status_code}: {resp.text[:200]}", None
+
+            root = ET.fromstring(resp.text)
+            task_id = None
+            for el in root.iter():
+                if el.tag.split("}")[-1] == "returnval" and el.text:
+                    task_id = el.text
+                    break
+
+            if not task_id:
+                return False, "Task ID alınamadı", None
+
+            ok, msg = self._soap_wait_task(soap_session, soap_url, task_id, timeout=300)
+            if ok:
+                # Snapshot ID = task result ya da name bazlı arama
+                snap_id = msg if msg and msg != "success" else None
+                if not snap_id:
+                    snaps = self._list_snapshots_soap(vm_id)
+                    match = next((s for s in snaps if s["name"] == name), None)
+                    snap_id = (match or (snaps[-1] if snaps else {})).get("id")
+                return True, "Snapshot oluşturuldu (SOAP)", snap_id
+            return False, msg, None
+        except Exception as e:
+            logger.error(f"_create_snapshot_soap error: {e}", exc_info=True)
+            return False, str(e), None
+
+    def _delete_snapshot_soap(self, vm_id: str, snapshot_id: str) -> Tuple[bool, str]:
+        """
+        SOAP RemoveSnapshot_Task ile snapshot siler.
+
+        snapshot_id: Snapshot MOR — örn. "snapshot-12037"
+        consolidate parametresi eski vCenter'larda 500 verebileceğinden dahil edilmez.
+        """
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return False, "SOAP oturumu açılamadı"
+
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RemoveSnapshot_Task>
+      <vim25:_this type="VirtualMachineSnapshot">{snapshot_id}</vim25:_this>
+      <vim25:removeChildren>false</vim25:removeChildren>
+    </vim25:RemoveSnapshot_Task>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code == 500:
+                # 500 genellikle snapshot MOR hatalı veya zaten silinmiş
+                logger.warning(f"_delete_snapshot_soap 500: {resp.text[:300]}")
+                # SOAP Fault içinde "not found" varsa başarı say
+                if "not found" in resp.text.lower() or "NotFound" in resp.text:
+                    return True, "Snapshot zaten silinmiş"
+                return False, f"SOAP HTTP 500: {resp.text[:200]}"
+            if resp.status_code != 200:
+                return False, f"SOAP HTTP {resp.status_code}"
+
+            root = ET.fromstring(resp.text)
+            task_id = None
+            for el in root.iter():
+                if el.tag.split("}")[-1] == "returnval" and el.text:
+                    task_id = el.text
+                    break
+
+            if not task_id:
+                return False, "Task ID alınamadı"
+
+            ok, msg = self._soap_wait_task(soap_session, soap_url, task_id, timeout=120)
+            return ok, "Snapshot silindi (SOAP)" if ok else msg
+        except Exception as e:
+            logger.error(f"_delete_snapshot_soap error: {e}", exc_info=True)
+            return False, str(e)
+
+    def list_snapshots(self, vm_id: str) -> List[Dict]:
+        # REST dene
+        response = self._safe_api(f"/vcenter/vm/{vm_id}/snapshot")
+        if response is not None:
+            items = response if isinstance(response, list) else response.get("value", [])
+            result = []
+            for item in items:
+                snap_id = item.get("snapshot") or item.get("id")
+                if not snap_id:
+                    continue
+                result.append({
+                    "id": snap_id,
+                    "name": item.get("name") or snap_id,
+                    "description": item.get("description") or "",
+                    "create_time": item.get("create_time"),
+                    "state": item.get("state"),
+                })
+            if result:
+                return result
+        # SOAP fallback
+        return self._list_snapshots_soap(vm_id)
 
     def create_snapshot(self, vm_id: str, name: str, description: str = "") -> Tuple[bool, str, Optional[str]]:
-        payload = {
-            "name": name,
-            "description": description or name,
-            "memory": False,
-            "quiesce": True,
-        }
+        # REST dene
+        payload = {"name": name, "description": description or name, "memory": False, "quiesce": False}
         body, status, text = self._api_call_raw("POST", f"/vcenter/vm/{vm_id}/snapshot", payload)
-        if status in (200, 201) and body:
+        if status in (200, 201, 202) and body:
             snap_id = body.get("value") if isinstance(body, dict) else None
             return True, "Snapshot oluşturuldu", snap_id
-        return False, f"HTTP {status}: {(text or '')[:300]}", None
+        if status not in (404, 0):
+            logger.warning(f"create_snapshot REST HTTP {status}: {(text or '')[:200]}")
+        # SOAP fallback (404 veya diğer hata)
+        logger.info(f"create_snapshot SOAP fallback: vm={vm_id}")
+        return self._create_snapshot_soap(vm_id, name, description)
 
     def delete_snapshot(self, vm_id: str, snapshot_id: str) -> Tuple[bool, str]:
-        _, status, text = self._api_call_raw(
-            "DELETE", f"/vcenter/vm/{vm_id}/snapshot/{snapshot_id}"
-        )
+        # REST dene
+        _, status, text = self._api_call_raw("DELETE", f"/vcenter/vm/{vm_id}/snapshot/{snapshot_id}")
         if status in (200, 204):
             return True, "Snapshot silindi"
-        return False, f"HTTP {status}: {(text or '')[:200]}"
+        if status not in (404, 0):
+            logger.warning(f"delete_snapshot REST HTTP {status}: {(text or '')[:200]}")
+        # SOAP fallback
+        logger.info(f"delete_snapshot SOAP fallback: vm={vm_id} snap={snapshot_id}")
+        return self._delete_snapshot_soap(vm_id, snapshot_id)
+
+    def _safe_api(self, endpoint: str) -> Optional[Dict]:
+        """404/diğer hata durumlarında None döner, exception fırlatmaz."""
+        try:
+            return self._api_call("GET", endpoint)
+        except Exception:
+            return None
+
+    def _vm_disks_soap(self, vm_id: str) -> int:
+        """
+        SOAP RetrieveProperties ile VM disk kapasitesini okur.
+        REST hardware/disk endpoint'i eski vCenter'larda 404 verebilir.
+        Döner: toplam disk GB (int).
+        """
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return 0
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>config.hardware.device</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=15)
+            if resp.status_code != 200:
+                return 0
+            root = ET.fromstring(resp.text)
+            total_bytes = 0
+            for el in root.iter():
+                tag = el.tag.split("}")[-1]
+                # VirtualDisk objects have <capacityInBytes> or <capacityInKB>
+                if tag == "capacityInBytes" and el.text:
+                    try:
+                        total_bytes += int(el.text)
+                    except ValueError:
+                        pass
+                elif tag == "capacityInKB" and el.text and total_bytes == 0:
+                    try:
+                        total_bytes += int(el.text) * 1024
+                    except ValueError:
+                        pass
+            return int(total_bytes / (1024 ** 3)) if total_bytes > 0 else 0
+        except Exception as e:
+            logger.debug(f"_vm_disks_soap error: {e}")
+            return 0
+
+    def _vm_nics_soap(self, vm_id: str, guest_ip: str = "") -> list:
+        """
+        SOAP ile VM ağ adaptörlerini (MAC + label) okur.
+        REST hardware/ethernet endpoint'i eski vCenter'larda 404 verebilir.
+        """
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return []
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>config.hardware.device</vim25:pathSet>
+          <vim25:pathSet>guest.net</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=15)
+            if resp.status_code != 200:
+                return []
+            root = ET.fromstring(resp.text)
+
+            def _tag(el): return el.tag.split("}")[-1]
+
+            # guest.net → MAC → IP mapping
+            mac_ips: dict = {}
+            for gnet in root.iter():
+                if _tag(gnet) != "GuestNicInfo" and _tag(gnet) != "net":
+                    continue
+                mac = ""
+                ips: list = []
+                for child in gnet:
+                    ct = _tag(child)
+                    if ct == "macAddress":
+                        mac = child.text or ""
+                    elif ct in ("ipAddress", "ipAddresses"):
+                        for ip_el in child:
+                            ip_val = (ip_el.text or "").strip()
+                            if ip_val and not ip_val.startswith("fe80") and ":" not in ip_val:
+                                ips.append({"address": ip_val, "version": "v4"})
+                if mac:
+                    mac_ips[mac.lower()] = ips
+
+            # config.hardware.device → VirtualEthernetCard objects
+            nics: list = []
+            for device in root.iter():
+                if _tag(device) not in (
+                    "VirtualVmxnet3", "VirtualVmxnet", "VirtualE1000",
+                    "VirtualE1000e", "VirtualPCNet32", "VirtualSriovEthernetCard",
+                ):
+                    continue
+                label = ""
+                mac = ""
+                for child in device:
+                    ct = _tag(child)
+                    if ct == "label":
+                        label = child.text or ""
+                    elif ct == "macAddress":
+                        mac = child.text or ""
+                    elif ct == "deviceInfo":
+                        for sub in child:
+                            if _tag(sub) == "label":
+                                label = sub.text or ""
+
+                nic_ips = mac_ips.get((mac or "").lower(), [])
+                # Fallback: guest IP bilgisi varsa ilk NIC'e ekle
+                if not nic_ips and guest_ip and not nics:
+                    nic_ips = [{"address": guest_ip, "version": "v4"}]
+
+                nics.append({"name": label or f"NIC {len(nics)+1}", "mac": mac, "ips": nic_ips})
+
+            return nics
+        except Exception as e:
+            logger.debug(f"_vm_nics_soap error: {e}")
+            return []
+
+    def get_vm_full_details(self, vm_id: str, name: str = "") -> Optional[Dict]:
+        """
+        VM'in tüm detaylarını (CPU, RAM, disk, ağ, guest, cluster) tek sözlükte döner.
+        REST hardware/* endpoint'leri 404 verirse SOAP'a düşer.
+        """
+        try:
+            details = self.get_vm_details(vm_id) or {}
+            guest   = self.get_vm_guest_info(vm_id) or {}
+
+            # CPU / RAM
+            cpu_count = (details.get("cpu") or {}).get("count", 0)
+            mem_mb    = (details.get("memory") or {}).get("size_MiB", 0)
+
+            # Power state & hardware version
+            power_state = details.get("power_state", "UNKNOWN")
+            hw_version  = (details.get("hardware") or {}).get("version", "")
+
+            # Guest info
+            guest_hostname = guest.get("host_name", "")
+            guest_ip       = guest.get("ip_address", "")
+
+            # ── Disk kapasitesi ──────────────────────────────────────────────
+            disk_gb = 0
+            # 1) REST disk list endpoint (yeni vCenter)
+            disks_resp = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk")
+            if disks_resp:
+                disk_list = disks_resp if isinstance(disks_resp, list) else (disks_resp.get("value") or [])
+                for disk in disk_list:
+                    # Bazı versiyonlar kapasiteyi list response'unda döner
+                    cap_bytes = disk.get("capacity") or disk.get("value", {}).get("capacity") or 0
+                    if not cap_bytes:
+                        # REST disk detail endpoint — 404 alırsak pass
+                        disk_key = disk.get("disk") or disk.get("key", "")
+                        if disk_key:
+                            dd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk/{disk_key}") or {}
+                            val = dd.get("value") or dd
+                            cap_bytes = val.get("capacity", 0)
+                    disk_gb += int(cap_bytes) // (1024 ** 3) if cap_bytes else 0
+
+            # 2) Fallback: SOAP config.hardware.device
+            if disk_gb == 0:
+                disk_gb = self._vm_disks_soap(vm_id)
+
+            # ── Ağ adaptörleri ───────────────────────────────────────────────
+            networks: list = []
+            # 1) REST ethernet endpoint (yeni vCenter)
+            nics_resp = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/ethernet")
+            if nics_resp:
+                nic_list = nics_resp if isinstance(nics_resp, list) else (nics_resp.get("value") or [])
+                for idx, nic in enumerate(nic_list):
+                    nic_key = nic.get("nic") or nic.get("key", "")
+                    mac = nic.get("mac_address", "")
+                    label = nic.get("label", f"NIC {idx+1}")
+                    if nic_key and not mac:
+                        nd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/ethernet/{nic_key}") or {}
+                        val = nd.get("value") or nd
+                        mac   = val.get("mac_address", mac)
+                        label = val.get("label", label)
+                    networks.append({
+                        "name": label,
+                        "mac": mac,
+                        "ips": [{"address": guest_ip, "version": "v4"}] if guest_ip and idx == 0 else [],
+                    })
+
+            # 2) Fallback: SOAP guest.net + config.hardware.device
+            if not networks:
+                networks = self._vm_nics_soap(vm_id, guest_ip=guest_ip)
+
+            # 3) Son çare: sadece guest IP'den minimal NIC oluştur
+            if not networks and guest_ip:
+                networks = [{"name": "eth0", "mac": "", "ips": [{"address": guest_ip, "version": "v4"}]}]
+
+            # ── Cluster ─────────────────────────────────────────────────────
+            cluster_name = (details.get("resource_pool") or details.get("host") or "")
+
+            return {
+                "vm_id":               vm_id,
+                "vm_name":             name or details.get("name", ""),
+                "vm_guest_hostname":   guest_hostname,
+                "vm_guest_ip":         guest_ip,
+                "vm_cpu_count":        cpu_count,
+                "vm_memory_mb":        mem_mb,
+                "vm_disk_gb":          disk_gb,
+                "vm_power_state":      power_state,
+                "vm_tools_status":     (guest.get("tools_status") or ""),
+                "vm_network_info":     networks,
+                "vm_cluster":          str(cluster_name) if cluster_name else "",
+                "vm_datastore":        "",
+                "vm_hardware_version": hw_version,
+                "os_type":             (guest.get("family") or ""),
+            }
+        except Exception as e:
+            logger.error(f"VCenter get_vm_full_details error: {e}", exc_info=True)
+            return None
 
     def find_vm_by_name_or_ip(self, name: str = "", ip: str = "") -> Optional[str]:
         """VM'i isim veya IP ile bul, vm_id döner."""

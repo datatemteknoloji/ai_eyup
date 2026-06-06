@@ -29,7 +29,22 @@ class Server(Base):
     # Hypervisor iliskisi
     hypervisor_id = Column(Integer, ForeignKey("hypervisors.id", ondelete="SET NULL"), nullable=True, index=True)
     hypervisor_vm_id = Column(String(255), nullable=True)
-    
+
+    # ── VM Detayları (hypervisor'dan senkronize edilir) ───────────────────────
+    vm_name           = Column(String(255), nullable=True)        # Hypervisorde görünen VM adı
+    vm_guest_hostname = Column(String(255), nullable=True)        # Guest OS hostname (VMware Tools / oVirt guest agent)
+    vm_guest_ip       = Column(String(45),  nullable=True)        # Guest OS primary IP (management IP'den farklı olabilir)
+    vm_cpu_count      = Column(Integer,     nullable=True)        # vCPU sayısı
+    vm_memory_mb      = Column(Integer,     nullable=True)        # Tahsis edilen RAM (MB)
+    vm_disk_gb        = Column(Integer,     nullable=True)        # Toplam disk (GB, tüm disk'ler)
+    vm_power_state    = Column(String(30),  nullable=True)        # poweredOn / poweredOff / up / down / suspended
+    vm_tools_status   = Column(String(50),  nullable=True)        # guestToolsRunning / toolsNotInstalled vb.
+    vm_network_info   = Column(JSON,        nullable=True)        # [{adapter, mac, ips:[...]}] listesi
+    vm_cluster        = Column(String(255), nullable=True)        # Hangi cluster / datacenter
+    vm_datastore      = Column(String(255), nullable=True)        # Birincil datastore / storage domain adı
+    vm_hardware_version = Column(String(50), nullable=True)       # vmx-19 / v4 vb.
+    vm_last_sync      = Column(DateTime(timezone=True), nullable=True)  # Son hypervisor sync zamanı
+
     # Node Exporter durum cache (background task 5dk'da bir gunceller)
     node_exporter_installed = Column(Boolean, default=False)
     node_exporter_running = Column(Boolean, default=False)

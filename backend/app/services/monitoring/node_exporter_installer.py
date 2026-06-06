@@ -414,7 +414,7 @@ print('OK')
                 # Sudo gerekirse deneyelim
                 if not is_root:
                     password = self.connector.sudo_password or ""
-                    sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
+                    sudo_prefix = "sudo"  # şifre sudo_execute_command ile stdin üzerinden gönderilir
                     sudo_cmd = f"""
                         {sudo_prefix} mkdir -p /usr/local/bin && \
                         {sudo_prefix} cp {binary_path} /usr/local/bin/node_exporter && \
@@ -422,7 +422,7 @@ print('OK')
                         {sudo_prefix} chown root:root /usr/local/bin/node_exporter && \
                         /usr/local/bin/node_exporter --version
                     """
-                    sudo_result = self.connector.execute_command(sudo_cmd)
+                    sudo_result = self.connector.sudo_execute_command(sudo_cmd, password) if password else self.connector.execute_command(sudo_cmd)
                     if sudo_result.get("success") or "version" in sudo_result.get("stdout", "").lower():
                         return {"success": True, "message": "Node Exporter binary kopyalandı (sudo ile)", "install_path": "/usr/local/bin/node_exporter"}
                     else:
@@ -524,7 +524,7 @@ EOFSERVICE
             # Sudo denemesi (non-root)
             if not is_root:
                     password = self.connector.sudo_password or ""
-                    sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
+                    sudo_prefix = "sudo"  # şifre sudo_execute_command ile stdin üzerinden gönderilir
                     sudo_cmd = f"""
                         {sudo_prefix} tee /etc/systemd/system/node_exporter.service > /dev/null << 'EOFSERVICE'
 [Unit]
@@ -543,7 +543,7 @@ WantedBy=multi-user.target
 EOFSERVICE
                         {sudo_prefix} systemctl daemon-reload
                     """
-                    sudo_result = self.connector.execute_command(sudo_cmd)
+                    sudo_result = self.connector.sudo_execute_command(sudo_cmd, password) if password else self.connector.execute_command(sudo_cmd)
                     if sudo_result.get("success"):
                         verify = self.connector.execute_command("test -f /etc/systemd/system/node_exporter.service && echo exists || echo missing")
                         if "exists" in verify.get("stdout", ""):
@@ -594,14 +594,14 @@ EOFSERVICE
                 result = self.connector.execute_command(start_cmd)
             else:
                 password = self.connector.sudo_password or ""
-                sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
-                start_cmd = f"""
-                    {sudo_prefix} systemctl daemon-reload && \
-                    {sudo_prefix} systemctl enable node_exporter && \
-                    {sudo_prefix} systemctl start node_exporter && \
-                    {sudo_prefix} systemctl status node_exporter --no-pager | head -5
-                """
-                result = self.connector.execute_command(start_cmd)
+                start_cmd = (
+                    "sudo systemctl daemon-reload && "
+                    "sudo systemctl enable node_exporter && "
+                    "sudo systemctl start node_exporter && "
+                    "sudo systemctl status node_exporter --no-pager | head -5"
+                )
+                result = (self.connector.sudo_execute_command(start_cmd, password)
+                          if password else self.connector.execute_command(start_cmd))
 
             stdout_text = (result.get("stdout", "") + result.get("stderr", "")).lower()
             if result.get("success") or "active (running)" in stdout_text or "active: active" in stdout_text:
@@ -703,12 +703,8 @@ SVCEOF"""
     def check_status(self) -> Dict[str, Any]:
         """Node Exporter durumunu kontrol et"""
         try:
-            # Sudo şifresini al (varsa)
-            password = self.connector.password or ""
-            sudo_prefix = f"echo '{password}' | sudo -S" if password else "sudo"
-            
             # Service durumu (sudo olmadan da deneyelim)
-            status_cmd = f"{sudo_prefix} systemctl is-active node_exporter 2>/dev/null || systemctl is-active node_exporter 2>/dev/null || echo 'inactive'"
+            status_cmd = "sudo systemctl is-active node_exporter 2>/dev/null || systemctl is-active node_exporter 2>/dev/null || echo 'inactive'"
             status_result = self.connector.execute_command(status_cmd)
             
             is_running = status_result.get("success") and "active" in status_result.get("stdout", "").lower()
@@ -723,7 +719,7 @@ SVCEOF"""
             is_installed = binary_check.get("success") and "exists" in binary_check.get("stdout", "").lower()
             
             # Port kontrolü (sudo olmadan da deneyelim)
-            port_check = self.connector.execute_command(f"{sudo_prefix} netstat -tlnp 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || netstat -tln 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || ss -tln 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || echo 'not listening'")
+            port_check = self.connector.execute_command(f"sudo netstat -tlnp 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || netstat -tln 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || ss -tln 2>/dev/null | grep {self.NODE_EXPORTER_PORT} || echo 'not listening'")
             is_listening = port_check.get("success") and "not listening" not in port_check.get("stdout", "").lower() and f":{self.NODE_EXPORTER_PORT}" in port_check.get("stdout", "")
             
             return {

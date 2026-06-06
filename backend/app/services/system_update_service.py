@@ -791,8 +791,7 @@ def recover_stuck_system_update_plans(db, max_minutes: int = 30) -> dict:
         SystemUpdateJob.status == "running",
         SystemUpdateJob.started_at.isnot(None),
         SystemUpdateJob.started_at < cutoff,
-        SystemUpdateJob.completed_at.is_(None),
-    ).all()
+    ).all()  # completed_at kontrolü yok — tutarsız state (running + completed_at set) de yakalanır
 
     for job in stuck_jobs:
         job.status = "failed"

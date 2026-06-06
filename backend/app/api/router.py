@@ -133,6 +133,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load snapshots router: {e}", exc_info=True)
 
+# Tasks (aktif görevler + ilerleme izleme)
+try:
+    from app.api import tasks
+    api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+except Exception as e:
+    logger.error(f"Could not load tasks router: {e}", exc_info=True)
+
 # SSH Web Terminal
 try:
     from app.api import terminal

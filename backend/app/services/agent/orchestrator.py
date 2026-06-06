@@ -258,6 +258,31 @@ def _run_loop_legacy(
 
             if tool.risk_level == RiskLevel.READ_ONLY:
                 result = tool.execute(db, args, ctx)
+
+                # Permission denied + sudo şifresi yok → chat'te sor, beklet.
+                if result.get("needs_sudo") and not ctx.get("sudo_password_override"):
+                    srv = tool_mod.resolve_server(db, args, ctx)
+                    action = AgentAction(
+                        session_id=ctx.get("session_id"),
+                        server_id=srv.id if srv else None,
+                        tool_name="__needs_sudo__",
+                        arguments={"tool": name, "args": args},
+                        risk_level="read_only",
+                        requires_root=True,
+                        status="pending",
+                        preview=f"Root yetkisi gerekiyor: {result.get('command', name)}",
+                        transcript=messages,
+                        model=model,
+                    )
+                    db.add(action); db.commit(); db.refresh(action)
+                    steps.append({"type": "approval_required", "tool": name, "args": args,
+                                  "preview": action.preview, "action_id": action.id,
+                                  "guard": {}, "requires_root": True})
+                    return {"status": "pending", "action_id": action.id,
+                            "preview": action.preview, "tool": name,
+                            "requires_root": True, "needs_sudo": True,
+                            "steps": steps, "session_id": ctx.get("session_id")}
+
                 _record_action(db, ctx, tool, args, "executed", result=result, model=model)
                 messages.append({"role": "tool", "name": name,
                                  "content": json.dumps(result, ensure_ascii=False)[:8000]})
@@ -356,6 +381,57 @@ def continue_after_decision(db: Session, action: AgentAction, approved: bool,
 
     action.decided_by = decided_by
     action.decided_at = datetime.utcnow()
+
+    # ── __needs_sudo__ özel kolu ──────────────────────────────────────────────
+    # READ_ONLY araç permission denied verdi, kullanıcı onay ekranında sudo
+    # şifresini girdi. Şimdi aynı aracı sudo ile yeniden çalıştır.
+    if action.tool_name == "__needs_sudo__":
+        orig_tool_name = (action.arguments or {}).get("tool", "")
+        orig_args = (action.arguments or {}).get("args", {})
+        orig_tool = tool_mod.get_tool(orig_tool_name)
+
+        if not approved:
+            action.status = "rejected"; db.commit()
+            record_audit(db, category="agent", action="agent.reject", status="rejected",
+                         actor=decided_by, target_type="action", target_id=action.id,
+                         summary=f"Sudo reddedildi: {orig_tool_name}")
+            messages.append({"role": "tool", "name": orig_tool_name,
+                             "content": json.dumps({"rejected": True, "note": "Sudo reddedildi."})})
+            result = _run_loop(db, messages, model, ctx, steps=steps,
+                               start_step=_step_estimate(messages))
+            _persist_final(db, result)
+            return result
+
+        if not orig_tool:
+            action.status = "failed"; db.commit()
+            return {"status": "error", "error": "Orijinal araç bulunamadı", "steps": steps}
+
+        record_audit(db, category="agent", action="agent.sudo_granted", actor=decided_by,
+                     target_type="action", target_id=action.id, server_id=action.server_id,
+                     summary=f"Sudo onaylandı: {orig_tool_name}")
+
+        # sudo_password_override ctx'e eklendi → executor otomatik kullanır
+        exec_result = orig_tool.execute(db, orig_args, ctx)
+        action.status = "executed" if exec_result.get("ok") else "failed"
+        action.result = exec_result
+        action.executed_at = datetime.utcnow()
+        db.commit()
+
+        record_audit(db, category="agent", action="agent.execute",
+                     status="success" if exec_result.get("ok") else "failure",
+                     actor=decided_by, server_id=action.server_id,
+                     summary=f"Sudo ile çalıştırıldı: {orig_tool_name}",
+                     detail={"ok": exec_result.get("ok"), "ran_as_sudo": exec_result.get("ran_as_sudo")})
+
+        messages.append({"role": "tool", "name": orig_tool_name,
+                         "content": json.dumps(exec_result, ensure_ascii=False)[:8000]})
+        steps.append({"type": "executed", "tool": orig_tool_name,
+                      "preview": f"sudo: {orig_tool_name}", "result": exec_result})
+        final_result = _run_loop(db, messages, model, ctx, steps=steps,
+                                 start_step=_step_estimate(messages))
+        _persist_final(db, final_result)
+        return final_result
+    # ─────────────────────────────────────────────────────────────────────────
 
     if not approved:
         action.status = "rejected"

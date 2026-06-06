@@ -84,31 +84,44 @@ class SSHManager:
     
     def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 15) -> Tuple[bool, str, str]:
         """
-        Komut çalıştır
+        Komut çalıştır.  Sudo gerektiğinde şifre stdin üzerinden aktarılır;
+        komut dizisine gömülmez (log / process list'e düşmez).
         Returns: (success, stdout, stderr)
         """
         if not self.client:
             return False, "", "SSH bağlantısı yok"
-        
+
+        # Log için şifresiz görünüm
+        log_cmd = command[:80]
+
         try:
+            actual_cmd = command
+            needs_sudo_stdin = False
             if use_sudo and self.sudo_password:
-                command = f"echo '{self.sudo_password}' | sudo -S {command}"
-            
-            stdin, stdout, stderr = self.client.exec_command(command, timeout=cmd_timeout)
-            
+                actual_cmd = f"sudo -S {command}"
+                needs_sudo_stdin = True
+
+            stdin, stdout, stderr = self.client.exec_command(actual_cmd, timeout=cmd_timeout)
+
+            if needs_sudo_stdin:
+                # Şifreyi komut yerine stdin'e gönder
+                stdin.write(self.sudo_password + '\n')
+                stdin.flush()
+                stdin.close()
+
             stdout_text = stdout.read().decode('utf-8', errors='ignore')
             stderr_text = stderr.read().decode('utf-8', errors='ignore')
             exit_code = stdout.channel.recv_exit_status()
-            
+
             success = exit_code == 0
-            
+
             if success:
-                logger.info(f"✅ Komut başarılı ({self.host}): {command[:50]}")
+                logger.info(f"✅ Komut başarılı ({self.host}): {log_cmd}")
             else:
-                logger.warning(f"⚠️ Komut hata döndü ({self.host}, exit={exit_code}): {command[:50]}")
-            
+                logger.warning(f"⚠️ Komut hata döndü ({self.host}, exit={exit_code}): {log_cmd}")
+
             return success, stdout_text, stderr_text
-            
+
         except Exception as e:
             logger.error(f"❌ Komut çalıştırma hatası ({self.host}): {e}")
             return False, "", str(e)

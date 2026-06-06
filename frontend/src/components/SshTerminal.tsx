@@ -58,8 +58,10 @@ const SshTerminalModal: React.FC<Props> = ({ serverId, serverName, serverIp, onC
     termRef.current = term
     fitRef.current  = fitAddon
 
-    // WebSocket bağlantısı
-    const wsUrl = `ws://${window.location.host}/api/v1/terminal/ws/${serverId}`
+    // WebSocket bağlantısı — JWT token query param olarak gönderilir
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const token = localStorage.getItem('auth_token') || ''
+    const wsUrl = `${proto}://${window.location.host}/api/v1/terminal/ws/${serverId}?token=${encodeURIComponent(token)}`
     const ws = new WebSocket(wsUrl)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws

@@ -58,10 +58,15 @@ def _connect(host: str, port: int, username: str,
 
 def _run(client: paramiko.SSHClient, cmd: str,
          sudo_pass: Optional[str] = None, timeout: int = 600) -> tuple[int, str, str]:
-    """Komutu çalıştırır. (exit_code, stdout, stderr) döner."""
+    """Komutu çalıştırır. (exit_code, stdout, stderr) döner.
+    Şifre komut dizisine gömülmez; stdin üzerinden gönderilir.
+    """
+    actual_cmd = f"sudo -S sh -c {_q(cmd)}" if sudo_pass else cmd
+    stdin, stdout, stderr = client.exec_command(actual_cmd, timeout=timeout, get_pty=False)
     if sudo_pass:
-        cmd = f"echo '{sudo_pass}' | sudo -S sh -c {_q(cmd)}"
-    _, stdout, stderr = client.exec_command(cmd, timeout=timeout, get_pty=False)
+        stdin.write(sudo_pass + "\n")
+        stdin.flush()
+        stdin.close()
     out  = stdout.read().decode("utf-8", errors="replace")
     err  = stderr.read().decode("utf-8", errors="replace")
     code = stdout.channel.recv_exit_status()

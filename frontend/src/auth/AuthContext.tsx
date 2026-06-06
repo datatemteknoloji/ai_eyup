@@ -32,7 +32,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = getToken()
     if (!token) { setUser(null); return }
     try {
-      const r = await fetch(`${API_BASE_URL}/auth/me`)
+      const r = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
       if (r.ok) setUser(await r.json())
       else { clearToken(); setUser(null) }
     } catch {
@@ -59,7 +61,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(data.user)
   }, [])
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    const token = getToken()
+    if (token) {
+      // Backend'e token revocation bildir (fire-and-forget)
+      fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      }).catch(() => {})
+    }
     clearToken()
     setUser(null)
     window.location.href = '/login'

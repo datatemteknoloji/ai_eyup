@@ -9,11 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredentials as _Creds
 from app.core.auth import client_ip, get_current_user, require_role
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, hash_password, verify_password, revoke_token
 from app.models.user import User
 from app.services.audit import record_audit
+
+_bearer_opt = _HTTPBearer(auto_error=False)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -73,6 +76,20 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     record_audit(db, category="auth", action="auth.login", status="success",
                  actor=user, summary=f"Giriş yapıldı: {user.username}", ip_address=ip)
     return {"access_token": token, "token_type": "bearer", "user": _user_dict(user)}
+
+
+@router.post("/logout")
+def logout(request: Request, db: Session = Depends(get_db),
+           creds: Optional[_Creds] = Depends(_bearer_opt)):
+    """Token'ı blacklist'e ekle — anında geçersiz kılar."""
+    from app.core.security import decode_access_token
+    if creds and creds.credentials:
+        payload = decode_access_token(creds.credentials)
+        if payload and payload.get("jti"):
+            revoke_token(payload["jti"])
+    record_audit(db, category="auth", action="auth.logout", status="success",
+                 summary="Çıkış yapıldı", ip_address=client_ip(request))
+    return {"success": True}
 
 
 @router.get("/me")

@@ -12,6 +12,17 @@ from app.schemas.hypervisor import HypervisorCreate, HypervisorUpdate, Hyperviso
 router = APIRouter()
 
 
+def _mask_hv_config(cfg: dict | None) -> dict:
+    """Hypervisor connection_config'den şifreleri kaldırır."""
+    if not cfg:
+        return {}
+    return {
+        "username":        cfg.get("username") or "",
+        "port":            cfg.get("port") or 443,
+        "has_password":    bool(cfg.get("password")),
+    }
+
+
 class TestConnectionRequest(BaseModel):
     type: str
     hostname: Optional[str] = None
@@ -78,7 +89,7 @@ async def list_hypervisors(db: Session = Depends(get_db)):
             "ip_address": h.ip_address,
             "port": h.port,
             "username": h.username,
-            "connection_config": h.connection_config,
+            "connection_config": _mask_hv_config(h.connection_config),
             "created_at": h.created_at,
             "updated_at": h.updated_at
         } for h in hypervisors]
@@ -134,7 +145,7 @@ async def create_hypervisor(hypervisor: HypervisorCreate, db: Session = Depends(
             "ip_address": db_hypervisor.ip_address,
             "port": db_hypervisor.port,
             "username": db_hypervisor.username,
-            "connection_config": db_hypervisor.connection_config,
+            "connection_config": _mask_hv_config(db_hypervisor.connection_config),
             "created_at": db_hypervisor.created_at,
             "updated_at": db_hypervisor.updated_at
         }
@@ -176,7 +187,7 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
             "ip_address": db_hypervisor.ip_address,
             "port": db_hypervisor.port,
             "username": db_hypervisor.username,
-            "connection_config": db_hypervisor.connection_config,
+            "connection_config": _mask_hv_config(db_hypervisor.connection_config),
             "created_at": db_hypervisor.created_at,
             "updated_at": db_hypervisor.updated_at
         }

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_role
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
 from app.models.app_settings import AppSettings
 from app.models.user import User
@@ -332,7 +332,7 @@ def list_plans(limit: int = 50, db: Session = Depends(get_db)):
 
 
 @router.post("/plans")
-def create_plan(req: PlanCreateRequest, db: Session = Depends(get_db)):
+def create_plan(req: PlanCreateRequest, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     if not servers:
         raise HTTPException(400, "Sunucu bulunamadı")
@@ -368,7 +368,7 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/plans/{plan_id}")
-def delete_plan(plan_id: int, db: Session = Depends(get_db)):
+def delete_plan(plan_id: int, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
     if not plan:
         raise HTTPException(404, "Plan bulunamadı")
@@ -382,7 +382,7 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db)):
 # ─── AI Ön Analiz ─────────────────────────────────────────────────────────────
 
 @router.post("/plans/{plan_id}/analyze")
-def analyze_plan(plan_id: int, db: Session = Depends(get_db)):
+def analyze_plan(plan_id: int, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
     if not plan:
         raise HTTPException(404, "Plan bulunamadı")
@@ -486,7 +486,7 @@ def get_server_update_history(server_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/reboot-servers")
-def reboot_servers(server_ids: List[int], db: Session = Depends(get_db)):
+def reboot_servers(server_ids: List[int], db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     """
     Seçili sunucuları SSH ile yeniden başlatır.
     Güvenlik için önce 'shutdown -r +1' ile 1 dakika sonra reboot planlar.
@@ -534,7 +534,7 @@ def reboot_servers(server_ids: List[int], db: Session = Depends(get_db)):
 
 
 @router.post("/cancel-reboot")
-def cancel_reboot(server_ids: List[int], db: Session = Depends(get_db)):
+def cancel_reboot(server_ids: List[int], db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     """Planlanmış reboot'u iptal eder (shutdown -c)."""
     from app.services.system_update_service import _resolve_creds, _make_client, _run
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -564,7 +564,7 @@ def cancel_reboot(server_ids: List[int], db: Session = Depends(get_db)):
 
 
 @router.post("/plans/{plan_id}/jobs/{job_id}/rerun")
-def rerun_job(plan_id: int, job_id: int, db: Session = Depends(get_db)):
+def rerun_job(plan_id: int, job_id: int, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     """
     Tamamlanmış (başarılı veya başarısız) bir job'u orijinal parametrelerle yeniden çalıştırır.
     """
@@ -647,6 +647,139 @@ def rerun_job(plan_id: int, job_id: int, db: Session = Depends(get_db)):
 
     threading.Thread(target=_do_rerun, daemon=True, name=f"rerun-{job_id}").start()
     return {"ok": True, "message": f"İş #{job_id} yeniden başlatıldı"}
+
+
+@router.post("/plans/{plan_id}/rerun-failed")
+def rerun_failed_jobs(plan_id: int, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
+    """
+    Bir plandaki başarısız/iptal edilmiş tüm job'ları yeniden başlatır.
+    Plan durumunu 'running' olarak günceller.
+    """
+    from datetime import datetime, timezone
+
+    plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
+    if not plan:
+        raise HTTPException(404, "Plan bulunamadı")
+    if plan.status == "running":
+        raise HTTPException(400, "Plan zaten çalışıyor")
+
+    all_jobs = db.query(SystemUpdateJob).filter(SystemUpdateJob.plan_id == plan_id).all()
+
+    # Hâlâ çalışan job'lar varsa — sadece plan durumunu düzelt, yeni thread açma
+    running_jobs = [j for j in all_jobs if j.status == "running"]
+    failed_jobs  = [j for j in all_jobs if j.status in ("failed", "cancelled", "error")]
+
+    if not failed_jobs and not running_jobs:
+        raise HTTPException(400, "Yeniden başlatılacak başarısız iş bulunamadı")
+
+    if not failed_jobs and running_jobs:
+        # Plan zaten devam ediyor, sadece durumu güncelle
+        plan.status = "running"
+        plan.completed_at = None
+        db.commit()
+        return {"ok": True, "restarted": 0,
+                "message": f"{len(running_jobs)} iş zaten çalışıyor, plan durumu güncellendi"}
+
+    # Plan + job durumlarını sıfırla
+    plan.status = "running"
+    plan.completed_at = None
+    for job in failed_jobs:
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc)
+        job.completed_at = None
+        job.log = f"[TEKRAR BAŞLATILDI] {datetime.now(timezone.utc).strftime('%H:%M:%S')}\n"
+        job.packages_updated = []
+        job.reboot_required = False
+    db.commit()
+
+    # Her job için ayrı thread başlat
+    for job in failed_jobs:
+        job_id    = job.id
+        server_id = job.server_id
+        plan_type = plan.update_type
+        plan_repo = plan.repo_id
+        over_user = plan.override_username
+        over_pass = plan.override_password
+        over_sudo = plan.override_sudo_password
+        priv_method   = plan.priv_method or "sudo"
+        custom_pkgs   = list(plan.custom_packages or [])
+
+        def _do_rerun(jid=job_id, sid=server_id):
+            from app.services.system_update_service import apply_updates_to_server
+            from app.core.database import ThreadSessionLocal
+            from app.models.repository import RepoSource
+            from app.services.repo_sync_service import generate_repo_file
+            from app.services.system_update_service import _get_management_ip
+            _db = ThreadSessionLocal()
+            try:
+                _srv  = _db.query(Server).filter_by(id=sid).first()
+                _gc   = _db.query(GlobalCredential).filter_by(is_default=True).first() \
+                        or _db.query(GlobalCredential).first()
+                _repo_name = None; _repo_content = None
+                if plan_repo:
+                    _repo = _db.query(RepoSource).filter_by(id=plan_repo).first()
+                    if _repo:
+                        _repo_content = generate_repo_file(_repo, _get_management_ip(), 8000)
+                        _repo_name = _repo.name
+                result = apply_updates_to_server(
+                    _srv, plan_type, _gc, _repo_content, _repo_name,
+                    override_username=over_user, override_password=over_pass,
+                    override_sudo_password=over_sudo, priv_method=priv_method,
+                    custom_packages=custom_pkgs, job_id=jid,
+                )
+                j = _db.query(SystemUpdateJob).filter_by(id=jid).first()
+                if j:
+                    j.status           = result["status"]
+                    j.packages_updated = result.get("packages_updated", [])
+                    j.reboot_required  = result.get("reboot_required", False)
+                    j.completed_at     = datetime.now(timezone.utc)
+                    _db.commit()
+                # Plan durumunu güncelle
+                _check_and_finalize_plan(_db, plan_id)
+            except Exception as exc:
+                logger.error(f"rerun-failed job #{jid}: {exc}", exc_info=True)
+                j = _db.query(SystemUpdateJob).filter_by(id=jid).first()
+                if j:
+                    j.status = "failed"
+                    j.log = (j.log or "") + f"\n[HATA] {exc}"
+                    _db.commit()
+                _check_and_finalize_plan(_db, plan_id)
+            finally:
+                _db.close()
+
+        threading.Thread(target=_do_rerun, daemon=True,
+                         name=f"rerun-failed-{job_id}").start()
+
+    return {
+        "ok": True,
+        "restarted": len(failed_jobs),
+        "message": f"{len(failed_jobs)} başarısız iş yeniden başlatıldı",
+    }
+
+
+def _check_and_finalize_plan(db, plan_id: int) -> None:
+    """Tüm job'lar bittiyse plan durumunu günceller."""
+    from datetime import datetime, timezone
+    try:
+        jobs = db.query(SystemUpdateJob).filter_by(plan_id=plan_id).all()
+        if not jobs:
+            return
+        statuses = {j.status for j in jobs}
+        if statuses & {"running", "pending"}:
+            return  # Hâlâ devam eden var
+        plan = db.query(SystemUpdatePlan).filter_by(id=plan_id).first()
+        if not plan or plan.status not in ("running",):
+            return
+        if all(j.status == "completed" for j in jobs):
+            plan.status = "completed"
+        elif any(j.status == "completed" for j in jobs):
+            plan.status = "partial"
+        else:
+            plan.status = "failed"
+        plan.completed_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as e:
+        logger.debug(f"_check_and_finalize_plan: {e}")
 
 
 @router.post("/plans/{plan_id}/jobs/{job_id}/fetch-packages")
@@ -886,7 +1019,7 @@ def run_plan(plan_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/plans/{plan_id}/cancel")
-def cancel_plan(plan_id: int, db: Session = Depends(get_db)):
+def cancel_plan(plan_id: int, db: Session = Depends(get_db), _=Depends(require_role("operator"))):
     """Takılı veya çalışan planı iptal eder."""
     result = cancel_system_update_plan(plan_id, db)
     if not result.get("ok"):

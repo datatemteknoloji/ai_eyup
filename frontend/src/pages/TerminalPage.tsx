@@ -70,9 +70,10 @@ const TerminalPage: React.FC = () => {
     termRef.current = term
     fitRef.current  = fitAddon
 
-    // WebSocket
+    // WebSocket — JWT token query param olarak gönderilir
     const proto  = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const wsUrl  = `${proto}://${window.location.host}/api/v1/terminal/ws/${serverId}`
+    const token  = localStorage.getItem('auth_token') || ''
+    const wsUrl  = `${proto}://${window.location.host}/api/v1/terminal/ws/${serverId}?token=${encodeURIComponent(token)}`
     const ws     = new WebSocket(wsUrl)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws

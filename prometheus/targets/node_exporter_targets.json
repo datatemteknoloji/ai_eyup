@@ -31,6 +31,16 @@
   },
   {
     "targets": [
+      "192.168.1.129:9100"
+    ],
+    "labels": {
+      "server_id": "276",
+      "server_name": "dttadvance",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
       "192.168.1.222:9100"
     ],
     "labels": {

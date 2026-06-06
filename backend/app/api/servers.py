@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _mask_conn_config(cfg: dict | None) -> dict:
+    """Şifre/anahtar alanlarını kaldırır, yalnızca bağlantı meta bilgisini döner."""
+    if not cfg:
+        return {}
+    return {
+        "username":     cfg.get("username") or "",
+        "port":         cfg.get("port") or 22,
+        "has_password":    bool(cfg.get("password")),
+        "has_private_key": bool(cfg.get("private_key")),
+        "has_sudo_password": bool(cfg.get("sudo_password")),
+    }
+
+
 def _parse_os_release(raw: str) -> dict:
     result = {}
     for line in raw.splitlines():
@@ -204,7 +217,7 @@ async def list_servers(db: Session = Depends(get_db), include_node_exporter_stat
                 "ai_ready": bool(s.ai_ready),
                 "hypervisor_id":   s.hypervisor_id,
                 "hypervisor_name": hv_name,
-                "connection_config": conn_config,
+                "connection_config": _mask_conn_config(conn_config),
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None
             }
@@ -267,7 +280,7 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
             "cpu_cores": s.cpu_cores,
             "memory_gb": s.memory_gb,
             "ai_ready": s.ai_ready,
-            "connection_config": s.connection_config,
+            "connection_config": _mask_conn_config(s.connection_config),
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "updated_at": s.updated_at.isoformat() if s.updated_at else None
         } for s in servers]
@@ -393,7 +406,7 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
             "cpu_cores": db_server.cpu_cores,
             "memory_gb": db_server.memory_gb,
             "ai_ready": db_server.ai_ready,
-            "connection_config": db_server.connection_config,
+            "connection_config": _mask_conn_config(db_server.connection_config),
             "created_at": db_server.created_at,
             "updated_at": db_server.updated_at
         }
@@ -436,7 +449,7 @@ async def update_server(server_id: int, server: ServerUpdate, db: Session = Depe
             "cpu_cores": db_server.cpu_cores,
             "memory_gb": db_server.memory_gb,
             "ai_ready": db_server.ai_ready,
-            "connection_config": db_server.connection_config,
+            "connection_config": _mask_conn_config(db_server.connection_config),
             "created_at": db_server.created_at,
             "updated_at": db_server.updated_at
         }

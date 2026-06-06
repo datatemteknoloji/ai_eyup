@@ -45,6 +45,13 @@ interface UpdatePlan {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const API = '/api/v1/updates'
 
+const authHeaders = (): Record<string, string> => {
+  const t = localStorage.getItem('auth_token')
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (t) h['Authorization'] = `Bearer ${t}`
+  return h
+}
+
 const DISTRO_LIST = [
   { key: 'rhel',   label: 'Red Hat Enterprise Linux', short: 'RHEL',   icon: '🔴', color: 'border-red-500/60 bg-red-500/10',    match: ['rhel'] },
   { key: 'oel',    label: 'Oracle Enterprise Linux',  short: 'OEL',    icon: '🟠', color: 'border-orange-500/60 bg-orange-500/10', match: ['ol', 'oel'] },
@@ -82,28 +89,30 @@ const SNAPSHOT_RETENTIONS = [
   { key: 'indefinite', label: 'Süresiz', desc: 'Manuel silinene kadar kalır' },
 ]
 
-const Steps = ({ current, maxReached, onGoTo }: {
-  current: number; maxReached: number; onGoTo: (step: number) => void
+const Steps = ({ current, maxReached, onGoTo, locked }: {
+  current: number; maxReached: number; onGoTo: (step: number) => void; locked?: boolean
 }) => (
   <div className="flex items-center gap-1 flex-1 flex-wrap">
     {STEP_NAMES.map((s, i) => {
       const stepNum   = i + 1
       const isDone    = stepNum < current
       const isCurrent = stepNum === current
-      const isVisited = stepNum <= maxReached  // daha önce ulaşıldı
-      const canClick  = isVisited && !isCurrent
+      const isVisited = stepNum <= maxReached
+      // Job çalışırken (locked) geri adımlara gidilemez
+      const canClick  = isVisited && !isCurrent && !locked
       return (
         <React.Fragment key={i}>
           <button
             onClick={() => canClick && onGoTo(stepNum)}
             disabled={!canClick}
+            title={locked && isDone ? 'İş devam ederken önceki adımlara geçilemez' : canClick ? `${s} adımına git` : undefined}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
               isCurrent  ? 'bg-blue-600 text-white' :
+              isDone && locked ? 'bg-green-700/20 text-green-600 cursor-not-allowed' :
               isDone     ? 'bg-green-700/40 text-green-300 hover:bg-green-700/60 cursor-pointer' :
               isVisited  ? 'bg-slate-700/60 text-slate-300 hover:bg-slate-700 cursor-pointer' :
               'bg-slate-800 text-slate-500 cursor-default'
             }`}
-            title={canClick ? `${s} adımına git` : undefined}
           >
             {isDone ? '✓ ' : `${stepNum}. `}{s}
           </button>
@@ -182,12 +191,13 @@ const ServerSelector = ({ servers, selected, onChange }: {
 }
 
 // ─── Plan history row ─────────────────────────────────────────────────────────
-const PlanRow = ({ plan, onView, onDelete, onResume, onCancel }: {
+const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: {
   plan: UpdatePlan
   onView: (p: UpdatePlan) => void
   onDelete: (id: number) => void
   onResume: (p: UpdatePlan) => void
   onCancel: (p: UpdatePlan) => void
+  onRerunFailed: (p: UpdatePlan) => void
 }) => {
   const isRunning  = plan.status === 'running' || plan.status === 'ai_analyzing'
   const canResume  = ['draft', 'ai_done', 'ai_analyzing'].includes(plan.status)
@@ -218,11 +228,19 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel }: {
       </td>
       <td className="px-3 py-3">
         <div className="flex gap-1 flex-wrap">
-          {/* Yeniden Çalıştır — tamamlanmış planlar için */}
-          {['completed','failed','partial'].includes(plan.status) && (
+          {/* Yeniden Çalıştır — başarısız/kısmi planlar için direkt başlat */}
+          {['failed','partial'].includes(plan.status) && (
+            <button onClick={() => onRerunFailed(plan)}
+              className="px-2.5 py-1 text-xs bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/30 rounded-lg transition-colors"
+              title="Başarısız işleri yeniden başlat">
+              ↻ Tekrar
+            </button>
+          )}
+          {/* Görüntüle — tamamlanmış planlar için */}
+          {plan.status === 'completed' && (
             <button onClick={() => onResume(plan)}
               className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
-              title="Aynı planı yeniden çalıştır">
+              title="Planı görüntüle">
               ↻
             </button>
           )}
@@ -830,6 +848,13 @@ const SystemUpdate: React.FC = () => {
   const [currentPlan,     setCurrentPlan]      = useState<UpdatePlan|null>(null)
   const [planJobs,        setPlanJobs]         = useState<UpdateJob[]>([])
   const [expandedJob,     setExpandedJob]      = useState<number|null>(null)
+
+  // İş aktif mi? (adım kilidi için)
+  const isJobActive = (
+    currentPlan?.status === 'running' ||
+    currentPlan?.status === 'ai_analyzing' ||
+    planJobs.some(j => j.status === 'running' || j.status === 'pending')
+  )
   const [liveJobAi,       setLiveJobAi]        = useState<Record<number,string>>({})
   const [liveAiLoading,   setLiveAiLoading]    = useState<number|null>(null)
 
@@ -838,9 +863,13 @@ const SystemUpdate: React.FC = () => {
   const [viewPlan, setViewPlan] = useState<UpdatePlan|null>(null)
   const [toast,    setToast]    = useState<{msg:string; type:'ok'|'err'}|null>(null)
 
+  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const showToast = (msg: string, type: 'ok'|'err' = 'ok') => {
-    setToast({msg, type}); setTimeout(() => setToast(null), 5000)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast({msg, type})
+    toastTimerRef.current = setTimeout(() => setToast(null), 5000)
   }
+  React.useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current) }, [])
 
   const loadPlans = useCallback(async () => {
     const r = await fetch(`${API}/plans`)
@@ -855,7 +884,7 @@ const SystemUpdate: React.FC = () => {
 
   useEffect(() => {
     loadPlans()
-    fetch('/api/v1/repos').then(r => r.json()).then(setRepos).catch(() => {})
+    fetch('/api/v1/repos', { headers: authHeaders() }).then(r => r.json()).then(setRepos).catch((e: Error) => console.warn('Repo listesi yüklenemedi:', e.message))
   }, [loadPlans])
 
   // Auto-refresh plans
@@ -875,7 +904,7 @@ const SystemUpdate: React.FC = () => {
     const url = selectedDistro
       ? `/api/v1/updates/servers?distro=${distroObj?.match[0] || selectedDistro}`
       : '/api/v1/updates/servers'
-    fetch(url).then(r => r.json()).then(setServers).catch(() => {})
+    fetch(url, { headers: authHeaders() }).then(r => r.json()).then(setServers).catch((e: Error) => console.warn('Sunucular yüklenemedi:', e.message))
 
     // Repoları filtrele
     if (selectedDistro === '') {
@@ -1027,6 +1056,23 @@ const SystemUpdate: React.FC = () => {
     else showToast('Hata', 'err')
   }
 
+  const handleRerunFailed = async (plan: UpdatePlan) => {
+    const r = await fetch(`${API}/plans/${plan.id}/rerun-failed`, { method: 'POST' })
+    const data = await r.json().catch(() => ({}))
+    if (r.ok) {
+      showToast(`↻ ${data.message || 'Yeniden başlatıldı'}`)
+      await loadPlans()
+      // Canlı izleme için planı aç
+      setCurrentPlan(plan)
+      const jr = await fetch(`${API}/plans/${plan.id}/jobs`)
+      if (jr.ok) setPlanJobs(await jr.json())
+      setStep(9)
+      setShowWizard(true)
+    } else {
+      showToast(data.detail || 'Yeniden başlatılamadı', 'err')
+    }
+  }
+
   const handleCancelPlan = async (plan: UpdatePlan) => {
     if (!confirm(`"${plan.name}" güncellemesi iptal edilsin mi?`)) return
     const r = await fetch(`${API}/plans/${plan.id}/cancel`, { method: 'POST' })
@@ -1103,7 +1149,12 @@ const SystemUpdate: React.FC = () => {
         <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
           {/* Wizard başlığı — her adımda kapat butonu */}
           <div className="flex items-center justify-between mb-4">
-            <Steps current={step} maxReached={maxStep} onGoTo={(s) => setStep(s)} />
+            <Steps
+              current={step}
+              maxReached={maxStep}
+              onGoTo={(s) => setStep(s)}
+              locked={isJobActive}
+            />
             <button
               onClick={() => {
                 if (currentPlan && (currentPlan.status === 'running' || currentPlan.status === 'ai_analyzing')) {
@@ -1192,7 +1243,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(1)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(1)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button onClick={() => setStep(3)} disabled={selectedServers.length === 0}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl disabled:opacity-40 transition-colors">
                   Repo Seç →
@@ -1331,7 +1382,7 @@ const SystemUpdate: React.FC = () => {
               </div>
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(2)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(2)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button
                   onClick={() => setStep(4)}
                   disabled={credMode === 'override' && !overrideUser}
@@ -1390,7 +1441,7 @@ const SystemUpdate: React.FC = () => {
               </div>
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(3)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(3)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button onClick={() => setStep(5)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
                   Snapshot →
@@ -1480,7 +1531,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(4)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(4)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button onClick={() => setStep(6)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
                   Güncelleme Modu →
@@ -1678,7 +1729,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(5)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(5)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button
                   onClick={handleCreatePlan}
                   disabled={!updateType || (updateType === 'custom' && selectedPkgs.size === 0)}
@@ -1754,7 +1805,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(6)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(6)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button onClick={() => setStep(8)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
                   {aiAnalysis ? 'İncele & Onayla →' : 'Onayla →'}
@@ -1832,7 +1883,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(7)} className="px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">← Geri</button>
+                <button onClick={() => setStep(7)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
                 <button onClick={handleRun}
                   className="px-8 py-3 bg-green-700 hover:bg-green-600 text-white font-bold text-sm rounded-xl transition-colors flex items-center gap-2">
                   ✓ Onayla ve Güncellemeyi Başlat
@@ -2000,7 +2051,7 @@ const SystemUpdate: React.FC = () => {
               </thead>
               <tbody>
                 {plans.map(p => (
-                  <PlanRow key={p.id} plan={p} onView={setViewPlan} onDelete={handleDeletePlan} onResume={handleResumePlan} onCancel={handleCancelPlan} />
+                  <PlanRow key={p.id} plan={p} onView={setViewPlan} onDelete={handleDeletePlan} onResume={handleResumePlan} onCancel={handleCancelPlan} onRerunFailed={handleRerunFailed} />
                 ))}
               </tbody>
             </table>

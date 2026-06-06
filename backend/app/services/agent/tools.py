@@ -225,7 +225,9 @@ TOOLS: Dict[str, Tool] = {
         risk_level=RiskLevel.READ_ONLY,
         build_command=_diag_cmd,
         timeout=60,
-        allow_sudo=False,
+        # allow_sudo=True → permission denied gelirse stored sudo_password ile otomatik retry yapılır.
+        # Risk seviyesi READ_ONLY kalmaya devam eder; onay akışı tetiklenmez.
+        allow_sudo=True,
     ),
     "read_service_logs": Tool(
         name="read_service_logs",
@@ -242,7 +244,7 @@ TOOLS: Dict[str, Tool] = {
         risk_level=RiskLevel.READ_ONLY,
         build_command=_logs_cmd,
         timeout=30,
-        allow_sudo=False,
+        allow_sudo=True,
     ),
     "clean_logs": Tool(
         name="clean_logs",

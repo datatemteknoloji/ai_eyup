@@ -142,6 +142,32 @@ def tools_node(state: AgentGraphState, config) -> AgentGraphState:
 
         if tool.risk_level == RiskLevel.READ_ONLY:
             result = tool.execute(db, args, ctx)
+
+            # Permission denied + sudo şifresi yok → onay akışıyla sor.
+            if result.get("needs_sudo") and not ctx.get("sudo_password_override"):
+                srv = resolve_server(db, args, ctx)
+                action = AgentAction(
+                    session_id=ctx.get("session_id"),
+                    server_id=srv.id if srv else None,
+                    tool_name="__needs_sudo__",
+                    arguments={"tool": name, "args": args},
+                    risk_level="read_only",
+                    requires_root=True,
+                    status="pending",
+                    preview=f"Root yetkisi gerekiyor: {result.get('command', name)}",
+                    transcript=messages,
+                    model=model,
+                )
+                db.add(action); db.commit(); db.refresh(action)
+                steps.append({"type": "approval_required", "tool": name, "args": args,
+                              "preview": action.preview, "action_id": action.id,
+                              "guard": {}, "requires_root": True})
+                return {"messages": messages, "steps": steps,
+                        "result": {"status": "pending", "action_id": action.id,
+                                   "preview": action.preview, "tool": name,
+                                   "requires_root": True, "needs_sudo": True,
+                                   "steps": steps, "session_id": ctx.get("session_id")}}
+
             _record_action(db, ctx, tool, args, "executed", result=result, model=model)
             messages.append({"role": "tool", "name": name,
                              "content": json.dumps(result, ensure_ascii=False)[:8000]})

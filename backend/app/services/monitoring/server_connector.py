@@ -119,10 +119,10 @@ class ServerConnector:
             ssh = self._get_ssh_client()
             stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
             exit_status = stdout.channel.recv_exit_status()
-            
+
             stdout_text = stdout.read().decode('utf-8', errors='ignore')
             stderr_text = stderr.read().decode('utf-8', errors='ignore')
-            
+
             return {
                 "success": exit_status == 0,
                 "stdout": stdout_text,
@@ -130,7 +130,7 @@ class ServerConnector:
                 "exit_code": exit_status,
                 "command": command
             }
-            
+
         except Exception as e:
             logger.error(f"Komut çalıştırma hatası: {e}", exc_info=True)
             return {
@@ -141,6 +141,43 @@ class ServerConnector:
                 "exit_code": -1,
                 "command": command
             }
+
+    def sudo_execute_command(self, command: str, sudo_password: str, timeout: int = 30) -> Dict[str, Any]:
+        """sudo ile komut çalıştır — şifre stdin'e gönderilir, komut dizisine gömülmez."""
+        try:
+            ssh = self._get_ssh_client()
+            actual_cmd = f"sudo -S sh -c {self._shell_quote(command)}"
+            stdin, stdout, stderr = ssh.exec_command(actual_cmd, timeout=timeout)
+            stdin.write(sudo_password + "\n")
+            stdin.flush()
+            stdin.close()
+            exit_status = stdout.channel.recv_exit_status()
+
+            stdout_text = stdout.read().decode('utf-8', errors='ignore')
+            stderr_text = stderr.read().decode('utf-8', errors='ignore')
+
+            return {
+                "success": exit_status == 0,
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+                "exit_code": exit_status,
+                "command": command  # şifreyi içermeyen orijinal komut
+            }
+
+        except Exception as e:
+            logger.error(f"Sudo komut çalıştırma hatası: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "stdout": "",
+                "stderr": str(e),
+                "exit_code": -1,
+                "command": command
+            }
+
+    @staticmethod
+    def _shell_quote(s: str) -> str:
+        return "'" + s.replace("'", "'\\''") + "'"
     
     def close(self):
         """Bağlantıyı kapat"""

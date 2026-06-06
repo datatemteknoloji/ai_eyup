@@ -2,6 +2,28 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 
+const ConfirmModal = ({ message, onConfirm, onCancel }: {
+  message: string; onConfirm: () => void; onCancel: () => void
+}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+      <div className="flex items-start gap-3 mb-5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <span className="text-yellow-400 text-base">⚠</span>
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
+        </div>
+      </div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+      </div>
+    </div>
+  </div>
+)
+
 interface Hypervisor {
   id: number
   name: string
@@ -15,6 +37,8 @@ interface Hypervisor {
 
 const Hypervisors: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false)
+  const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [formData, setFormData] = useState({
     name: '',
     type: 'vmware',
@@ -205,6 +229,8 @@ const Hypervisors: React.FC = () => {
   }
 
   return (
+    <>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -241,8 +267,8 @@ const Hypervisors: React.FC = () => {
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      if (confirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
+                    onClick={async () => {
+                      if (await showConfirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
                         deleteMutation.mutate(hv.id)
                       }
                     }}
@@ -467,6 +493,7 @@ const Hypervisors: React.FC = () => {
         </div>
       )}
     </div>
+    </>
   )
 }
 
