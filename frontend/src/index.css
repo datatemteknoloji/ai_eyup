@@ -2,39 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Design System Variables ─────────────────────────────────────────────── */
+/* ── Design System Variables — Industrial Precision (v2) ─────────────────── */
 :root {
-  --bg-deep:      #070b14;
-  --bg-base:      #0a0f1e;
-  --bg-card:      #0d1424;
-  --bg-card2:     #111827;
-  --bg-hover:     #151f35;
-  --border-dim:   rgba(99, 130, 194, 0.15);
-  --border-glow:  rgba(99, 179, 237, 0.3);
+  /* Surfaces — elevation via lightness, same base hue */
+  --bg-deep:      #080d16;   /* alias for bg-base */
+  --bg-base:      #080d16;
+  --bg-card:      #0d1422;   /* alias for bg-surface */
+  --bg-surface:   #0d1422;
+  --bg-card2:     #131c2f;   /* alias for bg-elevated */
+  --bg-elevated:  #131c2f;
+  --bg-hover:     #131c2f;
+  --bg-overlay:   #1a2540;
 
-  --cyan:         #22d3ee;
-  --cyan-dim:     rgba(34, 211, 238, 0.15);
-  --cyan-glow:    rgba(34, 211, 238, 0.4);
+  /* Text */
+  --text-primary:   #e8edf5;
+  --text-secondary: #8a9bbf;
+  --text-muted:     #3d4f6e;
 
+  /* Borders */
+  --border-dim:   rgba(255,255,255,0.06);
+  --border-glow:  rgba(255,255,255,0.11);
+  --border:       rgba(255,255,255,0.06);
+  --border-strong:rgba(255,255,255,0.11);
+
+  /* Single accent — blue only */
+  --accent:        #3b82f6;
+  --accent-glow:   rgba(59,130,246,0.25);
+  --accent-hover:  #2563eb;
+  --accent-muted:  #1a3057;
+  --accent-subtle: rgba(59,130,246,0.12);
   --blue:         #3b82f6;
-  --blue-dim:     rgba(59, 130, 246, 0.15);
-  --blue-glow:    rgba(59, 130, 246, 0.4);
+  --blue-dim:     rgba(59,130,246,0.12);
+  --blue-glow:    rgba(59,130,246,0.25);
 
-  --purple:       #a855f7;
-  --purple-dim:   rgba(168, 85, 247, 0.15);
-  --purple-glow:  rgba(168, 85, 247, 0.4);
+  /* Semantic */
+  --success:      #22c55e;
+  --success-bg:   rgba(34,197,94,0.10);
+  --success-glow: rgba(34,197,94,0.20);
+  --green:        #22c55e;
+  --green-dim:    rgba(34,197,94,0.10);
+  --green-glow:   rgba(34,197,94,0.20);
 
-  --green:        #10b981;
-  --green-dim:    rgba(16, 185, 129, 0.15);
-  --green-glow:   rgba(16, 185, 129, 0.4);
-
+  --warning:      #f59e0b;
+  --warning-bg:   rgba(245,158,11,0.10);
+  --warning-glow: rgba(245,158,11,0.20);
   --orange:       #f59e0b;
-  --orange-dim:   rgba(245, 158, 11, 0.15);
-  --orange-glow:  rgba(245, 158, 11, 0.4);
+  --orange-dim:   rgba(245,158,11,0.10);
+  --orange-glow:  rgba(245,158,11,0.20);
 
+  --error:        #ef4444;
+  --error-bg:     rgba(239,68,68,0.10);
+  --error-glow:   rgba(239,68,68,0.20);
   --red:          #ef4444;
-  --red-dim:      rgba(239, 68, 68, 0.15);
-  --red-glow:     rgba(239, 68, 68, 0.4);
+  --red-dim:      rgba(239,68,68,0.10);
+  --red-glow:     rgba(239,68,68,0.20);
+
+  --info:         #38bdf8;
+  --info-bg:      rgba(56,189,248,0.10);
+
+  /* Kept for backward compat — mapped to blue */
+  --cyan:         #38bdf8;
+  --cyan-dim:     rgba(56,189,248,0.10);
+  --cyan-glow:    rgba(56,189,248,0.20);
+
+  /* Removed from active palette — kept for legacy compat */
+  --purple:       #3b82f6;
+  --purple-dim:   rgba(59,130,246,0.12);
+  --purple-glow:  rgba(59,130,246,0.20);
 }
 
 /* ── Base Reset ──────────────────────────────────────────────────────────── */
@@ -43,18 +77,18 @@
 html { scroll-behavior: smooth; }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-family: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--bg-deep);
-  color: #e2e8f0;
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 
 /* ── Scrollbar Styling ───────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
-::-webkit-scrollbar-thumb { background: rgba(99, 130, 194, 0.3); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(99, 179, 237, 0.5); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 /* ── Neon Glow Utilities ─────────────────────────────────────────────────── */
 .glow-cyan  { box-shadow: 0 0 20px var(--cyan-glow),  0 0 40px rgba(34,211,238,0.15); }
@@ -73,49 +107,31 @@ body {
 
 /* ── Cyber Card ──────────────────────────────────────────────────────────── */
 .cyber-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   position: relative;
   overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .cyber-card:hover {
-  border-color: var(--border-glow);
-  box-shadow: 0 0 0 1px rgba(99,179,237,0.1), 0 8px 32px rgba(0,0,0,0.4);
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.35);
 }
-.cyber-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(99,179,237,0.4), transparent);
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-.cyber-card:hover::before { opacity: 1; }
 
-/* ── Stat Card Neon ──────────────────────────────────────────────────────── */
+/* ── Stat Card ───────────────────────────────────────────────────────────── */
 .stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
   position: relative;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+  transition: border-color 0.15s;
   cursor: default;
 }
-.stat-card::after {
-  content: '';
-  position: absolute;
-  bottom: 0; left: 0; right: 0; height: 2px;
-  background: var(--accent-color, #22d3ee);
-  opacity: 0.6;
-  border-radius: 0 0 12px 12px;
-}
 .stat-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--border-glow);
+  border-color: var(--border-strong);
 }
 
 /* ── Grid Scan Line ──────────────────────────────────────────────────────── */
@@ -177,10 +193,9 @@ body {
 }
 .count-up { animation: countUp 0.5s ease-out; }
 
-/* ── Sidebar Active Glow ─────────────────────────────────────────────────── */
+/* ── Sidebar Active ──────────────────────────────────────────────────────── */
 .nav-active {
-  background: linear-gradient(90deg, rgba(34,211,238,0.15), rgba(59,130,246,0.1));
-  border-left: 2px solid var(--cyan);
+  background: var(--accent-muted);
   color: #fff;
 }
 
@@ -191,12 +206,12 @@ body {
 .progress-glow-orange { box-shadow: 0 0 8px var(--orange-glow); }
 .progress-glow-red    { box-shadow: 0 0 8px var(--red-glow); }
 
-/* ── Badge Neon ──────────────────────────────────────────────────────────── */
-.badge-online  { background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
-.badge-offline { background:rgba(100,116,139,0.15); color:#94a3b8; border:1px solid rgba(100,116,139,0.3); }
-.badge-warning { background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); }
-.badge-critical{ background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.4); }
-.badge-ai      { background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.4); }
+/* ── Badge ───────────────────────────────────────────────────────────────── */
+.badge-online  { background:var(--success-bg);  color:var(--success); border:1px solid rgba(34,197,94,0.25); }
+.badge-offline { background:rgba(255,255,255,0.05); color:var(--text-secondary); border:1px solid var(--border-strong); }
+.badge-warning { background:var(--warning-bg);  color:var(--warning); border:1px solid rgba(245,158,11,0.25); }
+.badge-critical{ background:var(--error-bg);    color:var(--error);   border:1px solid rgba(239,68,68,0.25); }
+.badge-ai      { background:var(--info-bg);     color:var(--info);    border:1px solid rgba(56,189,248,0.25); }
 
 /* ── Table Cyber ─────────────────────────────────────────────────────────── */
 .cyber-table {

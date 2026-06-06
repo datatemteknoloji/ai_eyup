@@ -47,10 +47,10 @@ interface FeedEvent {
   created_at?: string; resolved: boolean
 }
 
-// ── Design tokens ─────────────────────────────────────────────────────────
+// ── Design tokens (aligned with DESIGN.md) ────────────────────────────────
 const NEON = {
-  cyan:   '#22d3ee', blue:   '#3b82f6', purple: '#a855f7',
-  green:  '#10b981', orange: '#f59e0b', red:    '#ef4444', pink: '#ec4899',
+  cyan:   '#38bdf8', blue:   '#3b82f6', purple: '#3b82f6',
+  green:  '#22c55e', orange: '#f59e0b', red:    '#ef4444', pink: '#f59e0b',
 }
 
 // ── Neon Stat Card ────────────────────────────────────────────────────────
@@ -66,44 +66,21 @@ function StatCard({
       style={{
         '--accent-color': accent,
         animationDelay: `${delay}ms`,
-        background: 'var(--bg-card)',
-        border: `1px solid rgba(${hexToRgb(accent)}, 0.2)`,
+        background: 'var(--bg-surface)',
+        border: `1px solid rgba(${hexToRgb(accent)}, 0.18)`,
         borderRadius: 12,
         padding: '18px 20px',
         position: 'relative',
         overflow: 'hidden',
-        transition: 'all 0.25s ease',
+        transition: 'border-color 0.15s',
       } as React.CSSProperties}
       onMouseEnter={e => {
-        const el = e.currentTarget
-        el.style.borderColor = `rgba(${hexToRgb(accent)}, 0.5)`
-        el.style.boxShadow = `0 0 24px rgba(${hexToRgb(accent)}, 0.2), 0 8px 32px rgba(0,0,0,0.4)`
-        el.style.transform = 'translateY(-2px)'
+        e.currentTarget.style.borderColor = `rgba(${hexToRgb(accent)}, 0.4)`
       }}
       onMouseLeave={e => {
-        const el = e.currentTarget
-        el.style.borderColor = `rgba(${hexToRgb(accent)}, 0.2)`
-        el.style.boxShadow = 'none'
-        el.style.transform = 'translateY(0)'
+        e.currentTarget.style.borderColor = `rgba(${hexToRgb(accent)}, 0.18)`
       }}
     >
-      {/* Top accent glow */}
-      <div style={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: 1,
-        background: `linear-gradient(90deg, transparent, ${accent}80, transparent)`,
-      }} />
-      {/* Bottom accent bar */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, height: 2,
-        background: accent, opacity: 0.5, borderRadius: '0 0 12px 12px',
-      }} />
-      {/* Bg glow blob */}
-      <div style={{
-        position: 'absolute', bottom: -20, right: -20,
-        width: 80, height: 80, borderRadius: '50%',
-        background: `radial-gradient(circle, rgba(${hexToRgb(accent)}, 0.12), transparent 70%)`,
-        pointerEvents: 'none',
-      }} />
 
       <div className="flex items-start justify-between relative z-10">
         <div>
@@ -287,7 +264,7 @@ function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
 
   return (
     <div className="cyber-card">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.1)' }}>
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-3">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
@@ -417,8 +394,8 @@ function ServerStatusChart({
 function OsDistChart({ servers }: { servers: DashboardServer[] }) {
   const osCounts: Record<string, { count: number; color: string }> = {}
   const osColors: Record<string, string> = {
-    rhel: NEON.red, centos: NEON.purple, ubuntu: NEON.orange,
-    debian: NEON.pink, rocky: NEON.blue, oracle: NEON.cyan, windows: NEON.blue,
+    rhel: NEON.red, centos: NEON.blue, ubuntu: NEON.orange,
+    debian: NEON.orange, rocky: NEON.blue, oracle: NEON.cyan, windows: NEON.blue,
   }
 
   servers.forEach(s => {
@@ -435,7 +412,7 @@ function OsDistChart({ servers }: { servers: DashboardServer[] }) {
   return (
     <div className="cyber-card p-5 animate-fade-in">
       <div className="flex items-center gap-2 mb-4">
-        <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.purple }} />
+        <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.blue }} />
         <h2 className="text-sm font-semibold text-white">OS Dağılımı</h2>
       </div>
       <div className="space-y-2.5">
@@ -511,18 +488,13 @@ function DashboardHero({
     <div
       className="relative overflow-hidden rounded-2xl p-6 md:p-8 animate-fade-in"
       style={{
-        background: 'linear-gradient(135deg, rgba(13,20,36,0.95) 0%, rgba(15,23,42,0.85) 45%, rgba(30,27,75,0.4) 100%)',
-        border: '1px solid rgba(99,130,194,0.2)',
-        boxShadow: '0 24px 60px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)',
+        background: 'linear-gradient(135deg, var(--bg-elevated) 0%, rgba(26,37,64,0.9) 100%)',
+        border: '1px solid var(--border-strong)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
       }}
     >
-      <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full opacity-30 blur-3xl pointer-events-none"
-        style={{ background: `radial-gradient(circle, ${accent}40, transparent 70%)` }} />
-      <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(99,179,237,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(99,179,237,0.8) 1px, transparent 1px)',
-          backgroundSize: '32px 32px',
-        }} />
+      <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${accent}30, transparent 70%)` }} />
 
       <div className="relative flex flex-col lg:flex-row lg:items-center gap-8">
         <div className="flex-1">
@@ -538,7 +510,7 @@ function DashboardHero({
           <div className="flex flex-wrap gap-3 mt-5">
             {[
               { label: 'Sağlık', value: `${healthScore}%`, color: accent },
-              { label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.cyan },
+              { label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.blue },
               { label: 'Events', value: String(unresolvedEvents), color: unresolvedEvents ? NEON.orange : NEON.green },
               { label: 'Incidents', value: String(openIncidents), color: openIncidents ? NEON.red : NEON.green },
             ].map(chip => (
@@ -687,7 +659,7 @@ function FleetTrendChart({ online, offline, warning }: { online: number; offline
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.06)" vertical={false} />
           <XAxis dataKey="t" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
-          <Tooltip contentStyle={{ background: '#0d1424', border: '1px solid rgba(99,130,194,0.2)', borderRadius: 8, fontSize: 12 }} />
+          <Tooltip contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12 }} />
           <Area type="monotone" dataKey="up" name="Online" stroke={NEON.green} fill="url(#gOnline)" strokeWidth={2} />
           <Area type="monotone" dataKey="dn" name="Sorunlu" stroke={NEON.red} fill="url(#gOffline)" strokeWidth={2} />
         </AreaChart>
@@ -700,7 +672,7 @@ function SectionTitle({ title, accent, sub }: { title: string; accent: string; s
   return (
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center gap-2">
-        <div className="w-1.5 h-4 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
+        <div className="w-1.5 h-4 rounded-full" style={{ background: accent }} />
         <div>
           <h2 className="text-sm font-semibold text-white">{title}</h2>
           {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
@@ -715,13 +687,13 @@ function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats;
   const items = [
     { label: 'Açık Event', value: eventStats?.unresolved ?? 0, color: NEON.orange, to: '/events' },
     { label: 'Kritik Event', value: (eventStats?.critical ?? 0) + (eventStats?.emergency ?? 0), color: NEON.red, to: '/events' },
-    { label: 'Açık Incident', value: incidentStats?.open ?? 0, color: NEON.purple, to: '/incidents' },
+    { label: 'Açık Incident', value: incidentStats?.open ?? 0, color: NEON.blue, to: '/incidents' },
     { label: 'RCA Bekleyen', value: incidentStats?.investigating ?? 0, color: NEON.cyan, to: '/incidents' },
   ]
 
   return (
     <div className="cyber-card p-5 animate-fade-in h-full">
-      <SectionTitle title="AIOps Özeti" accent={NEON.purple} sub="Events & Incidents" />
+      <SectionTitle title="AIOps Özeti" accent={NEON.blue} sub="Events & Incidents" />
       <div className="grid grid-cols-2 gap-3 mb-4">
         {items.map(item => (
           <Link key={item.label} to={item.to}
@@ -734,11 +706,11 @@ function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats;
       </div>
       <div className="flex gap-2">
         <Link to="/anomalies" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
-          style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)' }}>
+          style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
           Anomaly Detection →
         </Link>
         <Link to="/incidents" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
-          style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)' }}>
+          style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
           Incidents →
         </Link>
       </div>
@@ -749,17 +721,17 @@ function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats;
 // ── Aktivite Akışı ─────────────────────────────────────────────────────────
 function ActivityFeed({ events }: { events: FeedEvent[] }) {
   const sevStyle: Record<string, { color: string; bg: string }> = {
-    critical: { color: NEON.red, bg: 'rgba(239,68,68,0.12)' },
-    emergency: { color: NEON.red, bg: 'rgba(239,68,68,0.12)' },
-    warning: { color: NEON.orange, bg: 'rgba(245,158,11,0.12)' },
-    info: { color: NEON.cyan, bg: 'rgba(34,211,238,0.1)' },
+    critical: { color: NEON.red, bg: 'rgba(239,68,68,0.10)' },
+    emergency: { color: NEON.red, bg: 'rgba(239,68,68,0.10)' },
+    warning: { color: NEON.orange, bg: 'rgba(245,158,11,0.10)' },
+    info: { color: NEON.cyan, bg: 'rgba(56,189,248,0.08)' },
   }
 
   return (
     <div className="cyber-card animate-fade-in h-full flex flex-col">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.1)' }}>
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
         <SectionTitle title="Canlı Aktivite" accent={NEON.orange} sub="Son açık eventler" />
-        <Link to="/events" className="text-xs" style={{ color: 'rgba(34,211,238,0.7)' }}>Tümü →</Link>
+        <Link to="/events" className="text-xs" style={{ color: 'var(--accent)' }}>Tümü →</Link>
       </div>
       <div className="flex-1 overflow-y-auto max-h-80">
         {events.length === 0 ? (
@@ -788,7 +760,7 @@ function ActivityFeed({ events }: { events: FeedEvent[] }) {
 // ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
 function QuickActionsPanel() {
   const actions = [
-    { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.purple },
+    { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.blue },
     { label: 'AI Agent', desc: 'Otomasyon', to: '/agent', accent: NEON.cyan },
     { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange },
     { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green },
@@ -826,7 +798,7 @@ function RecentServers({
 
   return (
     <div className="cyber-card animate-fade-in">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.1)' }}>
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.green }} />
           <h2 className="text-sm font-semibold text-white">Çevrimiçi Sunucular</h2>
@@ -834,9 +806,9 @@ function RecentServers({
         <Link
           to="/servers"
           className="text-xs font-medium transition-colors"
-          style={{ color: 'rgba(34,211,238,0.7)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = NEON.cyan)}
-          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(34,211,238,0.7)')}
+          style={{ color: 'var(--accent)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = NEON.blue)}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--accent)')}
         >
           Tümünü Gör →
         </Link>
@@ -866,7 +838,7 @@ function RecentServers({
                   <p className="text-sm font-medium text-white truncate">{server.name}</p>
                   {server.ai_ready && server.status === 'ONLINE' && (
                     <span className="px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0"
-                      style={{ background: 'rgba(168,85,247,0.12)', color: NEON.purple, border: '1px solid rgba(168,85,247,0.25)' }}>
+                      style={{ background: 'rgba(56,189,248,0.10)', color: NEON.cyan, border: '1px solid rgba(56,189,248,0.22)' }}>
                       AI
                     </span>
                   )}
@@ -913,7 +885,7 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
   if (hypervisors.length === 0) return null
   return (
     <div className="cyber-card animate-fade-in">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.1)' }}>
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.blue }} />
           <h2 className="text-sm font-semibold text-white">Hypervisor'lar</h2>
@@ -921,7 +893,7 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
         <Link
           to="/hypervisors"
           className="text-xs font-medium"
-          style={{ color: 'rgba(34,211,238,0.7)' }}
+          style={{ color: 'var(--accent)' }}
         >
           Tümünü Gör →
         </Link>
@@ -949,10 +921,10 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
               }}
             >
               <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-lg"
-                style={{ background: `rgba(${hexToRgb(accent)},0.1)` }}
+                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                style={{ background: `rgba(${hexToRgb(accent)},0.12)`, color: accent, letterSpacing: '0.05em' }}
               >
-                {isVmware ? '🖧' : isOvirt ? '🐧' : '☁️'}
+                {isVmware ? 'VM' : isOvirt ? 'OV' : 'HV'}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-white truncate">{hv.name}</p>
@@ -1088,7 +1060,7 @@ const Dashboard: React.FC = () => {
   const secondaryStats = [
     { label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 },
     { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
-    { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.pink, pct: Math.min(100, totalRam / 2) },
+    { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
     { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
   ]
 
@@ -1105,8 +1077,8 @@ const Dashboard: React.FC = () => {
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.cyan} pct={onlinePct} delay={0} />
-          <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.purple} pct={aiReadyPct} delay={50} />
+          <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.blue} pct={onlinePct} delay={0} />
+          <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
           <HeroKpi label="Monitörlenen" value={monitoredLive} sub={`${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
           <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
         </div>
