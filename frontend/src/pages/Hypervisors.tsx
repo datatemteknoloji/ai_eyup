@@ -279,18 +279,18 @@ const Hypervisors: React.FC = () => {
                   </button>
                 </div>
                 <div className="space-y-2 text-sm">
-                  <div className="flex items-center text-slate-400">
-                    <span className="w-20">Host:</span>
-                    <span className="text-white font-mono">{hv.hostname || '-'}</span>
+                  <div className="flex items-center text-slate-400 min-w-0">
+                    <span className="w-20 flex-shrink-0">Host:</span>
+                    <span className="text-white font-mono truncate" title={hv.hostname || '-'}>{hv.hostname || '-'}</span>
                   </div>
-                  <div className="flex items-center text-slate-400">
-                    <span className="w-20">IP:</span>
-                    <span className="text-white font-mono">{hv.ip_address}:{hv.port}</span>
+                  <div className="flex items-center text-slate-400 min-w-0">
+                    <span className="w-20 flex-shrink-0">IP:</span>
+                    <span className="text-white font-mono truncate">{hv.ip_address}:{hv.port}</span>
                   </div>
                   {hv.username && (
-                    <div className="flex items-center text-slate-400">
-                      <span className="w-20">User:</span>
-                      <span className="text-white">{hv.username}</span>
+                    <div className="flex items-center text-slate-400 min-w-0">
+                      <span className="w-20 flex-shrink-0">User:</span>
+                      <span className="text-white truncate" title={hv.username}>{hv.username}</span>
                     </div>
                   )}
                 </div>
