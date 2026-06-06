@@ -2031,7 +2031,6 @@ const SystemUpdate: React.FC = () => {
           </div>
           {plans.length === 0 ? (
             <div className="py-16 text-center space-y-3">
-              <div className="text-5xl">🔄</div>
               <div className="text-slate-400 text-sm">Henüz güncelleme yapılmadı</div>
               <button onClick={() => setShowWizard(true)}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">
@@ -2039,7 +2038,8 @@ const SystemUpdate: React.FC = () => {
               </button>
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="bg-slate-700/50 border-b border-slate-600">
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Plan</th>
@@ -2055,6 +2055,7 @@ const SystemUpdate: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
