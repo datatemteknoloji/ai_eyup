@@ -202,9 +202,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <header className="h-16 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6 flex-shrink-0">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-semibold text-white">{pageTitle}</h1>
-            <span className="px-2 py-0.5 rounded-full text-[10px] border border-cyan-500/50 text-cyan-200 bg-cyan-500/10">
-              UI 2026
-            </span>
           </div>
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2 text-sm text-slate-400">
