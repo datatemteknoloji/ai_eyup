@@ -467,18 +467,18 @@ const Settings: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-        <div className="p-6 h-full overflow-y-auto">
+      <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden min-w-0">
+        <div className="p-6 h-full overflow-y-auto overflow-x-hidden">
 
           {/* ═══ Credentials ═══ */}
           {activeTab === 'credentials' && (
             <div>
-              <div className="flex items-center justify-between mb-6">
-                <div>
+              <div className="flex flex-wrap items-start gap-3 mb-6">
+                <div className="flex-1 min-w-0">
                   <h2 className="text-xl font-semibold text-white">Global Credentials</h2>
                   <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın ve sunuculara toplu uygulayın</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-shrink-0">
                   <button onClick={() => checkAllServersSSH.mutate()}
                     disabled={checkAllServersSSH.isPending}
                     className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
