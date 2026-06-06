@@ -20,6 +20,28 @@ interface Server {
   connection_config: any
 }
 
+const ConfirmModal = ({ message, onConfirm, onCancel }: {
+  message: string; onConfirm: () => void; onCancel: () => void
+}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+      <div className="flex items-start gap-3 mb-5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <span className="text-yellow-400 text-base">⚠</span>
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
+        </div>
+      </div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+      </div>
+    </div>
+  </div>
+)
+
 interface RagStatus {
   runbook: number
   incidents: number
@@ -44,6 +66,8 @@ interface GeneralSettings {
 const RagTab: React.FC = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfTitle, setPdfTitle] = useState('')
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const { data: status, refetch: refetchStatus } = useQuery<RagStatus>({
     queryKey: ['rag-status'],
     queryFn: async () => {
@@ -172,7 +196,7 @@ const RagTab: React.FC = () => {
                 <span className="text-slate-400 text-sm whitespace-nowrap">{doc.chunk_count} chunk</span>
                 <button
                   type="button"
-                  onClick={() => { if (confirm(`"${doc.title}" silinsin mi?`)) deleteRunbookDoc.mutate(doc.title) }}
+                  onClick={async () => { if (await showConfirm(`"${doc.title}" silinsin mi?`)) deleteRunbookDoc.mutate(doc.title) }}
                   disabled={deleteRunbookDoc.isPending}
                   className="ml-3 px-3 py-1.5 text-xs bg-red-600/20 text-red-400 border border-red-500/40 rounded-lg hover:bg-red-600/30 disabled:opacity-50"
                 >
@@ -220,6 +244,7 @@ const RagTab: React.FC = () => {
           <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-slate-800 px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-slate-800 px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
         </ul>
       </div>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     </div>
   )
 }
@@ -236,6 +261,8 @@ const Settings: React.FC = () => {
   const [selectedServerIds, setSelectedServerIds] = useState<number[]>([])
   const [setAiReady, setSetAiReady] = useState(true)
   const queryClient = useQueryClient()
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [metricRetentionDays, setMetricRetentionDays] = useState<number>(30)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
   const [modelSaved, setModelSaved] = useState(false)
@@ -454,11 +481,11 @@ const Settings: React.FC = () => {
                 <div className="flex gap-2">
                   <button onClick={() => checkAllServersSSH.mutate()}
                     disabled={checkAllServersSSH.isPending}
-                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50">
+                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
                     {checkAllServersSSH.isPending ? '⏳ Test Ediliyor...' : '🔍 SSH Test & Update'}
                   </button>
                   <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm">
+                    className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
                     {showForm ? '✕ İptal' : '➕ Yeni Credential'}
                   </button>
                 </div>
@@ -540,14 +567,14 @@ const Settings: React.FC = () => {
                           <div className={`w-11 h-11 rounded-lg flex items-center justify-center ${cred.is_default ? 'bg-gradient-to-br from-blue-500 to-blue-600' : 'bg-gradient-to-br from-yellow-500 to-orange-500'}`}>
                             <span className="text-white text-lg">🔑</span>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-white font-medium">{cred.name}</p>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-white font-medium truncate max-w-[200px]">{cred.name}</p>
                               {cred.is_default && (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium">VARSAYILAN</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium whitespace-nowrap">VARSAYILAN</span>
                               )}
                             </div>
-                            <p className="text-slate-400 text-sm font-mono mt-0.5">
+                            <p className="text-slate-400 text-sm font-mono mt-0.5 truncate">
                               {cred.username}@:{cred.port}
                               {cred.has_password && <span className="text-green-400 ml-2">● şifre</span>}
                               {cred.has_private_key && <span className="text-purple-400 ml-2">● key</span>}
@@ -565,7 +592,7 @@ const Settings: React.FC = () => {
                           )}
                           <button onClick={() => openEdit(cred)}
                             className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600" title="Düzenle">✏️</button>
-                          <button onClick={() => { if (confirm(`"${cred.name}" silinsin mi?`)) deleteCred.mutate(cred.id) }}
+                          <button onClick={async () => { if (await showConfirm(`"${cred.name}" silinsin mi?`)) deleteCred.mutate(cred.id) }}
                             className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20" title="Sil">🗑️</button>
                         </div>
                       </div>
@@ -722,13 +749,13 @@ const Settings: React.FC = () => {
                           <option value={365}>365 gün</option>
                         </select>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             const currentDays = generalSettings?.metric_retention_days ?? 30
                             const isDecrease = metricRetentionDays < currentDays
                             const message = isDecrease
                               ? `Saklama süresi ${currentDays} günden ${metricRetentionDays} güne düşürülecek.\n${metricRetentionDays} günden eski metrik kayıtları silinecek.\n\nDevam etmek istiyor musunuz?`
                               : `Metrik saklama süresi ${metricRetentionDays} gün olarak güncellensin mi?`
-                            if (!window.confirm(message)) return
+                            if (!await showConfirm(message)) return
                             saveMetricRetention.mutate(metricRetentionDays)
                           }}
                           disabled={saveMetricRetention.isPending}
@@ -843,6 +870,7 @@ const Settings: React.FC = () => {
           </div>
         </div>
       )}
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     </div>
   )
 }
