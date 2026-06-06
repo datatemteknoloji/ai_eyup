@@ -513,7 +513,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     {value === '__AI_READY_TOGGLE__' ? (
                       <div className="flex items-center justify-between mt-0.5">
                         <span className={`text-sm font-medium ${server.ai_ready ? 'text-green-400' : 'text-slate-400'}`}>
-                          {server.ai_ready ? '✅ AI Ready' : '❌ AI Ready Değil'}
+                          {server.ai_ready ? 'AI Ready' : 'AI Ready Değil'}
                         </span>
                         <button
                           onClick={async () => {
@@ -823,10 +823,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {/* AI Analiz */}
               <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-white">🤖 AI Analiz</h3>
+                  <h3 className="text-sm font-medium text-white">AI Analiz</h3>
                   <button onClick={startAnalyze} disabled={isAnalyzing}
                     className="px-3 py-1 text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded hover:bg-purple-600/40 disabled:opacity-50">
-                    {isAnalyzing ? '⏳ Analiz ediliyor...' : analyzeText ? '🔄 Yeniden' : '▶ Analiz Et'}
+                    {isAnalyzing ? 'Analiz ediliyor...' : analyzeText ? 'Yeniden' : 'Analiz Et'}
                   </button>
                 </div>
                 {analyzeText ? (
@@ -1427,7 +1427,7 @@ const Servers: React.FC = () => {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-64 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
-              <span className="absolute left-3 top-2.5 text-slate-500">🔍</span>
+              <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
             </div>
             {/* IP Filter */}
             <div className="relative">
@@ -1470,7 +1470,7 @@ const Servers: React.FC = () => {
               className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">Tümü</option>
-              <option value="true">🤖 AI Ready</option>
+              <option value="true">AI Ready</option>
               <option value="false">AI Ready Değil</option>
             </select>
             {/* Type Filter */}
@@ -1708,7 +1708,7 @@ const Servers: React.FC = () => {
                       {/* AI Ready — yalnızca SSH doğrulanmış ve ONLINE sunucular */}
                       {server.ai_ready && server.status === 'ONLINE' && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
-                          🤖 AI
+                          AI
                         </span>
                       )}
                       {/* Node Exporter */}
@@ -1740,7 +1740,7 @@ const Servers: React.FC = () => {
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Node Exporter Başlat"
                       >
-                        {startingNodeExporter === server.id ? '⏳' : '▶️'} {startingNodeExporter === server.id ? 'Başlatılıyor...' : 'Başlat'}
+                        {startingNodeExporter === server.id ? 'Başlatılıyor...' : 'Başlat'}
                       </button>
                     ) : server.status === 'ONLINE' ? (
                       <button
@@ -1753,7 +1753,7 @@ const Servers: React.FC = () => {
                         className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Node Exporter Kur"
                       >
-                        {installingNodeExporter === server.id ? '⏳ Kuruluyor...' : '📦 Kur'}
+                        {installingNodeExporter === server.id ? 'Kuruluyor...' : 'Kur'}
                       </button>
                     ) : (
                       <span className="text-xs text-slate-600 italic">Çevrimdışı</span>
