@@ -1,14 +1,19 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import {
+  LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
+  MessageCircle, Bot, Zap, RefreshCw, Package, Database, Terminal, Activity,
+  ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
+} from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
 }
 
 type MenuItem =
-  | { type: 'link'; path: string; name: string; icon: string }
-  | { type: 'group'; name: string; icon: string; children: { path: string; name: string; icon: string }[] }
+  | { type: 'link'; path: string; name: string; icon: React.ReactNode }
+  | { type: 'group'; name: string; icon: React.ReactNode; children: { path: string; name: string; icon: React.ReactNode }[] }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
@@ -26,27 +31,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
 
   const menuItems: MenuItem[] = [
-    { type: 'link', path: '/dashboard',    name: 'Dashboard',      icon: '📊' },
-    { type: 'link', path: '/servers',      name: 'Sunucular',      icon: '🖥️' },
-    { type: 'link', path: '/hypervisors',  name: 'Hypervisor\'lar', icon: '☁️' },
+    { type: 'link', path: '/dashboard',     name: 'Dashboard',       icon: <LayoutDashboard size={18} /> },
+    { type: 'link', path: '/servers',       name: 'Sunucular',       icon: <Monitor size={18} /> },
+    { type: 'link', path: '/hypervisors',   name: 'Hypervisor\'lar', icon: <Cloud size={18} /> },
     {
-      type: 'group', name: 'AIOps', icon: '🧠',
+      type: 'group', name: 'AIOps', icon: <Brain size={18} />,
       children: [
-        { path: '/events',    name: 'Events',            icon: '📋' },
-        { path: '/incidents', name: 'Incidents',         icon: '🚨' },
-        { path: '/anomalies', name: 'Anomaly Detection', icon: '🔍' },
+        { path: '/events',    name: 'Events',            icon: <ClipboardList size={16} /> },
+        { path: '/incidents', name: 'Incidents',         icon: <AlertTriangle size={16} /> },
+        { path: '/anomalies', name: 'Anomaly Detection', icon: <ScanSearch size={16} /> },
       ],
     },
-    { type: 'link', path: '/chat',         name: 'AI Chat',        icon: '🤖' },
-    { type: 'link', path: '/agent',        name: 'AI Agent',       icon: '🛠️' },
-    { type: 'link', path: '/ansible',      name: 'Ansible/AWX',    icon: '⚡' },
-    { type: 'link', path: '/system-update', name: 'Sistem Güncelle', icon: '🔄' },
-    { type: 'link', path: '/packages',     name: 'Paket & Yama',   icon: '📦' },
-    { type: 'link', path: '/repositories', name: 'Local Repo',     icon: '🗄️' },
-    { type: 'link', path: '/mcp',          name: 'Linux MCP',      icon: '🔧' },
-    { type: 'link', path: '/metrics',      name: 'Canlı Metrikler', icon: '📈' },
-    { type: 'link', path: '/audit',        name: 'Audit Log',      icon: '📜' },
-    { type: 'link', path: '/settings',     name: 'Ayarlar',        icon: '⚙️' },
+    { type: 'link', path: '/chat',          name: 'AI Chat',         icon: <MessageCircle size={18} /> },
+    { type: 'link', path: '/agent',         name: 'AI Agent',        icon: <Bot size={18} /> },
+    { type: 'link', path: '/ansible',       name: 'Ansible/AWX',     icon: <Zap size={18} /> },
+    { type: 'link', path: '/system-update', name: 'Sistem Güncelle', icon: <RefreshCw size={18} /> },
+    { type: 'link', path: '/packages',      name: 'Paket & Yama',    icon: <Package size={18} /> },
+    { type: 'link', path: '/repositories',  name: 'Local Repo',      icon: <Database size={18} /> },
+    { type: 'link', path: '/mcp',           name: 'Linux MCP',       icon: <Terminal size={18} /> },
+    { type: 'link', path: '/metrics',       name: 'Canlı Metrikler', icon: <Activity size={18} /> },
+    { type: 'link', path: '/audit',         name: 'Audit Log',       icon: <ScrollText size={18} /> },
+    { type: 'link', path: '/settings',      name: 'Ayarlar',         icon: <Settings size={18} /> },
   ]
 
   // Flat list for top-bar title lookup
@@ -76,7 +81,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
           >
-            {sidebarOpen ? '◀' : '▶'}
+            {sidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
           </button>
         </div>
 
@@ -96,7 +101,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                           : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                       }`}
                     >
-                      <span className="text-xl flex-shrink-0">{item.icon}</span>
+                      <span className="flex-shrink-0 text-current">{item.icon}</span>
                       {sidebarOpen && <span className="font-medium truncate">{item.name}</span>}
                     </Link>
                   </li>
@@ -119,13 +124,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                     }`}
                   >
-                    <span className="text-xl flex-shrink-0">{item.icon}</span>
+                    <span className="flex-shrink-0 text-current">{item.icon}</span>
                     {sidebarOpen && (
                       <>
                         <span className="font-medium ml-3 flex-1 text-left">{item.name}</span>
-                        <span className={`text-xs text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}>
-                          ▶
-                        </span>
+                        <ChevronRight size={14} className={`text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
                       </>
                     )}
                   </button>
@@ -145,7 +148,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                               }`}
                             >
-                              <span className="text-base flex-shrink-0">{child.icon}</span>
+                              <span className="flex-shrink-0 text-current">{child.icon}</span>
                               <span className="font-medium truncate">{child.name}</span>
                             </Link>
                           </li>
@@ -170,7 +173,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                                 : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                             }`}
                           >
-                            <span className="text-base">{child.icon}</span>
+                            <span className="flex-shrink-0 text-current">{child.icon}</span>
                           </Link>
                         )
                       })}
@@ -237,15 +240,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <Link
                       to="/settings"
                       onClick={() => setUserMenuOpen(false)}
-                      className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                      className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
                     >
-                      ⚙️ Ayarlar
+                      <Settings size={14} /> Ayarlar
                     </Link>
                     <button
                       onClick={logout}
-                      className="w-full text-left px-4 py-2.5 text-sm text-red-300 hover:bg-red-500/10"
+                      className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-red-300 hover:bg-red-500/10"
                     >
-                      ⎋ Çıkış Yap
+                      <LogOut size={14} /> Çıkış Yap
                     </button>
                   </div>
                 </>
