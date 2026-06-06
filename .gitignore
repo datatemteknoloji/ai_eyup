@@ -72,3 +72,4 @@ postgres_data/
 
 # Node exporter binaries
 backend/static/node_exporter/
+.gstack/
