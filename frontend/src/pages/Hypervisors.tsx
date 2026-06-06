@@ -184,15 +184,11 @@ const Hypervisors: React.FC = () => {
     setConnectionTest(null) // Form değişince test sonucunu sıfırla
   }
 
-  const getTypeIcon = (type: string) => {
-    const icons: Record<string, string> = {
-      vmware: '🟢',
-      hyperv: '🔵',
-      kvm: '🟠',
-      xen: '🟣',
-      proxmox: '🔴'
+  const getTypeLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      vmware: 'VM', hyperv: 'HV', kvm: 'KVM', xen: 'XEN', proxmox: 'PX'
     }
-    return icons[type.toLowerCase()] || '☁️'
+    return labels[type.toLowerCase()] || type.slice(0, 3).toUpperCase()
   }
 
   const getTypeColor = (type: string) => {
@@ -237,10 +233,9 @@ const Hypervisors: React.FC = () => {
         <p className="text-slate-400">Toplam {hypervisors.length} hypervisor</p>
         <button
           onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25"
         >
-          <span className="mr-2">➕</span>
-          Yeni Hypervisor
+          + Yeni Hypervisor
         </button>
       </div>
 
@@ -252,12 +247,11 @@ const Hypervisors: React.FC = () => {
               key={hv.id}
               className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
             >
-              <div className={`h-2 bg-gradient-to-r ${getTypeColor(hv.type)}`} />
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center space-x-3">
                     <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getTypeColor(hv.type)} flex items-center justify-center shadow-lg`}>
-                      <span className="text-2xl">{getTypeIcon(hv.type)}</span>
+                      <span className="text-sm font-bold text-white">{getTypeLabel(hv.type)}</span>
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-white">{hv.name}</h3>
