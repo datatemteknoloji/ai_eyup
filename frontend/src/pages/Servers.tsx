@@ -87,7 +87,7 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
       <button
       onClick={handleClick}
       disabled={loading || notRunning.length === 0}
-      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-cyan-700 text-white rounded-lg hover:from-cyan-500 hover:to-cyan-600 transition-all disabled:opacity-50"
+      className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
       title={`Node Exporter çalışmayan ${notRunning.length} AI-Ready sunucuya toplu kur`}
     >
       {loading ? (
@@ -98,10 +98,7 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
       ) : result ? (
         <span>✓ {result.success} başarılı{result.failed > 0 ? ` · ${result.failed} hata` : ''}</span>
       ) : (
-        <>
-          <span>📊</span>
-          <span>Toplu Metrik Kur {notRunning.length > 0 ? `(${notRunning.length})` : ''}</span>
-        </>
+        <span>Metrik Kur {notRunning.length > 0 ? `(${notRunning.length})` : ''}</span>
       )}
     </button>
     </>
@@ -138,7 +135,7 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg hover:from-indigo-500 hover:to-indigo-600 transition-all disabled:opacity-50"
+        className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
         title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
       >
         {loading ? (
@@ -147,12 +144,9 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
             <span>Test ediliyor...</span>
           </>
         ) : result ? (
-          <span>🤖 {result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+          <span>{result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
         ) : (
-          <>
-            <span>🤖</span>
-            <span>AI Ready Güncelle</span>
-          </>
+          <span>AI Ready Güncelle</span>
         )}
       </button>
     </>
@@ -201,7 +195,7 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ 
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-500 hover:to-purple-600 transition-all disabled:opacity-50"
+        className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
         title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
       >
         {loading ? (
@@ -212,10 +206,7 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ 
         ) : result ? (
           <span>✓ {result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
         ) : (
-          <>
-            <span>💻</span>
-            <span>OS Bilgisini Yenile</span>
-          </>
+          <span>OS Bilgisini Yenile</span>
         )}
       </button>
     </>
@@ -1522,9 +1513,8 @@ const Servers: React.FC = () => {
                   alert('Durum kontrolü hatası: ' + (err instanceof Error ? err.message : 'Ağ hatası'))
                 }
               }}
-              className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 transition-all"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all text-sm"
             >
-              <span className="mr-2">🔄</span>
               Durumları Kontrol Et
             </button>
             <AiReadyUpdateButton onDone={() => refetch()} />
@@ -1532,10 +1522,9 @@ const Servers: React.FC = () => {
             <OsRefreshButton servers={servers} onDone={() => refetch()} />
             <button
               onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25 text-sm font-medium"
             >
-              <span className="mr-2">➕</span>
-              Yeni Sunucu
+              + Yeni Sunucu
             </button>
           </div>
         </div>
