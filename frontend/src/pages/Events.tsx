@@ -60,6 +60,14 @@ const Events: React.FC = () => {
   const [analyzeGroup, setAnalyzeGroup] = useState<EventGroup | null>(null)
   const [analysisText, setAnalysisText] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analyzeTab, setAnalyzeTab] = useState<'chat' | 'log'>('chat')
+  const [logAnalysis, setLogAnalysis] = useState<{
+    root_cause: string; impact: string; recommendations: string[];
+    confidence: string; log_lines_used: number; model: string;
+    requires_approval: boolean; analyzed_at: string;
+  } | null>(null)
+  const [isLogAnalyzing, setIsLogAnalyzing] = useState(false)
+  const [logAnalysisError, setLogAnalysisError] = useState<string | null>(null)
   const [incidentModal, setIncidentModal] = useState<{ event_ids: number[]; group_title?: string } | null>(null)
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium', assigned_to: '' })
   const analyzeModel = localStorage.getItem('chat_selected_model') || 'gpt-oss:20b'
@@ -228,6 +236,7 @@ const Events: React.FC = () => {
   const startAnalyze = async (grp: EventGroup) => {
     analyzeAbortRef.current?.abort()
     setAnalyzeGroup(grp); setAnalysisText(''); setIsAnalyzing(true)
+    setAnalyzeTab('chat'); setLogAnalysis(null); setLogAnalysisError(null)
     const prompt = `Aşağıdaki sistem eventi/grubu hakkında detaylı analiz yap ve çözüm önerisi sun:\n\n` +
       `Başlık: ${grp.title}\nÖnem: ${grp.severity}\nTip: ${grp.event_type}\n` +
       (grp.server_name ? `Sunucu: ${grp.server_name}\n` : '') + `Adet: ${grp.count}×\n\n` +
@@ -258,6 +267,28 @@ const Events: React.FC = () => {
     } catch (e: any) {
       if (e?.name !== 'AbortError') setAnalysisText('Analiz başarısız.')
     } finally { setIsAnalyzing(false) }
+  }
+
+  const startLogAnalyze = async (grp: EventGroup) => {
+    if (!grp.event_ids.length) return
+    setIsLogAnalyzing(true)
+    setLogAnalysis(null)
+    setLogAnalysisError(null)
+    const eventId = grp.event_ids[0]
+    try {
+      const res = await fetch(`${API_BASE_URL}/events/${eventId}/log-analyze`, { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Bağlantı hatası' }))
+        setLogAnalysisError(err.detail || `HTTP ${res.status}`)
+        return
+      }
+      const data = await res.json()
+      setLogAnalysis(data)
+    } catch {
+      setLogAnalysisError('Analiz isteği başarısız.')
+    } finally {
+      setIsLogAnalyzing(false)
+    }
   }
 
   const openIncidentForGroup = (grp: EventGroup) => {
@@ -552,10 +583,13 @@ const Events: React.FC = () => {
         <Modal
           title={<span className="flex items-center gap-2">{analyzeGroup.title}</span>}
           subtitle={`${analyzeGroup.event_type}${analyzeGroup.server_name ? ' · ' + analyzeGroup.server_name : ''} · ${analyzeGroup.count}×`}
-          onClose={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText('') }}
+          onClose={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText(''); setLogAnalysis(null); setLogAnalysisError(null) }}
           footer={
             <div className="flex justify-between items-center gap-2">
-              <GhostButton accent={NEON.blue} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>Yeniden</GhostButton>
+              {analyzeTab === 'chat'
+                ? <GhostButton accent={NEON.blue} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>Yeniden</GhostButton>
+                : <GhostButton accent={NEON.cyan} onClick={() => startLogAnalyze(analyzeGroup)} disabled={isLogAnalyzing}>Yeniden Analiz Et</GhostButton>
+              }
               <div className="flex gap-2">
                 <GhostButton accent={NEON.green} onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}>Kapat</GhostButton>
                 <GhostButton accent={NEON.blue} onClick={() => {
@@ -565,20 +599,105 @@ const Events: React.FC = () => {
               </div>
             </div>
           }>
-          <div className="p-5">
-            {isAnalyzing && !analysisText && (
-              <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
-                <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.blue} transparent ${NEON.blue} ${NEON.blue}` }} />
-                AI analiz yapıyor...
-              </div>
-            )}
-            {analysisText && (
-              <div className="prose prose-invert prose-sm max-w-none" style={{ color: 'rgba(226,232,240,0.9)' }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
-                {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
-              </div>
-            )}
+          {/* Sekme bar */}
+          <div className="flex border-b px-5 pt-1" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            <button
+              onClick={() => setAnalyzeTab('chat')}
+              className="text-xs font-medium pb-2 mr-4 border-b-2 transition-colors"
+              style={{ borderColor: analyzeTab === 'chat' ? NEON.blue : 'transparent', color: analyzeTab === 'chat' ? NEON.blue : 'rgba(148,163,184,0.6)' }}
+            >AI Sohbet</button>
+            <button
+              onClick={() => { setAnalyzeTab('log'); if (!logAnalysis && !isLogAnalyzing) startLogAnalyze(analyzeGroup) }}
+              className="text-xs font-medium pb-2 border-b-2 transition-colors flex items-center gap-1"
+              style={{ borderColor: analyzeTab === 'log' ? NEON.cyan : 'transparent', color: analyzeTab === 'log' ? NEON.cyan : 'rgba(148,163,184,0.6)' }}
+            >Log Kök Neden Analizi</button>
           </div>
+
+          {/* AI Sohbet sekmesi */}
+          {analyzeTab === 'chat' && (
+            <div className="p-5">
+              {isAnalyzing && !analysisText && (
+                <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.blue} transparent ${NEON.blue} ${NEON.blue}` }} />
+                  AI analiz yapıyor...
+                </div>
+              )}
+              {analysisText && (
+                <div className="prose prose-invert prose-sm max-w-none" style={{ color: 'rgba(226,232,240,0.9)' }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
+                  {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Log Kök Neden Analizi sekmesi */}
+          {analyzeTab === 'log' && (
+            <div className="p-5 space-y-4">
+              {isLogAnalyzing && (
+                <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent ${NEON.cyan} ${NEON.cyan}` }} />
+                  Log satırları okunuyor, AI analiz yapıyor...
+                </div>
+              )}
+              {logAnalysisError && (
+                <div className="text-sm p-3 rounded-[8px]" style={{ background: 'rgba(239,68,68,0.08)', color: NEON.red, border: '1px solid rgba(239,68,68,0.2)' }}>
+                  {logAnalysisError}
+                </div>
+              )}
+              {logAnalysis && !isLogAnalyzing && (
+                <div className="space-y-4">
+                  {/* Güven + meta */}
+                  <div className="flex items-center gap-3 text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium"
+                      style={{
+                        background: logAnalysis.confidence === 'high' ? 'rgba(34,197,94,0.12)' : logAnalysis.confidence === 'medium' ? 'rgba(251,191,36,0.12)' : 'rgba(148,163,184,0.1)',
+                        color: logAnalysis.confidence === 'high' ? NEON.green : logAnalysis.confidence === 'medium' ? NEON.orange : 'rgba(148,163,184,0.6)',
+                        border: `1px solid ${logAnalysis.confidence === 'high' ? 'rgba(34,197,94,0.3)' : logAnalysis.confidence === 'medium' ? 'rgba(251,191,36,0.3)' : 'rgba(148,163,184,0.2)'}`,
+                      }}>
+                      {logAnalysis.confidence === 'high' ? 'Yüksek Güven' : logAnalysis.confidence === 'medium' ? 'Orta Güven' : 'Düşük Güven'}
+                    </span>
+                    <span>{logAnalysis.log_lines_used} log satırı kullanıldı</span>
+                    <span>Model: {logAnalysis.model}</span>
+                  </div>
+
+                  {/* Kök neden */}
+                  <div className="p-3 rounded-[8px]" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)' }}>
+                    <div className="text-xs font-semibold mb-1" style={{ color: NEON.cyan }}>Kök Neden</div>
+                    <div className="text-sm" style={{ color: 'rgba(226,232,240,0.9)' }}>{logAnalysis.root_cause}</div>
+                  </div>
+
+                  {/* Etki */}
+                  {logAnalysis.impact && (
+                    <div className="p-3 rounded-[8px]" style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.12)' }}>
+                      <div className="text-xs font-semibold mb-1" style={{ color: NEON.orange }}>Etki</div>
+                      <div className="text-sm" style={{ color: 'rgba(226,232,240,0.9)' }}>{logAnalysis.impact}</div>
+                    </div>
+                  )}
+
+                  {/* Öneriler */}
+                  {logAnalysis.recommendations.length > 0 && (
+                    <div className="p-3 rounded-[8px]" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.12)' }}>
+                      <div className="text-xs font-semibold mb-2 flex items-center gap-2" style={{ color: NEON.green }}>
+                        Önerilen Aksiyonlar
+                        {logAnalysis.requires_approval && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.3)' }}>Onay Gerekli</span>
+                        )}
+                      </div>
+                      <ol className="space-y-1.5">
+                        {logAnalysis.recommendations.map((rec, i) => (
+                          <li key={i} className="flex gap-2 text-sm" style={{ color: 'rgba(226,232,240,0.85)' }}>
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'rgba(34,197,94,0.15)', color: NEON.green }}>{i + 1}</span>
+                            <code className="text-xs bg-black/20 px-1.5 py-0.5 rounded font-mono" style={{ color: 'rgba(226,232,240,0.9)' }}>{rec}</code>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </Modal>
       )}
 

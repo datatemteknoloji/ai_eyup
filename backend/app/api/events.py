@@ -410,3 +410,29 @@ async def scan_all_servers(
     except Exception as e:
         logger.error(f"Manual scan error: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+# ── Log AI Analizi ───────────────────────────────────────────────────────────
+
+@router.post("/{event_id}/log-analyze")
+async def log_analyze_event(event_id: int, db: Session = Depends(get_db)):
+    """
+    Bir event için DB tabanlı AI kök neden analizi çalıştırır.
+
+    log_entry ve metric_anomaly tipleri için log satırlarını DB'den çeker,
+    Ollama ile analiz eder ve kök neden + öneriler döner.
+    Loglar dışarı çıkmaz (local Ollama).
+    """
+    from app.services.log_analyst import analyze_event_logs
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: analyze_event_logs(db, event_id)
+    )
+
+    if "error" in result:
+        status_code = 404 if result["error"] == "Event bulunamadı" else 503
+        raise HTTPException(status_code=status_code, detail=result["error"])
+
+    return result
