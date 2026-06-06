@@ -120,10 +120,10 @@ const Incidents: React.FC = () => {
 
   const rowMenu = (inc: Incident) => {
     const items = []
-    if (inc.status === 'open') items.push({ label: 'İncelemeye al', icon: '🔍', accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
+    if (inc.status === 'open') items.push({ label: "İncelemeye al", icon: "", accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
     if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
     if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: '🔒', accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
-    items.push({ label: 'Sil', icon: '🗑', accent: NEON.red, onClick: () => { if (confirm('Bu incident silinecek?')) deleteIncident.mutate(inc.id) } })
+    items.push({ label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu incident silinecek?')) deleteIncident.mutate(inc.id) } })
     return items
   }
 
@@ -187,9 +187,9 @@ const Incidents: React.FC = () => {
 
         {/* List */}
         {isLoading ? (
-          <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-slate-700" /></div>
+          <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
         ) : incidents.length === 0 ? (
-          <Section><EmptyState icon="🚨" text="Henüz incident yok" /></Section>
+          <Section><EmptyState icon="" text="Henüz incident yok" /></Section>
         ) : (
           <div className="space-y-2.5">
             {incidents.map(inc => {
@@ -242,7 +242,7 @@ const Incidents: React.FC = () => {
             </div>
 
             {detailLoading ? (
-              <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-2 border-t-cyan-400 border-slate-700" /></div>
+              <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
             ) : (
               <div className="p-5 space-y-5 text-sm">
                 {selectedIncident.description && (
@@ -282,7 +282,7 @@ const Incidents: React.FC = () => {
                 {/* Status actions */}
                 <div className="flex gap-2 flex-wrap">
                   {selectedIncident.status === 'open' && (
-                    <GhostButton accent={NEON.orange} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'investigating' } })}>🔍 İncelemeye Al</GhostButton>
+                    <GhostButton accent={NEON.orange} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'investigating' } })}>İncelemeye Al</GhostButton>
                   )}
                   {(selectedIncident.status === 'open' || selectedIncident.status === 'investigating') && (
                     <>

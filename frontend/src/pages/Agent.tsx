@@ -210,12 +210,12 @@ const Agent: React.FC = () => {
             <select
               value={selectedModel}
               onChange={e => setSelectedModel(e.target.value)}
-              className="bg-slate-900 border border-slate-600 text-slate-200 text-sm rounded-lg px-2 py-1.5"
+              className="bg-cyber-deep border border-white/[0.08] text-slate-200 text-sm rounded-lg px-2 py-1.5"
             >
               {!models.includes(selectedModel) && <option value={selectedModel}>{selectedModel}</option>}
               {models.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            <button onClick={resetChat} className="text-xs px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600">
+            <button onClick={resetChat} className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]">
               Yeni
             </button>
           </div>
@@ -232,7 +232,7 @@ const Agent: React.FC = () => {
                 onClick={() => toggleServer(s.id)}
                 className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
                   sel ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'bg-slate-900 border-slate-600 text-slate-300 hover:border-slate-500'
+                      : 'bg-cyber-deep border-white/[0.08] text-slate-300 hover:border-white/[0.15]'
                 }`}
                 title={s.ip_address}
               >
@@ -284,7 +284,7 @@ const Agent: React.FC = () => {
                 </div>
                 <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-3 text-xs text-slate-200 overflow-x-auto">{s.preview}</pre>
                 {s.guard && s.guard.enabled && (
-                  <div className="text-xs flex items-start gap-2 bg-slate-900/60 border border-slate-700 rounded-lg p-2">
+                  <div className="text-xs flex items-start gap-2 bg-cyber-deep/60 border border-white/[0.06] rounded-lg p-2">
                     <span className="text-slate-400">🛡️ Guard:</span>
                     <span className={s.guard.degraded ? 'text-slate-400' : 'text-emerald-300'}>
                       {s.guard.degraded ? 'erişilemedi (fail-open)' : 'izin verdi'}
@@ -308,7 +308,7 @@ const Agent: React.FC = () => {
                       onChange={e => setRootPassword(e.target.value)}
                       placeholder="root / sudo şifresi"
                       autoComplete="new-password"
-                      className="w-full bg-slate-900 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-1.5"
+                      className="w-full bg-cyber-deep border border-white/[0.08] text-slate-200 text-sm rounded-lg px-3 py-1.5"
                     />
                   </div>
                 )}
@@ -324,7 +324,7 @@ const Agent: React.FC = () => {
                     <button
                       onClick={() => s.action_id && decide(s.action_id, false)}
                       disabled={loading}
-                      className="px-4 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm disabled:opacity-50"
+                      className="px-4 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 text-sm disabled:opacity-50"
                     >
                       ✕ Reddet
                     </button>
@@ -360,7 +360,7 @@ const Agent: React.FC = () => {
                         disabled={!isActive || loading}
                         className={`w-full text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
                           sel ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'bg-slate-900 border-slate-600 text-slate-300 hover:border-slate-500'
+                              : 'bg-cyber-deep border-white/[0.08] text-slate-300 hover:border-white/[0.15]'
                         } ${!isActive ? 'opacity-60' : ''}`}
                       >
                         <span className="mr-2">{multi ? (sel ? '☑' : '☐') : (sel ? '◉' : '○')}</span>{opt}
@@ -414,7 +414,7 @@ const Agent: React.FC = () => {
               </summary>
               {s.preview && <div className="mt-2 text-xs text-slate-400">{s.preview}</div>}
               {s.result?.stdout && (
-                <pre className="mt-2 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 overflow-x-auto max-h-64">{s.result.stdout}</pre>
+                <pre className="mt-2 bg-cyber-deep border border-white/[0.06] rounded-lg p-2 text-xs text-slate-200 overflow-x-auto max-h-64">{s.result.stdout}</pre>
               )}
               {s.result?.stderr && (
                 <pre className="mt-2 bg-red-500/5 border border-red-500/30 rounded-lg p-2 text-xs text-red-300 overflow-x-auto max-h-40">{s.result.stderr}</pre>
@@ -432,7 +432,7 @@ const Agent: React.FC = () => {
       </div>
 
       {/* Input */}
-      <div className="sticky bottom-0 bg-slate-900 pt-2">
+      <div className="sticky bottom-0 bg-cyber-deep pt-2">
         <div className="flex gap-2">
           <textarea
             value={input}

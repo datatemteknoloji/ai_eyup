@@ -45,10 +45,10 @@ function formatDayLabel(isoDate: string) {
 function PipelineFlow({ status }: { status?: AiopsStatus }) {
   const stages = [
     { key: 'metric', label: 'Metrikler', icon: '', color: NEON.cyan, value: status?.monitored_servers ?? 0, unit: 'sunucu' },
-    { key: 'anomaly', label: 'Anomali', icon: '🔍', color: NEON.blue, value: status?.active_metric_anomalies ?? 0, unit: 'aktif' },
+    { key: 'anomaly', label: 'Anomali', icon: '', color: NEON.blue, value: status?.active_metric_anomalies ?? 0, unit: 'aktif' },
     { key: 'event', label: 'Event', icon: '', color: NEON.blue, value: status?.active_metric_critical ?? 0, unit: 'kritik' },
-    { key: 'incident', label: 'Incident', icon: '🚨', color: NEON.orange, value: status?.auto_open_incidents ?? 0, unit: 'otomatik' },
-    { key: 'rca', label: 'AI RCA', icon: '🧠', color: NEON.green, value: status?.incidents_with_rca ?? 0, unit: 'analiz' },
+    { key: 'incident', label: 'Incident', icon: '', color: NEON.orange, value: status?.auto_open_incidents ?? 0, unit: 'otomatik' },
+    { key: 'rca', label: 'AI RCA', icon: '', color: NEON.green, value: status?.incidents_with_rca ?? 0, unit: 'analiz' },
   ]
   return (
     <Section title="Otonom Döngü" accent={NEON.cyan}
@@ -128,7 +128,7 @@ const AnomalyDetection: React.FC = () => {
       const r = await fetch(`${API_BASE_URL}/incidents/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: `🚨 ${a.message}`,
+          title: a.message,
           description: `Manuel yükseltildi.\nMetrik: ${a.metric_name}\nDeğer: ${a.current_value}\nSunucu: ${a.server_name} (${a.ip_address || '-'})`,
           severity: a.severity === 'critical' ? 'critical' : 'high', source: 'manual_escalation', affected_servers: [a.server_id],
         }),
@@ -310,7 +310,7 @@ const AnomalyDetection: React.FC = () => {
           ) : error ? (
             <div className="p-6 text-sm" style={{ color: NEON.red }}>Veri alınamadı.</div>
           ) : filteredAnomalies.length === 0 ? (
-            <EmptyState icon="📋" text="Filtreye uyan anomali yok" />
+            <EmptyState icon="" text="Filtreye uyan anomali yok" />
           ) : (
             <div className="overflow-x-auto max-h-[560px]">
               <table className="cyber-table min-w-full text-sm">

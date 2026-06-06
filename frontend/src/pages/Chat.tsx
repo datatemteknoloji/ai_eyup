@@ -103,13 +103,13 @@ const StreamingText = ({ text }: { text: string }) => (
             <table className="min-w-full text-left text-sm border-collapse">{children}</table>
           </div>
         ),
-        thead: ({ children }) => <thead className="bg-slate-600">{children}</thead>,
+        thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
         th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-slate-700/60 whitespace-nowrap">{children}</td>,
-        tr: ({ children, ...props }) => <tr className="even:bg-slate-800/30 hover:bg-slate-600/20 transition-colors" {...props}>{children}</tr>,
+        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
+        tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
         code: ({ className, children }) => className
           ? <code className={className}>{children}</code>
-          : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
+          : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
         pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
       }}
     >{text}</ReactMarkdown>
@@ -126,11 +126,11 @@ const ConfirmDialog: React.FC<{
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-6 w-80 max-w-[90vw]">
+      <div className="bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl p-6 w-80 max-w-[90vw]">
         <p className="text-sm text-slate-200 mb-6 text-center leading-relaxed">{message}</p>
         <div className="flex gap-3 justify-center">
           <button onClick={onCancel}
-            className="flex-1 px-4 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+            className="flex-1 px-4 py-2 rounded-lg text-sm bg-white/[0.07] hover:bg-white/[0.12] text-slate-300 transition-colors">
             İptal
           </button>
           <button onClick={() => { onConfirm(); onCancel() }}
@@ -489,12 +489,12 @@ const Chat: React.FC = () => {
     <>
     <div className="flex flex-col h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       {/* Üst bar */}
-      <div className="flex-shrink-0 p-4 bg-slate-900/70 backdrop-blur border-b border-slate-700/60">
+      <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="px-3 py-1 rounded-full border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 text-xs font-semibold">Modern UI v2</div>
           <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-slate-400 text-sm font-medium">📚 RAG:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-slate-600'}`}
+            <span className="text-slate-400 text-sm font-medium">RAG:</span>
+            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-white/[0.1]'}`}
               onClick={() => setUseRag(v => !v)} role="switch" aria-checked={useRag}>
               <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
                 style={{ marginTop: 2 }} />
@@ -508,7 +508,7 @@ const Chat: React.FC = () => {
               className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 border border-blue-500 rounded-xl text-white text-sm font-medium hover:from-blue-500 hover:to-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[200px]"
               style={{ appearance: 'auto' }}>
               {availableModels.map(m => (
-                <option key={m.name} value={m.name} className="bg-slate-900 text-white">
+                <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
                   {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
                 </option>
               ))}
@@ -525,22 +525,22 @@ const Chat: React.FC = () => {
                   setServerDropdownOpen(true)
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              className="flex items-center gap-2 px-4 py-2.5 bg-cyber-card border border-white/[0.08] rounded-[10px] text-left min-w-[240px] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500">
               <span className="text-slate-300 text-sm">
                 {selectedServers.length === 0 ? 'Sunucu seçin (çoklu)' : `${selectedServers.length} sunucu seçili`}
               </span>
               <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
             </button>
             {serverDropdownOpen && serverMenuRect && createPortal(
-              <div ref={serverMenuRef} className="flex flex-col overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-2xl"
+              <div ref={serverMenuRef} className="flex flex-col overflow-hidden bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl"
                 style={{ position:'fixed', top: serverMenuRect.top, left: serverMenuRect.left, width: serverMenuRect.width,
                   maxHeight: `min(20rem, calc(100vh - ${serverMenuRect.top}px - 8px))`, zIndex: 9999 }}>
-                <div className="p-2 border-b border-slate-700 shrink-0">
+                <div className="p-2 border-b border-white/[0.06] shrink-0">
                   <input type="text" value={serverSearch} onChange={e => setServerSearch(e.target.value)}
                     placeholder="Sunucu ara..." autoFocus
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    className="w-full bg-cyber-deep border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div className="flex items-center gap-2 p-2 border-b border-slate-700 shrink-0">
+                <div className="flex items-center gap-2 p-2 border-b border-white/[0.06] shrink-0">
                   <button type="button" onClick={() => setSelectedServers(filteredAiReadyServers.map(s => s.id))}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
                   <button type="button" onClick={() => setSelectedServers([])}
@@ -551,13 +551,13 @@ const Chat: React.FC = () => {
                   {filteredAiReadyServers.length === 0 ? (
                     <div className="p-4 text-center text-slate-500 text-sm">AI Ready sunucu yok</div>
                   ) : filteredAiReadyServers.map(s => (
-                    <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700 cursor-pointer">
+                    <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer">
                       <input type="checkbox" checked={selectedServers.includes(s.id)}
                         onChange={e => {
                           if (e.target.checked) setSelectedServers(prev => [...prev, s.id])
                           else setSelectedServers(prev => prev.filter(id => id !== s.id))
                         }}
-                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                        className="rounded border-white/[0.2] bg-cyber-card text-blue-500 focus:ring-blue-500" />
                       <div>
                         <div className="text-white text-sm font-medium">{s.name}</div>
                         <div className="text-slate-500 text-xs font-mono">{s.ip_address}</div>
@@ -580,22 +580,22 @@ const Chat: React.FC = () => {
                   setHypervisorDropdownOpen(true)
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              className="flex items-center gap-2 px-4 py-2.5 bg-cyber-card border border-white/[0.08] rounded-[10px] text-left min-w-[240px] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500">
               <span className="text-slate-300 text-sm">
                 {selectedHypervisors.length === 0 ? 'Hypervisor seçin (çoklu)' : `${selectedHypervisors.length} hypervisor seçili`}
               </span>
               <span className="ml-auto text-slate-500">{hypervisorDropdownOpen ? '▲' : '▼'}</span>
             </button>
             {hypervisorDropdownOpen && hypervisorMenuRect && createPortal(
-              <div ref={hypervisorMenuRef} className="flex flex-col overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-2xl"
+              <div ref={hypervisorMenuRef} className="flex flex-col overflow-hidden bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl"
                 style={{ position:'fixed', top: hypervisorMenuRect.top, left: hypervisorMenuRect.left, width: hypervisorMenuRect.width,
                   maxHeight: `min(20rem, calc(100vh - ${hypervisorMenuRect.top}px - 8px))`, zIndex: 9999 }}>
-                <div className="p-2 border-b border-slate-700 shrink-0">
+                <div className="p-2 border-b border-white/[0.06] shrink-0">
                   <input type="text" value={hypervisorSearch} onChange={e => setHypervisorSearch(e.target.value)}
                     placeholder="Hypervisor ara..." autoFocus
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    className="w-full bg-cyber-deep border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div className="flex items-center gap-2 p-2 border-b border-slate-700 shrink-0">
+                <div className="flex items-center gap-2 p-2 border-b border-white/[0.06] shrink-0">
                   <button type="button" onClick={() => setSelectedHypervisors(filteredHypervisors.map(h => h.id))}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
                   <button type="button" onClick={() => setSelectedHypervisors([])}
@@ -606,13 +606,13 @@ const Chat: React.FC = () => {
                   {filteredHypervisors.length === 0 ? (
                     <div className="p-4 text-center text-slate-500 text-sm">Hypervisor yok</div>
                   ) : filteredHypervisors.map(h => (
-                    <label key={h.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700 cursor-pointer">
+                    <label key={h.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer">
                       <input type="checkbox" checked={selectedHypervisors.includes(h.id)}
                         onChange={e => {
                           if (e.target.checked) setSelectedHypervisors(prev => [...prev, h.id])
                           else setSelectedHypervisors(prev => prev.filter(id => id !== h.id))
                         }}
-                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                        className="rounded border-white/[0.2] bg-cyber-card text-blue-500 focus:ring-blue-500" />
                       <div>
                         <div className="text-white text-sm font-medium">{h.name}</div>
                         <div className="text-slate-500 text-xs font-mono">{h.hostname || h.ip_address || '-'}</div>
@@ -629,15 +629,15 @@ const Chat: React.FC = () => {
 
       <div className="flex flex-1 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
-        <div className="w-72 flex-shrink-0 bg-slate-800/70 backdrop-blur rounded-2xl border border-slate-700/60 flex flex-col overflow-hidden shadow-2xl">
-          <div className="p-3 border-b border-slate-700 flex items-center justify-between flex-shrink-0">
+        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
+          <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
             <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
             <div className="flex items-center gap-1">
               <button onClick={() => createSessionMutation.mutate()}
                 className="px-2 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-500">+ Yeni</button>
               {sessions.length > 0 && (
                 <button onClick={() => setConfirmDialog({ open: true, message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?', onConfirm: () => clearAllSessionsMutation.mutate() })}
-                  className="px-2 py-1 bg-slate-700 text-slate-400 text-xs rounded-lg hover:bg-slate-600">🗑</button>
+                  className="px-2 py-1 bg-white/[0.05] text-slate-400 text-xs rounded-lg hover:bg-white/[0.08]">✕</button>
               )}
             </div>
           </div>
@@ -647,7 +647,7 @@ const Chat: React.FC = () => {
             ) : sessions.map(session => (
               <div key={session.id}
                 className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
-                  selectedSessionId === session.id ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-slate-700'
+                  selectedSessionId === session.id ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-white/[0.04]'
                 }`}
                 onClick={() => {
                   if (session.id !== selectedSessionId) {
@@ -676,7 +676,7 @@ const Chat: React.FC = () => {
         </div>
 
         {/* Sağ Panel */}
-        <div className="flex-1 bg-slate-800/60 backdrop-blur rounded-2xl border border-slate-700/60 flex flex-col overflow-hidden shadow-2xl">
+        <div className="flex-1 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
           {/* Mesajlar */}
           <div className="flex-1 overflow-y-auto p-8">
             {selectedSessionId === null ? (
@@ -707,7 +707,7 @@ const Chat: React.FC = () => {
                     <div className={`max-w-[82%] rounded-3xl px-5 py-4 shadow-lg ${
                       msg.role === 'user'
                         ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border border-blue-400/30'
-                        : 'bg-slate-700/90 text-slate-100 border border-slate-600/70'
+                        : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
                     }`}>
                       {msg.role === 'user' ? (
                         <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
@@ -719,21 +719,21 @@ const Chat: React.FC = () => {
                                 <table className="min-w-full text-left text-sm border-collapse">{children}</table>
                               </div>
                             ),
-                            thead: ({ children }) => <thead className="bg-slate-600">{children}</thead>,
+                            thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
                             th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-slate-700/60 whitespace-nowrap">{children}</td>,
-                            tr: ({ children, ...props }) => <tr className="even:bg-slate-800/30 hover:bg-slate-600/20 transition-colors" {...props}>{children}</tr>,
+                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
+                            tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
                             code: ({ className, children }) => className
                               ? <code className={className}>{children}</code>
-                              : <code className="bg-slate-600/70 px-1.5 py-0.5 rounded text-xs">{children}</code>,
+                              : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
                             pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
                           }}>{msg.content}</ReactMarkdown>
                           {getFirstMarkdownTable(msg.content) && (
                             <div className="mt-2 flex gap-2">
                               <button type="button"
                                 onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
-                                className="text-xs px-2 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 border border-slate-500 flex items-center gap-1">
-                                📄 CSV indir
+                                className="text-xs px-2 py-1.5 rounded bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] flex items-center gap-1">
+                                CSV İndir
                               </button>
                               <button type="button"
                                 onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
@@ -754,7 +754,7 @@ const Chat: React.FC = () => {
                 {/* Streaming / thinking area — sadece bu isteğin session'ı için göster */}
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start">
-                    <div className="bg-slate-700 rounded-2xl px-4 py-3 max-w-[85%] w-full">
+                    <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -784,7 +784,7 @@ const Chat: React.FC = () => {
           </div>
 
           {/* Input */}
-          <div className="px-6 py-5 border-t border-white/[0.06]/70 bg-slate-900/70 backdrop-blur">
+          <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
             {selectedServers.length > 0 && (
               <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
@@ -815,12 +815,12 @@ const Chat: React.FC = () => {
                 })}
               </div>
             )}
-            <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-slate-900/70 border border-slate-700/70 rounded-2xl p-2">
+            <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-cyber-deep/80 border border-white/[0.08] rounded-2xl p-2">
               <div className="flex-1 relative">
                 <input type="text" value={input} onChange={e => setInput(e.target.value)}
                   placeholder={isLoading ? 'AI düşünüyor...' : 'Mesajınızı yazın... (Enter ile gönder)'}
                   className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isLoading ? 'border-blue-500/60' : 'border-slate-700'
+                    isLoading ? 'border-blue-500/60' : 'border-white/[0.06]'
                   }`}
                   disabled={isLoading}
                 />

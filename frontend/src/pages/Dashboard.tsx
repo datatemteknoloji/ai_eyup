@@ -282,7 +282,7 @@ function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
         </div>
         {isLoading && (
           <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
-            <div className="animate-spin rounded-full h-3 w-3 border border-b-cyan-400 border-slate-700" />
+            <div className="animate-spin rounded-full h-3 w-3 border border-b-cyan-400 border-white/[0.06]" />
             Yükleniyor...
           </div>
         )}
@@ -594,7 +594,7 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
     return (
-      <div className="cyber-card px-3 py-2 text-xs border border-slate-700">
+      <div className="cyber-card px-3 py-2 text-xs border border-white/[0.06]">
         <p className="text-white font-medium mb-1">{label}</p>
         {payload.map((p: any) => (
           <p key={p.dataKey} style={{ color: p.color }}>{p.name}: {p.value}%</p>

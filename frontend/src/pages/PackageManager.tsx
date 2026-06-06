@@ -71,13 +71,13 @@ const STATUS_LABEL: Record<string, string> = {
 const JOB_TYPE_LABEL: Record<string, string> = {
   deploy: 'Paket Dağıtımı',
   upgrade: '⬆️ Sistem Güncellemesi',
-  check_updates: '🔍 Güncelleme Kontrolü',
+  check_updates: 'Güncelleme Kontrolü',
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 const StatusBadge = ({ status }: { status: string }) => (
-  <span className={`px-2 py-0.5 text-xs rounded-full border font-medium ${STATUS_COLOR[status] || 'bg-slate-700 text-slate-300 border-slate-600'}`}>
+  <span className={`px-2 py-0.5 text-xs rounded-full border font-medium ${STATUS_COLOR[status] || 'bg-white/[0.07] text-slate-300 border-slate-600'}`}>
     {STATUS_LABEL[status] || status}
   </span>
 )
@@ -86,7 +86,7 @@ const ProgressBar = ({ done, total }: { done: number; total: number }) => {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+      <div className="flex-1 bg-white/[0.07] rounded-full h-1.5">
         <div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{ width: `${pct}%` }} />
       </div>
       <span className="text-xs text-slate-400 whitespace-nowrap">{done}/{total}</span>
@@ -122,14 +122,14 @@ const ServerSelector = ({
   const clearAll      = () => onChange([])
 
   return (
-    <div className="border border-slate-700 rounded-lg overflow-hidden">
+    <div className="border border-white/[0.06] rounded-lg overflow-hidden">
       {/* Toolbar */}
-      <div className="bg-slate-800 px-3 py-2 flex flex-wrap items-center gap-2 border-b border-slate-700">
+      <div className="bg-cyber-card px-3 py-2 flex flex-wrap items-center gap-2 border-b border-white/[0.06]">
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Sunucu ara..."
-          className="flex-1 min-w-[140px] bg-slate-700 text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+          className="flex-1 min-w-[140px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
         />
         {/* AI Ready toggle */}
         <button
@@ -137,7 +137,7 @@ const ServerSelector = ({
           className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors ${
             onlyAiReady
               ? 'bg-green-500/15 text-green-300 border-green-500/40'
-              : 'bg-slate-700 text-slate-400 border-slate-600 hover:text-slate-200'
+              : 'bg-white/[0.07] text-slate-400 border-slate-600 hover:text-slate-200'
           }`}
           title={onlyAiReady ? 'Tüm sunucuları göster' : 'Sadece AI Ready sunucuları göster'}
         >
@@ -146,11 +146,11 @@ const ServerSelector = ({
       </div>
 
       {/* Hızlı seçim */}
-      <div className="bg-slate-800/60 px-3 py-1.5 flex items-center gap-2 border-b border-slate-700/60">
-        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">AI Ready Aktifler</button>
-        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tüm Aktifler</button>
-        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tümü</button>
-        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Temizle</button>
+      <div className="bg-cyber-card/60 px-3 py-1.5 flex items-center gap-2 border-b border-white/[0.06]">
+        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">AI Ready Aktifler</button>
+        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Tüm Aktifler</button>
+        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Tümü</button>
+        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Temizle</button>
         <span className="text-xs text-slate-500 ml-auto">{selected.length} seçili</span>
       </div>
 
@@ -168,7 +168,7 @@ const ServerSelector = ({
         {filtered.map(srv => (
           <label
             key={srv.id}
-            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-700/40 transition-colors ${selected.includes(srv.id) ? 'bg-blue-600/10' : ''}`}
+            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-white/[0.04] transition-colors ${selected.includes(srv.id) ? 'bg-blue-600/10' : ''}`}
           >
             <input
               type="checkbox"
@@ -216,7 +216,7 @@ const JobResultRow = ({ result }: { sid: string; result: JobResult }) => {
   const [open, setOpen] = useState(false)
   const isOk = result.status === 'success'
   return (
-    <div className="border border-slate-700 rounded-lg overflow-hidden">
+    <div className="border border-white/[0.06] rounded-lg overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.03] transition-colors text-left"
@@ -266,7 +266,7 @@ const JobCard = ({ job, onDelete, onExpand }: {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-mono text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded">#{job.id}</span>
+            <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded">#{job.id}</span>
             <span className="text-xs text-slate-400">{JOB_TYPE_LABEL[job.job_type]}</span>
             <StatusBadge status={job.status} />
             {isRunning && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
@@ -305,7 +305,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
   onCancel: () => void
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+    <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
           <span className="text-yellow-400 text-base">⚠</span>
@@ -318,7 +318,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
       <div className="flex gap-3 justify-end">
         <button
           onClick={onCancel}
-          className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors"
+          className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors"
         >
           İptal
         </button>
@@ -571,7 +571,7 @@ const PackageManager: React.FC = () => {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-slate-800 p-1 rounded-xl w-fit border border-slate-700">
+      <div className="flex gap-1 bg-cyber-card p-1 rounded-xl w-fit border border-white/[0.06]">
         {([
           { key: 'deploy', label: 'Paket Dağıt' },
           { key: 'history', label: `İş Geçmişi ${jobs.length > 0 ? `(${jobs.length})` : ''}` },
@@ -582,7 +582,7 @@ const PackageManager: React.FC = () => {
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               tab === t.key
                 ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'
             }`}
           >
             {t.label}
@@ -636,13 +636,13 @@ const PackageManager: React.FC = () => {
                 value={uploadDesc}
                 onChange={e => setUploadDesc(e.target.value)}
                 placeholder="Açıklama (isteğe bağlı)"
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
 
             {/* Package list */}
             <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-white">Yüklü Paketler</h2>
                 <span className="text-xs text-slate-500">{packageFiles.length} adet</span>
               </div>
@@ -699,7 +699,7 @@ const PackageManager: React.FC = () => {
 
               {/* ── Yetkili Kullanıcı ───────────────────────────────────── */}
               <div className="border border-slate-600 rounded-xl overflow-hidden">
-                <div className="bg-slate-700/50 px-4 py-2.5 flex items-center gap-2 border-b border-slate-600">
+                <div className="bg-white/[0.07]/50 px-4 py-2.5 flex items-center gap-2 border-b border-slate-600">
                   <span className="text-xs font-semibold text-slate-300">🔐 Yetkili Kullanıcı</span>
                   <span className="text-xs text-slate-500">· kurulum için SSH erişimi</span>
                 </div>
@@ -708,7 +708,7 @@ const PackageManager: React.FC = () => {
                   <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
                     credMode === 'stored'
                       ? 'border-green-500/60 bg-green-500/8'
-                      : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                      : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                   }`}>
                     <input type="radio" checked={credMode === 'stored'} onChange={() => setCredMode('stored')}
                       className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -724,7 +724,7 @@ const PackageManager: React.FC = () => {
                   <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
                     credMode === 'override'
                       ? 'border-blue-500/60 bg-blue-500/8'
-                      : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                      : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                   }`}>
                     <input type="radio" checked={credMode === 'override'} onChange={() => setCredMode('override')}
                       className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -740,7 +740,7 @@ const PackageManager: React.FC = () => {
                             <input
                               value={overrideUser} onChange={e => setOverrideUser(e.target.value)}
                               placeholder="root veya sudo yetkili kullanıcı"
-                              className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
                             />
                           </div>
                           <div className="grid grid-cols-2 gap-2">
@@ -749,7 +749,7 @@ const PackageManager: React.FC = () => {
                               <input
                                 type="password" value={overridePass} onChange={e => setOverridePass(e.target.value)}
                                 placeholder="SSH şifresi"
-                                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -759,7 +759,7 @@ const PackageManager: React.FC = () => {
                               <input
                                 type="password" value={overrideSudo} onChange={e => setOverrideSudo(e.target.value)}
                                 placeholder="sudo şifresi"
-                                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
                               />
                             </div>
                           </div>
@@ -796,7 +796,7 @@ const PackageManager: React.FC = () => {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">İşler ({jobs.length})</h2>
-              <button onClick={loadJobs} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors">
+              <button onClick={loadJobs} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">
                 ↻ Yenile
               </button>
             </div>
@@ -815,10 +815,10 @@ const PackageManager: React.FC = () => {
           <div>
             {expandedJob ? (
               <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden sticky top-0">
-                <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-mono text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded">#{expandedJob.id}</span>
+                      <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded">#{expandedJob.id}</span>
                       <span className="text-xs text-slate-400">{JOB_TYPE_LABEL[expandedJob.job_type]}</span>
                       <StatusBadge status={expandedJob.status} />
                     </div>
@@ -843,7 +843,7 @@ const PackageManager: React.FC = () => {
 
                 {/* AI Analiz Sonucu */}
                 {aiAnalysis[expandedJob.id] && (
-                  <div className="border-b border-slate-700">
+                  <div className="border-b border-white/[0.06]">
                     <div className="bg-blue-900/20 px-4 py-2.5 flex items-center gap-2 border-b border-blue-500/20">
                       <span className="text-xs font-bold text-blue-400">AI</span>
                       <span className="text-xs font-semibold text-blue-300">AI Analiz & Çözüm</span>
@@ -862,12 +862,12 @@ const PackageManager: React.FC = () => {
 
                 <div className="p-4">
                   <div className="grid grid-cols-2 gap-3 mb-4 text-xs">
-                    <div className="bg-slate-700/50 rounded-lg p-2">
+                    <div className="bg-white/[0.07]/50 rounded-lg p-2">
                       <div className="text-slate-400">Başlangıç</div>
                       <div className="text-white mt-0.5">{fmtDate(expandedJob.created_at)}</div>
                     </div>
                     {expandedJob.completed_at && (
-                      <div className="bg-slate-700/50 rounded-lg p-2">
+                      <div className="bg-white/[0.07]/50 rounded-lg p-2">
                         <div className="text-slate-400">Bitiş</div>
                         <div className="text-white mt-0.5">{fmtDate(expandedJob.completed_at)}</div>
                       </div>

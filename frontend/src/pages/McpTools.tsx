@@ -84,7 +84,7 @@ const Pct: React.FC<{ v: number }> = ({ v }) => {
   const tc = v >= 90 ? 'text-red-300' : v >= 75 ? 'text-orange-300' : v >= 50 ? 'text-yellow-300' : 'text-slate-300'
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-white/[0.07] rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${c}`} style={{ width: `${Math.min(v, 100)}%` }} />
       </div>
       <span className={`text-xs font-mono w-8 text-right ${tc}`}>{v}%</span>
@@ -104,7 +104,7 @@ const Disk: React.FC<{ s: string }> = ({ s }) => {
   return (
     <div className="space-y-2">
       {rows.map((r, i) => (
-        <div key={i} className="bg-slate-900/50 rounded-lg p-2.5 space-y-1">
+        <div key={i} className="bg-cyber-deep/50 rounded-lg p-2.5 space-y-1">
           <div className="flex justify-between text-xs">
             <span className="text-cyan-300 font-mono truncate max-w-[160px]" title={r.fs}>{r.fs} <span className="text-slate-500 text-[10px]">{r.mount}</span></span>
             <span className="text-slate-400 font-mono">{r.used}/{r.size}</span>
@@ -121,7 +121,7 @@ const Mem: React.FC<{ s: string }> = ({ s }) => {
   return (
     <div className="space-y-2">
       {rows.map((r, i) => (
-        <div key={i} className="bg-slate-900/50 rounded-lg p-2.5 space-y-1">
+        <div key={i} className="bg-cyber-deep/50 rounded-lg p-2.5 space-y-1">
           <div className="flex justify-between text-xs">
             <span className="text-blue-300 font-semibold">{r.label === 'Mem' ? 'RAM' : 'Swap'}</span>
             <span className="text-slate-400 font-mono">{r.used}/{r.total}</span>
@@ -200,7 +200,7 @@ const Logins: React.FC<{ s: string }> = ({ s }) => {
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.term}</td>
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.host}</td>
             <td className="py-0.5 pr-2 text-slate-400">{r.time}</td>
-            <td className="py-0.5"><span className={`px-1.5 rounded-full text-[10px] ${r.active ? 'bg-green-500/20 text-green-300' : 'bg-slate-700 text-slate-400'}`}>{r.active ? '● aktif' : 'çıktı'}</span></td>
+            <td className="py-0.5"><span className={`px-1.5 rounded-full text-[10px] ${r.active ? 'bg-green-500/20 text-green-300' : 'bg-white/[0.07] text-slate-400'}`}>{r.active ? '● aktif' : 'çıktı'}</span></td>
           </tr>
         ))}
       </tbody>
@@ -237,7 +237,7 @@ const OsInfo: React.FC<{ s: string }> = ({ s }) => {
   return (
     <div className="space-y-1">
       {rows.map(k => (
-        <div key={k} className="flex gap-3 bg-slate-900/50 rounded px-3 py-1.5">
+        <div key={k} className="flex gap-3 bg-cyber-deep/50 rounded px-3 py-1.5">
           <span className="text-xs text-slate-500 w-28 shrink-0">{k}</span>
           <span className="text-xs text-emerald-300 font-mono break-all">{info[k]}</span>
         </div>
@@ -252,12 +252,12 @@ const UptimeCard: React.FC<{ s: string }> = ({ s }) => {
   const um = line.match(/up\s+([\d\s\w,]+?),\s+\d+ user/)
   return (
     <div className="space-y-3">
-      <div className="bg-slate-900/50 rounded-lg p-3"><div className="text-xs text-slate-500 mb-1">Uptime</div><div className="text-lg font-mono text-cyan-300">{um?.[1]?.trim() || line}</div></div>
+      <div className="bg-cyber-deep/50 rounded-lg p-3"><div className="text-xs text-slate-500 mb-1">Uptime</div><div className="text-lg font-mono text-cyan-300">{um?.[1]?.trim() || line}</div></div>
       {lm && (
         <div className="grid grid-cols-3 gap-2">
           {['1dk', '5dk', '15dk'].map((lb, i) => {
             const v = parseFloat(lm[i + 1])
-            return <div key={i} className="bg-slate-900/50 rounded-lg p-2 text-center"><div className="text-[10px] text-slate-500">Yük {lb}</div><div className={`text-xl font-bold ${v > 2 ? 'text-red-300' : v > 1 ? 'text-yellow-300' : 'text-emerald-300'}`}>{lm[i + 1]}</div></div>
+            return <div key={i} className="bg-cyber-deep/50 rounded-lg p-2 text-center"><div className="text-[10px] text-slate-500">Yük {lb}</div><div className={`text-xl font-bold ${v > 2 ? 'text-red-300' : v > 1 ? 'text-yellow-300' : 'text-emerald-300'}`}>{lm[i + 1]}</div></div>
           })}
         </div>
       )}
@@ -305,7 +305,7 @@ const ArgsForm: React.FC<{ tool: McpTool; args: Record<string, string>; onChange
           <input type={def.type === 'integer' || def.type === 'number' ? 'number' : 'text'}
             value={args[k] ?? ''} onChange={e => onChange(k, e.target.value)}
             placeholder={def.description || k}
-            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono focus:border-blue-500 outline-none" />
+            className="w-full bg-cyber-deep border border-white/[0.06] rounded px-2 py-1 text-xs text-white font-mono focus:border-blue-500 outline-none" />
         </div>
       ))}
     </div>
@@ -377,7 +377,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
   }, [answer])
 
   return (
-    <div className="bg-slate-800/70 border border-slate-700 rounded-xl overflow-hidden">
+    <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl overflow-hidden">
       <button onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-white hover:bg-white/[0.03] transition-colors">
         <span className="flex items-center gap-2">
@@ -400,7 +400,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
               'Performans iyileştirme önerisi ver',
             ].map(q => (
               <button key={q} onClick={() => { setQuestion(q); analyze(q) }}
-                className="text-[10px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:border-blue-500/50 hover:text-blue-300 transition-colors">
+                className="text-[10px] px-2 py-1 rounded-lg border border-white/[0.06] text-slate-400 hover:border-blue-500/50 hover:text-blue-300 transition-colors">
                 {q}
               </button>
             ))}
@@ -411,7 +411,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
             <input ref={inputRef} value={question} onChange={e => setQuestion(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !analyzing && analyze()}
               placeholder="Soru sor... (ör. 'Disk %90 üstündeki sunucular hangileri?')"
-              className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-blue-500 outline-none" />
+              className="flex-1 bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-blue-500 outline-none" />
             <button onClick={() => analyze()} disabled={analyzing}
               className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-600 hover:from-blue-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-medium transition-all">
               {analyzing ? '...' : 'Analiz Et'}
@@ -420,7 +420,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
 
           {/* Answer */}
           {(answer || analyzing) && (
-            <div ref={answerRef} className="mx-4 mb-4 bg-slate-950/60 border border-slate-700/50 rounded-xl p-4 max-h-72 overflow-y-auto">
+            <div ref={answerRef} className="mx-4 mb-4 bg-slate-950/60 border border-white/[0.06]/50 rounded-xl p-4 max-h-72 overflow-y-auto">
               {answer ? (
                 <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
                   {answer.split('\n').map((line, i) => {
@@ -539,13 +539,13 @@ const McpTools: React.FC = () => {
       <div className="w-64 flex flex-col gap-2 overflow-y-auto shrink-0">
 
         {/* Server selection */}
-        <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
+        <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Sunucular</span>
             <div className="flex gap-1">
               <button onClick={selectAiReady} title="AI Ready seç" className="text-xs px-2 py-1 rounded border border-cyan-700/60 text-cyan-400 hover:bg-cyan-700/20">AI</button>
-              <button onClick={selectAll} title="Tümünü seç" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">Tümü</button>
-              <button onClick={clearSel} title="Seçimi temizle" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-slate-700/50">✕</button>
+              <button onClick={selectAll} title="Tümünü seç" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">Tümü</button>
+              <button onClick={clearSel} title="Seçimi temizle" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">✕</button>
             </div>
           </div>
 
@@ -557,7 +557,7 @@ const McpTools: React.FC = () => {
                 const sel = selectedIds.has(s.id)
                 return (
                   <button key={s.id} onClick={() => toggleServer(s.id)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all text-xs ${sel ? 'bg-blue-600/25 border border-blue-500/40' : 'border border-transparent hover:bg-slate-700/40'}`}>
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all text-xs ${sel ? 'bg-blue-600/25 border border-blue-500/40' : 'border border-transparent hover:bg-white/[0.04]'}`}>
                     <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${sel ? 'bg-blue-600 border-blue-500' : 'border-slate-600'}`}>
                       {sel && <span className="text-white text-[9px]">✓</span>}
                     </div>
@@ -578,10 +578,10 @@ const McpTools: React.FC = () => {
         </div>
 
         {/* Tool list */}
-        <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3 flex-1 overflow-y-auto">
+        <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl p-3 flex-1 overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Araçlar</span>
-            <button onClick={() => void refetchTools()} className="text-[10px] text-slate-500 hover:text-slate-300 border border-slate-700 rounded px-1.5 py-0.5">↺</button>
+            <button onClick={() => void refetchTools()} className="text-[10px] text-slate-500 hover:text-slate-300 border border-white/[0.06] rounded px-1.5 py-0.5">↺</button>
           </div>
           {toolsLoading ? (
             <div className="text-xs text-slate-500 animate-pulse">Yükleniyor...</div>
@@ -593,8 +593,8 @@ const McpTools: React.FC = () => {
                   <div className="space-y-0.5">
                     {catTools.map(t => (
                       <button key={t.name} onClick={() => { setSelectedTool(t); setArgs({}); setResults([]); setError('') }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg transition-all text-xs flex items-center gap-2 ${selectedTool?.name === t.name ? 'bg-blue-600/30 border border-blue-500/40 text-white' : 'border border-transparent hover:bg-slate-700/40 text-slate-300'}`}>
-                        <span className="text-sm shrink-0">{t.icon || '🔌'}</span>
+                        className={`w-full text-left px-2 py-1.5 rounded-lg transition-all text-xs flex items-center gap-2 ${selectedTool?.name === t.name ? 'bg-blue-600/30 border border-blue-500/40 text-white' : 'border border-transparent hover:bg-white/[0.04] text-slate-300'}`}>
+                        <span className="text-sm shrink-0">{t.icon || '●'}</span>
                         <div className="min-w-0">
                           <div className="font-mono text-[11px] truncate">{t.name.replace('builtin.', '')}</div>
                           {t.description && <div className="text-[9px] text-slate-500 leading-tight truncate">{t.description}</div>}
@@ -614,7 +614,7 @@ const McpTools: React.FC = () => {
       <div className="flex-1 flex flex-col gap-2 overflow-hidden min-w-0">
 
         {/* Control bar */}
-        <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3 shrink-0">
+        <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl p-3 shrink-0">
           {selectedTool ? (
             <div>
               <div className="flex items-start justify-between gap-3">
@@ -653,12 +653,12 @@ const McpTools: React.FC = () => {
 
         {/* Results */}
         {results.length > 0 && (
-          <div className="flex-1 flex flex-col bg-slate-800/70 border border-slate-700 rounded-xl overflow-hidden min-h-0">
+          <div className="flex-1 flex flex-col bg-cyber-card/70 border border-white/[0.06] rounded-xl overflow-hidden min-h-0">
             {/* Server tabs */}
-            <div className="flex items-center gap-0.5 px-3 pt-2 pb-0 border-b border-slate-700/60 overflow-x-auto shrink-0">
+            <div className="flex items-center gap-0.5 px-3 pt-2 pb-0 border-b border-white/[0.06] overflow-x-auto shrink-0">
               {results.map(r => (
                 <button key={r.server_id} onClick={() => { setActiveTab(r.server_id); setRawMode(false) }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs transition-all shrink-0 ${activeTab === r.server_id ? 'bg-slate-900/60 text-white border-x border-t border-white/[0.06]/60' : 'text-slate-400 hover:text-slate-200'}`}>
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs transition-all shrink-0 ${activeTab === r.server_id ? 'bg-cyber-deep/60 text-white border-x border-t border-white/[0.06]/60' : 'text-slate-400 hover:text-slate-200'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${r.ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
                   <span className="font-medium">{r.server_name}</span>
                   <span className="text-[10px] text-slate-500">{r.elapsed_ms}ms</span>
@@ -674,15 +674,15 @@ const McpTools: React.FC = () => {
 
             {/* Active tab output header */}
             {activeResult && (
-              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/30 shrink-0">
+              <div className="flex items-center justify-between px-3 py-1.5 bg-cyber-deep/30 shrink-0">
                 <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
                   <span>{activeResult.result?.command || toolName}</span>
                   <span className="text-slate-700">·</span>
                   <span className="text-cyan-400">{activeResult.host}</span>
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setRawMode(false)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${!rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-slate-700 text-slate-500 hover:text-slate-300'}`}>Görsel</button>
-                  <button onClick={() => setRawMode(true)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-slate-700 text-slate-500 hover:text-slate-300'}`}>Ham</button>
+                  <button onClick={() => setRawMode(false)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${!rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>Görsel</button>
+                  <button onClick={() => setRawMode(true)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>Ham</button>
                 </div>
               </div>
             )}
@@ -704,7 +704,7 @@ const McpTools: React.FC = () => {
         {/* Empty state */}
         {results.length === 0 && !error && !running && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center">
-            <div className="w-16 h-16 bg-slate-800/60 rounded-2xl flex items-center justify-center opacity-40"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+            <div className="w-16 h-16 bg-cyber-card/60 rounded-2xl flex items-center justify-center opacity-40"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
             <div className="space-y-1">
               <div className="text-sm text-slate-500">Sunucu(lar) ve araç seçip çalıştırın</div>
               <div className="text-xs text-slate-600">Çoklu sunucu seçimi destekleniyor · Paralel çalışır · AI analiz eder</div>
@@ -721,7 +721,7 @@ const McpTools: React.FC = () => {
             </div>
             <div className="flex gap-2">
               {servers.filter(s => selectedIds.has(s.id)).map(s => (
-                <div key={s.id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700 text-xs text-slate-400 animate-pulse">
+                <div key={s.id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyber-card/50 border border-white/[0.06] text-xs text-slate-400 animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
                   {s.name}
                 </div>

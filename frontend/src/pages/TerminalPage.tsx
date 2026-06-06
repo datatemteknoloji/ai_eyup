@@ -156,7 +156,7 @@ const TerminalPage: React.FC = () => {
           </span>
           <button
             onClick={connect}
-            className="text-xs text-slate-500 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors"
+            className="text-xs text-slate-500 hover:text-white px-2 py-1 hover:bg-white/[0.07] rounded transition-colors"
             title="Yeniden bağlan"
           >
             ↻ Yeniden Bağlan

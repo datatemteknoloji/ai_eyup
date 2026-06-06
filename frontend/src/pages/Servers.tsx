@@ -10,7 +10,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+    <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
           <span className="text-yellow-400 text-base">⚠</span>
@@ -21,7 +21,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
         <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
       </div>
     </div>
@@ -87,7 +87,7 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
       <button
       onClick={handleClick}
       disabled={loading || notRunning.length === 0}
-      className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
+      className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
       title={`Node Exporter çalışmayan ${notRunning.length} AI-Ready sunucuya toplu kur`}
     >
       {loading ? (
@@ -135,7 +135,7 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
+        className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
         title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
       >
         {loading ? (
@@ -195,7 +195,7 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ 
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
+        className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
         title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
       >
         {loading ? (
@@ -272,7 +272,7 @@ function MetricBar({ label, value, colorClass }: { label: string; value: number 
         <span>{label}</span>
         <span className={value !== null ? 'text-white font-medium' : 'text-slate-600'}>{value !== null ? `${value}%` : 'N/A'}</span>
       </div>
-      <div className="w-full bg-slate-700 rounded-full h-2">
+      <div className="w-full bg-white/[0.07] rounded-full h-2">
         <div className={`h-2 rounded-full transition-all ${colorClass}`} style={{ width: `${Math.min(v, 100)}%` }} />
       </div>
     </div>
@@ -436,9 +436,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="w-full max-w-xl bg-slate-900 border-l border-slate-700 flex flex-col shadow-2xl overflow-hidden">
+      <div className="w-full max-w-xl bg-cyber-deep border-l border-white/[0.06] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700 bg-slate-800/50">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card/50">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${server.status === 'ONLINE' ? 'bg-gradient-to-br from-green-500 to-green-600' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
             <span className="text-xs font-bold text-blue-400">SRV</span>
           </div>
@@ -447,7 +447,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
               {server.hypervisor_name && (
-                <span className="text-xs text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">
+                <span className="text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
                   ☁ {server.hypervisor_name}
                 </span>
               )}
@@ -477,8 +477,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-700 bg-slate-800/30">
-          {([['info', '📋 Bilgi'], ['perf', '📈 Performans'], ['events', '🔔 Eventler']] as const).map(([id, label]) => (
+        <div className="flex border-b border-white/[0.06] bg-cyber-card/30">
+          {([['info', 'Bilgi'], ['perf', 'Performans'], ['events', 'Eventler']] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${tab === id ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'}`}>
               {label}
@@ -508,7 +508,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   ['AI Ready', '__AI_READY_TOGGLE__'],
                   ['Node Exporter', server.node_exporter?.running ? 'Çalışıyor' : server.node_exporter?.installed ? 'Kurulu/Durdurulmuş' : 'Kurulu Değil'],
                 ].map(([label, value]) => (
-                  <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                  <div key={label} className="bg-cyber-card/50 rounded-lg p-3 border border-white/[0.06]/50">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">{label}</p>
                     {value === '__AI_READY_TOGGLE__' ? (
                       <div className="flex items-center justify-between mt-0.5">
@@ -543,9 +543,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
               {/* Son Güncelleme Bilgisi */}
               {updateHistory && (updateHistory.history.length > 0 || updateHistory.pending_reboot) && (
-                <div className={`rounded-xl border p-4 space-y-2 ${updateHistory.pending_reboot ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-slate-800/50 border-slate-700'}`}>
+                <div className={`rounded-xl border p-4 space-y-2 ${updateHistory.pending_reboot ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-cyber-card/50 border-white/[0.06]'}`}>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-white">🔄 Güncelleme Geçmişi</h3>
+                    <h3 className="text-sm font-medium text-white">Güncelleme Geçmişi</h3>
                     {updateHistory.pending_reboot && (
                       <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full animate-pulse">
                         Reboot Gerekiyor
@@ -578,7 +578,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
               {/* VM Detayları Kartı */}
               {server.hypervisor_id && (
-                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-medium text-white flex items-center gap-1.5">
                       VM Detayları
@@ -592,7 +592,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     <button
                       onClick={handleSearchVm}
                       disabled={vmSearching}
-                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-slate-700/40 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       title="VM bilgilerini hypervisor'dan yenile"
                     >
                       {vmSearching
@@ -648,8 +648,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Ağ Adaptörleri</p>
                       <div className="space-y-1">
                         {vmDetails!.vm_network_info!.map((nic, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs bg-slate-700/20 rounded px-2 py-1.5">
-                            <span className="text-slate-400 flex-shrink-0">🔌</span>
+                          <div key={i} className="flex items-start gap-2 text-xs bg-white/[0.02] rounded px-2 py-1.5">
+                            <span className="text-slate-400 flex-shrink-0">●</span>
                             <div className="min-w-0">
                               <span className="text-slate-300">{nic.name || `NIC ${i + 1}`}</span>
                               {nic.mac && <span className="text-slate-500 ml-2 font-mono text-[10px]">{nic.mac}</span>}
@@ -669,13 +669,13 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
               {/* VM Snapshot */}
               {server.hypervisor_id && (
-                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4 space-y-3">
                   {/* Header */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-medium text-white">📸 VM Snapshot</h3>
                       {vmSnapshots?.platform && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 uppercase">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.07] text-slate-400 uppercase">
                           {vmSnapshots.platform}
                         </span>
                       )}
@@ -686,7 +686,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <select
                           value={snapRetention}
                           onChange={e => setSnapRetention(e.target.value)}
-                          className="text-xs bg-slate-700 border border-slate-600 text-slate-300 rounded px-1.5 py-0.5"
+                          className="text-xs bg-white/[0.07] border border-slate-600 text-slate-300 rounded px-1.5 py-0.5"
                         >
                           <option value="1d">1 Gün</option>
                           <option value="1w">1 Hafta</option>
@@ -755,7 +755,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           <div key={s.id} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
                             s.status === 'pending' ? 'bg-yellow-900/20 border border-yellow-700/30'
                             : s.status === 'failed' ? 'bg-red-900/20 border border-red-700/30'
-                            : 'bg-slate-700/30'
+                            : 'bg-white/[0.07]/30'
                           }`}>
                             {s.status === 'pending'
                               ? <span className="w-3 h-3 border border-yellow-400/60 border-t-yellow-400 rounded-full animate-spin flex-shrink-0" />
@@ -800,7 +800,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Hypervisor'daki Tüm Snapshotlar</p>
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
                         {vmSnapshots!.external.map((s, i) => (
-                          <div key={s.id || i} className="flex items-center gap-2 text-xs bg-slate-700/20 rounded-lg px-3 py-2 border border-slate-700/40">
+                          <div key={s.id || i} className="flex items-center gap-2 text-xs bg-white/[0.02] rounded-lg px-3 py-2 border border-white/[0.04]">
                             <span className="text-slate-400 flex-shrink-0">🔖</span>
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-300 truncate">{s.name}</div>
@@ -821,7 +821,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               )}
 
               {/* AI Analiz */}
-              <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4">
+              <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-white">AI Analiz</h3>
                   <button onClick={startAnalyze} disabled={isAnalyzing}
@@ -869,7 +869,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     {metrics.source === 'vcenter' ? (
                       <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">vCenter</span>
                     ) : metrics.source === 'prometheus' ? (
-                      <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">📈 Prometheus / Node Exporter</span>
+                      <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">Prometheus / Node Exporter</span>
                     ) : null}
                     {metrics.power_state && (
                       <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${metrics.power_state === 'POWERED_ON' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
@@ -882,10 +882,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   <div className="grid grid-cols-3 gap-3">
                     {[
                       { label: 'CPU', value: metrics.cpu_percent, icon: '', color: 'text-yellow-400' },
-                      { label: 'RAM', value: metrics.mem_percent, icon: '🧠', color: 'text-blue-400' },
+                      { label: 'RAM', value: metrics.mem_percent, icon: '', color: 'text-blue-400' },
                       { label: 'Disk', value: metrics.disk_percent, icon: '', color: 'text-blue-400' },
                     ].map(({ label, value, icon, color }) => (
-                      <div key={label} className="bg-slate-800/50 rounded-xl border border-slate-700 p-3 text-center">
+                      <div key={label} className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-3 text-center">
                         <p className={`text-2xl font-bold ${value !== null ? (value > 85 ? 'text-red-400' : value > 60 ? 'text-yellow-400' : 'text-green-400') : 'text-slate-600'}`}>
                           {value !== null ? `${value}%` : 'N/A'}
                         </p>
@@ -895,7 +895,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   </div>
 
                   {/* Progress bars */}
-                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 space-y-3">
+                  <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4 space-y-3">
                     <MetricBar label="CPU Kullanımı" value={metrics.cpu_percent} colorClass={cpuColor(metrics.cpu_percent)} />
                     <MetricBar label={`RAM  ${metrics.mem_used_gb != null ? `(${metrics.mem_used_gb}/${metrics.mem_total_gb} GB)` : ''}`} value={metrics.mem_percent} colorClass={memColor(metrics.mem_percent)} />
                     <MetricBar label={`Disk  ${metrics.disk_avail_gb != null ? `(${metrics.disk_avail_gb} GB boş / ${metrics.disk_total_gb} GB)` : ''}`} value={metrics.disk_percent} colorClass={diskColor(metrics.disk_percent)} />
@@ -912,7 +912,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         : ['Load 5m', metrics.load5 !== null ? String(metrics.load5) : '-'],
                       ['Uptime', fmtUptime(metrics.uptime_seconds)],
                     ].map(([label, value]) => (
-                      <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50 text-center">
+                      <div key={label} className="bg-cyber-card/50 rounded-lg p-3 border border-white/[0.06]/50 text-center">
                         <p className="text-xs text-slate-500 mb-0.5">{label}</p>
                         <p className="text-sm font-medium text-white">{value}</p>
                       </div>
@@ -938,7 +938,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 </div>
               ) : (
                 eventsData.groups.map((grp, i) => (
-                  <div key={i} className="bg-slate-800/50 rounded-lg border border-slate-700/50 p-3">
+                  <div key={i} className="bg-cyber-card/50 rounded-lg border border-white/[0.06]/50 p-3">
                     <div className="flex items-start gap-2">
                       <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0 ${SCOLOR[grp.severity] || SCOLOR.info}`}>
                         {grp.severity}
@@ -1425,7 +1425,7 @@ const Servers: React.FC = () => {
                 placeholder="Sunucu ara..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-64 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-64 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
             </div>
@@ -1436,7 +1436,7 @@ const Servers: React.FC = () => {
                 placeholder="IP filtre..."
                 value={ipFilter}
                 onChange={(e) => setIpFilter(e.target.value)}
-                className="w-48 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
             {/* Show Offline Toggle */}
@@ -1445,7 +1445,7 @@ const Servers: React.FC = () => {
                 type="checkbox"
                 checked={showOffline}
                 onChange={(e) => setShowOffline(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
+                className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
               />
               <span className="text-sm text-slate-300">Çevrimdışıları Göster</span>
             </label>
@@ -1454,7 +1454,7 @@ const Servers: React.FC = () => {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">Tüm Durumlar</option>
                 <option value="ONLINE">Çevrimiçi</option>
@@ -1467,7 +1467,7 @@ const Servers: React.FC = () => {
             <select
               value={aiReadyFilter}
               onChange={(e) => setAiReadyFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">Tümü</option>
               <option value="true">AI Ready</option>
@@ -1477,7 +1477,7 @@ const Servers: React.FC = () => {
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">Tüm Tipler</option>
               <option value="VIRTUAL">Virtual</option>
@@ -1487,7 +1487,7 @@ const Servers: React.FC = () => {
             <select
               value={nodeExporterFilter}
               onChange={(e) => setNodeExporterFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">Node Exporter: Tümü</option>
               <option value="running">Çalışıyor</option>
@@ -1513,7 +1513,7 @@ const Servers: React.FC = () => {
                   alert('Durum kontrolü hatası: ' + (err instanceof Error ? err.message : 'Ağ hatası'))
                 }
               }}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all text-sm"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all text-sm"
             >
               Durumları Kontrol Et
             </button>
@@ -1531,7 +1531,7 @@ const Servers: React.FC = () => {
       </div>
 
       {/* Table */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="bg-cyber-card rounded-xl border border-white/[0.06] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full" style={{ tableLayout: 'fixed', minWidth: colWidths.reduce((a,b) => a+b, 0) }}>
             {/* Kolon genişlikleri */}
@@ -1539,7 +1539,7 @@ const Servers: React.FC = () => {
               {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
             </colgroup>
             <thead>
-              <tr className="bg-slate-800/80 border-b border-slate-700 select-none">
+              <tr className="bg-cyber-card/80 border-b border-white/[0.06] select-none">
                 {([
                   { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'name'   },
                   { key: 'status', label: 'Durum',       sortable: true,  sortKey: 'status' },
@@ -1590,7 +1590,7 @@ const Servers: React.FC = () => {
                 </tr>
               ) : sortedServers.map((server) => (
                 <React.Fragment key={server.id}>
-                <tr className="hover:bg-slate-700/20 transition-colors cursor-pointer border-b border-slate-700/50 group" onClick={() => setSelectedServer(server)}>
+                <tr className="hover:bg-white/[0.02] transition-colors cursor-pointer border-b border-white/[0.06]/50 group" onClick={() => setSelectedServer(server)}>
 
                   {/* ── Sunucu Adı + IP + Hostname ── */}
                   <td className="px-4 py-3">
@@ -1599,7 +1599,7 @@ const Servers: React.FC = () => {
                         server.status === 'ONLINE'
                           ? 'bg-green-500/20 ring-1 ring-green-500/40'
                           : server.status === 'OFFLINE'
-                          ? 'bg-slate-700/50 ring-1 ring-slate-600/40'
+                          ? 'bg-white/[0.07]/50 ring-1 ring-slate-600/40'
                           : 'bg-yellow-500/20 ring-1 ring-yellow-500/40'
                       }`}>
                         <span className="text-[10px] font-bold text-slate-400">{server.server_type === 'PHYSICAL' ? 'PHY' : 'VM'}</span>
@@ -1611,7 +1611,7 @@ const Servers: React.FC = () => {
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="text-xs font-mono text-slate-400">{server.ip_address || '-'}</span>
                           {server.hypervisor_name ? (
-                            <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">
+                            <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
                               ☁ {server.hypervisor_name}
                             </span>
                           ) : server.hostname && server.hostname !== server.name && server.hostname !== server.ip_address ? (
@@ -1630,7 +1630,7 @@ const Servers: React.FC = () => {
                         Aktif
                       </span>
                     ) : server.status === 'OFFLINE' ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-700/50 text-slate-400 border border-slate-600/50">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/[0.07]/50 text-slate-400 border border-slate-600/50">
                         <span className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
                         Çevrimdışı
                       </span>
@@ -1789,7 +1789,7 @@ const Servers: React.FC = () => {
                       )}
                       <button
                         onClick={() => setSelectedServer(server)}
-                        className="px-2.5 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+                        className="px-2.5 py-1.5 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
                         title="Detay"
                       >
                         Detay
@@ -1810,9 +1810,9 @@ const Servers: React.FC = () => {
                 </tr>
                 {/* Kurulum adımları: Kur basılan satırda açılır */}
                 {(installingNodeExporter === server.id || installResultByServerId[server.id]) && (
-                  <tr key={`${server.id}-install`} className="bg-slate-800/80">
+                  <tr key={`${server.id}-install`} className="bg-cyber-card/80">
                     <td colSpan={6} className="px-6 py-4">
-                      <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                      <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/60 p-4">
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-sm font-medium text-slate-300">Node Exporter kurulumu — {server.name}</span>
                           <div className="flex items-center gap-2">
@@ -1835,7 +1835,7 @@ const Servers: React.FC = () => {
                           </div>
                         </div>
                         <div className="mb-3">
-                          <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                          <div className="h-2 bg-white/[0.07] rounded-full overflow-hidden">
                             {!installResultByServerId[server.id] ? (
                               <div
                                 className="h-full bg-blue-500 rounded-full transition-all duration-500"
@@ -1871,7 +1871,7 @@ const Servers: React.FC = () => {
                                 message: undefined as string | undefined
                               }))
                           ).map((step: { id: string; label: string; status: string; message?: string }) => (
-                            <div key={step.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-slate-800/60 border border-slate-700/50">
+                            <div key={step.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-cyber-card/60 border border-white/[0.06]/50">
                               <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-xs">
                                 {step.status === 'success' ? (
                                   <span className="text-green-400">✓</span>
@@ -1918,7 +1918,7 @@ const Servers: React.FC = () => {
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-md shadow-2xl">
+          <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-white">Yeni Sunucu Ekle</h2>
               <button
@@ -1936,7 +1936,7 @@ const Servers: React.FC = () => {
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="örn: web-server-01"
                 />
               </div>
@@ -1946,7 +1946,7 @@ const Servers: React.FC = () => {
                   type="text"
                   value={formData.hostname}
                   onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="örn: web-server-01.local"
                 />
               </div>
@@ -1959,7 +1959,7 @@ const Servers: React.FC = () => {
                   required
                   value={formData.ip_address}
                   onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
-                  className={`w-full bg-slate-900 border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${!formData.ip_address ? 'border-red-500/50' : 'border-slate-700'}`}
+                  className={`w-full bg-cyber-deep border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${!formData.ip_address ? 'border-red-500/50' : 'border-white/[0.06]'}`}
                   placeholder="örn: 192.168.1.100"
                 />
                 {!formData.ip_address && (
@@ -1972,7 +1972,7 @@ const Servers: React.FC = () => {
                   <select
                     value={formData.server_type}
                     onChange={(e) => setFormData({ ...formData, server_type: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="VIRTUAL">Virtual</option>
                     <option value="PHYSICAL">Physical</option>
@@ -1983,14 +1983,14 @@ const Servers: React.FC = () => {
                   <select
                     value={formData.os_type}
                     onChange={(e) => setFormData({ ...formData, os_type: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="linux">Linux</option>
                     <option value="windows">Windows</option>
                   </select>
                 </div>
               </div>
-              <div className="border-t border-slate-700 pt-4">
+              <div className="border-t border-white/[0.06] pt-4">
                 <h3 className="text-sm font-semibold text-slate-200 mb-3">SSH Bilgileri (Node Exporter kurulumu için)</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -1999,7 +1999,7 @@ const Servers: React.FC = () => {
                       type="text"
                       value={formData.ssh_username}
                       onChange={(e) => setFormData({ ...formData, ssh_username: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="örn: root"
                     />
                   </div>
@@ -2009,7 +2009,7 @@ const Servers: React.FC = () => {
                       type="number"
                       value={formData.ssh_port}
                       onChange={(e) => setFormData({ ...formData, ssh_port: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="22"
                     />
                   </div>
@@ -2021,7 +2021,7 @@ const Servers: React.FC = () => {
                       type="password"
                       value={formData.ssh_password}
                       onChange={(e) => setFormData({ ...formData, ssh_password: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="SSH şifresi"
                     />
                   </div>
@@ -2031,7 +2031,7 @@ const Servers: React.FC = () => {
                       type="password"
                       value={formData.sudo_password}
                       onChange={(e) => setFormData({ ...formData, sudo_password: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Opsiyonel"
                     />
                   </div>
@@ -2041,7 +2041,7 @@ const Servers: React.FC = () => {
                   <textarea
                     value={formData.private_key}
                     onChange={(e) => setFormData({ ...formData, private_key: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                     rows={3}
                   />
@@ -2051,7 +2051,7 @@ const Servers: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
+                  className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 transition-colors"
                 >
                   İptal
                 </button>

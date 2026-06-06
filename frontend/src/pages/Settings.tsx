@@ -24,7 +24,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+    <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
           <span className="text-yellow-400 text-base">⚠</span>
@@ -35,7 +35,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
         <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
       </div>
     </div>
@@ -142,9 +142,9 @@ const RagTab: React.FC = () => {
       <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
 
       {/* PDF Ekle - en üstte, belirgin */}
-      <div className="mb-6 p-5 bg-slate-900/70 rounded-xl border-2 border-emerald-500/40">
+      <div className="mb-6 p-5 bg-cyber-deep/70 rounded-xl border-2 border-emerald-500/40">
         <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
-          <span className="text-xl">📄</span> Runbook'a PDF Ekle
+          Runbook'a PDF Ekle
         </h3>
         <p className="text-slate-400 text-xs mb-4">PDF yükleyin; metin çıkarılıp RAG'e eklenir. Chat'te sorularınıza yanıt verirken kullanılır.</p>
         <div className="flex flex-wrap items-end gap-4">
@@ -164,7 +164,7 @@ const RagTab: React.FC = () => {
               value={pdfTitle}
               onChange={(e) => setPdfTitle(e.target.value)}
               placeholder="Dosya adı kullanılır"
-              className="w-52 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500"
+              className="w-52 bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500"
             />
           </div>
           <button
@@ -179,7 +179,7 @@ const RagTab: React.FC = () => {
       </div>
 
       {/* Eklenen runbook dokümanları */}
-      <div className="mb-6 p-5 bg-slate-900/50 rounded-xl border border-slate-700">
+      <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-white/[0.06]">
         <h3 className="text-base font-semibold text-white mb-3 flex items-center gap-2">
           Eklenen Runbook Dokümanları
         </h3>
@@ -190,7 +190,7 @@ const RagTab: React.FC = () => {
             {runbookDocs.map((doc) => (
               <li
                 key={doc.title}
-                className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/50 border border-slate-700"
+                className="flex items-center justify-between py-2 px-3 rounded-lg bg-cyber-card/50 border border-white/[0.06]"
               >
                 <span className="text-white font-medium truncate flex-1 mr-3">{doc.title}</span>
                 <span className="text-slate-400 text-sm whitespace-nowrap">{doc.chunk_count} chunk</span>
@@ -209,15 +209,15 @@ const RagTab: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-4">
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Runbook</p>
           <p className="text-2xl font-semibold text-white">{status?.runbook ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
         </div>
-        <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-4">
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Incidents / Events</p>
           <p className="text-2xl font-semibold text-white">{status?.incidents ?? 0} <span className="text-sm font-normal text-slate-500">kayıt</span></p>
         </div>
-        <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-4">
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Metrik Açıklamaları</p>
           <p className="text-2xl font-semibold text-white">{status?.metrics ?? 0} <span className="text-sm font-normal text-slate-500">metrik</span></p>
         </div>
@@ -236,12 +236,12 @@ const RagTab: React.FC = () => {
           {reindexEvents.isPending ? 'Indexleniyor...' : "Event'leri RAG'e Ekle"}
         </button>
       </div>
-      <div className="mt-6 bg-slate-900/30 rounded-[10px] border border-white/[0.06] p-4">
+      <div className="mt-6 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
         <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl kullanılır?</h4>
         <ul className="text-xs text-slate-500 space-y-1">
           <li>• <strong>Metrik açıklamaları:</strong> Chat’te “bu metrik ne?” sorularında kullanılır. Yukarıdan yükleyin.</li>
           <li>• <strong>Incident’lar:</strong> Veritabanındaki incident’lar RAG’e eklenir; benzer geçmiş olaylar yanıtta kullanılır.</li>
-          <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-slate-800 px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-slate-800 px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
+          <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-cyber-card px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-cyber-card px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
         </ul>
       </div>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
@@ -449,15 +449,15 @@ const Settings: React.FC = () => {
   return (
     <div className="flex gap-6 h-[calc(100vh-140px)]">
       {/* Sol Menu */}
-      <div className="w-64 bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden flex-shrink-0">
-        <div className="p-4 border-b border-slate-700">
+      <div className="w-64 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden flex-shrink-0">
+        <div className="p-4 border-b border-white/[0.06]">
           <h2 className="text-lg font-semibold text-white">Ayarlar</h2>
         </div>
         <nav className="p-3">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`w-full flex items-center px-4 py-2.5 rounded-lg text-left transition-all text-sm ${
-                activeTab === tab.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                activeTab === tab.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-400 hover:text-white hover:bg-white/[0.06]/50'
               }`}>
               <span className="font-medium">{tab.name}</span>
             </button>
@@ -466,7 +466,7 @@ const Settings: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden min-w-0">
+      <div className="flex-1 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden min-w-0">
         <div className="p-6 h-full overflow-y-auto overflow-x-hidden">
 
           {/* ═══ Credentials ═══ */}
@@ -492,7 +492,7 @@ const Settings: React.FC = () => {
 
               {/* Form */}
               {(showForm || editingCred) && (
-                <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-6 mb-6">
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 mb-6">
                   <h3 className="text-lg font-medium text-white mb-4">
                     {editingCred ? `"${editingCred.name}" Düzenle` : 'Yeni Credential Ekle'}
                   </h3>
@@ -501,35 +501,35 @@ const Settings: React.FC = () => {
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">İsim *</label>
                         <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="örn: Production SSH" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="örn: Production SSH" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">Kullanıcı Adı *</label>
                         <input type="text" required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="root" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="root" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">SSH Port</label>
                         <input type="number" value={form.port} onChange={e => setForm({ ...form, port: parseInt(e.target.value) || 22 })}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">Şifre {editingCred ? '(boş = değiştirme)' : '*'}</label>
                         <input type="password" required={!editingCred} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">Sudo Şifresi (opsiyonel)</label>
                         <input type="password" value={form.sudo_password} onChange={e => setForm({ ...form, sudo_password: e.target.value })}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="opsiyonel" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="opsiyonel" />
                       </div>
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-1.5">Private Key (opsiyonel)</label>
                       <textarea value={form.private_key} onChange={e => setForm({ ...form, private_key: e.target.value })}
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" rows={3} />
                     </div>
                     <div className="flex justify-between items-center pt-2">
@@ -537,7 +537,7 @@ const Settings: React.FC = () => {
                         <p className="text-red-400 text-sm">{(createCred.error || updateCred.error)?.message}</p>
                       )}
                       <div className="flex gap-3 ml-auto">
-                        <button type="button" onClick={resetForm} className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                        <button type="button" onClick={resetForm} className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
                         <button type="submit" disabled={createCred.isPending || updateCred.isPending}
                           className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
                           {(createCred.isPending || updateCred.isPending) ? 'Kaydediliyor...' : 'Kaydet'}
@@ -552,7 +552,7 @@ const Settings: React.FC = () => {
               {credsLoading ? (
                 <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div></div>
               ) : credentials.length === 0 ? (
-                <div className="text-center py-12 bg-slate-900/30 rounded-xl border border-dashed border-slate-700">
+                <div className="text-center py-12 bg-cyber-deep/30 rounded-xl border border-dashed border-white/[0.06]">
                   <span className="text-2xl font-bold text-blue-400 block mb-4">KEY</span>
                   <p className="text-slate-400 mb-2">Henüz credential eklenmemiş</p>
                   <p className="text-slate-500 text-sm">Yeni credential ekleyip tüm sunuculara toplu uygulayabilirsiniz</p>
@@ -560,7 +560,7 @@ const Settings: React.FC = () => {
               ) : (
                 <div className="space-y-3">
                   {credentials.map(cred => (
-                    <div key={cred.id} className={`rounded-xl border p-4 ${cred.is_default ? 'bg-blue-500/5 border-blue-500/30' : 'bg-slate-900/50 border-slate-700'}`}>
+                    <div key={cred.id} className={`rounded-xl border p-4 ${cred.is_default ? 'bg-blue-500/5 border-blue-500/30' : 'bg-cyber-deep/50 border-white/[0.06]'}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-4">
                           <div className={`w-11 h-11 rounded-lg flex items-center justify-center ${cred.is_default ? 'bg-gradient-to-br from-blue-500 to-blue-600' : 'bg-gradient-to-br from-yellow-500 to-orange-500'}`}>
@@ -590,7 +590,7 @@ const Settings: React.FC = () => {
                               className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20" title="Varsayılan Yap">★</button>
                           )}
                           <button onClick={() => openEdit(cred)}
-                            className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600" title="Düzenle">✎</button>
+                            className="px-3 py-1.5 text-xs bg-white/[0.07] text-slate-300 rounded-lg hover:bg-slate-600" title="Düzenle">✎</button>
                           <button onClick={async () => { if (await showConfirm(`"${cred.name}" silinsin mi?`)) deleteCred.mutate(cred.id) }}
                             className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20" title="Sil">✕</button>
                         </div>
@@ -608,7 +608,7 @@ const Settings: React.FC = () => {
             <div>
               <h2 className="text-xl font-semibold text-white mb-6">AI Ayarları</h2>
               <div className="space-y-6">
-                <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-6">
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                   <h3 className="text-lg font-medium text-white mb-4">Ollama Model Seçimi</h3>
                   <div className="space-y-4">
                     <div>
@@ -616,7 +616,7 @@ const Settings: React.FC = () => {
                       <select
                         value={selectedModel}
                         onChange={e => setSelectedModel(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
                       >
                         {availableModels.length === 0 && (
                           <option value={selectedModel}>{selectedModel}</option>
@@ -672,16 +672,16 @@ const Settings: React.FC = () => {
             <div>
               <h2 className="text-xl font-semibold text-white mb-6">Monitoring Ayarları</h2>
               <div className="space-y-6">
-                <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-6">
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                   <h3 className="text-lg font-medium text-white mb-4">Prometheus</h3>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Prometheus URL</label>
-                      <input type="text" value="http://prometheus:9090" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <input type="text" value="http://prometheus:9090" disabled className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Pushgateway URL</label>
-                      <input type="text" value="http://pushgateway:9091" disabled className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <input type="text" value="http://pushgateway:9091" disabled className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
                     </div>
                     {/* Yönetim Sunucu IP */}
                     <div className="border-t border-white/[0.06] pt-4">
@@ -701,7 +701,7 @@ const Settings: React.FC = () => {
                           defaultValue={generalSettings?.management_server_ip || ''}
                           id="mgmt-ip-input"
                           placeholder={generalSettings?.detected_management_ip || '192.168.1.x'}
-                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 w-48 font-mono"
+                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 w-48 font-mono"
                         />
                         <button
                           onClick={async () => {
@@ -728,7 +728,7 @@ const Settings: React.FC = () => {
                         <select
                           value={metricRetentionDays}
                           onChange={e => setMetricRetentionDays(Number(e.target.value))}
-                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
+                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
                         >
                           <option value={7}>7 gün</option>
                           <option value={15}>15 gün</option>
@@ -762,10 +762,10 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <a href="http://192.168.1.222:9090" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
-                    <span className="text-2xl">📈</span><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">Metrics & Queries</p></div>
+                  <a href="http://192.168.1.222:9090" target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
+                    <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">Metrics & Queries</p></div>
                   </a>
-                  <a href="http://192.168.1.222:9091" target="_blank" rel="noopener noreferrer" className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
+                  <a href="http://192.168.1.222:9091" target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
                     <span className="text-2xl">📊</span><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">Push Metrics</p></div>
                   </a>
                 </div>
@@ -777,7 +777,7 @@ const Settings: React.FC = () => {
           {activeTab === 'about' && (
             <div>
               <h2 className="text-xl font-semibold text-white mb-6">Hakkında</h2>
-              <div className="bg-slate-900/50 rounded-[10px] border border-white/[0.06] p-6">
+              <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                 <div className="flex items-center space-x-4 mb-6">
                   <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
                     <span className="text-white font-bold text-2xl">SM</span>
@@ -785,10 +785,10 @@ const Settings: React.FC = () => {
                   <div><h3 className="text-2xl font-bold text-white">datatem AI</h3><p className="text-slate-400">v1.0.0 - AI Infrastructure Management</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4">
-                  <div className="bg-slate-800 rounded-lg p-4"><p className="text-slate-400 text-sm">Backend</p><p className="text-white font-medium">FastAPI + Python</p></div>
-                  <div className="bg-slate-800 rounded-lg p-4"><p className="text-slate-400 text-sm">Frontend</p><p className="text-white font-medium">React + TypeScript</p></div>
-                  <div className="bg-slate-800 rounded-lg p-4"><p className="text-slate-400 text-sm">Database</p><p className="text-white font-medium">PostgreSQL</p></div>
-                  <div className="bg-slate-800 rounded-lg p-4"><p className="text-slate-400 text-sm">AI</p><p className="text-white font-medium">Ollama + LLaMA</p></div>
+                  <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Backend</p><p className="text-white font-medium">FastAPI + Python</p></div>
+                  <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Frontend</p><p className="text-white font-medium">React + TypeScript</p></div>
+                  <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Database</p><p className="text-white font-medium">PostgreSQL</p></div>
+                  <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">AI</p><p className="text-white font-medium">Ollama + LLaMA</p></div>
                 </div>
               </div>
             </div>
@@ -812,22 +812,22 @@ const Settings: React.FC = () => {
 
             <div className="flex gap-3 mb-4">
               <button onClick={() => setApplyMode('all')}
-                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'all' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-slate-700 text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
+                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'all' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
                 🌐 Tüm Sunuculara ({servers.length})
               </button>
               <button onClick={() => setApplyMode('select')}
-                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'select' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-slate-700 text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
+                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'select' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
                 Seçili Sunuculara ({selectedServerIds.length})
               </button>
             </div>
 
             {applyMode === 'select' && (
-              <div className="flex-1 overflow-y-auto mb-4 border border-slate-700 rounded-lg max-h-60">
+              <div className="flex-1 overflow-y-auto mb-4 border border-white/[0.06] rounded-lg max-h-60">
                 {servers.map(s => (
-                  <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-700/50 border-b border-white/[0.04] last:border-b-0 ${selectedServerIds.includes(s.id) ? 'bg-blue-500/10' : ''}`}>
+                  <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-white/[0.06]/50 border-b border-white/[0.04] last:border-b-0 ${selectedServerIds.includes(s.id) ? 'bg-blue-500/10' : ''}`}>
                     <input type="checkbox" checked={selectedServerIds.includes(s.id)}
                       onChange={() => setSelectedServerIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
-                      className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded" />
+                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
                     <span className="text-sm text-white">{s.name}</span>
                     <span className="text-xs text-slate-500 font-mono">{s.ip_address}</span>
                     {s.ai_ready && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 ml-auto">AI</span>}
@@ -838,13 +838,13 @@ const Settings: React.FC = () => {
 
             <div className="flex items-center gap-2 mb-4">
               <input type="checkbox" checked={setAiReady} onChange={e => setSetAiReady(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded" />
+                className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
               <span className="text-sm text-slate-300">Sunucuları <strong className="text-blue-400">AI Ready</strong> olarak işaretle</span>
             </div>
 
             <div className="flex justify-end gap-3 pt-3 border-t border-white/[0.06]">
               <button onClick={() => setApplyModal({ open: false, credId: 0, credName: '' })}
-                className="px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
               <button onClick={() => applyCred.mutate({ credId: applyModal.credId, serverIds: applyMode === 'all' ? null : selectedServerIds, aiReady: setAiReady })}
                 disabled={applyCred.isPending || (applyMode === 'select' && selectedServerIds.length === 0)}
                 className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 font-medium text-sm">

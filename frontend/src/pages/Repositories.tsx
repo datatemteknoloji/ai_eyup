@@ -270,19 +270,19 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
           <h2 className="text-lg font-semibold text-white">Repo Ekle</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
         </div>
 
         {/* Mode tabs */}
         <div className="px-6 pt-4 flex gap-2">
-          <button onClick={() => setMode('product')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'product' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}>
+          <button onClick={() => setMode('product')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'product' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/[0.06]'}`}>
             Ürün Seç
           </button>
-          <button onClick={() => setMode('custom')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'custom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}>
+          <button onClick={() => setMode('custom')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'custom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/[0.06]'}`}>
             Özel URL
           </button>
         </div>
@@ -311,7 +311,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             className={`text-left p-3 rounded-xl border transition-all ${
                               selectedProduct?.product === p.product
                                 ? 'border-blue-500 bg-blue-600/15'
-                                : 'border-slate-600 bg-slate-700/30 hover:border-slate-500 hover:bg-slate-700/50'
+                                : 'border-slate-600 bg-white/[0.07]/30 hover:border-slate-500 hover:bg-white/[0.06]/50'
                             }`}
                           >
                             <div className="flex items-center gap-2">
@@ -341,7 +341,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                               className={`text-left p-3 rounded-xl border transition-all ${
                                 selectedProduct?.product === p.product
                                   ? 'border-blue-500 bg-blue-600/15'
-                                  : 'border-slate-600 bg-slate-700/30 hover:border-slate-500 hover:bg-slate-700/50'
+                                  : 'border-slate-600 bg-white/[0.07]/30 hover:border-slate-500 hover:bg-white/[0.06]/50'
                               }`}
                             >
                               <div className="flex items-center gap-2">
@@ -383,7 +383,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           className={`px-3 py-1.5 text-sm rounded-lg border transition-all font-medium ${
                             selectedVersion === v.value
                               ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-700'
+                              : 'border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-white/[0.06]'
                           }`}
                         >
                           {v.label}
@@ -398,7 +398,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                       const slug = makeSlug(selectedProduct, selectedVersion, firstCh.key)
                       const url  = resolveUrl(firstCh.url_template, selectedVersion)
                       return (
-                        <div className="mt-2 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono space-y-1">
+                        <div className="mt-2 bg-cyber-deep/60 border border-white/[0.06] rounded-lg px-3 py-2 text-xs font-mono space-y-1">
                           <div><span className="text-slate-500">slug: </span><span className="text-blue-300">{slug}</span></div>
                           <div className="text-slate-400 truncate">{url}</div>
                         </div>
@@ -421,7 +421,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
                             selectedChannels.has(ch.key)
                               ? 'border-blue-500 bg-blue-600/15'
-                              : 'border-slate-600 bg-slate-700/30 hover:border-slate-500'
+                              : 'border-slate-600 bg-white/[0.07]/30 hover:border-slate-500'
                           }`}
                         >
                           <input
@@ -437,7 +437,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   </div>
 
                   {/* Snapshot / Versiyon Etiketi */}
-                  <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-3">
+                  <div className="bg-white/[0.04] border border-slate-600 rounded-xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-sm font-semibold text-white">Snapshot Etiketi</div>
@@ -461,7 +461,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           className={`px-3 py-1.5 text-xs rounded-lg border transition-all font-medium ${
                             snapshotMode === m.key
                               ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-700'
+                              : 'border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-white/[0.06]'
                           }`}
                         >
                           {m.label}
@@ -479,7 +479,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           value={snapshotLabel}
                           onChange={e => { setSnapshotMode('custom'); setSnapshotLabel(e.target.value) }}
                           placeholder="2026-05-12"
-                          className="flex-1 bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                          className="flex-1 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
                         />
                         {snapshotLabel && (
                           <div className="text-xs text-slate-400 whitespace-nowrap">
@@ -517,7 +517,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             value={credentials.username}
                             onChange={e => setCredentials(p => ({...p, username: e.target.value}))}
                             placeholder="kullanici@example.com"
-                            className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
                           />
                         </div>
                         <div>
@@ -526,7 +526,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             type="password"
                             value={credentials.password}
                             onChange={e => setCredentials(p => ({...p, password: e.target.value}))}
-                            className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
                           />
                         </div>
                       </div>
@@ -560,26 +560,26 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <label className="text-xs text-slate-400 block mb-1">Slug (benzersiz)</label>
                   <input value={customForm.name}
                     onChange={e => setCustomForm(p => ({...p, name: e.target.value.toLowerCase().replace(/\s+/g,'-')}))}
-                    placeholder="custom-repo" className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="custom-repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Görünen Ad</label>
                   <input value={customForm.display_name}
                     onChange={e => setCustomForm(p => ({...p, display_name: e.target.value}))}
-                    placeholder="Custom Repo" className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="Custom Repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
               </div>
               <div>
                 <label className="text-xs text-slate-400 block mb-1">Base URL</label>
                 <input value={customForm.base_url}
                   onChange={e => setCustomForm(p => ({...p, base_url: e.target.value}))}
-                  placeholder="https://..." className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                  placeholder="https://..." className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Tip</label>
                   <select value={customForm.repo_type} onChange={e => setCustomForm(p => ({...p, repo_type: e.target.value}))}
-                    className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
                     {['oel','rhel','rocky','alma','centos','custom'].map(t => (
                       <option key={t} value={t}>{t.toUpperCase()}</option>
                     ))}
@@ -588,12 +588,12 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">OS Ver.</label>
                   <input value={customForm.os_version} onChange={e => setCustomForm(p => ({...p, os_version: e.target.value}))}
-                    placeholder="9" className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="9" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Auth</label>
                   <select value={customForm.auth_type} onChange={e => setCustomForm(p => ({...p, auth_type: e.target.value}))}
-                    className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
                     <option value="none">Yok</option>
                     <option value="basic">Basic</option>
                     <option value="ssl_cert">SSL Cert</option>
@@ -605,12 +605,12 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Kullanıcı</label>
                     <input value={customForm.username} onChange={e => setCustomForm(p => ({...p, username: e.target.value}))}
-                      className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Şifre</label>
                     <input type="password" value={customForm.password} onChange={e => setCustomForm(p => ({...p, password: e.target.value}))}
-                      className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
                 </div>
               )}
@@ -664,8 +664,8 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-white">{repo.display_name}</h2>
             <p className="text-xs text-slate-400">{total.toLocaleString('tr-TR')} paket</p>
@@ -674,13 +674,13 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
         </div>
 
         {/* Filters */}
-        <div className="px-6 py-3 border-b border-slate-700 flex flex-wrap gap-3 flex-shrink-0">
+        <div className="px-6 py-3 border-b border-white/[0.06] flex flex-wrap gap-3 flex-shrink-0">
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(0) }}
-            placeholder="Paket ara..." className="flex-1 min-w-[180px] bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder="Paket ara..." className="flex-1 min-w-[180px] bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
           <input value={arch} onChange={e => { setArch(e.target.value); setPage(0) }}
-            placeholder="arch (x86_64)" className="w-32 bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder="arch (x86_64)" className="w-32 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
           <select value={downloaded} onChange={e => { setDownloaded(e.target.value as any); setPage(0) }}
-            className="bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+            className="bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
             <option value="all">Tümü</option>
             <option value="yes">İndirilmiş</option>
             <option value="no">İndirilmemiş</option>
@@ -697,7 +697,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
             <div className="text-center py-12 text-slate-500">Paket bulunamadı</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-slate-700/50 sticky top-0">
+              <thead className="bg-white/[0.07]/50 sticky top-0">
                 <tr>
                   <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">Paket</th>
                   <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">Versiyon</th>
@@ -717,7 +717,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
                     <td className="px-4 py-2 text-slate-400 text-xs">{p.arch}</td>
                     <td className="px-4 py-2 text-slate-400 text-xs">{p.size_bytes > 0 ? (p.size_bytes/1024/1024).toFixed(1)+' MB' : '—'}</td>
                     <td className="px-4 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${p.downloaded ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-slate-400 bg-slate-700/50 border-slate-600'}`}>
+                      <span className={`text-xs px-2 py-0.5 rounded-full border ${p.downloaded ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-slate-400 bg-white/[0.07]/50 border-slate-600'}`}>
                         {p.downloaded ? '✓ Yerel' : 'Metadata'}
                       </span>
                     </td>
@@ -734,9 +734,9 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
             <span className="text-xs text-slate-400">{page * limit + 1}–{Math.min((page+1)*limit, total)} / {total}</span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}
-                className="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">← Önceki</button>
+                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">← Önceki</button>
               <button onClick={() => setPage(p => p+1)} disabled={(page+1)*limit >= total}
-                className="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">Sonraki →</button>
+                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">Sonraki →</button>
             </div>
           </div>
         )}
@@ -779,8 +779,8 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
           <h2 className="text-lg font-semibold text-white">İstemci Yapılandırması — {repo.display_name}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
@@ -794,12 +794,12 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
             <div className="flex-1">
               <label className="text-xs text-slate-400 block mb-1">Yönetim Sunucusu IP</label>
               <input value={serverIp} onChange={e => setServerIp(e.target.value)}
-                placeholder="192.168.1.100" className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                placeholder="192.168.1.100" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
             </div>
             <div className="w-24">
               <label className="text-xs text-slate-400 block mb-1">Port</label>
               <input value={port} onChange={e => setPort(e.target.value)}
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-end">
               <button onClick={generateConfig}
@@ -813,7 +813,7 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
             <>
               <div>
                 <label className="text-xs text-slate-400 block mb-1">.repo dosyası içeriği</label>
-                <pre className="bg-slate-900 text-green-300 text-xs p-4 rounded-xl font-mono whitespace-pre overflow-x-auto border border-slate-700">{repoContent}</pre>
+                <pre className="bg-cyber-deep text-green-300 text-xs p-4 rounded-xl font-mono whitespace-pre overflow-x-auto border border-white/[0.06]">{repoContent}</pre>
                 <button
                   onClick={() => navigator.clipboard.writeText(repoContent)}
                   className="mt-2 text-xs text-blue-400 hover:text-blue-300"
@@ -824,7 +824,7 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
 
               <div>
                 <label className="text-xs text-slate-400 block mb-2">SSH ile sunuculara gönder</label>
-                <div className="max-h-40 overflow-y-auto border border-slate-700 rounded-xl divide-y divide-white/[0.04]">
+                <div className="max-h-40 overflow-y-auto border border-white/[0.06] rounded-xl divide-y divide-white/[0.04]">
                   {servers.map((srv: any) => (
                     <label key={srv.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-white/[0.03] ${selectedServers.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
                       <input type="checkbox" checked={selectedServers.includes(srv.id)}
@@ -907,15 +907,15 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
           <h2 className="text-lg font-semibold text-white">Sync Geçmişi — {repo.display_name}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
 
         <div className="flex-1 overflow-hidden flex gap-0">
           {/* Job list */}
-          <div className="w-72 border-r border-slate-700 overflow-y-auto flex-shrink-0">
+          <div className="w-72 border-r border-white/[0.06] overflow-y-auto flex-shrink-0">
             {loading ? (
               <div className="p-6 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
             ) : jobs.length === 0 ? (
@@ -941,7 +941,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
               <div className="space-y-4">
                 {/* Stat kartları */}
                 <div className="grid grid-cols-4 gap-2 text-xs">
-                  <div className="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div className="bg-white/[0.07]/50 rounded-lg p-3 text-center">
                     <div className="text-slate-400 mb-0.5">Toplam</div>
                     <div className="text-white font-bold text-base">
                       {(liveProgress?.total_packages || selectedJob.total_packages || 0).toLocaleString('tr-TR')}
@@ -985,7 +985,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                         })()}
                       </span>
                     </div>
-                    <div className="bg-slate-700 rounded-full h-2.5">
+                    <div className="bg-white/[0.07] rounded-full h-2.5">
                       <div className="bg-blue-500 h-2.5 rounded-full transition-all duration-500"
                         style={{
                           width: (() => {
@@ -1011,11 +1011,11 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                   </div>
                   {selectedJob.log ? (
                     <pre ref={logRef}
-                      className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed">
+                      className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed">
                       {selectedJob.log}
                     </pre>
                   ) : (selectedJob.status === 'running' || selectedJob.status === 'pending') ? (
-                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-center gap-3">
+                    <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 flex items-center gap-3">
                       <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                       <div>
                         <div className="text-xs text-blue-300">Sync başlatılıyor...</div>
@@ -1023,7 +1023,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-slate-500 text-center italic">
+                    <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs text-slate-500 text-center italic">
                       Log kaydı yok
                     </div>
                   )}
@@ -1119,8 +1119,8 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
           <div>
             <h2 className="text-lg font-semibold text-white">RHSM Sync Ayarları</h2>
             <p className="text-xs text-slate-400 mt-0.5">{repo.display_name}</p>
@@ -1145,7 +1145,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               value={form.rhsm_repo_id}
               onChange={e => setForm(p => ({...p, rhsm_repo_id: e.target.value}))}
               placeholder="rhel-9-for-x86_64-baseos-rpms"
-              className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
             />
           </div>
 
@@ -1157,7 +1157,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_host}
                 onChange={e => setForm(p => ({...p, mirror_host: e.target.value}))}
                 placeholder="127.0.0.1"
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
@@ -1165,7 +1165,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               <input
                 value={form.mirror_port}
                 onChange={e => setForm(p => ({...p, mirror_port: e.target.value}))}
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
           </div>
@@ -1177,7 +1177,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_username}
                 onChange={e => setForm(p => ({...p, mirror_username: e.target.value}))}
                 placeholder="root"
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
@@ -1187,7 +1187,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_password}
                 onChange={e => setForm(p => ({...p, mirror_password: e.target.value}))}
                 placeholder="(değiştirmek için girin)"
-                className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
           </div>
@@ -1201,25 +1201,25 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               value={form.mirror_download_path}
               onChange={e => setForm(p => ({...p, mirror_download_path: e.target.value}))}
               placeholder="/var/lib/server_management/repos"
-              className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
             />
           </div>
 
           {/* Test butonları */}
           <div className="flex gap-2 flex-wrap">
             <button onClick={testConnection} disabled={testing}
-              className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
-              {testing ? '...' : '🔌 Bağlantıyı Test Et'}
+              className="px-4 py-2 text-sm bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
+              {testing ? "..." : "Bağlantıyı Test Et"}
             </button>
             <button onClick={listRepos} disabled={testing}
-              className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
+              className="px-4 py-2 text-sm bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
               {testing ? '...' : 'Mevcut Repoları Listele'}
             </button>
           </div>
 
           {/* Test sonucu */}
           {testResult && (
-            <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs font-mono">
+            <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs font-mono">
               {'repos' in testResult ? (
                 <div className="space-y-1 max-h-52 overflow-y-auto">
                   <div className="text-slate-400 mb-2">{testResult.total} repo bulundu:</div>
@@ -1280,7 +1280,7 @@ const RepoRow: React.FC<{
   const syncing = repo.sync_status === 'syncing'
 
   return (
-    <tr className="border-b border-slate-700/60 hover:bg-slate-800/60 transition-colors group">
+    <tr className="border-b border-white/[0.06] hover:bg-cyber-card/60 transition-colors group">
       {/* Dağıtım + ad */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -1315,7 +1315,7 @@ const RepoRow: React.FC<{
                     {Math.round(progress.rpm_on_disk * 100 / progress.total_packages)}%
                   </span>
                 </div>
-                <div className="w-full bg-slate-700 rounded-full h-1.5">
+                <div className="w-full bg-white/[0.07] rounded-full h-1.5">
                   <div
                     className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
                     style={{ width: `${Math.min(Math.round(progress.rpm_on_disk * 100 / progress.total_packages), 100)}%` }}
@@ -1395,19 +1395,19 @@ const RepoRow: React.FC<{
 
           {/* Log — her zaman görünür */}
           <button onClick={() => onLogs(repo)}
-            className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
+            className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
             Log
           </button>
 
           {/* Paketler */}
           <button onClick={() => onPackages(repo)} disabled={repo.package_count === 0}
-            className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-30">
+            className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-30">
             Paketler
           </button>
 
           {/* .repo */}
           <button onClick={() => onConfig(repo)}
-            className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
+            className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
             .repo
           </button>
 
@@ -1617,7 +1617,7 @@ const Repositories: React.FC = () => {
           <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : repos.length === 0 ? (
-        <div className="bg-slate-800 border border-slate-700 rounded-2xl p-16 text-center">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-2xl p-16 text-center">
           <div className="text-3xl font-bold text-blue-400 mb-4">PKG</div>
           <h3 className="text-lg font-semibold text-white">Henüz repo yok</h3>
           <p className="text-slate-400 text-sm mt-2">OEL, RHEL veya Rocky Linux mirror'ı ekleyin</p>
@@ -1630,7 +1630,7 @@ const Repositories: React.FC = () => {
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-700/60 border-b border-slate-600">
+              <tr className="bg-white/[0.05] border-b border-slate-600">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Repo</th>
                 <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Tip</th>
                 <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Durum</th>

@@ -25,7 +25,7 @@ const Login: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-start px-4 pt-[20vh] pb-8">
+    <div className="min-h-screen bg-cyber-deep flex flex-col items-center justify-start px-4 pt-[20vh] pb-8">
       <div className="w-full max-w-sm">
         <div className="flex items-center justify-center gap-3 mb-8">
           <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
@@ -35,7 +35,7 @@ const Login: React.FC = () => {
         </div>
 
         <form onSubmit={submit}
-          className="bg-slate-800 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-2xl">
+          className="bg-slate-800 border border-white/[0.06] rounded-2xl p-6 space-y-4 shadow-2xl">
           <h1 className="text-lg font-semibold text-white text-center">Giriş Yap</h1>
 
           {error && (
@@ -50,7 +50,7 @@ const Login: React.FC = () => {
               autoFocus
               value={username}
               onChange={e => setUsername(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
+              className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
               placeholder="admin"
             />
           </div>
@@ -61,7 +61,7 @@ const Login: React.FC = () => {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
+              className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
               placeholder="••••••••"
             />
           </div>

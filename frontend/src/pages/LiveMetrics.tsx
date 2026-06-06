@@ -239,7 +239,7 @@ const Sparkline: React.FC<{ values: number[]; color: string }> = ({ values, colo
 const MetricBar: React.FC<{ value: number; color: string }> = ({ value, color }) => {
   const pct = Math.max(0, Math.min(100, value))
   return (
-    <div className="w-28 bg-slate-700 rounded-full h-2">
+    <div className="w-28 bg-white/[0.07] rounded-full h-2">
       <div className="h-2 rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
     </div>
   )
@@ -356,7 +356,7 @@ const EnterpriseMetricChart: React.FC<{
 
   if (loading) {
     return (
-      <div className="bg-slate-800/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ height }}>
+      <div className="bg-cyber-card/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ height }}>
         <div className="p-4 border-b border-slate-600/50 flex items-center justify-between">
           <span className="text-sm font-semibold text-slate-200">{title}</span>
           <span className="text-xs text-slate-500">Yükleniyor...</span>
@@ -368,7 +368,7 @@ const EnterpriseMetricChart: React.FC<{
 
   if (!chartData.length || !seriesKeys.length) {
     return (
-      <div className="bg-slate-800/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ minHeight: height }}>
+      <div className="bg-cyber-card/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ minHeight: height }}>
         <div className="p-4 border-b border-slate-600/50 flex items-center justify-between">
           <span className="text-sm font-semibold text-slate-200">{title}</span>
           {unit && <span className="text-xs text-slate-400">{unit}</span>}
@@ -379,7 +379,7 @@ const EnterpriseMetricChart: React.FC<{
   }
 
   return (
-    <div className="bg-slate-800/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ minHeight: height }}>
+    <div className="bg-cyber-card/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ minHeight: height }}>
       <div className="p-4 border-b border-slate-600/50 flex items-center justify-between">
         <span className="text-sm font-semibold text-slate-200">{title}</span>
         {unit && <span className="text-xs text-slate-400">{unit}</span>}
@@ -807,7 +807,7 @@ const LiveMetrics: React.FC = () => {
             className={`flex items-center gap-2 rounded-lg px-4 py-2.5 font-medium text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 ${
               realTimeMode
                 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/25 focus:ring-emerald-500'
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600 focus:ring-slate-500'
+                : 'bg-white/[0.07] text-slate-300 hover:bg-slate-600 focus:ring-slate-500'
             }`}
           >
             {realTimeMode ? (
@@ -828,7 +828,7 @@ const LiveMetrics: React.FC = () => {
               value={timeRangeIndex}
               onChange={(e) => setTimeRangeIndex(Number(e.target.value))}
               disabled={realTimeMode}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {TIME_RANGES.map((r, i) => (
                 <option key={r.value} value={i}>{r.label}</option>
@@ -842,7 +842,7 @@ const LiveMetrics: React.FC = () => {
             <button
               type="button"
               onClick={() => setInstanceDropdownOpen((prev) => !prev)}
-              className="flex items-center gap-2 min-w-[220px] bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white text-left hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex items-center gap-2 min-w-[220px] bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white text-left hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <span className="truncate">
                 {selectedInstances.length === 0
@@ -852,17 +852,17 @@ const LiveMetrics: React.FC = () => {
               <span className="ml-auto text-slate-500 shrink-0">{instanceDropdownOpen ? '▲' : '▼'}</span>
             </button>
             {instanceDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1 w-80 max-h-72 overflow-hidden bg-slate-800 border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
-                <div className="p-2 border-b border-slate-700">
+              <div className="absolute top-full left-0 mt-1 w-80 max-h-72 overflow-hidden bg-cyber-card border border-slate-600 rounded-xl shadow-xl z-50 flex flex-col">
+                <div className="p-2 border-b border-white/[0.06]">
                   <input
                     type="text"
                     value={instanceSearch}
                     onChange={(e) => setInstanceSearch(e.target.value)}
                     placeholder="Sunucu veya hostname ara..."
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-                <div className="flex items-center gap-2 p-2 border-b border-slate-700">
+                <div className="flex items-center gap-2 p-2 border-b border-white/[0.06]">
                   <button
                     type="button"
                     onClick={() => setSelectedInstances([])}
@@ -904,7 +904,7 @@ const LiveMetrics: React.FC = () => {
                     .map((s) => (
                       <label
                         key={s.id}
-                        className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-700/50"
+                        className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-white/[0.06]/50"
                       >
                         <input
                           type="checkbox"
@@ -916,7 +916,7 @@ const LiveMetrics: React.FC = () => {
                                 : [...prev, s.instance]
                             )
                           }}
-                          className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-slate-800 focus:ring-blue-500"
+                          className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-cyber-card focus:ring-blue-500"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -941,7 +941,7 @@ const LiveMetrics: React.FC = () => {
             placeholder="Hostname filtre..."
             value={hostFilter}
             onChange={(e) => setHostFilter(e.target.value)}
-            className="w-48 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
 
           {realTimeMode ? (
@@ -950,7 +950,7 @@ const LiveMetrics: React.FC = () => {
               <select
                 value={realTimeRefetchMs}
                 onChange={(e) => setRealTimeRefetchMs(Number(e.target.value))}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="bg-cyber-card border border-white/[0.06] rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {REAL_TIME_REFETCH_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1046,7 +1046,7 @@ const LiveMetrics: React.FC = () => {
                 <select
                   value={chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex]}
                   onChange={(e) => setChartSlot(slotIndex, e.target.value)}
-                  className="bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
+                  className="bg-white/[0.07] border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
                 >
                   <optgroup label="Preset metrikler">
                     {METRIC_PRESETS.map((p) => (
@@ -1077,11 +1077,11 @@ const LiveMetrics: React.FC = () => {
       </div>
 
       {/* Table */}
-      <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden">
+      <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-slate-900/50">
+              <tr className="bg-cyber-deep/50">
                 <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
                   <button onClick={() => toggleSort('hostname')} className="flex items-center gap-1">
                     Hostname <span className="text-[10px]">{getSortIcon('hostname')}</span>

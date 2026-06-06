@@ -57,7 +57,7 @@ const DISTRO_LIST = [
   { key: 'oel',    label: 'Oracle Enterprise Linux',  short: 'OEL',    icon: 'OE', color: 'border-orange-500/60 bg-orange-500/10', match: ['ol', 'oel'] },
   { key: 'rocky',  label: 'Rocky Linux',              short: 'Rocky',  icon: 'RK', color: 'border-green-500/60 bg-green-500/10',  match: ['rocky'] },
   { key: 'ubuntu', label: 'Ubuntu',                   short: 'Ubuntu', icon: 'UB', color: 'border-yellow-500/60 bg-yellow-500/10', match: ['ubuntu'] },
-  { key: '',       label: 'Tüm Dağıtımlar',           short: 'Tümü',   icon: '', color: 'border-slate-500/60 bg-slate-700/30',  match: [] },
+  { key: '',       label: 'Tüm Dağıtımlar',           short: 'Tümü',   icon: '', color: 'border-slate-500/60 bg-white/[0.07]/30',  match: [] },
 ]
 
 const UPDATE_TYPES = [
@@ -110,14 +110,14 @@ const Steps = ({ current, maxReached, onGoTo, locked }: {
               isCurrent  ? 'bg-blue-600 text-white' :
               isDone && locked ? 'bg-green-700/20 text-green-600 cursor-not-allowed' :
               isDone     ? 'bg-green-700/40 text-green-300 hover:bg-green-700/60 cursor-pointer' :
-              isVisited  ? 'bg-slate-700/60 text-slate-300 hover:bg-slate-700 cursor-pointer' :
-              'bg-slate-800 text-slate-500 cursor-default'
+              isVisited  ? 'bg-white/[0.05] text-slate-300 hover:bg-white/[0.06] cursor-pointer' :
+              'bg-cyber-card text-slate-500 cursor-default'
             }`}
           >
             {isDone ? '✓ ' : `${stepNum}. `}{s}
           </button>
           {i < STEP_NAMES.length-1 && (
-            <div className={`flex-1 h-0.5 min-w-[6px] ${isDone ? 'bg-green-600' : isVisited ? 'bg-slate-600' : 'bg-slate-700'}`} />
+            <div className={`flex-1 h-0.5 min-w-[6px] ${isDone ? 'bg-green-600' : isVisited ? 'bg-slate-600' : 'bg-white/[0.07]'}`} />
           )}
         </React.Fragment>
       )
@@ -137,17 +137,17 @@ const ServerSelector = ({ servers, selected, onChange }: {
     onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
 
   return (
-    <div className="border border-slate-700 rounded-xl overflow-hidden">
-      <div className="bg-slate-800/80 px-3 py-2 flex gap-2 border-b border-slate-700 flex-wrap items-center">
+    <div className="border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="bg-cyber-card/80 px-3 py-2 flex gap-2 border-b border-white/[0.06] flex-wrap items-center">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Sunucu veya IP ara..."
-          className="flex-1 min-w-[160px] bg-slate-700 text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+          className="flex-1 min-w-[160px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
         <button onClick={() => onChange(filtered.map(s => s.id))}
-          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Tümü</button>
+          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Tümü</button>
         <button onClick={() => onChange(filtered.filter(s => s.status === 'ONLINE').map(s => s.id))}
-          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Aktifler</button>
+          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Aktifler</button>
         <button onClick={() => onChange([])}
-          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-slate-700 rounded">Temizle</button>
+          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Temizle</button>
         <span className="text-xs text-slate-500 ml-auto">{selected.length} / {servers.length} seçili</span>
       </div>
       <div className="max-h-64 overflow-y-auto divide-y divide-white/[0.04]">
@@ -205,7 +205,7 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
   const ut = UPDATE_TYPES.find(t => t.key === plan.update_type)
 
   return (
-    <tr className="border-b border-white/[0.04] hover:bg-slate-800/40 transition-colors">
+    <tr className="border-b border-white/[0.04] hover:bg-cyber-card/40 transition-colors">
       <td className="px-4 py-3">
         <div className="text-sm font-medium text-white">{plan.name}</div>
         <div className="text-xs text-slate-500">{fmtDate(plan.created_at)}</div>
@@ -220,7 +220,7 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
       <td className="px-3 py-3 text-center">
         <div className="text-sm text-white">{plan.completed_servers}/{plan.total_servers}</div>
         {plan.total_servers > 0 && (
-          <div className="w-full bg-slate-700 rounded-full h-1 mt-1">
+          <div className="w-full bg-white/[0.07] rounded-full h-1 mt-1">
             <div className="bg-blue-500 h-1 rounded-full transition-all"
               style={{ width: `${Math.round(plan.completed_servers*100/plan.total_servers)}%` }} />
           </div>
@@ -239,7 +239,7 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
           {/* Görüntüle — tamamlanmış planlar için */}
           {plan.status === 'completed' && (
             <button onClick={() => onResume(plan)}
-              className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+              className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
               title="Planı görüntüle">
               ↻
             </button>
@@ -259,13 +259,13 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
                   ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30'
                   : canRun
                   ? 'bg-green-700 hover:bg-green-600 text-white'
-                  : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                  : 'bg-white/[0.07] hover:bg-slate-600 text-slate-200'
               }`}>
               {isRunning ? '● İzle' : canRun ? '▶ Çalıştır' : '↩ Devam'}
             </button>
           )}
           <button onClick={() => onView(plan)}
-            className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
+            className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
             Detay
           </button>
           {!isRunning && (
@@ -313,8 +313,8 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
+      <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-white">{plan.name}</h2>
             <span className={`text-xs font-medium ${STATUS_COLOR[plan.status]}`}>
@@ -325,22 +325,22 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
         </div>
         <div className="flex-1 overflow-hidden flex">
           {/* Left: server list */}
-          <div className="w-64 border-r border-slate-700 overflow-y-auto flex-shrink-0">
+          <div className="w-64 border-r border-white/[0.06] overflow-y-auto flex-shrink-0">
             {plan.ai_analysis && (
-              <div className="p-3 border-b border-slate-700 bg-cyan-500/5">
+              <div className="p-3 border-b border-white/[0.06] bg-cyan-500/5">
                 <div className="text-xs font-semibold text-cyan-400 mb-1">AI Analiz</div>
                 <div className="text-xs text-slate-300 line-clamp-5 leading-relaxed">{plan.ai_analysis}</div>
               </div>
             )}
             {plan.ai_summary && (
-              <div className="p-3 border-b border-slate-700 bg-green-500/5">
+              <div className="p-3 border-b border-white/[0.06] bg-green-500/5">
                 <div className="text-xs font-semibold text-green-400 mb-1">AI Özet</div>
                 <AiMarkdown text={plan.ai_summary} />
               </div>
             )}
             {jobs.map(j => (
               <button key={j.id} onClick={() => setSel(j)}
-                className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] border-b border-slate-700/30 transition-colors ${sel?.id === j.id ? 'bg-blue-600/10' : ''}`}>
+                className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] border-b border-white/[0.03] transition-colors ${sel?.id === j.id ? 'bg-blue-600/10' : ''}`}>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs ${STATUS_COLOR[j.status]}`}>
                     {(j.status==='running'||j.status==='pending') && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse mr-1" />}
@@ -360,8 +360,8 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
             {sel ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="bg-slate-700/50 rounded-lg p-3"><div className="text-slate-400">Başlangıç</div><div className="text-white">{fmtDate(sel.started_at)}</div></div>
-                  <div className="bg-slate-700/50 rounded-lg p-3"><div className="text-slate-400">Bitiş</div><div className="text-white">{fmtDate(sel.completed_at)}</div></div>
+                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">Başlangıç</div><div className="text-white">{fmtDate(sel.started_at)}</div></div>
+                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">Bitiş</div><div className="text-white">{fmtDate(sel.completed_at)}</div></div>
                 </div>
                 {sel.reboot_required && (
                   <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
@@ -371,7 +371,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                 {sel.packages_to_update.length > 0 && (
                   <div>
                     <div className="text-xs font-semibold text-slate-300 mb-2">Güncellenecek ({sel.packages_to_update.length})</div>
-                    <div className="bg-slate-900 rounded-xl p-3 max-h-40 overflow-y-auto space-y-0.5">
+                    <div className="bg-cyber-deep rounded-xl p-3 max-h-40 overflow-y-auto space-y-0.5">
                       {sel.packages_to_update.slice(0,30).map((p,i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
                           {p.is_security && <span className="text-red-400">🔒</span>}
@@ -394,7 +394,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                       if (r.ok) { load(); alert('↻ Yeniden başlatıldı') }
                       else alert((await r.json()).detail || 'Hata')
                     }}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center font-medium"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center font-medium"
                   >
                     ↻ Yeniden Çalıştır
                   </button>
@@ -440,7 +440,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                         </button>
                       </div>
                     )}
-                    <pre className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-52 overflow-y-auto">{sel.log}</pre>
+                    <pre className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs text-green-300 font-mono whitespace-pre-wrap max-h-52 overflow-y-auto">{sel.log}</pre>
                   </div>
                 )}
               </div>
@@ -474,10 +474,10 @@ const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId
 
   if (packages.length === 0 && !fetched) {
     return (
-      <div className="flex items-center justify-between bg-slate-800/50 rounded-lg px-3 py-2">
+      <div className="flex items-center justify-between bg-cyber-card/50 rounded-lg px-3 py-2">
         <span className="text-xs text-slate-500">Güncellenen paket listesi yüklenmedi</span>
         <button onClick={fetchPackages} disabled={loading}
-          className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-slate-700 rounded transition-colors disabled:opacity-40">
+          className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors disabled:opacity-40">
           {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />Getiriliyor...</> : 'SSH ile Listele'}
         </button>
       </div>
@@ -572,11 +572,11 @@ const LiveJobLog: React.FC<{
                       )}
       {liveLog ? (
         <pre ref={logRef}
-          className="bg-slate-900 border border-slate-700/50 rounded-lg p-3 text-[11px] text-green-300 font-mono whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
+          className="bg-cyber-deep border border-white/[0.06]/50 rounded-lg p-3 text-[11px] text-green-300 font-mono whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
           {liveLog}
         </pre>
       ) : isActive ? (
-        <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-4 flex items-center gap-3">
+        <div className="bg-cyber-deep border border-white/[0.06]/50 rounded-lg p-4 flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
           <div className="text-xs text-slate-400">Güncelleme başlatılıyor, log bekleniyor...</div>
         </div>
@@ -648,7 +648,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
         '🔒': 'bg-orange-500/10 border-orange-500/30 text-orange-200',
         '💡': 'bg-blue-500/10 border-blue-500/30 text-blue-200',
       }
-      const cls = alertColors[icon] || 'bg-slate-800/50 border-slate-600 text-slate-200'
+      const cls = alertColors[icon] || 'bg-cyber-card/50 border-slate-600 text-slate-200'
       nodes.push(
         <div key={i} className={`flex gap-2.5 border rounded-lg px-3 py-2 my-1 text-xs leading-relaxed ${cls}`}>
           <span className="flex-shrink-0 text-sm">{icon}</span>
@@ -689,7 +689,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
         <p key={i} className="text-sm text-slate-300 leading-relaxed py-0.5">
           {parts.map((p, j) =>
             j % 2 === 1
-              ? <code key={j} className="bg-slate-800 border border-slate-600 text-green-300 px-1.5 py-0.5 rounded text-[11px] font-mono mx-0.5">{p}</code>
+              ? <code key={j} className="bg-cyber-card border border-slate-600 text-green-300 px-1.5 py-0.5 rounded text-[11px] font-mono mx-0.5">{p}</code>
               : <span key={j}>{renderInline(p)}</span>
           )}
         </p>
@@ -1146,7 +1146,7 @@ const SystemUpdate: React.FC = () => {
 
       {/* ── WIZARD ────────────────────────────────────────────────────────── */}
       {showWizard && (
-        <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+        <div className="bg-cyber-card border border-white/[0.06] rounded-2xl p-6">
           {/* Wizard başlığı — her adımda kapat butonu */}
           <div className="flex items-center justify-between mb-4">
             <Steps
@@ -1162,7 +1162,7 @@ const SystemUpdate: React.FC = () => {
                 }
                 setShowWizard(false)
               }}
-              className="ml-4 flex-shrink-0 text-slate-400 hover:text-white hover:bg-slate-700 px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5"
+              className="ml-4 flex-shrink-0 text-slate-400 hover:text-white hover:bg-white/[0.06] px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5"
               title="Wizard'ı kapat"
             >
               <span className="text-lg leading-none">×</span>
@@ -1184,7 +1184,7 @@ const SystemUpdate: React.FC = () => {
                   return (
                     <button key={d.key} onClick={() => setSelectedDistro(d.key)}
                       className={`p-5 rounded-xl border-2 text-left transition-all ${
-                        isSelected ? d.color + ' border-2' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500 hover:bg-slate-700/40'
+                        isSelected ? d.color + ' border-2' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500 hover:bg-white/[0.04]'
                       }`}>
                       <div className="text-xs font-bold text-slate-400 mb-1">{d.icon}</div>
                       <div className="text-base font-bold text-white">{d.short}</div>
@@ -1265,7 +1265,7 @@ const SystemUpdate: React.FC = () => {
               <div className="space-y-3">
                 {/* Seçenek 1: Kayıtlı kimlik bilgileri */}
                 <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                  credMode === 'stored' ? 'border-green-500 bg-green-500/10' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                  credMode === 'stored' ? 'border-green-500 bg-green-500/10' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                 }`}>
                   <input type="radio" checked={credMode==='stored'} onChange={() => setCredMode('stored')}
                     className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -1282,7 +1282,7 @@ const SystemUpdate: React.FC = () => {
 
                 {/* Seçenek 2: Özel kullanıcı */}
                 <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                  credMode === 'override' ? 'border-blue-500 bg-blue-500/10' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                  credMode === 'override' ? 'border-blue-500 bg-blue-500/10' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                 }`}>
                   <input type="radio" checked={credMode==='override'} onChange={() => setCredMode('override')}
                     className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -1300,14 +1300,14 @@ const SystemUpdate: React.FC = () => {
                           <label className="text-xs text-slate-400 block mb-1">Kullanıcı Adı <span className="text-red-400">*</span></label>
                           <input value={overrideUser} onChange={e => setOverrideUser(e.target.value)}
                             placeholder="root veya sudo yetkili kullanıcı"
-                            className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-xs text-slate-400 block mb-1">SSH Şifresi</label>
                             <input type="password" value={overridePass} onChange={e => setOverridePass(e.target.value)}
                               placeholder="SSH şifresi"
-                              className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                           </div>
                           <div>
                             <label className="text-xs text-slate-400 block mb-1">
@@ -1316,7 +1316,7 @@ const SystemUpdate: React.FC = () => {
                             </label>
                             <input type="password" value={overrideSudo} onChange={e => setOverrideSudo(e.target.value)}
                               placeholder="sudo şifresi (boşsa SSH şifresi kullanılır)"
-                              className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                           </div>
                         </div>
                         <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
@@ -1330,7 +1330,7 @@ const SystemUpdate: React.FC = () => {
               </div>
 
               {/* Yetki Yükseltme Yöntemi */}
-              <div className="bg-slate-700/30 border border-slate-600 rounded-xl p-4 space-y-3">
+              <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4 space-y-3">
                 <div>
                   <div className="text-sm font-semibold text-white">Yetki Yükseltme Yöntemi</div>
                   <div className="text-xs text-slate-400 mt-0.5">Komutları hangi yöntemle root yetkisiyle çalıştıracak?</div>
@@ -1345,7 +1345,7 @@ const SystemUpdate: React.FC = () => {
                       className={`p-3 rounded-xl border text-left transition-all ${
                         privMethod === m.key
                           ? 'border-blue-500 bg-blue-600/15'
-                          : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                          : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                       }`}>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-400">{m.icon}</span>
@@ -1370,7 +1370,7 @@ const SystemUpdate: React.FC = () => {
               </div>
 
               {/* Özet */}
-              <div className="bg-slate-700/30 border border-slate-600 rounded-xl p-4">
+              <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4">
                 <div className="text-xs font-semibold text-slate-300 mb-2">Özet</div>
                 <div className="text-xs text-slate-400 space-y-0.5">
                   <div>{selectedServers.length} sunucu seçildi</div>
@@ -1404,7 +1404,7 @@ const SystemUpdate: React.FC = () => {
               <div className="space-y-2">
                 {/* Varsayılan seçenek */}
                 <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                  selectedRepo === null ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                  selectedRepo === null ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                 }`}>
                   <input type="radio" checked={selectedRepo===null} onChange={() => setSelectedRepo(null)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
                   <div>
@@ -1417,7 +1417,7 @@ const SystemUpdate: React.FC = () => {
                 {filteredRepos.length > 0 ? (
                   filteredRepos.map(repo => (
                     <label key={repo.id} className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                      selectedRepo===repo.id ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                      selectedRepo===repo.id ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                     }`}>
                       <input type="radio" checked={selectedRepo===repo.id} onChange={() => setSelectedRepo(repo.id)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1432,7 +1432,7 @@ const SystemUpdate: React.FC = () => {
                     </label>
                   ))
                 ) : (
-                  <div className="bg-slate-700/30 border border-slate-600 rounded-xl p-4 text-center text-xs text-slate-400">
+                  <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4 text-center text-xs text-slate-400">
                     {selectedDistro
                       ? `${DISTRO_LIST.find(d=>d.key===selectedDistro)?.short} için senkronize local repo bulunamadı`
                       : 'Senkronize local repo yok'} — Varsayılan repo kullanılacak
@@ -1466,7 +1466,7 @@ const SystemUpdate: React.FC = () => {
                   className={`p-5 rounded-xl border-2 text-left transition-all ${
                     snapshotMode === 'take'
                       ? 'border-cyan-500 bg-cyan-500/10'
-                      : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                      : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                   }`}
                 >
                   <div className="text-3xl mb-2">📸</div>
@@ -1478,7 +1478,7 @@ const SystemUpdate: React.FC = () => {
                   className={`p-5 rounded-xl border-2 text-left transition-all ${
                     snapshotMode === 'skip'
                       ? 'border-slate-400 bg-slate-600/20'
-                      : 'border-slate-600 bg-slate-700/20 hover:border-slate-500'
+                      : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                   }`}
                 >
                   <div className="text-3xl mb-2">⏭️</div>
@@ -1498,7 +1498,7 @@ const SystemUpdate: React.FC = () => {
                         className={`p-3 rounded-xl border text-left transition-all ${
                           snapshotRetention === r.key
                             ? 'border-cyan-500 bg-cyan-500/10'
-                            : 'border-slate-600 hover:border-slate-500 bg-slate-700/20'
+                            : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                         }`}
                       >
                         <div className="text-sm font-semibold text-white">{r.label}</div>
@@ -1552,7 +1552,7 @@ const SystemUpdate: React.FC = () => {
                 {UPDATE_TYPES.map(t => (
                   <button key={t.key} onClick={() => setUpdateType(t.key)}
                     className={`p-5 rounded-xl border-2 text-left transition-all ${
-                      updateType === t.key ? t.color + ' border-2' : 'border-slate-600 bg-slate-700/20 hover:border-slate-500 hover:bg-slate-700/40'
+                      updateType === t.key ? t.color + ' border-2' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500 hover:bg-white/[0.04]'
                     }`}>
                     <div className="text-xs font-bold text-slate-400 mb-1">{t.icon}</div>
                     <div className="text-base font-bold text-white">{t.label}</div>
@@ -1563,22 +1563,22 @@ const SystemUpdate: React.FC = () => {
 
               {/* Özet + Plan adı */}
               {updateType && (
-                <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-3">
+                <div className="bg-white/[0.04] border border-slate-600 rounded-xl p-4 space-y-3">
                   <div className="text-xs font-semibold text-slate-300 mb-2">Plan Özeti</div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div className="bg-slate-700/50 rounded-lg p-2 text-center">
+                    <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
                       <div className="text-slate-400 mt-0.5">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.short}</div>
                     </div>
-                    <div className="bg-slate-700/50 rounded-lg p-2 text-center">
+                    <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-lg font-bold text-white">{selectedServers.length}</div>
                       <div className="text-slate-400">Sunucu</div>
                     </div>
-                    <div className="bg-slate-700/50 rounded-lg p-2 text-center">
+                    <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-xs font-bold text-blue-400">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
                       <div className="text-slate-400 mt-0.5">{UPDATE_TYPES.find(t=>t.key===updateType)?.label}</div>
                     </div>
-                    <div className="bg-slate-700/50 rounded-lg p-2 text-center">
+                    <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-xs text-white font-medium">{selectedRepo ? 'Local' : 'Varsayılan'}</div>
                       <div className="text-slate-400">Repo</div>
                     </div>
@@ -1587,7 +1587,7 @@ const SystemUpdate: React.FC = () => {
                     <label className="text-xs text-slate-400 block mb-1">Plan Adı (isteğe bağlı)</label>
                     <input value={planName} onChange={e => setPlanName(e.target.value)}
                       placeholder={`${DISTRO_LIST.find(d=>d.key===selectedDistro)?.short || 'Linux'} ${UPDATE_TYPES.find(t=>t.key===updateType)?.label} — ${new Date().toLocaleDateString('tr-TR')}`}
-                      className="w-full bg-slate-700 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
                 </div>
               )}
@@ -1600,8 +1600,8 @@ const SystemUpdate: React.FC = () => {
 
               {/* Güncellemeleri Kontrol Et */}
               {updateType && (
-                <div className="border border-slate-700 rounded-xl overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-3 bg-slate-700/40 border-b border-slate-700">
+                <div className="border border-white/[0.06] rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 bg-white/[0.04] border-b border-white/[0.06]">
                     <div className="text-sm font-semibold text-white">Mevcut Güncellemeler</div>
                     <button
                       onClick={async () => {
@@ -1627,7 +1627,7 @@ const SystemUpdate: React.FC = () => {
                     >
                       {checking
                         ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kontrol ediliyor...</>
-                        : '🔍 Sunucularda Kontrol Et'}
+                        : 'Sunucularda Kontrol Et'}
                     </button>
                   </div>
 
@@ -1671,7 +1671,7 @@ const SystemUpdate: React.FC = () => {
                         <div className="space-y-1 mt-2">
                           <div className="flex items-center gap-2 mb-2">
                             <input value={pkgSearch} onChange={e => setPkgSearch(e.target.value)}
-                              placeholder="Paket ara..." className="flex-1 bg-slate-800 text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              placeholder="Paket ara..." className="flex-1 bg-cyber-card text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                             <button onClick={() => {
                               const allNames = data.packages.map((p: any) => p.name)
                               if (allNames.every((n: string) => selectedPkgs.has(n))) {
@@ -1679,7 +1679,7 @@ const SystemUpdate: React.FC = () => {
                               } else {
                                 setSelectedPkgs(prev => new Set([...prev, ...allNames]))
                               }
-                            }} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-slate-700 rounded transition-colors">
+                            }} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">
                               Tümü
                             </button>
                             <span className="text-xs text-slate-500">{selectedPkgs.size} seçili</span>
@@ -1707,7 +1707,7 @@ const SystemUpdate: React.FC = () => {
                             <span key={i} className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
                               p.is_security ? 'bg-red-500/15 text-red-300' :
                               p.is_kernel   ? 'bg-blue-500/15 text-blue-300' :
-                              'bg-slate-700 text-slate-300'
+                              'bg-white/[0.07] text-slate-300'
                             }`}>
                               {p.name}
                               {p.new_version ? <span className="text-slate-500 ml-1">→{p.new_version.split('-')[0]}</span> : null}
@@ -1754,7 +1754,7 @@ const SystemUpdate: React.FC = () => {
               {/* AI başlat veya yükleniyor */}
               {!aiAnalysis && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className={`border rounded-xl p-5 text-center space-y-3 ${analyzing ? 'border-blue-500/30 bg-blue-500/5' : 'border-slate-600 bg-slate-700/20'}`}>
+                  <div className={`border rounded-xl p-5 text-center space-y-3 ${analyzing ? 'border-blue-500/30 bg-blue-500/5' : 'border-slate-600 bg-white/[0.02]'}`}>
                     <div className="text-xl font-bold text-blue-400">{analyzing ? '...' : 'AI'}</div>
                     {analyzing ? (
                       <>
@@ -1773,7 +1773,7 @@ const SystemUpdate: React.FC = () => {
                       </>
                     )}
                   </div>
-                  <div className="border border-slate-600 bg-slate-700/20 rounded-xl p-5 text-center space-y-3 flex flex-col justify-center">
+                  <div className="border border-slate-600 bg-white/[0.02] rounded-xl p-5 text-center space-y-3 flex flex-col justify-center">
                     <div className="text-3xl">⏭️</div>
                     <div className="text-sm font-medium text-white">Analiz Olmadan Devam</div>
                     <div className="text-xs text-slate-400">Direkt onay adımına geç</div>
@@ -1819,7 +1819,7 @@ const SystemUpdate: React.FC = () => {
             <div className="space-y-5">
               <h2 className="text-base font-semibold text-white">Güncellemeyi Onayla</h2>
 
-              <div className="bg-slate-700/50 rounded-xl p-5">
+              <div className="bg-white/[0.07]/50 rounded-xl p-5">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                   <div className="text-center">
                     <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
@@ -1872,7 +1872,7 @@ const SystemUpdate: React.FC = () => {
               )}
 
               {aiAnalysis && (
-                <details className="bg-slate-700/30 border border-slate-600 rounded-xl">
+                <details className="bg-white/[0.07]/30 border border-slate-600 rounded-xl">
                   <summary className="px-4 py-3 text-sm text-cyan-400 cursor-pointer select-none">
                     AI Analiz Özetini Göster
                   </summary>
@@ -1908,7 +1908,7 @@ const SystemUpdate: React.FC = () => {
                   <span>{currentPlan.completed_servers} / {currentPlan.total_servers} sunucu</span>
                   <span>{Math.round(currentPlan.completed_servers*100/Math.max(currentPlan.total_servers,1))}%</span>
                 </div>
-                <div className="bg-slate-700 rounded-full h-2.5">
+                <div className="bg-white/[0.07] rounded-full h-2.5">
                   <div className="bg-blue-500 h-2.5 rounded-full transition-all duration-500"
                     style={{ width: `${Math.round(currentPlan.completed_servers*100/Math.max(currentPlan.total_servers,1))}%` }} />
                 </div>
@@ -1917,7 +1917,7 @@ const SystemUpdate: React.FC = () => {
               {/* Sunucu satırları — tıklanabilir, detay açılır */}
               <div className="space-y-2">
                 {planJobs.map(j => (
-                  <div key={j.id} className="bg-slate-700/40 rounded-xl overflow-hidden border border-slate-700/50">
+                  <div key={j.id} className="bg-white/[0.04] rounded-xl overflow-hidden border border-white/[0.06]/50">
                     {/* Satır başlığı — tıkla */}
                     <button
                       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors text-left"
@@ -1969,7 +1969,7 @@ const SystemUpdate: React.FC = () => {
                             if (jr.ok) setPlanJobs(await jr.json())
                           } else alert((await r.json()).detail || 'Hata')
                         }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center mt-1"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center mt-1"
                       >
                         ↻ Bu Sunucuda Yeniden Çalıştır
                       </button>
@@ -2010,7 +2010,7 @@ const SystemUpdate: React.FC = () => {
 
               {['completed','failed','partial'].includes(currentPlan.status) && (
                 <button onClick={resetWizard}
-                  className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition-colors">
+                  className="w-full py-3 bg-white/[0.07] hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition-colors">
                   ← Plan Listesine Dön
                 </button>
               )}
@@ -2025,9 +2025,9 @@ const SystemUpdate: React.FC = () => {
       {/* ── GEÇMİŞ ──────────────────────────────────────────────────────── */}
       {!showWizard && (
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Güncelleme Geçmişi</h2>
-            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors">↻ Yenile</button>
+            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">↻ Yenile</button>
           </div>
           {plans.length === 0 ? (
             <div className="py-16 text-center space-y-3">
@@ -2041,7 +2041,7 @@ const SystemUpdate: React.FC = () => {
             <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[560px]">
               <thead>
-                <tr className="bg-slate-700/50 border-b border-slate-600">
+                <tr className="bg-white/[0.07]/50 border-b border-slate-600">
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Plan</th>
                   <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Mod</th>
                   <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Durum</th>

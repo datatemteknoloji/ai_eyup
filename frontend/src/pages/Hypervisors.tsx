@@ -6,7 +6,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+    <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
           <span className="text-yellow-400 text-base">⚠</span>
@@ -17,7 +17,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
         <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
       </div>
     </div>
@@ -117,7 +117,7 @@ const Hypervisors: React.FC = () => {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
-      alert(`${data.synced_count} VM senkronize edildi!\n\nToplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
+      alert(`${data.synced_count} VM senkronize edildi. Toplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
     },
     onError: (error: Error) => {
       alert(`❌ Sync hatası: ${error.message}`)
@@ -245,7 +245,7 @@ const Hypervisors: React.FC = () => {
           {hypervisors.map((hv) => (
             <div
               key={hv.id}
-              className="bg-slate-800 rounded-[10px] border border-white/[0.06] overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
+              className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
             >
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -255,7 +255,7 @@ const Hypervisors: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-white">{hv.name}</h3>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-700 text-slate-300">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-white/[0.07] text-slate-300">
                         {hv.type.toUpperCase()}
                       </span>
                     </div>
@@ -315,8 +315,8 @@ const Hypervisors: React.FC = () => {
           ))}
         </div>
       ) : (
-        <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] p-12 text-center">
-          <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-12 text-center">
+          <div className="w-16 h-16 bg-white/[0.07] rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="text-xs font-bold text-blue-400">HV</span>
           </div>
           <h3 className="text-lg font-medium text-white mb-2">Henüz hypervisor eklenmemiş</h3>
@@ -334,7 +334,7 @@ const Hypervisors: React.FC = () => {
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-[10px] border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
+          <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-white">Yeni Hypervisor Ekle</h2>
               <button
@@ -352,7 +352,7 @@ const Hypervisors: React.FC = () => {
                   required
                   value={formData.name}
                   onChange={(e) => handleFormChange('name', e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="örn: vCenter Production"
                 />
               </div>
@@ -361,7 +361,7 @@ const Hypervisors: React.FC = () => {
                 <select
                   value={formData.type}
                   onChange={(e) => handleFormChange('type', e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="vmware">VMware vCenter / ESXi</option>
                   <option value="hyperv">Microsoft Hyper-V</option>
@@ -378,7 +378,7 @@ const Hypervisors: React.FC = () => {
                     required
                     value={formData.ip_address}
                     onChange={(e) => handleFormChange('ip_address', e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="192.168.1.100"
                   />
                 </div>
@@ -388,7 +388,7 @@ const Hypervisors: React.FC = () => {
                     type="number"
                     value={formData.port}
                     onChange={(e) => handleFormChange('port', parseInt(e.target.value) || 443)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -399,7 +399,7 @@ const Hypervisors: React.FC = () => {
                   required
                   value={formData.username}
                   onChange={(e) => handleFormChange('username', e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder={formData.type === 'kvm' ? 'örn. admin (@internal otomatik eklenir)' : 'administrator@vsphere.local'}
                 />
               </div>
@@ -410,7 +410,7 @@ const Hypervisors: React.FC = () => {
                   required
                   value={formData.password}
                   onChange={(e) => handleFormChange('password', e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="••••••••"
                 />
               </div>
@@ -430,7 +430,7 @@ const Hypervisors: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <span>🔌</span>
+                      <span>●</span>
                       <span>Bağlantıyı Test Et</span>
                     </>
                   )}
@@ -464,7 +464,7 @@ const Hypervisors: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
+                  className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 transition-colors"
                 >
                   İptal
                 </button>

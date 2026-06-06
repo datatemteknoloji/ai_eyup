@@ -269,7 +269,7 @@ const Events: React.FC = () => {
   const groupMenu = (grp: EventGroup): MenuItem[] => [
     { label: 'Tümünü gör', icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
     { label: 'İncelemeye al', icon: '👁', onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
-    { label: 'Bilinen olay', icon: '🧠', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
+    { label: 'Bilinen olay', icon: '', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
     { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
     { label: 'Incident oluştur', icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
@@ -277,10 +277,10 @@ const Events: React.FC = () => {
   const flatMenu = (e: SystemEvent): MenuItem[] => [
     { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
     { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
-    { label: 'Bilinen olay', icon: '🧠', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
+    { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
     { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
-    { label: 'Sil', icon: '🗑', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },
+    { label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },
   ]
 
   const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
@@ -293,7 +293,7 @@ const Events: React.FC = () => {
         subtitle="Sistem olaylarını izleyin, gruplayın ve yönetin"
         actions={<>
           <GhostButton accent={NEON.green} onClick={handleScan} disabled={scanning}>
-            {scanning ? 'Taranıyor...' : '🔍 Şimdi Tara'}
+            {scanning ? 'Taranıyor...' : 'Şimdi Tara'}
           </GhostButton>
           <PrimaryButton accent={NEON.blue} onClick={() => setShowCreateForm(v => !v)}>
             {showCreateForm ? 'İptal' : '+ Yeni Event'}
@@ -425,7 +425,7 @@ const Events: React.FC = () => {
 
       {/* List */}
       {isLoadingList ? (
-        <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-slate-700" /></div>
+        <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
       ) : groupedView ? (
         groups.length === 0 ? <Section><EmptyState icon="" text="Henüz event yok" /></Section> : (
           <Section className="overflow-visible">
@@ -461,7 +461,7 @@ const Events: React.FC = () => {
                           <button onClick={() => startAnalyze(grp)}
                             className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
                             style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.3)` }}>
-                            🔍 Analiz
+                            Analiz
                           </button>
                           <ActionMenu items={groupMenu(grp)} />
                         </div>
@@ -550,7 +550,7 @@ const Events: React.FC = () => {
       {/* AI Analyze modal */}
       {analyzeGroup && (
         <Modal
-          title={<span className="flex items-center gap-2">🔍 {analyzeGroup.title}</span>}
+          title={<span className="flex items-center gap-2">{analyzeGroup.title}</span>}
           subtitle={`${analyzeGroup.event_type}${analyzeGroup.server_name ? ' · ' + analyzeGroup.server_name : ''} · ${analyzeGroup.count}×`}
           onClose={() => { analyzeAbortRef.current?.abort(); setAnalyzeGroup(null); setAnalysisText('') }}
           footer={
