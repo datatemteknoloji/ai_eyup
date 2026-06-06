@@ -301,6 +301,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
   const [analyzeText, setAnalyzeText] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const analyzeAbort = React.useRef<AbortController | null>(null)
+  const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const { data: metrics, isLoading: metricsLoading } = useQuery<MetricsSummary>({
     queryKey: ['server-metrics-summary', server.id],
@@ -971,6 +973,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
         </div>
       </div>
+      {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     </div>
   )
 }
