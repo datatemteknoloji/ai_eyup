@@ -99,12 +99,13 @@ async def command_center(db: Session = Depends(get_db)):
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
 
-    # Tüm açık eventler
+    # Tüm açık, bilinmeyen, onaylanmamış eventler
     events: List[SystemEvent] = (
         db.query(SystemEvent)
         .filter(
-            SystemEvent.resolved == False,  # noqa: E712
-            SystemEvent.is_known == False,  # noqa: E712
+            SystemEvent.resolved == False,       # noqa: E712
+            SystemEvent.is_known == False,       # noqa: E712
+            SystemEvent.is_acknowledged == False, # noqa: E712
             SystemEvent.last_seen >= since,
         )
         .order_by(SystemEvent.last_seen.desc())
@@ -112,12 +113,16 @@ async def command_center(db: Session = Depends(get_db)):
         .all()
     )
 
-    # Bastırılan / bilinen event sayısı
+    # Bastırılan / bilinen / onaylanmış / çözülmüş → "Kontrol Altında"
     green_count: int = (
         db.query(SystemEvent)
         .filter(
             SystemEvent.last_seen >= since,
-            (SystemEvent.resolved == True) | (SystemEvent.is_known == True),  # noqa: E712
+            (
+                (SystemEvent.resolved == True) |     # noqa: E712
+                (SystemEvent.is_known == True) |     # noqa: E712
+                (SystemEvent.is_acknowledged == True) # noqa: E712
+            ),
         )
         .count()
     )

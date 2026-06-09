@@ -142,9 +142,37 @@ async def create_suppression_from_event(
         scope="server",
         expires_at=expires_at,
     )
+
+    # Mevcut event'i bilinen olarak işaretle (listeden kaldır)
+    event.is_known = True
+    event.known_at = datetime.utcnow()
+    event.known_by = "suppression_rule"
+
+    # Aynı sunucu + metrik için açık diğer eventleri de kapat
+    from app.models.event import SystemEvent as SE
+    sibling_events = (
+        db.query(SE)
+        .filter(
+            SE.server_id == event.server_id,
+            SE.resolved == False,  # noqa: E712
+            SE.is_known == False,  # noqa: E712
+            SE.id != event_id,
+        )
+        .all()
+    )
+    for sib in sibling_events:
+        sib_metric = (sib.raw_data or {}).get("metric") or sib.title[:200]
+        if sib_metric == metric_name:
+            sib.is_known = True
+            sib.known_at = datetime.utcnow()
+            sib.known_by = "suppression_rule"
+
+    db.commit()
+
     logger.info(
         f"[Baseline API] from-event: event={event_id} metric={metric_name} "
-        f"server={event.server_id} cap={baseline_severity}"
+        f"server={event.server_id} cap={baseline_severity} "
+        f"siblings_closed={len([s for s in sibling_events if s.is_known])}"
     )
     return rule
 
