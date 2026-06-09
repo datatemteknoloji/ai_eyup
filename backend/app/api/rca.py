@@ -293,102 +293,146 @@ async def awr_parse_only(
 
 class QuickRCARequest(BaseModel):
     event_id: Optional[int] = None
+    event_ids: Optional[List[int]] = None   # Storm için: birden fazla event
     server_id: Optional[int] = None
     metric: Optional[str] = None
+    is_storm: bool = False
     model: Optional[str] = None
 
 
 @router.post("/quick-analyze")
 async def quick_analyze(req: QuickRCARequest, db: Session = Depends(get_db)):
     """
-    Tek event veya server+metric için hızlı LLM kök neden analizi.
+    Tek event, server+metric, veya storm (çoklu event) için hızlı LLM kök neden analizi.
     OpsCenter'dan inline çağrılır.
     """
     import json as json_lib
     from app.models.event import SystemEvent
     from app.models.server import Server
+    from datetime import timedelta
 
-    # Event bağlamı topla
-    event = None
-    server = None
-    related_events = []
+    # Tüm event ID'leri birleştir
+    all_event_ids: List[int] = []
+    if req.event_ids:
+        all_event_ids = req.event_ids[:30]  # max 30 event
+    elif req.event_id:
+        all_event_ids = [req.event_id]
 
-    if req.event_id:
-        event = db.query(SystemEvent).filter(SystemEvent.id == req.event_id).first()
-        if event:
-            server_id = event.server_id
-            metric = (event.raw_data or {}).get("metric") or event.event_type
-        else:
-            server_id = req.server_id
-            metric = req.metric
-    else:
-        server_id = req.server_id
-        metric = req.metric
+    # Event'leri yükle
+    seed_events: List[SystemEvent] = []
+    if all_event_ids:
+        seed_events = db.query(SystemEvent).filter(
+            SystemEvent.id.in_(all_event_ids)
+        ).all()
 
-    if server_id:
-        server = db.query(Server).filter(Server.id == server_id).first()
+    # Metrik ve server bilgisi
+    metric = req.metric
+    if not metric and seed_events:
+        metric = (seed_events[0].raw_data or {}).get("metric") or seed_events[0].event_type
 
-    # Son 24 saatteki aynı metrik eventleri getir
-    if server_id and metric:
-        from datetime import datetime, timedelta
-        since = datetime.utcnow() - timedelta(hours=24)
-        related_events = (
-            db.query(SystemEvent)
-            .filter(
-                SystemEvent.server_id == server_id,
-                SystemEvent.created_at >= since,
-            )
-            .order_by(SystemEvent.last_seen.desc())
-            .limit(20)
-            .all()
+    # Storm veya tek sunucu?
+    is_storm = req.is_storm or len({e.server_id for e in seed_events if e.server_id}) > 1
+
+    # Etkilenen sunucuları topla
+    server_ids = list({e.server_id for e in seed_events if e.server_id})
+    if req.server_id and req.server_id not in server_ids:
+        server_ids.append(req.server_id)
+
+    # Sunucu bilgileri
+    servers_map: dict = {}
+    for s in db.query(Server).filter(Server.id.in_(server_ids)).all():
+        servers_map[s.id] = s
+
+    # Son 6 saatteki ilgili eventleri her sunucu için topla
+    since = datetime.utcnow() - timedelta(hours=6)
+    related_events: List[SystemEvent] = (
+        db.query(SystemEvent)
+        .filter(
+            SystemEvent.server_id.in_(server_ids),
+            SystemEvent.last_seen >= since,
         )
+        .order_by(SystemEvent.last_seen.desc())
+        .limit(50)
+        .all()
+    )
 
-    # Prompt oluştur
-    server_name = server.name if server else f"server_id={server_id}"
-    tier = getattr(server, "tier", "unknown") or "unknown" if server else "unknown"
-
-    event_lines = []
+    # Her sunucu için özet satır oluştur
+    by_server: dict = {}
     for ev in related_events:
-        raw = ev.raw_data or {}
-        m = raw.get("metric") or ev.event_type
-        val = raw.get("current_value")
-        val_str = f" ({val:.1f})" if val is not None else ""
-        event_lines.append(
-            f"  - [{ev.severity.upper()}] {m}{val_str} — {ev.title} "
-            f"(oluşum: {ev.occurrence_count or 1}x, "
-            f"son: {ev.last_seen.strftime('%H:%M') if ev.last_seen else '?'})"
-        )
+        sid = ev.server_id
+        if sid not in by_server:
+            by_server[sid] = []
+        by_server[sid].append(ev)
 
-    if not event_lines:
-        if event:
-            raw = event.raw_data or {}
+    # Prompt bağlamı
+    if is_storm:
+        server_sections = []
+        for sid, evs in by_server.items():
+            s = servers_map.get(sid)
+            sname = s.name if s else f"server#{sid}"
+            ip = s.ip_address if s else "?"
+            tier = getattr(s, "tier", "unknown") or "unknown" if s else "unknown"
+            lines = []
+            for ev in evs[:5]:
+                raw = ev.raw_data or {}
+                m = raw.get("metric") or ev.event_type
+                val = raw.get("current_value")
+                val_str = f" %{val:.0f}" if val is not None else ""
+                lines.append(f"    [{ev.severity.upper()}] {m}{val_str} — {ev.title[:80]} ({ev.occurrence_count or 1}x)")
+            server_sections.append(
+                f"  {sname} ({ip}, {tier}):\n" + "\n".join(lines)
+            )
+
+        context_block = "\n".join(server_sections) or "  (veri yok)"
+        prompt = f"""Sen bir Linux/altyapı uzmanısın. Aynı anda {len(server_ids)} farklı sunucuyu etkileyen ALARM FIRTINASI için kök neden analizi yap.
+
+Metrik: {metric}
+Etkilenen sunucular ({len(server_ids)}):
+{context_block}
+
+Bu alarm fırtınası büyük ihtimalle ortak bir altyapı sorununa işaret ediyor (ağ, depolama, NTP, shared storage, hypervisor vb.).
+
+Yalnızca şu JSON formatında yanıt ver:
+{{
+  "root_cause": "Ortak kök neden — 1-2 cümle, teknik ve net",
+  "likely_cause": "En olası ortak sebep (paylaşılan altyapı unsuru)",
+  "impact": "Etkilenen servisler ve sistemdeki genel etki",
+  "actions": [
+    "Hemen yap: ...",
+    "Kontrol et: ..."
+  ],
+  "affected_summary": "Hangi tier/tip sunucular etkilendi özeti",
+  "severity_assessment": "critical|high|medium|low",
+  "confidence": "high|medium|low"
+}}"""
+    else:
+        # Tek sunucu analizi
+        server = servers_map.get(server_ids[0]) if server_ids else None
+        server_name = server.name if server else f"server_id={server_ids[0] if server_ids else '?'}"
+        tier = getattr(server, "tier", "unknown") or "unknown" if server else "unknown"
+        ip = server.ip_address if server else "?"
+
+        event_lines = []
+        for ev in (related_events[:15]):
+            raw = ev.raw_data or {}
+            m = raw.get("metric") or ev.event_type
             val = raw.get("current_value")
-            event_lines = [f"  - [{event.severity.upper()}] {metric} ({val:.1f}% if val else '') — {event.title}"]
+            val_str = f" %{val:.0f}" if val is not None else ""
+            event_lines.append(
+                f"  [{ev.severity.upper()}] {m}{val_str} — {ev.title[:80]} "
+                f"({ev.occurrence_count or 1}x, {ev.last_seen.strftime('%H:%M') if ev.last_seen else '?'})"
+            )
+        ctx = "\n".join(event_lines) or "  (event verisi yok)"
 
-    ctx = "\n".join(event_lines) or "  (event verisi yok)"
+        prompt = f"""Sen bir Linux/altyapı uzmanısın. Aşağıdaki alarm için KISA ve NET bir kök neden analizi yap.
 
-    current_event_detail = ""
-    if event:
-        raw = event.raw_data or {}
-        current_event_detail = (
-            f"Tetikleyen event: {event.title}\n"
-            f"Severity: {event.severity}\n"
-            f"Değer: {raw.get('current_value', '?')} "
-            f"(ort: {raw.get('mean_value', '?')}, "
-            f"z-score: {raw.get('z_score', '?')})\n"
-            f"Oluşum: {event.occurrence_count or 1}x\n"
-        )
-
-    prompt = f"""Sen bir Linux/altyapı uzmanısın. Aşağıdaki alarm için KISA ve NET bir kök neden analizi yap.
-
-Sunucu: {server_name} (IP: {getattr(server, 'ip_address', '?') if server else '?'}, Tier: {tier})
+Sunucu: {server_name} (IP: {ip}, Tier: {tier})
 Metrik: {metric}
 
-{current_event_detail}
-Son 24 saatteki alarmlar:
+Son 6 saatteki alarmlar:
 {ctx}
 
-Yalnızca şu JSON formatında yanıt ver (başka hiçbir şey yazma):
+Yalnızca şu JSON formatında yanıt ver:
 {{
   "root_cause": "Kök neden — 1-2 cümle, teknik ve net",
   "likely_cause": "En olası sebep",
@@ -428,10 +472,16 @@ Yalnızca şu JSON formatında yanıt ver (başka hiçbir şey yazma):
     except req_lib.exceptions.Timeout:
         analysis = {"root_cause": "AI yanıt süresi aşıldı (60s)", "confidence": "low"}
 
+    display_server = (
+        f"{len(server_ids)} sunucu (fırtına)" if is_storm
+        else (servers_map[server_ids[0]].name if server_ids and server_ids[0] in servers_map else "?")
+    )
     return {
-        "server": server_name,
+        "server": display_server,
         "metric": metric,
         "event_count": len(related_events),
+        "is_storm": is_storm,
+        "server_count": len(server_ids),
         "analysis": analysis,
         "model": active_model,
         "analyzed_at": datetime.utcnow().isoformat(),

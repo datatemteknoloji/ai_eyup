@@ -17,6 +17,7 @@ interface RCAResult {
   likely_cause?: string
   impact?: string
   actions?: string[]
+  affected_summary?: string
   severity_assessment?: string
   confidence?: string
 }
@@ -26,9 +27,10 @@ interface RCAResponse {
 }
 
 function RCAPanel({
-  eventId, serverId, metric, onClose
+  eventId, eventIds, serverId, metric, isStorm, onClose
 }: {
-  eventId?: number; serverId?: number; metric: string; onClose: () => void
+  eventId?: number; eventIds?: number[]; serverId?: number
+  metric: string; isStorm?: boolean; onClose: () => void
 }) {
   const [result, setResult] = useState<RCAResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -41,7 +43,13 @@ function RCAPanel({
       const r = await fetch(`${API_BASE_URL}/rca/quick-analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: eventId, server_id: serverId, metric }),
+        body: JSON.stringify({
+          event_id: eventId,
+          event_ids: eventIds,
+          server_id: serverId,
+          metric,
+          is_storm: isStorm ?? false,
+        }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       setResult(await r.json())
@@ -61,7 +69,9 @@ function RCAPanel({
   return (
     <div className="mt-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-cyan-400">🔍 AI Kök Neden Analizi</span>
+        <span className="text-xs font-semibold text-cyan-400">
+          {isStorm ? '🔍 AI Fırtına Analizi (tüm sunucular)' : '🔍 AI Kök Neden Analizi'}
+        </span>
         <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-300">✕</button>
       </div>
 
@@ -89,6 +99,12 @@ function RCAPanel({
             <div>
               <span className="text-[10px] text-gray-500 uppercase">Olası Sebep</span>
               <p className="text-gray-300 mt-0.5">{result.analysis.likely_cause}</p>
+            </div>
+          )}
+          {result.analysis.affected_summary && (
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase">Etkilenen Tier/Tip</span>
+              <p className="text-gray-300 mt-0.5">{result.analysis.affected_summary}</p>
             </div>
           )}
           {result.analysis.impact && (
@@ -383,9 +399,11 @@ function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) 
 
           {showRCA && (
             <RCAPanel
-              eventId={item.event_ids[0]}
-              serverId={item.server ? undefined : undefined}
+              eventId={item.type !== 'storm' ? item.event_ids[0] : undefined}
+              eventIds={item.type === 'storm' ? item.event_ids : undefined}
+              serverId={item.server?.name ? undefined : undefined}
               metric={item.metric}
+              isStorm={item.type === 'storm'}
               onClose={() => setShowRCA(false)}
             />
           )}
