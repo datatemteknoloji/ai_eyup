@@ -1,13 +1,18 @@
 """
-Ops Command Center API — "Şu an ne yapmalıyım?" sorusuna tek endpoint'te yanıt.
+Ops Command Center API — Verimli, sunucu odaklı alarm yönetimi.
 
 GET /ops/command-center
-  Açık event'leri severity + storm bilgisiyle gruplar,
-  üç katmana ayırır: red (hemen bak), yellow (izle), green (ok).
-  Her gruba inline aksiyonlar ekler.
+  Sunucu bazlı gruplama: her sunucunun tüm açık alarmları tek kart.
+  Storm grupları ayrı blok. Sağlık skoru dahil.
 
 GET /ops/summary
-  Hafif özet — sadece sayılar, header/banner için.
+  Hafif özet — navbar badge, dashboard kart.
+
+POST /ops/snooze
+  Event veya sunucu bazında belirtilen süre snooze.
+
+GET /ops/health-score
+  0-100 altyapı sağlık skoru + kategori breakdown.
 """
 from __future__ import annotations
 
@@ -16,7 +21,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -27,16 +34,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SEV_RANK = {"emergency": 4, "critical": 3, "warning": 2, "info": 1}
+SEV_SCORE = {"emergency": 25, "critical": 15, "warning": 5, "info": 1}
 
-# Kaç dakika içindeki eventleri "aktif" sayalım
 ACTIVE_WINDOW_HOURS = 24
 
+# ── Snoozed event ID seti (in-memory, process-içi) ───────────────────────────
+# Daha kalıcı çözüm için DB column eklenebilir.
+_snoozed: Dict[int, datetime] = {}   # event_id → snooze_until
 
-def _server_map(db: Session) -> Dict[int, Dict[str, str]]:
-    servers = db.query(Server.id, Server.name, Server.hostname, Server.ip_address,
-                        Server.tier).all()  # type: ignore[attr-defined]
+
+def _is_snoozed(event_id: int) -> bool:
+    until = _snoozed.get(event_id)
+    if until is None:
+        return False
+    if datetime.utcnow() >= until:
+        del _snoozed[event_id]
+        return False
+    return True
+
+
+def _server_map(db: Session) -> Dict[int, Dict[str, Any]]:
+    servers = db.query(
+        Server.id, Server.name, Server.hostname, Server.ip_address, Server.tier  # type: ignore[attr-defined]
+    ).all()
     return {
         s.id: {
+            "id": s.id,
             "name": s.name,
             "hostname": s.hostname or "",
             "ip": s.ip_address or "",
@@ -46,87 +69,9 @@ def _server_map(db: Session) -> Dict[int, Dict[str, str]]:
     }
 
 
-_SMAP_REF: Dict[int, Dict[str, str]] = {}
-
-
-def _build_item(
-    group_type: str,
-    events: List[SystemEvent],
-    server_info: Optional[Dict[str, str]],
-    metric: str,
-    storm_incident_id: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Tek bir aksiyon öğesi oluşturur."""
-    max_sev = max(events, key=lambda e: SEV_RANK.get(e.severity, 0)).severity
-    first_event = min(events, key=lambda e: e.created_at or datetime.min)
-    last_event = max(events, key=lambda e: e.last_seen or datetime.min)
-
-    actions = []
-    if group_type == "storm":
-        actions = ["rca", "suppress_all", "acknowledge_all"]
-    elif max_sev == "critical":
-        actions = ["rca", "mark_known", "acknowledge"]
-    else:
-        actions = ["mark_known", "acknowledge", "suppress"]
-
-    sample_value = None
-    if events:
-        raw = events[0].raw_data or {}
-        sample_value = raw.get("current_value")
-
-    # Storm'da tüm etkilenen sunucuları listele
-    affected_servers = None
-    if group_type == "storm":
-        seen_ids: set = set()
-        affected_servers = []
-        for ev in events:
-            if ev.server_id and ev.server_id not in seen_ids:
-                seen_ids.add(ev.server_id)
-                # server_info parametresi storm için None olarak gelir,
-                # smap'ten kendimiz bakıyoruz
-                si = _SMAP_REF.get(ev.server_id) if _SMAP_REF else None
-                affected_servers.append({
-                    "id": ev.server_id,
-                    "name": si["name"] if si else f"server#{ev.server_id}",
-                    "ip": si["ip"] if si else "",
-                    "tier": si["tier"] if si else "unknown",
-                })
-
-    return {
-        "type": group_type,             # "storm" | "single" | "group"
-        "metric": metric,
-        "severity": max_sev,
-        "event_count": len(events),
-        "event_ids": [e.id for e in events],
-        "server_count": len({e.server_id for e in events}),
-        "server": server_info,
-        "affected_servers": affected_servers,   # storm'da dolu, diğerlerinde None
-        "storm_incident_id": storm_incident_id,
-        "first_seen": first_event.created_at.isoformat() if first_event.created_at else None,
-        "last_seen": last_event.last_seen.isoformat() if last_event.last_seen else None,
-        "occurrence_count": sum(e.occurrence_count or 1 for e in events),
-        "current_value": sample_value,
-        "actions": actions,
-    }
-
-
-@router.get("/command-center")
-async def command_center(db: Session = Depends(get_db)):
-    """
-    Açık, çözülmemiş event'leri üç kategoriye ayırır:
-      red    → severity critical/emergency veya fırtına → hemen bak
-      yellow → severity warning, tekrarlayan → izle
-      green_count → bastırılmış/bilinen eventlerin sayısı
-    """
-    global _SMAP_REF
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
-    smap = _server_map(db)
-    _SMAP_REF = smap
-
-    # Tüm açık, bilinmeyen, onaylanmamış eventler
-    # Log entry'ler için minimum tekrar filtresi uygula
-    from sqlalchemy import or_, and_
-    events: List[SystemEvent] = (
+def _active_events(db: Session, since: datetime) -> List[SystemEvent]:
+    """Aktif, bilinmeyen, onaylanmamış, snooze'suz eventler."""
+    rows: List[SystemEvent] = (
         db.query(SystemEvent)
         .filter(
             SystemEvent.resolved == False,        # noqa: E712
@@ -134,9 +79,7 @@ async def command_center(db: Session = Depends(get_db)):
             SystemEvent.is_acknowledged == False, # noqa: E712
             SystemEvent.last_seen >= since,
             or_(
-                # Metrik anomaliler: her zaman göster
                 SystemEvent.event_type != "log_entry",
-                # Log entry: critical için min 3x, warning için min 2x
                 and_(
                     SystemEvent.event_type == "log_entry",
                     SystemEvent.severity == "critical",
@@ -150,129 +93,263 @@ async def command_center(db: Session = Depends(get_db)):
             ),
         )
         .order_by(SystemEvent.last_seen.desc())
-        .limit(2000)
+        .limit(3000)
         .all()
     )
+    return [e for e in rows if not _is_snoozed(e.id)]
 
-    # Bastırılan / bilinen / onaylanmış / çözülmüş → "Kontrol Altında"
+
+# ── Sağlık Skoru ─────────────────────────────────────────────────────────────
+
+def _calc_health_score(events: List[SystemEvent], server_count: int) -> Dict[str, Any]:
+    """
+    0-100 sağlık skoru. 100 = mükemmel, 0 = felaket.
+    Formül: max(0, 100 - penalty), penalty = weighted alarm sum / server_count
+    """
+    if server_count == 0:
+        return {"score": 100, "grade": "A", "label": "Veri Yok"}
+
+    penalty = sum(SEV_SCORE.get(e.severity, 1) for e in events)
+    # Normalize by server count — büyük altyapıda tek sorun skoru çok düşürmesin
+    normalized = min(penalty / max(server_count, 1), 100)
+    score = max(0, round(100 - normalized))
+
+    if score >= 90:
+        grade, label, color = "A", "Sağlıklı", "green"
+    elif score >= 75:
+        grade, label, color = "B", "İyi", "blue"
+    elif score >= 55:
+        grade, label, color = "C", "Dikkat", "yellow"
+    elif score >= 35:
+        grade, label, color = "D", "Sorunlu", "orange"
+    else:
+        grade, label, color = "F", "Kritik", "red"
+
+    by_sev: Dict[str, int] = defaultdict(int)
+    for e in events:
+        by_sev[e.severity] += 1
+
+    return {
+        "score": score, "grade": grade, "label": label, "color": color,
+        "penalty": round(normalized, 1),
+        "severity_breakdown": dict(by_sev),
+        "event_count": len(events),
+        "server_count": server_count,
+    }
+
+
+# ── Sunucu bazlı gruplama ─────────────────────────────────────────────────────
+
+def _build_server_card(
+    server_info: Dict[str, Any],
+    events: List[SystemEvent],
+) -> Dict[str, Any]:
+    max_sev = max(events, key=lambda e: SEV_RANK.get(e.severity, 0)).severity
+    last_ev = max(events, key=lambda e: e.last_seen or datetime.min)
+
+    # Metrik özetleri
+    metrics: List[Dict[str, Any]] = []
+    for ev in sorted(events, key=lambda e: -SEV_RANK.get(e.severity, 0))[:8]:
+        raw = ev.raw_data or {}
+        m = raw.get("metric") or ev.event_type
+        val = raw.get("current_value")
+        # log_entry için başlıktan oku
+        import re
+        display = m
+        if ev.event_type == "log_entry":
+            cat = raw.get("category", "")
+            if cat and cat != "General":
+                display = cat
+            elif ev.title and ev.title != "Log Entry":
+                display = re.sub(r'\s*\[x\d+\]', '', ev.title).strip()[:60]
+            else:
+                display = "Log Girişi"
+        metrics.append({
+            "event_id": ev.id,
+            "metric": display,
+            "severity": ev.severity,
+            "value": round(val, 1) if val is not None else None,
+            "occurrence_count": ev.occurrence_count or 1,
+            "last_seen": ev.last_seen.isoformat() if ev.last_seen else None,
+            "event_type": ev.event_type,
+        })
+
+    all_event_ids = [e.id for e in events]
+
+    return {
+        "server": server_info,
+        "max_severity": max_sev,
+        "event_count": len(events),
+        "event_ids": all_event_ids,
+        "metrics": metrics,
+        "last_seen": last_ev.last_seen.isoformat() if last_ev.last_seen else None,
+        # Aksiyon önerileri
+        "suggested_actions": _suggest_actions(events, server_info),
+    }
+
+
+def _suggest_actions(events: List[SystemEvent], server: Dict[str, Any]) -> List[str]:
+    actions = []
+    metrics = {(ev.raw_data or {}).get("metric") or ev.event_type for ev in events}
+
+    has_cpu = any("cpu" in (m or "") for m in metrics)
+    has_mem = any("memory" in (m or "") or "swap" in (m or "") for m in metrics)
+    has_disk = any("disk" in (m or "") for m in metrics)
+    has_load = any("load" in (m or "") or "procs_blocked" in (m or "") for m in metrics)
+    has_log = any(e.event_type == "log_entry" for e in events)
+
+    if has_cpu and has_load:
+        actions.append("top -b -n1 ile süreçleri kontrol et")
+    elif has_cpu:
+        actions.append("ps aux --sort=-%cpu | head -10")
+    if has_mem:
+        actions.append("free -h && swapon --show")
+    if has_disk:
+        actions.append("df -h && iostat -x 1 3")
+    if has_log:
+        actions.append("journalctl -p err --since '1 hour ago' | tail -50")
+    if not actions:
+        actions.append("dmesg | tail -20 ve journal kontrol et")
+
+    tier = server.get("tier", "unknown")
+    if tier == "production" and len(events) >= 3:
+        actions.insert(0, "⚠ Production sunucu — eskalasyon değerlendir")
+
+    return actions[:4]
+
+
+# ── API Endpoint'leri ─────────────────────────────────────────────────────────
+
+@router.get("/command-center")
+async def command_center(db: Session = Depends(get_db)):
+    """
+    Sunucu odaklı alarm merkezi:
+      - storms: ortak metrik fırtınaları
+      - critical_servers: sunucu bazlı kart listesi (critical/emergency)
+      - warning_servers: sunucu bazlı kart listesi (warning)
+      - health_score: altyapı sağlık skoru
+      - green_count: bastırılan / çözülen sayısı
+    """
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    smap = _server_map(db)
+    total_servers = len(smap)
+
+    events = _active_events(db, since)
+
+    # Bastırılan / bilinen / onaylanmış sayısı
     green_count: int = (
         db.query(SystemEvent)
         .filter(
             SystemEvent.last_seen >= since,
-            (
-                (SystemEvent.resolved == True) |     # noqa: E712
-                (SystemEvent.is_known == True) |     # noqa: E712
-                (SystemEvent.is_acknowledged == True) # noqa: E712
+            or_(
+                SystemEvent.resolved == True,       # noqa: E712
+                SystemEvent.is_known == True,       # noqa: E712
+                SystemEvent.is_acknowledged == True, # noqa: E712
             ),
         )
         .count()
     )
 
-    # Açık storm incident'ları
+    # ── Storm tespiti ─────────────────────────────────────────────────────────
     storm_incidents: List[Incident] = (
         db.query(Incident)
-        .filter(
-            Incident.source == "storm_detector",
-            Incident.status != "resolved",
-        )
+        .filter(Incident.source == "storm_detector", Incident.status != "resolved")
         .all()
     )
     storm_event_ids: set = set()
-    storm_items: List[Dict[str, Any]] = []
+    storms: List[Dict[str, Any]] = []
+
     for inc in storm_incidents:
         eids = set(inc.related_events or [])
         storm_event_ids.update(eids)
         related_evs = [e for e in events if e.id in eids]
         if not related_evs:
             continue
-        # Metrik adını başlıktan çıkar
+
         metric_hint = inc.title.replace("⚡ ALARM FIRTINASI:", "").split("—")[0].strip()
-        storm_items.append(_build_item(
-            "storm", related_evs, None, metric_hint, storm_incident_id=inc.id
-        ))
+        max_sev = max(related_evs, key=lambda e: SEV_RANK.get(e.severity, 0)).severity
 
-    # Storm dışı eventleri sunucu+gruplama_anahtarı bazında grupla
-    by_server_metric: Dict[tuple, List[SystemEvent]] = defaultdict(list)
+        affected_servers = []
+        seen_sids: set = set()
+        for ev in related_evs:
+            if ev.server_id and ev.server_id not in seen_sids:
+                seen_sids.add(ev.server_id)
+                si = smap.get(ev.server_id, {})
+                affected_servers.append({
+                    "id": ev.server_id,
+                    "name": si.get("name", f"server#{ev.server_id}"),
+                    "ip": si.get("ip", ""),
+                    "tier": si.get("tier", "unknown"),
+                })
+
+        storms.append({
+            "incident_id": inc.id,
+            "metric": metric_hint,
+            "severity": max_sev,
+            "server_count": len(seen_sids),
+            "event_count": len(related_evs),
+            "event_ids": [e.id for e in related_evs],
+            "affected_servers": affected_servers,
+            "last_seen": inc.updated_at.isoformat() if inc.updated_at else inc.created_at.isoformat() if inc.created_at else None,
+        })
+
+    # ── Sunucu bazlı gruplama ─────────────────────────────────────────────────
+    by_server: Dict[Optional[int], List[SystemEvent]] = defaultdict(list)
     for ev in events:
-        if ev.id in storm_event_ids:
-            continue
+        if ev.id not in storm_event_ids:
+            by_server[ev.server_id].append(ev)
 
-        if ev.event_type == "metric_anomaly":
-            # Metrik anomaliler → metrik adıyla grupla
-            group_key = (ev.raw_data or {}).get("metric") or ev.event_type
+    critical_servers: List[Dict[str, Any]] = []
+    warning_servers: List[Dict[str, Any]] = []
+
+    for server_id, sevs in by_server.items():
+        si = smap.get(server_id, {
+            "id": server_id, "name": f"server#{server_id}",
+            "hostname": "", "ip": "", "tier": "unknown"
+        }) if server_id else {
+            "id": None, "name": "Bilinmeyen", "hostname": "", "ip": "", "tier": "unknown"
+        }
+
+        card = _build_server_card(si, sevs)
+        max_sev = card["max_severity"]
+        tier = si.get("tier", "unknown")
+
+        if max_sev in ("critical", "emergency") or (max_sev == "warning" and tier == "production"):
+            critical_servers.append(card)
         else:
-            # Log entry ve diğerleri → kategori veya title'ın ilk 80 karakteriyle grupla
-            category = (ev.raw_data or {}).get("category") or ""
-            if category and category != "General":
-                group_key = f"log:{category}"
-            elif ev.title and ev.title != "Log Entry":
-                # Başlıktan [] tekrar sayaçlarını temizle, ilk 80 karakter
-                import re
-                clean = re.sub(r'\s*\[x\d+\]', '', ev.title).strip()
-                group_key = clean[:80] if clean else ev.event_type
-            else:
-                group_key = ev.event_type or "unknown"
+            warning_servers.append(card)
 
-        by_server_metric[(ev.server_id, group_key)].append(ev)
+    # Severity'ye göre sırala (critical > warning, sonra event sayısı)
+    def sort_key(c: Dict[str, Any]) -> tuple:
+        return (-SEV_RANK.get(c["max_severity"], 0), -c["event_count"])
 
-    red_items: List[Dict[str, Any]] = []
-    yellow_items: List[Dict[str, Any]] = []
+    critical_servers.sort(key=sort_key)
+    warning_servers.sort(key=sort_key)
 
-    for (server_id, metric), evs in by_server_metric.items():
-        max_sev = max(evs, key=lambda e: SEV_RANK.get(e.severity, 0)).severity
-        sinfo = smap.get(server_id) if server_id else None
-
-        # Production tier kritik → red; staging warning → yellow
-        tier = (sinfo or {}).get("tier", "unknown")
-
-        # Basit gruplama: aynı sunucuda birden fazla event varsa "group", yoksa "single"
-        gtype = "group" if len(evs) > 1 else "single"
-        item = _build_item(gtype, evs, sinfo, metric)
-
-        if max_sev in ("critical", "emergency"):
-            red_items.append(item)
-        elif max_sev == "warning":
-            # Production'da warning de önemli, staging'de daha az acil
-            if tier == "production":
-                red_items.append(item)
-            else:
-                yellow_items.append(item)
-
-    # Storm item'ları red başına ekle
-    red_items = storm_items + red_items
-
-    # Severity → son görülme sırasıyla sırala
-    def sort_key(item: Dict[str, Any]):
-        return (
-            -SEV_RANK.get(item["severity"], 0),
-            -(item["server_count"] or 1),
-        )
-
-    red_items.sort(key=sort_key)
-    yellow_items.sort(key=sort_key)
+    health = _calc_health_score(events, total_servers)
 
     return {
-        "red": red_items[:50],          # max 50 kritik göster
-        "yellow": yellow_items[:100],
-        "red_count": len(red_items),
-        "yellow_count": len(yellow_items),
+        "health": health,
+        "storms": storms,
+        "critical_servers": critical_servers[:30],
+        "warning_servers": warning_servers[:50],
+        "critical_count": len(critical_servers),
+        "warning_count": len(warning_servers),
+        "storm_count": len(storms),
         "green_count": green_count,
-        "storm_count": len(storm_items),
         "generated_at": datetime.utcnow().isoformat(),
     }
 
 
 @router.get("/summary")
 async def ops_summary(db: Session = Depends(get_db)):
-    """
-    Hafif özet — sadece sayılar (navbar badge, dashboard kart).
-    """
+    """Hafif özet — navbar badge."""
     since = datetime.utcnow() - timedelta(hours=24)
     critical = (
         db.query(SystemEvent)
         .filter(
-            SystemEvent.resolved == False,  # noqa: E712
-            SystemEvent.is_known == False,  # noqa: E712
+            SystemEvent.resolved == False,        # noqa: E712
+            SystemEvent.is_known == False,        # noqa: E712
             SystemEvent.severity.in_(["critical", "emergency"]),
             SystemEvent.last_seen >= since,
         )
@@ -281,8 +358,8 @@ async def ops_summary(db: Session = Depends(get_db)):
     warning = (
         db.query(SystemEvent)
         .filter(
-            SystemEvent.resolved == False,  # noqa: E712
-            SystemEvent.is_known == False,  # noqa: E712
+            SystemEvent.resolved == False,        # noqa: E712
+            SystemEvent.is_known == False,        # noqa: E712
             SystemEvent.severity == "warning",
             SystemEvent.last_seen >= since,
         )
@@ -293,9 +370,41 @@ async def ops_summary(db: Session = Depends(get_db)):
         .filter(Incident.status.in_(["open", "investigating"]))
         .count()
     )
+    return {"critical": critical, "warning": warning, "open_incidents": open_incidents, "action_needed": critical > 0}
+
+
+# ── Snooze ────────────────────────────────────────────────────────────────────
+
+class SnoozeRequest(BaseModel):
+    event_ids: List[int]
+    minutes: int = 60   # Kaç dakika ertele
+
+
+@router.post("/snooze")
+async def snooze_events(req: SnoozeRequest, db: Session = Depends(get_db)):
+    """
+    Belirtilen event'leri X dakika erteler (snooze).
+    Bu süre zarfında komuta merkezinde görünmez.
+    """
+    if req.minutes < 1 or req.minutes > 1440:
+        raise HTTPException(status_code=400, detail="1-1440 dakika aralığında olmalı")
+
+    until = datetime.utcnow() + timedelta(minutes=req.minutes)
+    for eid in req.event_ids:
+        _snoozed[eid] = until
+
+    logger.info(f"[OpsCenter] Snooze: {len(req.event_ids)} event, {req.minutes}dk")
     return {
-        "critical": critical,
-        "warning": warning,
-        "open_incidents": open_incidents,
-        "action_needed": critical > 0,
+        "snoozed": len(req.event_ids),
+        "until": until.isoformat(),
+        "minutes": req.minutes,
     }
+
+
+@router.get("/health-score")
+async def health_score(db: Session = Depends(get_db)):
+    """Anlık altyapı sağlık skoru."""
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    smap = _server_map(db)
+    events = _active_events(db, since)
+    return _calc_health_score(events, len(smap))
