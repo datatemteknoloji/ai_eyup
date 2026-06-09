@@ -100,13 +100,30 @@ async def command_center(db: Session = Depends(get_db)):
     smap = _server_map(db)
 
     # Tüm açık, bilinmeyen, onaylanmamış eventler
+    # Log entry'ler için minimum tekrar filtresi uygula
+    from sqlalchemy import or_, and_
     events: List[SystemEvent] = (
         db.query(SystemEvent)
         .filter(
-            SystemEvent.resolved == False,       # noqa: E712
-            SystemEvent.is_known == False,       # noqa: E712
+            SystemEvent.resolved == False,        # noqa: E712
+            SystemEvent.is_known == False,        # noqa: E712
             SystemEvent.is_acknowledged == False, # noqa: E712
             SystemEvent.last_seen >= since,
+            or_(
+                # Metrik anomaliler: her zaman göster
+                SystemEvent.event_type != "log_entry",
+                # Log entry: critical için min 3x, warning için min 2x
+                and_(
+                    SystemEvent.event_type == "log_entry",
+                    SystemEvent.severity == "critical",
+                    SystemEvent.occurrence_count >= 3,
+                ),
+                and_(
+                    SystemEvent.event_type == "log_entry",
+                    SystemEvent.severity == "warning",
+                    SystemEvent.occurrence_count >= 2,
+                ),
+            ),
         )
         .order_by(SystemEvent.last_seen.desc())
         .limit(2000)

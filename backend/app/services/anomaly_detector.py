@@ -15,21 +15,26 @@ logger = logging.getLogger(__name__)
 
 
 # Anomali tespiti icin kritik metrikler ve esikleri
+# z_threshold: kaç sigma sapma olunca alarm üretilir
+#   - 3.0 = %99.7 normal dağılım (her 370 ölçümde 1 alarm — gürültülü)
+#   - 3.5 = %99.95 (her 4.400 ölçümde 1 — dengeli)  ← yeni default
+#   - 4.0 = %99.994 (her 15.800 ölçümde 1 — hassas ortamlar)
+# min_history: eşik devreye girmeden önce gereken minimum veri noktası
 ANOMALY_CONFIG = {
-    "cpu_usage_percent":         {"warning": 80.0, "critical": 95.0, "z_threshold": 3.0, "min_history": 10},
-    "cpu_iowait_percent":        {"warning": 20.0, "critical": 40.0, "z_threshold": 3.0, "min_history": 10},
-    "cpu_steal_percent":         {"warning": 5.0,  "critical": 15.0, "z_threshold": 3.0, "min_history": 10},
-    "memory_usage_percent":      {"warning": 85.0, "critical": 95.0, "z_threshold": 3.0, "min_history": 10},
-    "swap_usage_percent":        {"warning": 50.0, "critical": 80.0, "z_threshold": 2.5, "min_history": 5},
-    "disk_root_usage_percent":   {"warning": 80.0, "critical": 90.0, "z_threshold": 2.5, "min_history": 5},
-    "disk_io_utilization_percent":{"warning": 80.0,"critical": 95.0, "z_threshold": 3.0, "min_history": 10},
-    "load1":                     {"warning": None, "critical": None, "z_threshold": 3.0, "min_history": 10},  # CPU bazli dinamik
-    "procs_blocked":             {"warning": 5.0,  "critical": 20.0, "z_threshold": 3.0, "min_history": 5},
-    "network_rx_errors_per_sec": {"warning": 1.0,  "critical": 10.0, "z_threshold": 3.0, "min_history": 5},
-    "network_tx_errors_per_sec": {"warning": 1.0,  "critical": 10.0, "z_threshold": 3.0, "min_history": 5},
-    "network_rx_drops_per_sec":  {"warning": 1.0,  "critical": 10.0, "z_threshold": 3.0, "min_history": 5},
-    "network_tx_drops_per_sec":  {"warning": 1.0,  "critical": 10.0, "z_threshold": 3.0, "min_history": 5},
-    "context_switches_per_sec":  {"warning": None, "critical": None, "z_threshold": 3.5, "min_history": 15},
+    "cpu_usage_percent":         {"warning": 85.0, "critical": 95.0, "z_threshold": 3.5, "min_history": 20},
+    "cpu_iowait_percent":        {"warning": 25.0, "critical": 50.0, "z_threshold": 3.5, "min_history": 20},
+    "cpu_steal_percent":         {"warning": 8.0,  "critical": 20.0, "z_threshold": 3.5, "min_history": 20},
+    "memory_usage_percent":      {"warning": 88.0, "critical": 96.0, "z_threshold": 3.5, "min_history": 20},
+    "swap_usage_percent":        {"warning": 60.0, "critical": 85.0, "z_threshold": 3.5, "min_history": 10},
+    "disk_root_usage_percent":   {"warning": 82.0, "critical": 92.0, "z_threshold": 3.5, "min_history": 10},
+    "disk_io_utilization_percent":{"warning": 85.0,"critical": 96.0, "z_threshold": 3.5, "min_history": 20},
+    "load1":                     {"warning": None, "critical": None, "z_threshold": 3.5, "min_history": 20},
+    "procs_blocked":             {"warning": 10.0, "critical": 30.0, "z_threshold": 3.5, "min_history": 10},
+    "network_rx_errors_per_sec": {"warning": 5.0,  "critical": 20.0, "z_threshold": 3.5, "min_history": 10},
+    "network_tx_errors_per_sec": {"warning": 5.0,  "critical": 20.0, "z_threshold": 3.5, "min_history": 10},
+    "network_rx_drops_per_sec":  {"warning": 5.0,  "critical": 20.0, "z_threshold": 3.5, "min_history": 10},
+    "network_tx_drops_per_sec":  {"warning": 5.0,  "critical": 20.0, "z_threshold": 3.5, "min_history": 10},
+    "context_switches_per_sec":  {"warning": None, "critical": None, "z_threshold": 4.0, "min_history": 30},
 }
 
 

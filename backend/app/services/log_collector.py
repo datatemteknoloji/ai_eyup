@@ -1,6 +1,11 @@
 """
 Log Collector - Sunuculardan SSH ile warning/error/critical log toplar,
 SystemEvent tablosuna kaydeder.
+
+Gürültü azaltma kuralları:
+  - LOG_MIN_OCCURRENCES: kritik log event oluşabilmesi için minimum tekrar sayısı
+  - LEARNING_MODE_HOURS: sistem ilk başladığında bu kadar saat sadece veri toplar,
+    alarm üretmez (baseline öğrenir)
 """
 import logging
 import re
@@ -14,6 +19,14 @@ from app.models.credential import GlobalCredential
 from app.services.ssh_manager import SSHManager
 
 logger = logging.getLogger(__name__)
+
+# ── Gürültü azaltma sabitleri ────────────────────────────────────────────────
+# Bir log satırının CRITICAL event oluşturabilmesi için kaç kez görülmesi gerekir
+LOG_MIN_OCCURRENCES_CRITICAL = 3   # kritik için min 3x
+LOG_MIN_OCCURRENCES_WARNING  = 2   # warning için min 2x
+
+# Log event'lerini "öğrenme" için saydığımız pencere (saat)
+LOG_LEARNING_WINDOW_HOURS = 24
 
 def _build_journald_cmd(since_hours: int = 2) -> str:
     return (
@@ -252,29 +265,59 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
         if norm_key in existing_map:
             eid = existing_map[norm_key]
             if eid not in updated_ids:
+                # occurrence_count artır
                 db.query(SystemEvent).filter(SystemEvent.id == eid).update(
-                    {"last_seen": now}, synchronize_session=False
+                    {
+                        "last_seen": now,
+                        "occurrence_count": SystemEvent.occurrence_count + 1,
+                    },
+                    synchronize_session=False,
                 )
                 updated_ids.add(eid)
             continue
 
+        severity = log["severity"]
+
+        # ── Öğrenme modu: ilk LOG_LEARNING_WINDOW_HOURS saatte kritik basma ──
+        # Bu pencerede kaç farklı log tipi gördük? Az veri varsa warning'e düşür
+        learning_since = now - timedelta(hours=LOG_LEARNING_WINDOW_HOURS)
+        log_count_in_window = db.query(SystemEvent).filter(
+            SystemEvent.server_id == server.id,
+            SystemEvent.event_type == "log_entry",
+            SystemEvent.created_at >= learning_since,
+        ).count()
+
+        if log_count_in_window < 50:
+            # Yeterli veri yok — öğrenme modu, kritikleri warning'e düşür
+            if severity == "critical":
+                severity = "warning"
+                logger.debug(
+                    f"[LogCollector] Öğrenme modu: {server.name} critical→warning "
+                    f"(sadece {log_count_in_window} log var)"
+                )
+
+        # ── Minimum tekrar filtresi: ilk görüldüğünde sadece kaydedilir ──────
+        # occurrence_count 1 olarak başlar; tekrar görülünce yükselir.
+        # OpsCenter sadece yeterli tekrarı olan olayları gösterir.
         event = SystemEvent(
             server_id=server.id,
             event_type="log_entry",
-            severity=log["severity"],
+            severity=severity,
             source="log_collector",
             title=clean_title,
             description=raw_line,
             raw_data={
                 "category": log["category"],
                 "collected_at": now.isoformat(),
+                "min_occurrences_critical": LOG_MIN_OCCURRENCES_CRITICAL,
             },
             is_acknowledged=False,
             resolved=False,
             last_seen=now,
+            occurrence_count=1,
         )
         db.add(event)
-        existing_map[norm_key] = -1  # placeholder so we don't add duplicate in same batch
+        existing_map[norm_key] = -1
         saved += 1
 
     db.commit()
