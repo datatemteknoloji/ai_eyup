@@ -52,6 +52,7 @@ const Events: React.FC = () => {
   const [expandedRaw, setExpandedRaw] = useState<number | null>(null)
   const [newEvent, setNewEvent] = useState({ title: '', event_type: 'custom', severity: 'info', description: '' })
   const [groupedView, setGroupedView] = useState(true)
+  const [excludeKnown, setExcludeKnown] = useState(true)
   const [sortBy, setSortBy] = useState<keyof EventGroup>('latest_created_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [detailGroupIds, setDetailGroupIds] = useState<number[] | null>(null)
@@ -109,11 +110,12 @@ const Events: React.FC = () => {
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
-    queryKey: ['events', 'grouped', severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir],
+    queryKey: ['events', 'grouped', severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
       params.set('sort_by', sortBy as string); params.set('sort_dir', sortDir)
+      params.set('exclude_known', String(excludeKnown))
       const res = await fetch(`${API_BASE_URL}/events/grouped?${params}`)
       if (!res.ok) return { total: 0, groups: [] }
       return res.json()
@@ -422,6 +424,16 @@ const Events: React.FC = () => {
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${groupedView ? 'translate-x-4' : ''}`} />
           </div>
           <span className="text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>Benzerleri grupla</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <div onClick={() => { setExcludeKnown(v => !v); setPage(0) }}
+            className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
+            style={{ background: excludeKnown ? NEON.orange : 'rgba(100,116,139,0.5)' }}>
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${excludeKnown ? 'translate-x-4' : ''}`} />
+          </div>
+          <span className="text-xs" style={{ color: excludeKnown ? NEON.orange : 'rgba(148,163,184,0.5)' }}>
+            Bilinenleri gizle
+          </span>
         </label>
         <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{total} {groupedView ? 'grup' : 'sonuç'}</span>
       </div>

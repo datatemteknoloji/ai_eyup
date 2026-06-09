@@ -167,6 +167,22 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
             event.is_known = True
             event.known_at = now
             count += 1
+            # metric_anomaly için suppression kuralı da oluştur
+            if event.event_type == "metric_anomaly":
+                try:
+                    from app.services.baseline_engine import create_suppression_rule
+                    metric_name = (event.raw_data or {}).get("metric") or event.title[:200]
+                    create_suppression_rule(
+                        db=db,
+                        server_id=event.server_id,
+                        metric_name=metric_name,
+                        reason=f"Bilinen olay: {event.title[:80]}",
+                        created_by="known_bulk",
+                        baseline_severity="warning",
+                        scope="server",
+                    )
+                except Exception:
+                    pass
         elif data.action == "resolve" and not event.resolved:
             event.resolved = True
             event.resolved_at = now
@@ -180,15 +196,49 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/{event_id}/known")
-async def mark_event_known(event_id: int, db: Session = Depends(get_db)):
-    """Event'i Bilgim Dahilinde olarak işaretle"""
+async def mark_event_known(
+    event_id: int,
+    suppress: bool = True,  # metric_anomaly için suppression kuralı da oluştur
+    db: Session = Depends(get_db),
+):
+    """
+    Event'i Bilgim Dahilinde olarak işaretle.
+
+    suppress=True (varsayılan): metric_anomaly tipindeki eventler için
+    aynı zamanda baseline suppression kuralı oluşturur — bir sonraki
+    AIOps döngüsünde aynı alarm yeniden critical olarak gelmez (max warning).
+    """
     event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event bulunamadı")
     event.is_known = True
     event.known_at = datetime.utcnow()
     db.commit()
-    return {"success": True, "message": "Bilgim dahilinde olarak işaretlendi"}
+
+    suppression_created = False
+    if suppress and event.event_type == "metric_anomaly":
+        try:
+            from app.services.baseline_engine import create_suppression_rule
+            metric_name = (event.raw_data or {}).get("metric") or event.title[:200]
+            create_suppression_rule(
+                db=db,
+                server_id=event.server_id,
+                metric_name=metric_name,
+                reason=f"Bilinen olay — Event #{event_id}: {event.title[:80]}",
+                created_by="known_flag",
+                baseline_severity="warning",  # tamamen bastırma değil, max warning
+                baseline_value=(event.raw_data or {}).get("current_value"),
+                scope="server",
+            )
+            suppression_created = True
+        except Exception as ex:
+            logger.warning(f"[Events] known → suppression oluşturulamadı: {ex}")
+
+    return {
+        "success": True,
+        "message": "Bilgim dahilinde olarak işaretlendi",
+        "suppression_created": suppression_created,
+    }
 
 
 @router.post("/{event_id}/acknowledge")
@@ -288,6 +338,7 @@ async def list_events_grouped(
     resolved: Optional[bool] = None,
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
+    exclude_known: bool = Query(default=True),  # Bilinen eventleri varsayılan olarak gizle
     limit: int = Query(default=50, le=100),
     offset: int = 0,
     sort_by: str = Query(default="latest_created_at"),
@@ -307,6 +358,8 @@ async def list_events_grouped(
         q = q.filter(SystemEvent.resolved == resolved)
     if acknowledged is not None:
         q = q.filter(SystemEvent.is_acknowledged == acknowledged)
+    if exclude_known:
+        q = q.filter(SystemEvent.is_known == False)  # noqa: E712
     if search:
         q = q.filter(SystemEvent.title.ilike(f"%{search}%"))
 
