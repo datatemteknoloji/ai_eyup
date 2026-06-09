@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
   MessageCircle, Bot, Zap, RefreshCw, Package, Database, Terminal, Activity,
-  ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
+  ScrollText, Settings, LogOut, ChevronRight, ChevronLeft, Microscope,
 } from 'lucide-react'
 
 interface LayoutProps {
@@ -37,9 +37,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', name: 'AIOps', icon: <Brain size={18} />,
       children: [
-        { path: '/events',    name: 'Events',            icon: <ClipboardList size={16} /> },
-        { path: '/incidents', name: 'Incidents',         icon: <AlertTriangle size={16} /> },
-        { path: '/anomalies', name: 'Anomaly Detection', icon: <ScanSearch size={16} /> },
+        { path: '/events',    name: 'Events',              icon: <ClipboardList size={16} /> },
+        { path: '/incidents', name: 'Incidents',           icon: <AlertTriangle size={16} /> },
+        { path: '/anomalies', name: 'Anomaly Detection',   icon: <ScanSearch size={16} /> },
+        { path: '/rca',       name: 'Kök Neden Analizi',   icon: <Microscope size={16} /> },
       ],
     },
     { type: 'link', path: '/chat',          name: 'AI Chat',         icon: <MessageCircle size={18} /> },
