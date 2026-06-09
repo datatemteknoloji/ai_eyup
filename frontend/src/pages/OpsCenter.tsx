@@ -191,8 +191,14 @@ function metricLabel(raw: string): string {
     cpu_usage: 'CPU Kullanımı', memory_usage: 'Bellek',
     disk_usage: 'Disk', network_rx: 'Ağ Giriş', network_tx: 'Ağ Çıkış',
     load_average: 'Sistem Yükü', swap_usage: 'Swap',
+    log_entry: 'Log Girişi',
   }
-  return map[raw] || raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  if (map[raw]) return map[raw]
+  // "log:Kategori" formatı → kategori adını göster
+  if (raw.startsWith('log:')) return raw.slice(4)
+  // Ham başlık gibi görünüyorsa (boşluk, : içeriyorsa) olduğu gibi göster
+  if (raw.includes(' ') || raw.includes(':') || raw.includes('/')) return raw
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 // ── Aksiyon butonları ─────────────────────────────────────────────────────────

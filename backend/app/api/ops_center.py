@@ -150,13 +150,29 @@ async def command_center(db: Session = Depends(get_db)):
             "storm", related_evs, None, metric_hint, storm_incident_id=inc.id
         ))
 
-    # Storm dışı eventleri sunucu+metrik bazında grupla
+    # Storm dışı eventleri sunucu+gruplama_anahtarı bazında grupla
     by_server_metric: Dict[tuple, List[SystemEvent]] = defaultdict(list)
     for ev in events:
         if ev.id in storm_event_ids:
             continue
-        metric = (ev.raw_data or {}).get("metric") or ev.event_type or "unknown"
-        by_server_metric[(ev.server_id, metric)].append(ev)
+
+        if ev.event_type == "metric_anomaly":
+            # Metrik anomaliler → metrik adıyla grupla
+            group_key = (ev.raw_data or {}).get("metric") or ev.event_type
+        else:
+            # Log entry ve diğerleri → kategori veya title'ın ilk 80 karakteriyle grupla
+            category = (ev.raw_data or {}).get("category") or ""
+            if category and category != "General":
+                group_key = f"log:{category}"
+            elif ev.title and ev.title != "Log Entry":
+                # Başlıktan [] tekrar sayaçlarını temizle, ilk 80 karakter
+                import re
+                clean = re.sub(r'\s*\[x\d+\]', '', ev.title).strip()
+                group_key = clean[:80] if clean else ev.event_type
+            else:
+                group_key = ev.event_type or "unknown"
+
+        by_server_metric[(ev.server_id, group_key)].append(ev)
 
     red_items: List[Dict[str, Any]] = []
     yellow_items: List[Dict[str, Any]] = []
