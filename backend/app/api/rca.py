@@ -402,6 +402,7 @@ Yalnızca şu JSON formatında yanıt ver (başka hiçbir şey yazma):
 }}"""
 
     import requests as req_lib
+    from app.core.config import settings
     active_model = req.model or get_active_model(db)
     try:
         resp = req_lib.post(
