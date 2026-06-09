@@ -37,6 +37,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', name: 'AIOps', icon: <Brain size={18} />,
       children: [
+        { path: '/ops',       name: 'Komuta Merkezi',      icon: <Zap size={16} /> },
         { path: '/events',    name: 'Events',              icon: <ClipboardList size={16} /> },
         { path: '/incidents', name: 'Incidents',           icon: <AlertTriangle size={16} /> },
         { path: '/anomalies', name: 'Anomaly Detection',   icon: <ScanSearch size={16} /> },

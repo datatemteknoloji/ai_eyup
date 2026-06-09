@@ -167,3 +167,10 @@ try:
     api_router.include_router(baseline.router, prefix="/baseline", tags=["baseline"])
 except Exception as e:
     logger.error(f"Could not load baseline router: {e}", exc_info=True)
+
+# Ops Command Center (komuta merkezi)
+try:
+    from app.api import ops_center
+    api_router.include_router(ops_center.router, prefix="/ops", tags=["ops"])
+except Exception as e:
+    logger.error(f"Could not load ops_center router: {e}", exc_info=True)
