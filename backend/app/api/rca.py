@@ -289,6 +289,154 @@ async def awr_parse_only(
     }
 
 
+# ── Hızlı Event RCA ──────────────────────────────────────────────────────────
+
+class QuickRCARequest(BaseModel):
+    event_id: Optional[int] = None
+    server_id: Optional[int] = None
+    metric: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/quick-analyze")
+async def quick_analyze(req: QuickRCARequest, db: Session = Depends(get_db)):
+    """
+    Tek event veya server+metric için hızlı LLM kök neden analizi.
+    OpsCenter'dan inline çağrılır.
+    """
+    import json as json_lib
+    from app.models.event import SystemEvent
+    from app.models.server import Server
+
+    # Event bağlamı topla
+    event = None
+    server = None
+    related_events = []
+
+    if req.event_id:
+        event = db.query(SystemEvent).filter(SystemEvent.id == req.event_id).first()
+        if event:
+            server_id = event.server_id
+            metric = (event.raw_data or {}).get("metric") or event.event_type
+        else:
+            server_id = req.server_id
+            metric = req.metric
+    else:
+        server_id = req.server_id
+        metric = req.metric
+
+    if server_id:
+        server = db.query(Server).filter(Server.id == server_id).first()
+
+    # Son 24 saatteki aynı metrik eventleri getir
+    if server_id and metric:
+        from datetime import datetime, timedelta
+        since = datetime.utcnow() - timedelta(hours=24)
+        related_events = (
+            db.query(SystemEvent)
+            .filter(
+                SystemEvent.server_id == server_id,
+                SystemEvent.created_at >= since,
+            )
+            .order_by(SystemEvent.last_seen.desc())
+            .limit(20)
+            .all()
+        )
+
+    # Prompt oluştur
+    server_name = server.name if server else f"server_id={server_id}"
+    tier = getattr(server, "tier", "unknown") or "unknown" if server else "unknown"
+
+    event_lines = []
+    for ev in related_events:
+        raw = ev.raw_data or {}
+        m = raw.get("metric") or ev.event_type
+        val = raw.get("current_value")
+        val_str = f" ({val:.1f})" if val is not None else ""
+        event_lines.append(
+            f"  - [{ev.severity.upper()}] {m}{val_str} — {ev.title} "
+            f"(oluşum: {ev.occurrence_count or 1}x, "
+            f"son: {ev.last_seen.strftime('%H:%M') if ev.last_seen else '?'})"
+        )
+
+    if not event_lines:
+        if event:
+            raw = event.raw_data or {}
+            val = raw.get("current_value")
+            event_lines = [f"  - [{event.severity.upper()}] {metric} ({val:.1f}% if val else '') — {event.title}"]
+
+    ctx = "\n".join(event_lines) or "  (event verisi yok)"
+
+    current_event_detail = ""
+    if event:
+        raw = event.raw_data or {}
+        current_event_detail = (
+            f"Tetikleyen event: {event.title}\n"
+            f"Severity: {event.severity}\n"
+            f"Değer: {raw.get('current_value', '?')} "
+            f"(ort: {raw.get('mean_value', '?')}, "
+            f"z-score: {raw.get('z_score', '?')})\n"
+            f"Oluşum: {event.occurrence_count or 1}x\n"
+        )
+
+    prompt = f"""Sen bir Linux/altyapı uzmanısın. Aşağıdaki alarm için KISA ve NET bir kök neden analizi yap.
+
+Sunucu: {server_name} (IP: {getattr(server, 'ip_address', '?') if server else '?'}, Tier: {tier})
+Metrik: {metric}
+
+{current_event_detail}
+Son 24 saatteki alarmlar:
+{ctx}
+
+Yalnızca şu JSON formatında yanıt ver (başka hiçbir şey yazma):
+{{
+  "root_cause": "Kök neden — 1-2 cümle, teknik ve net",
+  "likely_cause": "En olası sebep",
+  "impact": "Sistemdeki etkisi",
+  "actions": [
+    "Hemen yap: ...",
+    "Kontrol et: ..."
+  ],
+  "severity_assessment": "critical|high|medium|low",
+  "confidence": "high|medium|low"
+}}"""
+
+    import requests as req_lib
+    active_model = req.model or get_active_model(db)
+    try:
+        resp = req_lib.post(
+            f"{settings.OLLAMA_URL}/api/generate",
+            json={"model": active_model, "prompt": prompt, "stream": False},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            raw_text = resp.json().get("response", "").strip()
+            start = raw_text.find("{")
+            end = raw_text.rfind("}") + 1
+            if start >= 0 and end > start:
+                try:
+                    analysis = json_lib.loads(raw_text[start:end])
+                except Exception:
+                    analysis = {"root_cause": raw_text[:600], "confidence": "low"}
+            else:
+                analysis = {"root_cause": raw_text[:600], "confidence": "low"}
+        else:
+            analysis = {"root_cause": f"AI yanıt vermedi (HTTP {resp.status_code})", "confidence": "low"}
+    except req_lib.exceptions.ConnectionError:
+        analysis = {"root_cause": "Ollama bağlantı hatası — AI servisi çalışmıyor olabilir", "confidence": "low"}
+    except req_lib.exceptions.Timeout:
+        analysis = {"root_cause": "AI yanıt süresi aşıldı (60s)", "confidence": "low"}
+
+    return {
+        "server": server_name,
+        "metric": metric,
+        "event_count": len(related_events),
+        "analysis": analysis,
+        "model": active_model,
+        "analyzed_at": datetime.utcnow().isoformat(),
+    }
+
+
 # ── Yardımcı ─────────────────────────────────────────────────────────────────
 
 def _build_awr_analysis_prompt(summary: str, compare_summary: str = "") -> str:

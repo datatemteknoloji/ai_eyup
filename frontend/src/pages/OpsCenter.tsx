@@ -6,10 +6,120 @@
  *   🟡 İZLE        → warning (non-production)
  *   🟢 KONTROL     → bastırılan, bilinen, çözülen
  */
-import { useState } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
+
+// ── Inline RCA paneli ────────────────────────────────────────────────────────
+interface RCAResult {
+  root_cause?: string
+  likely_cause?: string
+  impact?: string
+  actions?: string[]
+  severity_assessment?: string
+  confidence?: string
+}
+interface RCAResponse {
+  server: string; metric: string; event_count: number
+  analysis: RCAResult; model: string; analyzed_at: string
+}
+
+function RCAPanel({
+  eventId, serverId, metric, onClose
+}: {
+  eventId?: number; serverId?: number; metric: string; onClose: () => void
+}) {
+  const [result, setResult] = useState<RCAResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/rca/quick-analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: eventId, server_id: serverId, metric }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      setResult(await r.json())
+    } catch (e: any) {
+      setError(e.message || 'Bilinmeyen hata')
+    } finally {
+      setLoading(false)
+    }
+  }, [eventId, serverId, metric])
+
+  // İlk açılışta otomatik başlat
+  useEffect(() => { run() }, [])
+
+  const conf = result?.analysis?.confidence
+  const confColor = conf === 'high' ? 'text-green-400' : conf === 'medium' ? 'text-amber-400' : 'text-gray-400'
+
+  return (
+    <div className="mt-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-cyan-400">🔍 AI Kök Neden Analizi</span>
+        <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-300">✕</button>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 py-2">
+          <div className="w-4 h-4 rounded-full border-2 border-t-cyan-400 border-r-transparent animate-spin" />
+          <span className="text-xs text-gray-400">AI analiz ediyor...</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="text-xs text-red-400 bg-red-500/10 rounded p-2">
+          ⚠ {error}
+          <button onClick={run} className="ml-2 underline">Tekrar dene</button>
+        </div>
+      )}
+
+      {result && (
+        <div className="space-y-2 text-sm">
+          <div>
+            <span className="text-[10px] text-gray-500 uppercase">Kök Neden</span>
+            <p className="text-gray-200 mt-0.5">{result.analysis.root_cause}</p>
+          </div>
+          {result.analysis.likely_cause && (
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase">Olası Sebep</span>
+              <p className="text-gray-300 mt-0.5">{result.analysis.likely_cause}</p>
+            </div>
+          )}
+          {result.analysis.impact && (
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase">Etki</span>
+              <p className="text-gray-300 mt-0.5">{result.analysis.impact}</p>
+            </div>
+          )}
+          {result.analysis.actions && result.analysis.actions.length > 0 && (
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase">Aksiyonlar</span>
+              <ul className="mt-1 space-y-1">
+                {result.analysis.actions.map((a, i) => (
+                  <li key={i} className="text-xs text-gray-300 flex gap-1.5">
+                    <span className="text-cyan-500 shrink-0">→</span>
+                    <span>{a}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="flex items-center gap-3 pt-1 border-t border-gray-700/60">
+            <span className={`text-xs ${confColor}`}>Güven: {conf}</span>
+            <span className="text-xs text-gray-500">{result.event_count} event analiz edildi</span>
+            <button onClick={run} className="text-xs text-gray-500 hover:text-gray-300 ml-auto">↻ Yenile</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ServerInfo {
@@ -87,10 +197,11 @@ function metricLabel(raw: string): string {
 
 // ── Aksiyon butonları ─────────────────────────────────────────────────────────
 function ActionButtons({
-  item, onDone
+  item, onDone, onRCA
 }: {
   item: ActionItem
   onDone: () => void
+  onRCA: () => void
 }) {
   const [loading, setLoading] = useState<string | null>(null)
 
@@ -151,13 +262,13 @@ function ActionButtons({
           🔗 Incident #{item.storm_incident_id}
         </Link>
       )}
-      {item.actions.includes('rca') && item.server && (
-        <Link
-          to={`/rca`}
+      {item.actions.includes('rca') && (
+        <button
+          onClick={onRCA}
           className="text-xs px-2.5 py-1 rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 transition-colors"
         >
           🔍 RCA
-        </Link>
+        </button>
       )}
       {item.actions.includes('acknowledge') &&
         btn('✓ Onayla', acknowledge, 'ack', 'border-blue-500/40 text-blue-300 hover:bg-blue-500/10')}
@@ -174,6 +285,7 @@ function ActionButtons({
 // ── Tekil kart ────────────────────────────────────────────────────────────────
 function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) {
   const tier = item.server?.tier || 'unknown'
+  const [showRCA, setShowRCA] = useState(false)
 
   return (
     <div className={`rounded-xl border p-3 transition-all hover:brightness-110 ${SEV_BG[item.severity] || SEV_BG.warning}`}>
@@ -233,7 +345,16 @@ function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) 
             <span className="text-xs text-gray-500">{relTime(item.last_seen)}</span>
           </div>
 
-          <ActionButtons item={item} onDone={onDone} />
+          <ActionButtons item={item} onDone={onDone} onRCA={() => setShowRCA(v => !v)} />
+
+          {showRCA && (
+            <RCAPanel
+              eventId={item.event_ids[0]}
+              serverId={item.server ? undefined : undefined}
+              metric={item.metric}
+              onClose={() => setShowRCA(false)}
+            />
+          )}
         </div>
       </div>
     </div>
