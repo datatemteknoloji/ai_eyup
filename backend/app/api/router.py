@@ -160,3 +160,10 @@ try:
     api_router.include_router(rca.router, prefix="/rca", tags=["rca"])
 except Exception as e:
     logger.error(f"Could not load rca router: {e}", exc_info=True)
+
+# Baseline (suppression kuralları + per-server adaptif eşikler)
+try:
+    from app.api import baseline
+    api_router.include_router(baseline.router, prefix="/baseline", tags=["baseline"])
+except Exception as e:
+    logger.error(f"Could not load baseline router: {e}", exc_info=True)

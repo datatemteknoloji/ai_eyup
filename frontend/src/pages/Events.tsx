@@ -305,10 +305,17 @@ const Events: React.FC = () => {
     { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
     { label: 'Incident oluştur', icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
   ]
+  const markAsNormal = async (eventId: number) => {
+    try {
+      await fetch(`${API_BASE_URL}/baseline/suppressions/from-event/${eventId}?baseline_severity=warning`, { method: 'POST' })
+    } catch { /* sessiz başarısız */ }
+  }
+
   const flatMenu = (e: SystemEvent): MenuItem[] => [
     { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
     { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
     { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
+    { label: 'Bu sunucu için normal', icon: '📊', hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
     { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
     { label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent, Incident
 from app.services.incident_auto import auto_create_or_link_incident
+from app.services.baseline_engine import apply_baseline_filter
 
 logger = logging.getLogger(__name__)
 
@@ -88,15 +89,45 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                 "detected_at": a.get("detected_at"),
             }
 
+            # ── Baseline filtresi uygula ────────────────────────────────────
+            baseline_result = apply_baseline_filter(
+                db=db,
+                server_id=server_id,
+                metric_name=metric,
+                severity=severity,
+                event_type=METRIC_ANOMALY_TYPE,
+                current_value=a.get("current_value"),
+            )
+            if baseline_result["suppress"]:
+                logger.debug(
+                    f"[AIOps] Baseline SUPPRESS: server={server_id} metric={metric} "
+                    f"reason={baseline_result['downgrade_reason']}"
+                )
+                continue
+            effective_severity = baseline_result["effective_severity"]
+            if effective_severity != severity:
+                logger.info(
+                    f"[AIOps] Baseline DOWNGRADE: {severity}→{effective_severity} "
+                    f"server={server_id} metric={metric} reason={baseline_result['downgrade_reason']}"
+                )
+            severity = effective_severity
+            raw["baseline_downgrade"] = baseline_result.get("downgrade_reason")
+            raw["recurrence_days"] = baseline_result.get("recurrence", {}).get("recurrence_days", 0)
+            # ────────────────────────────────────────────────────────────────
+
             if match:
                 # Mevcut anomaliyi güncelle (tekrar event açma)
                 match.last_seen = now
                 match.raw_data = raw
+                match.occurrence_count = (match.occurrence_count or 1) + 1
                 # Severity yükseldiyse (warning → critical) güncelle ve incident'a yansıt
                 escalated = (match.severity != "critical" and severity == "critical")
                 if escalated:
                     match.severity = "critical"
                     match.title = a.get("message", match.title)
+                # Severity düştüyse de güncelle
+                elif baseline_result["downgrade_reason"] and severity != match.severity:
+                    match.severity = severity
                 db.commit()
                 updated += 1
                 if escalated:
@@ -115,6 +146,7 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                 description=_build_event_description(a),
                 raw_data=raw,
                 last_seen=now,
+                occurrence_count=1,
             )
             db.add(event)
             db.commit()

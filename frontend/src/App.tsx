@@ -21,6 +21,7 @@ import Repositories from './pages/Repositories'
 import SystemUpdate from './pages/SystemUpdate'
 import TerminalPage from './pages/TerminalPage'
 import RootCauseAnalysis from './pages/RootCauseAnalysis'
+import BaselineManager from './pages/BaselineManager'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient({
@@ -82,6 +83,7 @@ function App() {
                       <Route path="/incidents" element={<ErrorBoundary><Incidents /></ErrorBoundary>} />
                       <Route path="/anomalies" element={<ErrorBoundary><AnomalyDetection /></ErrorBoundary>} />
                       <Route path="/rca" element={<ErrorBoundary><RootCauseAnalysis /></ErrorBoundary>} />
+                      <Route path="/baseline" element={<ErrorBoundary><BaselineManager /></ErrorBoundary>} />
                       <Route path="/ansible" element={<ErrorBoundary><Ansible /></ErrorBoundary>} />
                       <Route path="/mcp" element={<ErrorBoundary><McpTools /></ErrorBoundary>} />
                       <Route path="/packages" element={<ErrorBoundary><PackageManager /></ErrorBoundary>} />

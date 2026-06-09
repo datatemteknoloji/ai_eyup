@@ -1,7 +1,7 @@
 """
-AIOps Event Models - SystemEvent, Alert, Incident
+AIOps Event Models - SystemEvent, Alert, Incident, AnomalySuppression
 """
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, JSON, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, JSON, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -28,6 +28,7 @@ class SystemEvent(Base):
     resolved_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_seen  = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    occurrence_count = Column(Integer, default=1)  # kaç kez tetiklendi
 
     server = relationship("Server", back_populates="events")
 
@@ -85,6 +86,36 @@ class BaselineMetric(Base):
     sample_count = Column(Integer, default=0)
     period = Column(String(50))  # hourly, daily, weekly
     calculated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AnomalySuppression(Base):
+    """
+    Sunucu + metrik bazında alarm bastırma / severity override kuralları.
+
+    scope:
+      'server'  → sadece bu sunucu için geçerli
+      'global'  → tüm sunucular için geçerli (metric_name bazında)
+
+    baseline_severity:
+      None      → tamamen bastır (event oluşturma)
+      'info'    → en fazla info seviyesinde oluştur
+      'warning' → en fazla warning
+    """
+    __tablename__ = "anomaly_suppressions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    server_id = Column(Integer, ForeignKey("servers.id", ondelete="CASCADE"), nullable=True, index=True)
+    metric_name = Column(String(200), nullable=False, index=True)
+    scope = Column(String(20), default="server")       # 'server' | 'global'
+    reason = Column(Text)
+    created_by = Column(String(100))
+    baseline_value = Column(Float, nullable=True)      # normal değer referansı
+    baseline_severity = Column(String(20), nullable=True)  # None=suppress, 'info', 'warning'
+    active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    server = relationship("Server", foreign_keys=[server_id])
 
 
 class RunbookExecution(Base):
