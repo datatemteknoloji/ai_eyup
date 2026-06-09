@@ -153,3 +153,10 @@ try:
     api_router.include_router(agent.router, prefix="/agent", tags=["agent"])
 except Exception as e:
     logger.error(f"Could not load agent router: {e}", exc_info=True)
+
+# RCA (karşılaştırmalı analiz + AWR parse/analiz)
+try:
+    from app.api import rca
+    api_router.include_router(rca.router, prefix="/rca", tags=["rca"])
+except Exception as e:
+    logger.error(f"Could not load rca router: {e}", exc_info=True)
