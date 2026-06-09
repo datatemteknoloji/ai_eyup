@@ -137,8 +137,7 @@ function DeltaBadge({ value, pct, invert = false }: { value: number; pct?: numbe
 
 // ── Log Analiz Kartı ──────────────────────────────────────────────────────────
 
-function AnalysisCard({ result, eventTitle }: { result: LogAnalysisResult; eventTitle: string }) {
-  const conf = CONFIDENCE_COLORS[result.confidence] || CONFIDENCE_COLORS.low
+function AnalysisCard({ result }: { result: LogAnalysisResult }) {
   const hasApproval = result.requires_approval || result.recommendations.some(r => MUTATING_KW.some(k => r.toLowerCase().includes(k)))
 
   return (
@@ -242,9 +241,9 @@ function ComparePanel() {
     } finally { setLoading(false) }
   }
 
-  const serverOptions = [
+  const serverOptions: { value: string; label: string }[] = [
     { value: '', label: 'Tüm sunucular' },
-    ...servers.map(s => ({ value: String(s.id), label: s.name })),
+    ...servers.map((s: { id: number; name: string }) => ({ value: String(s.id), label: s.name })),
   ]
 
   return (
@@ -260,7 +259,9 @@ function ComparePanel() {
             className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
             placeholder="Pencere A etiketi" />
-          <Select value={serverIdA} onChange={setServerIdA} options={serverOptions} />
+          <Select value={serverIdA} onChange={setServerIdA}>
+            {serverOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </Select>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
@@ -287,7 +288,9 @@ function ComparePanel() {
             className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
             placeholder="Pencere B etiketi" />
-          <Select value={serverIdB} onChange={setServerIdB} options={serverOptions} />
+          <Select value={serverIdB} onChange={setServerIdB}>
+            {serverOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </Select>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
@@ -727,18 +730,18 @@ const RootCauseAnalysis: React.FC = () => {
 
           <Section>
             <div className="flex flex-wrap gap-3 p-4">
-              <SearchInput value={search} onChange={setSearch} placeholder="Başlık veya sunucu ara..." className="flex-1 min-w-[200px]" />
-              <Select value={typeFilter} onChange={setTypeFilter} options={[
-                { value: '', label: 'Tüm tipler' },
-                { value: 'log_entry', label: 'Log Entry' },
-                { value: 'metric_anomaly', label: 'Metrik Anomali' },
-              ]} />
-              <Select value={severityFilter} onChange={setSeverityFilter} options={[
-                { value: '', label: 'Tüm önemler' },
-                { value: 'critical', label: 'Kritik' },
-                { value: 'warning', label: 'Uyarı' },
-                { value: 'info', label: 'Bilgi' },
-              ]} />
+              <SearchInput value={search} onChange={setSearch} placeholder="Başlık veya sunucu ara..." width="flex-1" />
+              <Select value={typeFilter} onChange={setTypeFilter}>
+                <option value="">Tüm tipler</option>
+                <option value="log_entry">Log Entry</option>
+                <option value="metric_anomaly">Metrik Anomali</option>
+              </Select>
+              <Select value={severityFilter} onChange={setSeverityFilter}>
+                <option value="">Tüm önemler</option>
+                <option value="critical">Kritik</option>
+                <option value="warning">Uyarı</option>
+                <option value="info">Bilgi</option>
+              </Select>
             </div>
           </Section>
 
@@ -747,7 +750,7 @@ const RootCauseAnalysis: React.FC = () => {
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : events.length === 0 ? (
-            <EmptyState title="Analiz edilecek event yok" description="Seçili filtrelere göre çözümlenmemiş event bulunamadı." />
+            <EmptyState text="Seçili filtrelere göre çözümlenmemiş event bulunamadı." />
           ) : (
             <div className="space-y-2">
               {events.map(event => {
@@ -790,7 +793,7 @@ const RootCauseAnalysis: React.FC = () => {
                     )}
                     {isExpanded && state?.result && (
                       <div className="px-4 pb-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.04)' }}>
-                        <AnalysisCard result={state.result} eventTitle={event.title} />
+                        <AnalysisCard result={state.result} />
                       </div>
                     )}
                     {state?.loading && (
