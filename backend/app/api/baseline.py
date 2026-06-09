@@ -227,6 +227,126 @@ async def server_recurrence(
     return {"server_id": server_id, "window_days": window_days, "metrics": result}
 
 
+@router.get("/correlation")
+async def correlation_view(
+    server_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Anomali tespiti + tekrarlayan alarm + suppression kuralı korelasyonu.
+
+    Her satır bir metric_name etrafında şunları birleştirir:
+      - Şu an aktif anomali var mı?
+      - Kaç gündür tekrar ediyor?
+      - Aktif suppression kuralı var mı?
+      - Son event severity'si nedir?
+    """
+    from datetime import datetime, timedelta
+    from collections import defaultdict
+
+    now = datetime.utcnow()
+    window = timedelta(days=14)
+    since = now - window
+
+    # Tüm metric_anomaly event'leri (son 14 gün)
+    q = db.query(SystemEvent).filter(
+        SystemEvent.event_type == "metric_anomaly",
+        SystemEvent.created_at >= since,
+    )
+    if server_id:
+        q = q.filter(SystemEvent.server_id == server_id)
+
+    events = q.order_by(SystemEvent.created_at.desc()).all()
+
+    # metric_name bazında grupla
+    metric_data: dict = defaultdict(lambda: {
+        "metric": "",
+        "servers": set(),
+        "days_seen": set(),
+        "total_count": 0,
+        "max_severity": "info",
+        "last_seen": None,
+        "last_event_id": None,
+        "last_server_id": None,
+        "last_server_name": None,
+        "suppression_rule": None,
+        "occurrence_counts": [],
+    })
+
+    sev_rank = {"info": 0, "warning": 1, "critical": 2, "emergency": 3}
+
+    for ev in events:
+        metric = (ev.raw_data or {}).get("metric") or ev.title[:100]
+        d = metric_data[metric]
+        d["metric"] = metric
+        if ev.server_id:
+            d["servers"].add(ev.server_id)
+        ts = ev.created_at or ev.last_seen
+        if ts:
+            d["days_seen"].add(ts.date())
+            if d["last_seen"] is None or ts > d["last_seen"]:
+                d["last_seen"] = ts
+                d["last_event_id"] = ev.id
+                d["last_server_id"] = ev.server_id
+                d["last_server_name"] = getattr(ev.server, "name", None) if ev.server_id else None
+        d["total_count"] += 1
+        if sev_rank.get(ev.severity, 0) > sev_rank.get(d["max_severity"], 0):
+            d["max_severity"] = ev.severity
+        if ev.occurrence_count:
+            d["occurrence_counts"].append(ev.occurrence_count)
+
+    # Suppression kurallarını çek
+    rules_q = db.query(AnomalySuppression).filter(AnomalySuppression.active == True)
+    if server_id:
+        rules_q = rules_q.filter(
+            (AnomalySuppression.server_id == server_id) | (AnomalySuppression.scope == "global")
+        )
+    rules = {r.metric_name: r for r in rules_q.all()}
+
+    result = []
+    for metric, d in metric_data.items():
+        recurrence_days = len(d["days_seen"])
+        rule = rules.get(metric)
+        result.append({
+            "metric": metric,
+            "recurrence_days": recurrence_days,
+            "total_count": d["total_count"],
+            "max_severity": d["max_severity"],
+            "last_seen": d["last_seen"].isoformat() if d["last_seen"] else None,
+            "last_event_id": d["last_event_id"],
+            "last_server_id": d["last_server_id"],
+            "server_count": len(d["servers"]),
+            "is_chronic": recurrence_days >= 3,
+            "is_very_chronic": recurrence_days >= 7,
+            "suppression": {
+                "id": rule.id,
+                "active": True,
+                "baseline_severity": rule.baseline_severity,
+                "reason": rule.reason,
+                "scope": rule.scope,
+            } if rule else None,
+            "effective_severity": rule.baseline_severity if rule and rule.baseline_severity else (
+                "warning" if recurrence_days >= 7 and d["max_severity"] == "critical" else d["max_severity"]
+            ),
+            "is_suppressed": rule is not None and rule.baseline_severity is None,
+            "is_downgraded": (
+                (rule is not None and rule.baseline_severity is not None) or
+                recurrence_days >= 3
+            ),
+        })
+
+    result.sort(key=lambda x: (x["recurrence_days"], sev_rank.get(x["max_severity"], 0)), reverse=True)
+    return {
+        "server_id": server_id,
+        "window_days": 14,
+        "total_metrics": len(result),
+        "chronic_count": sum(1 for r in result if r["is_chronic"]),
+        "suppressed_count": sum(1 for r in result if r["is_suppressed"]),
+        "downgraded_count": sum(1 for r in result if r["is_downgraded"] and not r["is_suppressed"]),
+        "metrics": result,
+    }
+
+
 @router.get("/stats/{server_id}")
 async def server_baseline_stats(server_id: int, db: Session = Depends(get_db)):
     """Per-server baseline istatistiklerini döndürür."""

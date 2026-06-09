@@ -86,6 +86,189 @@ function PipelineFlow({ status }: { status?: AiopsStatus }) {
   )
 }
 
+interface CorrelationMetric {
+  metric: string
+  recurrence_days: number
+  total_count: number
+  max_severity: string
+  last_seen: string | null
+  last_event_id: number | null
+  last_server_id: number | null
+  server_count: number
+  is_chronic: boolean
+  is_very_chronic: boolean
+  suppression: { id: number; baseline_severity: string | null; reason: string | null; scope: string } | null
+  effective_severity: string
+  is_suppressed: boolean
+  is_downgraded: boolean
+}
+
+interface CorrelationResponse {
+  total_metrics: number
+  chronic_count: number
+  suppressed_count: number
+  downgraded_count: number
+  metrics: CorrelationMetric[]
+}
+
+const SEV_COLOR: Record<string, string> = { critical: '#ef4444', warning: '#fb923c', info: '#22d3ee', emergency: '#a855f7' }
+
+function CorrelationTab() {
+  const [search, setSearch] = useState('')
+  const [markLoading, setMarkLoading] = useState<number | null>(null)
+  const queryClient = useQueryClient()
+
+  const { data, isLoading } = useQuery<CorrelationResponse>({
+    queryKey: ['baseline-correlation'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/baseline/correlation`)
+      return r.json()
+    },
+    refetchInterval: 60000,
+  })
+
+  const suppress = async (_metric: string, _serverId: number | null, eventId: number | null) => {
+    if (!eventId) return
+    setMarkLoading(eventId)
+    try {
+      await fetch(`${API_BASE_URL}/baseline/suppressions/from-event/${eventId}?baseline_severity=warning`, { method: 'POST' })
+      queryClient.invalidateQueries({ queryKey: ['baseline-correlation'] })
+    } finally { setMarkLoading(null) }
+  }
+
+  const metrics = data?.metrics ?? []
+  const filtered = search
+    ? metrics.filter(m => m.metric.toLowerCase().includes(search.toLowerCase()))
+    : metrics
+
+  return (
+    <div className="space-y-4">
+      {/* KPI'lar */}
+      {data && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Toplam Metrik', value: data.total_metrics, accent: NEON.cyan },
+            { label: 'Kronik (3+ gün)', value: data.chronic_count, accent: NEON.orange },
+            { label: 'Bastırılıyor', value: data.suppressed_count, accent: NEON.green },
+            { label: 'Düşürüldü', value: data.downgraded_count, accent: NEON.blue },
+          ].map(k => (
+            <div key={k.label} className="cyber-card p-3 flex flex-col gap-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'rgba(148,163,184,0.5)' }}>{k.label}</span>
+              <span className="text-2xl font-bold" style={{ color: k.accent }}>{k.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Arama */}
+      <SearchInput value={search} onChange={setSearch} placeholder="Metrik adı ara..." width="w-64" />
+
+      {isLoading ? (
+        <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="📊" text="Korelasyon verisi yok — AIOps döngüsünü çalıştırın." />
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(m => {
+            const origColor = SEV_COLOR[m.max_severity] ?? NEON.cyan
+            const effColor = SEV_COLOR[m.effective_severity] ?? NEON.cyan
+            const degraded = m.effective_severity !== m.max_severity
+
+            return (
+              <div key={m.metric} className="cyber-card p-4">
+                <div className="flex items-start gap-3 flex-wrap">
+                  {/* Sol: Kronik göstergesi */}
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-2.5 h-2.5 rounded-full"
+                      style={{
+                        background: m.is_very_chronic ? NEON.red : m.is_chronic ? NEON.orange : 'rgba(148,163,184,0.25)',
+                        boxShadow: m.is_chronic ? `0 0 8px ${m.is_very_chronic ? NEON.red : NEON.orange}` : 'none',
+                      }} />
+                  </div>
+
+                  {/* Orta: Metrik bilgisi */}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <p className="text-sm font-medium truncate" style={{ color: 'rgba(226,232,240,0.9)' }}>{m.metric}</p>
+
+                    {/* Severity akışı */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Orijinal severity */}
+                      <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold uppercase"
+                        style={{ background: `color-mix(in srgb, ${origColor} 12%, transparent)`, color: origColor, border: `1px solid color-mix(in srgb, ${origColor} 20%, transparent)` }}>
+                        {m.max_severity}
+                      </span>
+
+                      {/* Ok (değiştiyse) */}
+                      {degraded && (
+                        <>
+                          <span style={{ color: 'rgba(148,163,184,0.3)' }}>→</span>
+                          <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold uppercase"
+                            style={{ background: `color-mix(in srgb, ${effColor} 12%, transparent)`, color: effColor, border: `1px solid color-mix(in srgb, ${effColor} 20%, transparent)` }}>
+                            {m.is_suppressed ? 'bastırıldı' : m.effective_severity}
+                          </span>
+                        </>
+                      )}
+
+                      {/* Kronik rozeti */}
+                      {m.is_very_chronic && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.1)', color: NEON.red, border: '1px solid rgba(239,68,68,0.2)' }}>
+                          {m.recurrence_days}g kronik
+                        </span>
+                      )}
+                      {m.is_chronic && !m.is_very_chronic && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.1)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)' }}>
+                          {m.recurrence_days}g tekrar
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Kural bilgisi */}
+                    {m.suppression && (
+                      <div className="text-[11px] flex items-center gap-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>
+                        <span>📋</span>
+                        <span>Kural #{m.suppression.id}:</span>
+                        <span style={{ color: NEON.green }}>{m.suppression.reason || 'Suppression aktif'}</span>
+                        {m.suppression.scope === 'global' && <span className="px-1 rounded text-[10px]" style={{ background: 'rgba(6,182,212,0.1)', color: NEON.cyan }}>global</span>}
+                      </div>
+                    )}
+
+                    {/* İstatistik */}
+                    <div className="flex gap-3 text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>
+                      <span>{m.total_count} olay</span>
+                      {m.server_count > 1 && <span>· {m.server_count} sunucu</span>}
+                      {m.last_seen && <span>· Son: {new Date(m.last_seen).toLocaleString('tr-TR')}</span>}
+                    </div>
+                  </div>
+
+                  {/* Sağ: Aksiyonlar */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {m.last_event_id && (
+                      <a href={`/events?highlight=${m.last_event_id}`}
+                        className="text-xs px-2 py-1 rounded transition-colors"
+                        style={{ color: NEON.cyan, border: '1px solid rgba(6,182,212,0.2)', background: 'rgba(6,182,212,0.05)' }}>
+                        Event →
+                      </a>
+                    )}
+                    {!m.suppression && m.is_chronic && m.last_event_id && (
+                      <button
+                        onClick={() => suppress(m.metric, m.last_server_id, m.last_event_id)}
+                        disabled={markLoading === m.last_event_id}
+                        className="text-xs px-2 py-1 rounded transition-colors"
+                        style={{ color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)' }}>
+                        {markLoading === m.last_event_id ? '...' : 'Bu Normal'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const AnomalyDetection: React.FC = () => {
   const [tab, setTab] = useState('metric')
   const [serverSearch, setServerSearch] = useState('')
@@ -200,6 +383,7 @@ const AnomalyDetection: React.FC = () => {
           { id: 'metric', label: 'Metrik Anomalileri', count: filteredMetric.length },
           { id: 'heatmap', label: 'Log Isı Haritası' },
           { id: 'list', label: 'Log Listesi', count: data?.total },
+          { id: 'correlation', label: 'Korelasyon' },
         ]} />
         <div className="flex items-center gap-2">
           <SearchInput value={serverSearch} onChange={setServerSearch} placeholder="Sunucu ara..." width="w-52" />
@@ -330,6 +514,8 @@ const AnomalyDetection: React.FC = () => {
           )}
         </Section>
       )}
+
+      {tab === 'correlation' && <CorrelationTab />}
     </div>
   )
 }
