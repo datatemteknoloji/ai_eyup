@@ -46,6 +46,9 @@ def _server_map(db: Session) -> Dict[int, Dict[str, str]]:
     }
 
 
+_SMAP_REF: Dict[int, Dict[str, str]] = {}
+
+
 def _build_item(
     group_type: str,
     events: List[SystemEvent],
@@ -71,6 +74,24 @@ def _build_item(
         raw = events[0].raw_data or {}
         sample_value = raw.get("current_value")
 
+    # Storm'da tüm etkilenen sunucuları listele
+    affected_servers = None
+    if group_type == "storm":
+        seen_ids: set = set()
+        affected_servers = []
+        for ev in events:
+            if ev.server_id and ev.server_id not in seen_ids:
+                seen_ids.add(ev.server_id)
+                # server_info parametresi storm için None olarak gelir,
+                # smap'ten kendimiz bakıyoruz
+                si = _SMAP_REF.get(ev.server_id) if _SMAP_REF else None
+                affected_servers.append({
+                    "id": ev.server_id,
+                    "name": si["name"] if si else f"server#{ev.server_id}",
+                    "ip": si["ip"] if si else "",
+                    "tier": si["tier"] if si else "unknown",
+                })
+
     return {
         "type": group_type,             # "storm" | "single" | "group"
         "metric": metric,
@@ -79,6 +100,7 @@ def _build_item(
         "event_ids": [e.id for e in events],
         "server_count": len({e.server_id for e in events}),
         "server": server_info,
+        "affected_servers": affected_servers,   # storm'da dolu, diğerlerinde None
         "storm_incident_id": storm_incident_id,
         "first_seen": first_event.created_at.isoformat() if first_event.created_at else None,
         "last_seen": last_event.last_seen.isoformat() if last_event.last_seen else None,
@@ -96,8 +118,10 @@ async def command_center(db: Session = Depends(get_db)):
       yellow → severity warning, tekrarlayan → izle
       green_count → bastırılmış/bilinen eventlerin sayısı
     """
+    global _SMAP_REF
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
+    _SMAP_REF = smap
 
     # Tüm açık, bilinmeyen, onaylanmamış eventler
     # Log entry'ler için minimum tekrar filtresi uygula

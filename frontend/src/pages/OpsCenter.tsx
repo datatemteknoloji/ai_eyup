@@ -126,6 +126,10 @@ interface ServerInfo {
   name: string; hostname: string; ip: string; tier: string
 }
 
+interface AffectedServer {
+  id: number; name: string; ip: string; tier: string
+}
+
 interface ActionItem {
   type: 'storm' | 'single' | 'group'
   metric: string
@@ -134,6 +138,7 @@ interface ActionItem {
   event_ids: number[]
   server_count: number
   server: ServerInfo | null
+  affected_servers: AffectedServer[] | null
   storm_incident_id: number | null
   first_seen: string | null
   last_seen: string | null
@@ -292,6 +297,7 @@ function ActionButtons({
 function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) {
   const tier = item.server?.tier || 'unknown'
   const [showRCA, setShowRCA] = useState(false)
+  const [showServers, setShowServers] = useState(false)
 
   return (
     <div className={`rounded-xl border p-3 transition-all hover:brightness-110 ${SEV_BG[item.severity] || SEV_BG.warning}`}>
@@ -329,9 +335,14 @@ function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) 
           {/* Sunucu bilgisi */}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {item.type === 'storm' ? (
-              <span className="text-sm text-gray-300">
-                <span className="font-medium text-amber-300">{item.server_count}</span> sunucu aynı anda
-              </span>
+              <button
+                onClick={() => setShowServers(v => !v)}
+                className="text-sm text-left hover:text-amber-200 transition-colors"
+              >
+                <span className="font-medium text-amber-300">{item.server_count}</span>
+                <span className="text-gray-300"> sunucu aynı anda</span>
+                <span className="text-xs text-gray-500 ml-1">{showServers ? '▲' : '▼ detay'}</span>
+              </button>
             ) : item.server ? (
               <>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-bold ${TIER_COLORS[tier]}`}>
@@ -350,6 +361,23 @@ function ActionCard({ item, onDone }: { item: ActionItem; onDone: () => void }) 
             )}
             <span className="text-xs text-gray-500">{relTime(item.last_seen)}</span>
           </div>
+
+          {/* Storm sunucu listesi */}
+          {item.type === 'storm' && showServers && item.affected_servers && (
+            <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 divide-y divide-amber-500/10">
+              {item.affected_servers.map(s => (
+                <div key={s.id} className="flex items-center justify-between px-3 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-bold ${TIER_COLORS[s.tier] || TIER_COLORS['unknown']}`}>
+                      {TIER_LABEL[s.tier] || '?'}
+                    </span>
+                    <span className="text-sm text-gray-200 font-medium">{s.name}</span>
+                  </div>
+                  <span className="text-xs text-gray-500">{s.ip}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <ActionButtons item={item} onDone={onDone} onRCA={() => setShowRCA(v => !v)} />
 
