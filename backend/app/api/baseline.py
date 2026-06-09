@@ -347,6 +347,77 @@ async def correlation_view(
     }
 
 
+@router.get("/digest")
+async def daily_digest(
+    date: Optional[str] = None,  # ISO tarih: 2026-06-09
+    db: Session = Depends(get_db),
+):
+    """
+    Günlük alarm özeti.
+    date belirtilmezse bugün kullanılır.
+    """
+    from app.services.storm_detector import generate_daily_digest
+    import datetime as dt
+
+    target = None
+    if date:
+        try:
+            target = dt.datetime.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+
+    return generate_daily_digest(db, target)
+
+
+class TierUpdate(BaseModel):
+    tier: str
+
+
+@router.patch("/servers/{server_id}/tier")
+async def set_server_tier(
+    server_id: int,
+    body: TierUpdate,
+    db: Session = Depends(get_db),
+):
+    tier = body.tier
+    """
+    Sunucu tier'ını ayarlar: production | staging | development | unknown.
+    Tier, alarm severity filtrelemesini etkiler:
+      production  → tüm severity geçer
+      staging     → max warning
+      development → max info
+    """
+    from app.models.server import Server
+    valid = ("production", "staging", "development", "unknown")
+    if tier not in valid:
+        raise HTTPException(status_code=400, detail=f"Geçerli tier: {', '.join(valid)}")
+
+    from app.models.server import Server
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Sunucu bulunamadı")
+
+    server.tier = tier  # type: ignore[attr-defined]
+    db.commit()
+    logger.info(f"[Baseline] Server #{server_id} tier={tier}")
+    return {"server_id": server_id, "tier": tier, "ok": True}
+
+
+@router.get("/servers/tiers")
+async def list_server_tiers(db: Session = Depends(get_db)):
+    """Tüm sunucuların tier bilgisini listeler."""
+    from app.models.server import Server
+    servers = db.query(Server).order_by(Server.name).all()
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "tier": getattr(s, "tier", "unknown") or "unknown",
+        }
+        for s in servers
+    ]
+
+
 @router.get("/stats/{server_id}")
 async def server_baseline_stats(server_id: int, db: Session = Depends(get_db)):
     """Per-server baseline istatistiklerini döndürür."""

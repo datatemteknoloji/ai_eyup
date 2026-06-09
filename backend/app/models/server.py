@@ -24,6 +24,7 @@ class Server(Base):
     cpu_cores = Column(Integer, default=0)
     memory_gb = Column(Integer, default=0)
     ai_ready = Column(Boolean, default=False, index=True)
+    tier = Column(String(20), default="unknown", index=True)  # production | staging | development | unknown
     connection_config = Column(JSON, default=dict)
     
     # Hypervisor iliskisi

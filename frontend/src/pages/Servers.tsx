@@ -287,6 +287,26 @@ const SCOLOR: Record<string, string> = {
   error: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
 }
 
+const TIER_COLORS: Record<string, string> = {
+  production: 'bg-red-500/20 text-red-400 border-red-500/30',
+  staging: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  development: 'bg-green-500/20 text-green-400 border-green-500/30',
+  unknown: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+}
+const TIER_LABELS: Record<string, string> = {
+  production: '🔴 Production',
+  staging: '🟡 Staging',
+  development: '🟢 Development',
+  unknown: '⚪ Belirsiz',
+}
+function TierBadge({ tier }: { tier: string }) {
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${TIER_COLORS[tier] || TIER_COLORS['unknown']}`}>
+      {TIER_LABELS[tier] || tier}
+    </span>
+  )
+}
+
 export function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
   const [tab, setTab] = useState<'info' | 'events' | 'perf'>('info')
   const [analyzeText, setAnalyzeText] = useState('')
@@ -506,6 +526,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   ['RAM', server.memory_gb ? `${server.memory_gb} GB` : '-'],
                   ['SSH Kullanıcı', sshUser || '-'],
                   ['AI Ready', '__AI_READY_TOGGLE__'],
+                  ['Ortam Tieri', '__TIER_SELECT__'],
                   ['Node Exporter', server.node_exporter?.running ? 'Çalışıyor' : server.node_exporter?.installed ? 'Kurulu/Durdurulmuş' : 'Kurulu Değil'],
                 ].map(([label, value]) => (
                   <div key={label} className="bg-cyber-card/50 rounded-lg p-3 border border-white/[0.06]/50">
@@ -533,6 +554,26 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         >
                           {server.ai_ready ? 'Kaldır' : 'Ekle'}
                         </button>
+                      </div>
+                    ) : value === '__TIER_SELECT__' ? (
+                      <div className="flex items-center justify-between mt-0.5">
+                        <TierBadge tier={(server as any).tier || 'unknown'} />
+                        <select
+                          className="text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-1.5 py-0.5"
+                          defaultValue={(server as any).tier || 'unknown'}
+                          onChange={async (e) => {
+                            await fetch(`${API_BASE_URL}/baseline/servers/${server.id}/tier`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ tier: e.target.value }),
+                            })
+                          }}
+                        >
+                          <option value="production">Production</option>
+                          <option value="staging">Staging</option>
+                          <option value="development">Development</option>
+                          <option value="unknown">Belirsiz</option>
+                        </select>
                       </div>
                     ) : (
                       <p className="text-sm text-white font-medium break-all">{value}</p>

@@ -23,6 +23,7 @@ from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent, Incident
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.baseline_engine import apply_baseline_filter
+from app.services.storm_detector import apply_tier_filter, check_and_handle_storm, auto_resolve_by_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,17 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                 "detected_at": a.get("detected_at"),
             }
 
+            # ── Tier filtresi uygula (prod/staging/dev) ─────────────────────
+            original_severity = severity
+            severity = apply_tier_filter(db, server_id, severity)
+            if original_severity != severity:
+                logger.debug(
+                    f"[AIOps] Tier filter: {original_severity}→{severity} server={server_id}"
+                )
+            # development tier'da info'ya düşen eventleri atla
+            if severity == "info":
+                continue
+
             # ── Baseline filtresi uygula ────────────────────────────────────
             baseline_result = apply_baseline_filter(
                 db=db,
@@ -153,7 +165,12 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
             db.refresh(event)
             created += 1
 
-            if severity == "critical":
+            # ── Storm tespiti ───────────────────────────────────────────────
+            storm_detected = check_and_handle_storm(db, metric, event)
+            if storm_detected:
+                db.commit()  # storm downgrade'i kaydet
+
+            if event.severity == "critical" and not storm_detected:
                 inc_id = auto_create_or_link_incident(db, event)
                 if inc_id:
                     incidents_touched.add(inc_id)
@@ -164,6 +181,9 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
 
     # Düzelen (recovered) anomalileri otomatik çöz
     resolved = _auto_resolve_recovered(db, now)
+    # TTL bazlı otomatik kapanma (severity bazlı)
+    ttl_resolved = auto_resolve_by_ttl(db)
+    resolved += ttl_resolved
 
     if created or updated or resolved:
         logger.warning(

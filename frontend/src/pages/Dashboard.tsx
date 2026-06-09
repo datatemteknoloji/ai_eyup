@@ -757,6 +757,96 @@ function ActivityFeed({ events }: { events: FeedEvent[] }) {
   )
 }
 
+// ── Günlük Özet Kartı ──────────────────────────────────────────────────────
+function DigestCard({ digest }: {
+  digest: {
+    date: string; total_events: number; severity_breakdown: Record<string, number>
+    affected_servers: number; new_incidents: number; storm_incidents: number
+    resolved_count: number; unresolved_critical_count: number
+    top_metrics: { metric: string; count: number }[]
+    action_required: boolean; noise_ratio: number
+  }
+}) {
+  const sevColor: Record<string, string> = {
+    critical: 'text-red-400', warning: 'text-amber-400', info: 'text-blue-400', emergency: 'text-purple-400'
+  }
+  return (
+    <div className={`rounded-xl border p-4 ${digest.action_required
+      ? 'border-amber-500/40 bg-amber-500/5'
+      : 'border-gray-700/60 bg-gray-800/30'}`}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">📊</span>
+          <h3 className="font-semibold text-gray-100">Günlük Alarm Özeti</h3>
+          <span className="text-xs text-gray-500">{digest.date}</span>
+        </div>
+        {digest.action_required && (
+          <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-1 rounded-full border border-amber-500/30">
+            ⚠ Müdahale Gerekli
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <div className="text-center">
+          <div className="text-2xl font-bold text-gray-100">{digest.total_events}</div>
+          <div className="text-xs text-gray-500">Toplam Event</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-red-400">{digest.unresolved_critical_count}</div>
+          <div className="text-xs text-gray-500">Kritik Açık</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-amber-400">{digest.affected_servers}</div>
+          <div className="text-xs text-gray-500">Etkilenen Sunucu</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-cyan-400">{digest.noise_ratio}%</div>
+          <div className="text-xs text-gray-500">Gürültü Oranı</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <div className="text-xs text-gray-500 mb-2">Severity Dağılımı</div>
+          <div className="space-y-1">
+            {Object.entries(digest.severity_breakdown).map(([sev, cnt]) => (
+              <div key={sev} className="flex items-center gap-2">
+                <span className={`text-xs w-16 ${sevColor[sev] || 'text-gray-400'}`}>{sev}</span>
+                <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${sev === 'critical' ? 'bg-red-500' : sev === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${Math.min((cnt / digest.total_events) * 100, 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-400 w-8 text-right">{cnt}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs text-gray-500 mb-2">En Sık Tetiklenen Metrikler</div>
+          <div className="space-y-1">
+            {digest.top_metrics.slice(0, 5).map((m, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="text-xs text-gray-300 truncate max-w-[160px]">{m.metric}</span>
+                <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded">{m.count}</span>
+              </div>
+            ))}
+          </div>
+          {digest.storm_incidents > 0 && (
+            <div className="mt-2 text-xs text-amber-400 flex items-center gap-1">
+              <span>⚡</span>
+              <span>{digest.storm_incidents} alarm fırtınası tespit edildi</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
 function QuickActionsPanel() {
   const actions = [
@@ -1024,6 +1114,22 @@ const Dashboard: React.FC = () => {
     refetchInterval: 45_000,
   })
 
+  const { data: digest } = useQuery<{
+    date: string; total_events: number; severity_breakdown: Record<string, number>
+    affected_servers: number; new_incidents: number; storm_incidents: number
+    resolved_count: number; unresolved_critical_count: number
+    top_metrics: { metric: string; count: number }[]
+    action_required: boolean; noise_ratio: number
+  }>({
+    queryKey: ['daily-digest'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/baseline/digest`)
+      if (!r.ok) return null
+      return r.json()
+    },
+    refetchInterval: 300_000,  // 5 dk
+  })
+
   if (serversLoading || hypervisorsLoading) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
@@ -1104,6 +1210,10 @@ const Dashboard: React.FC = () => {
 
         {hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
           <EsxResourcePanel hypervisors={hypervisors} />
+        )}
+
+        {digest && (
+          <DigestCard digest={digest} />
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
