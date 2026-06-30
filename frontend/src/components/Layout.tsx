@@ -1,11 +1,13 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../auth/AuthContext'
 import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
   MessageCircle, Bot, Zap, RefreshCw, Package, Database, Terminal, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft, Microscope, Sliders,
 } from 'lucide-react'
+import { API_BASE_URL } from '../config/api'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -21,6 +23,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ aiops: true })
+
+  const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+    queryKey: ['ops-summary-nav'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/ops/summary`)
+      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      return r.json()
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  })
 
   const isActive = (path: string) =>
     location.pathname === path || (path === '/dashboard' && location.pathname === '/')
@@ -131,6 +144,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     {sidebarOpen && (
                       <>
                         <span className="font-medium ml-3 flex-1 text-left">{item.name}</span>
+                        {item.name === 'AIOps' && (opsSummary?.critical ?? 0) > 0 && (
+                          <span className="mr-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                            {opsSummary!.critical > 99 ? '99+' : opsSummary!.critical}
+                          </span>
+                        )}
                         <ChevronRight size={14} className={`text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
                       </>
                     )}
@@ -152,7 +170,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                               }`}
                             >
                               <span className="flex-shrink-0 text-current">{child.icon}</span>
-                              <span className="font-medium truncate">{child.name}</span>
+                              <span className="font-medium truncate flex-1">{child.name}</span>
+                              {child.path === '/ops' && (opsSummary?.critical ?? 0) > 0 && (
+                                <span className="ml-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                                  {opsSummary!.critical > 99 ? '99+' : opsSummary!.critical}
+                                </span>
+                              )}
+                              {child.path === '/events' && (opsSummary?.warning ?? 0) > 0 && (
+                                <span className="ml-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                                  {opsSummary!.warning > 99 ? '99+' : opsSummary!.warning}
+                                </span>
+                              )}
                             </Link>
                           </li>
                         )
