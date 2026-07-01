@@ -14,9 +14,16 @@ scrape_configs:
     static_configs:
       - targets: ['pushgateway:9091']
 
-  # Node Exporter - File-based service discovery
+  # Node Exporter (Linux) - File-based service discovery
   - job_name: 'node-exporter'
     file_sd_configs:
       - files:
           - '/etc/prometheus/targets/node_exporter_targets.json'
+        refresh_interval: 30s
+
+  # Windows Exporter (Windows) - port 9182
+  - job_name: 'windows-exporter'
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/targets/windows_exporter_targets.json'
         refresh_interval: 30s

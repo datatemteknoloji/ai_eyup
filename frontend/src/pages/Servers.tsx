@@ -1553,10 +1553,41 @@ const Servers: React.FC = () => {
     )
   }
 
+  // OS platform tabs
+  const platformCounts = {
+    all: servers.length,
+    linux: servers.filter(s => !(s.os_type || '').toLowerCase().includes('windows')).length,
+    windows: servers.filter(s => (s.os_type || '').toLowerCase().includes('windows')).length,
+  }
+
   return (
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     <div className="space-y-6">
+      {/* Platform tabs */}
+      <div className="flex items-center gap-1 bg-slate-800/60 rounded-xl p-1 w-fit border border-slate-700/60">
+        {([
+          { key: 'all', label: 'Tümü', count: platformCounts.all },
+          { key: 'linux', label: 'Linux', count: platformCounts.linux },
+          { key: 'windows', label: 'Windows', count: platformCounts.windows },
+        ] as const).map(tab => (
+          <button key={tab.key}
+            onClick={() => setOsFilter(tab.key === 'all' ? 'all' : tab.key)}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              (tab.key === 'all' && osFilter === 'all') || (tab.key !== 'all' && osFilter === tab.key)
+                ? 'bg-blue-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}>
+            {tab.label}
+            <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${
+              (tab.key === 'all' && osFilter === 'all') || (tab.key !== 'all' && osFilter === tab.key)
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-700 text-slate-400'
+            }`}>{tab.count}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
       {isError && servers.length > 0 && (
         <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2.5 text-sm">

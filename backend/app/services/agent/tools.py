@@ -410,7 +410,7 @@ ASK_USER_SPEC: Dict[str, Any] = {
 
 
 def tool_specs() -> List[Dict[str, Any]]:
-    """LLM'e gönderilecek tool şemaları (Ollama/OpenAI function-calling formatı)."""
+    """LLM'e gönderilecek tool şemaları — Linux + Windows araçları."""
     specs = [
         {
             "type": "function",
@@ -422,5 +422,12 @@ def tool_specs() -> List[Dict[str, Any]]:
         }
         for t in TOOLS.values()
     ]
+    # Windows tools
+    try:
+        from app.services.agent.tools_windows import WINDOWS_TOOLS
+        for wt in WINDOWS_TOOLS:
+            specs.append({"type": "function", "function": wt})
+    except Exception:
+        pass
     specs.append(ASK_USER_SPEC)
     return specs

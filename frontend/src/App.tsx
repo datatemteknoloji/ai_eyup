@@ -25,6 +25,7 @@ import BaselineManager from './pages/BaselineManager'
 import OpsCenter from './pages/OpsCenter'
 import HypervisorChat from './pages/HypervisorChat'
 import InfraReports from './pages/InfraReports'
+import WindowsServers from './pages/WindowsServers'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient({
@@ -81,6 +82,9 @@ function App() {
                       <Route path="/hypervisors" element={<ErrorBoundary><Hypervisors /></ErrorBoundary>} />
                       <Route path="/hypervisor-chat" element={<ErrorBoundary><HypervisorChat /></ErrorBoundary>} />
                       <Route path="/infra-reports" element={<ErrorBoundary><InfraReports /></ErrorBoundary>} />
+                      <Route path="/windows" element={<ErrorBoundary><WindowsServers /></ErrorBoundary>} />
+                      <Route path="/windows/events" element={<ErrorBoundary><WindowsServers /></ErrorBoundary>} />
+                      <Route path="/windows/updates" element={<ErrorBoundary><WindowsServers /></ErrorBoundary>} />
                       <Route path="/chat" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
                       <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
                       <Route path="/metrics" element={<ErrorBoundary><LiveMetrics /></ErrorBoundary>} />

@@ -37,24 +37,21 @@ logger = logging.getLogger(__name__)
 MAX_STEPS = 8
 
 SYSTEM_PROMPT = (
-    "Sen bir AIOps Linux altyapı asistanısın. Görevin sunucularda teşhis yapmak ve "
-    "gerektiğinde düzeltici işlemleri UYGULAMAKTIR.\n"
-    "KURALLAR:\n"
-    "1. Salt-okunur teşhis tool'larını (run_diagnostic, read_service_logs) serbestçe kullan.\n"
-    "2. Bir değişiklik yapman gerekiyorsa (clean_logs, restart_service, update_packages) "
-    "ONAY İÇİN KULLANICIYA METİNLE SORMA. Doğrudan ilgili tool'u çağır. "
-    "Sistem, değişiklik yapan tool çağrılarını otomatik olarak duraklatıp insan onayına "
-    "sunar; onaylanırsa senin yerine çalıştırır. Yani 'onayınızı bekliyorum' deme, tool'u çağır.\n"
-    "3. Bir parametreyi (hangi disk, hangi volume group, hangi boyut vb.) KESİN bilmiyorsan "
-    "TAHMİN ETME. Önce salt-okunur tool'larla adayları topla (örn. yeni VG için "
-    "list_free_disks ile diskleri bul). Sonra kullanıcının seçmesi gereken bir durum varsa "
-    "seçenekleri DÜZ METİN olarak yazıp DURMA; bunun yerine MUTLAKA 'ask_user' tool'unu çağır "
-    "ve options dizisine her adayı (örn. '/dev/sdb (64G, boş)') koy. Seçenekleri metinle "
-    "listeleyip yanıtı sonlandırmak YANLIŞTIR — ask_user kullan. Kullanıcı zaten net "
-    "belirttiyse (disk/boyut/ad verdiyse) sormadan doğrudan ilerle.\n"
-    "4. Komut çıktısı uydurma; yalnızca tool sonuçlarına dayan.\n"
-    "5. Tool sonuçları döndükten ve işin bittikten sonra TÜRKÇE, kısa ve net bir özet ile bitir.\n"
-    "6. Hangi sunucuda işlem yaptığını belirt."
+    "Sen çok platformlu bir AIOps altyapı asistanısın. Linux ve Windows sunucularında "
+    "teşhis ve yönetim işlemleri yapabilirsin.\n"
+    "PLATFORM KURALLAR:\n"
+    "- Linux sunucular için: run_diagnostic, read_service_logs, restart_service, "
+    "update_packages, list_free_disks, lvm_info, manage_lvm araçlarını kullan.\n"
+    "- Windows sunucular için: win_diagnostic, win_read_event_logs, win_manage_service, "
+    "win_run_powershell, win_list_updates, win_install_updates araçlarını kullan.\n"
+    "- Hangi platform olduğunu sunucunun os_type bilgisinden anla.\n"
+    "GENEL KURALLAR:\n"
+    "1. Salt-okunur araçları (run_diagnostic, win_diagnostic, win_read_event_logs) serbestçe kullan.\n"
+    "2. Değişiklik yapan araçları (restart_service, update_packages, win_manage_service, "
+    "win_install_updates vb.) doğrudan çağır — sistem onay için duraklatır.\n"
+    "3. Parametre tahmin etme. Önce bilgi toplayan araçları çalıştır, sonra ask_user ile seçenek sun.\n"
+    "4. Araç çıktısı uydurma; yalnızca gerçek sonuçlara dayan.\n"
+    "5. İş bitince TÜRKÇE, kısa ve net özet ver. Hangi sunucuda ne yaptığını belirt."
 )
 
 
@@ -121,13 +118,22 @@ def _persist_final(db: Session, result: Dict[str, Any]) -> None:
 
 
 def _server_summary(db: Session, server_ids: List[int]) -> str:
+    """Build server context: includes AI-ready Linux + WinRM-configured Windows servers."""
     from app.models.server import Server
-    q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
-    if server_ids:
-        q = q.filter(Server.id.in_(server_ids))
     lines = []
-    for s in q.all():
-        lines.append(f"- {s.name} ({s.ip_address}) OS={s.os_version or s.os_type or 'Linux'} durum={s.status}")
+    if server_ids:
+        servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
+    else:
+        # Linux: ai_ready=True; Windows: has WinRM credentials
+        linux_q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
+        win_q = db.query(Server).filter(Server.os_type.ilike("%windows%"))
+        servers = linux_q.all() + [s for s in win_q.all() if s.id not in {x.id for x in linux_q.all()}]
+    for s in servers:
+        os_label = s.os_type or s.os_version or "Linux"
+        cfg = s.connection_config or {}
+        has_win = "windows" in (s.os_type or "").lower()
+        conn_label = "WinRM" if has_win else "SSH"
+        lines.append(f"- {s.name} ({s.ip_address}) OS={os_label} bağlantı={conn_label} durum={s.status}")
     return "\n".join(lines)
 
 
@@ -247,6 +253,45 @@ def _run_loop_legacy(
                 return {"status": "question", "action_id": action.id, "question": question,
                         "options": options, "allow_multiple": allow_multiple,
                         "steps": steps, "session_id": ctx.get("session_id")}
+
+            # ── Windows tool dispatcher ───────────────────────────────────
+            if name.startswith("win_"):
+                from app.services.agent.tools_windows import (
+                    execute_windows_tool, MUTATING_WIN_TOOLS,
+                )
+                is_mutating = name in MUTATING_WIN_TOOLS
+                if is_mutating:
+                    # Pause for approval (same pattern as Linux mutating tools)
+                    from app.models.agent_action import AgentAction
+                    action_rec = AgentAction(
+                        session_id=ctx.get("session_id"),
+                        tool_name=name,
+                        arguments=args,
+                        risk_level="mutating",
+                        status="pending",
+                        preview=f"Windows: {name}({args})",
+                        transcript=messages,
+                        model=model,
+                    )
+                    db.add(action_rec); db.commit(); db.refresh(action_rec)
+                    steps.append({"type": "pending", "tool": name, "action_id": action_rec.id})
+                    return {
+                        "status": "pending",
+                        "action_id": action_rec.id,
+                        "steps": steps,
+                        "session_id": ctx.get("session_id"),
+                    }
+                # READ_ONLY Windows tool — run directly
+                try:
+                    win_result = execute_windows_tool(name, args, db, ctx)
+                    messages.append({"role": "tool", "name": name, "content": win_result})
+                    steps.append({"type": "tool_result", "tool": name})
+                except Exception as exc:
+                    err_str = json.dumps({"error": str(exc)})
+                    messages.append({"role": "tool", "name": name, "content": err_str})
+                    steps.append({"type": "error", "tool": name, "detail": str(exc)})
+                continue
+            # ── End Windows dispatcher ───────────────────────────────────
 
             tool = tool_mod.get_tool(name)
 

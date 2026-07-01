@@ -12,6 +12,7 @@ class HypervisorType(str, enum.Enum):
     HYPERV = "hyperv"
     KVM = "kvm"
     XEN = "xen"
+    PROXMOX = "proxmox"
 
 class Hypervisor(Base):
     __tablename__ = "hypervisors"

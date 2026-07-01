@@ -174,3 +174,10 @@ try:
     api_router.include_router(ops_center.router, prefix="/ops", tags=["ops"])
 except Exception as e:
     logger.error(f"Could not load ops_center router: {e}", exc_info=True)
+
+# Windows Management (WinRM, event logs, updates, exporter)
+try:
+    from app.api import windows
+    api_router.include_router(windows.router, prefix="/windows", tags=["windows"])
+except Exception as e:
+    logger.error(f"Could not load windows router: {e}", exc_info=True)

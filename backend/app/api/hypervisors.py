@@ -75,7 +75,33 @@ async def test_connection(data: TestConnectionRequest):
         except Exception as e:
             return {"success": False, "message": "oVirt bağlantı hatası", "details": str(e)}
 
-    return {"success": False, "message": f"Desteklenmeyen tip: {data.type}. vmware veya kvm kullanın.", "details": ""}
+    if htype in ("proxmox",):
+        try:
+            from app.services.hypervisor.proxmox_client import ProxmoxClient
+            client = ProxmoxClient(
+                host=host, username=username, password=password, port=port or 8006, verify_ssl=False,
+            )
+            result = client.test_connection()
+            if result["connected"]:
+                return {"success": True, "message": result["message"], "details": result.get("version", "")}
+            return {"success": False, "message": result["message"], "details": ""}
+        except Exception as exc:
+            return {"success": False, "message": "Proxmox bağlantı hatası", "details": str(exc)}
+
+    if htype in ("hyperv",):
+        try:
+            from app.services.windows.winrm_client import WinRMClient
+            from app.services.hypervisor.hyperv_client import HyperVClient
+            winrm = WinRMClient(host=host, username=username, password=password, port=port or 5985)
+            client = HyperVClient(winrm)
+            result = client.test_connection()
+            if result["connected"]:
+                return {"success": True, "message": result["message"], "details": ""}
+            return {"success": False, "message": result["message"], "details": ""}
+        except Exception as exc:
+            return {"success": False, "message": "Hyper-V bağlantı hatası", "details": str(exc)}
+
+    return {"success": False, "message": f"Desteklenmeyen tip: {data.type}. vmware, kvm, proxmox veya hyperv kullanın.", "details": ""}
 
 @router.get("/", response_model=List[HypervisorResponse])
 async def list_hypervisors(db: Session = Depends(get_db)):
@@ -243,6 +269,33 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                 errors.append("oVirt client modülü bulunamadı")
             except Exception as e:
                 errors.append(f"oVirt bağlantı hatası: {str(e)}")
+        elif htype == "proxmox":
+            try:
+                from app.services.hypervisor.proxmox_client import ProxmoxClient
+                client = ProxmoxClient(
+                    host=hypervisor.ip_address or hypervisor.hostname,
+                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
+                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
+                    port=hypervisor.port or 8006,
+                    verify_ssl=False,
+                )
+                vms = client.list_vms()
+            except Exception as e:
+                errors.append(f"Proxmox bağlantı hatası: {str(e)}")
+        elif htype == "hyperv":
+            try:
+                from app.services.windows.winrm_client import WinRMClient
+                from app.services.hypervisor.hyperv_client import HyperVClient
+                winrm = WinRMClient(
+                    host=hypervisor.ip_address or hypervisor.hostname,
+                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
+                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
+                    port=hypervisor.port or 5985,
+                )
+                hv_client = HyperVClient(winrm)
+                vms = hv_client.list_vms()
+            except Exception as e:
+                errors.append(f"Hyper-V bağlantı hatası: {str(e)}")
         else:
             errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
 
