@@ -586,8 +586,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${server.status === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
             ● {server.status}
           </span>
-          {/* SSH butonu detay headerında */}
-          {server.status === 'ONLINE' && server.ip_address && (
+          {/* SSH butonu detay headerında — sadece Linux */}
+          {server.status === 'ONLINE' && server.ip_address && !((server.os_type || '').toLowerCase().includes('windows')) && (
             <button
               onClick={() => {
                 const w = window.open(
@@ -1128,10 +1128,11 @@ const Servers: React.FC = () => {
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [ipFilter, setIpFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all') // Varsayılan olarak tüm durumlar
-  const [showOffline, setShowOffline] = useState(false) // Varsayılan: tüm sunucular (çevrimiçi + çevrimdışı) gösterilsin
-  const [aiReadyFilter, setAiReadyFilter] = useState<string>('true') // all, true, false — varsayılan: AI Ready
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [showOffline, setShowOffline] = useState(true) // Tüm VM'ler (offline dahil) göster
+  const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // Tümü — Linux + Windows + diğer
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
+  const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
 
   const [sortKey, setSortKey] = useState<string>('name')
@@ -1450,12 +1451,18 @@ const Servers: React.FC = () => {
     
     const matchesType = typeFilter === 'all' || server.server_type === typeFilter
 
+    const osTypeLow = (server.os_type || '').toLowerCase()
+    const matchesOs = osFilter === 'all' ||
+      (osFilter === 'windows' && osTypeLow.includes('windows')) ||
+      (osFilter === 'linux' && !osTypeLow.includes('windows') && (osTypeLow.includes('linux') || osTypeLow.includes('rhel') || osTypeLow.includes('ol') || osTypeLow.includes('ubuntu') || osTypeLow.includes('centos') || osTypeLow.includes('rocky') || osTypeLow.includes('sles') || server.os_release_id)) ||
+      (osFilter === 'other' && !osTypeLow.includes('windows') && !osTypeLow.includes('linux') && !osTypeLow.includes('rhel') && !osTypeLow.includes('ol') && !osTypeLow.includes('ubuntu') && !osTypeLow.includes('centos') && !osTypeLow.includes('rocky') && !osTypeLow.includes('sles') && !server.os_release_id)
+
     const matchesNodeExporter = nodeExporterFilter === 'all' ||
       (nodeExporterFilter === 'installed' && server.node_exporter?.installed) ||
       (nodeExporterFilter === 'running' && server.node_exporter?.running) ||
       (nodeExporterFilter === 'not_installed' && !server.node_exporter?.installed)
 
-    return matchesSearch && matchesIp && matchesStatus && matchesAiReady && matchesType && matchesNodeExporter
+    return matchesSearch && matchesIp && matchesStatus && matchesAiReady && matchesType && matchesOs && matchesNodeExporter
   })
 
   const sortedServers = [...filteredServers].sort((a, b) => {
@@ -1634,6 +1641,17 @@ const Servers: React.FC = () => {
               <option value="VIRTUAL">Virtual</option>
               <option value="PHYSICAL">Physical</option>
             </select>
+            {/* OS Filter */}
+            <select
+              value={osFilter}
+              onChange={(e) => setOsFilter(e.target.value)}
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Tüm OS</option>
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+              <option value="other">Diğer / Bilinmiyor</option>
+            </select>
             {/* Node Exporter Filter */}
             <select
               value={nodeExporterFilter}
@@ -1776,21 +1794,31 @@ const Servers: React.FC = () => {
                   {/* ── OS / Kernel ── */}
                   <td className="px-4 py-3">
                     {(() => {
-                      const icon = server.os_release_id === 'rhel'   ? 'RH' :
+                      const osTypeLower = (server.os_type || '').toLowerCase()
+                      const osReleaseLower = (server.os_release_id || '').toLowerCase()
+                      const osVersionLower = (server.os_version || '').toLowerCase()
+                      const isWindows = osTypeLower.includes('windows') || osReleaseLower.includes('windows') || osVersionLower.includes('windows')
+                      const icon = isWindows ? 'WIN' :
+                                   server.os_release_id === 'rhel'   ? 'RH' :
                                    server.os_release_id === 'ol'     ? 'OE' :
                                    server.os_release_id === 'rocky'  ? 'RK' :
                                    server.os_release_id === 'ubuntu' ? 'UB' :
                                    server.os_release_id === 'debian' ? 'DEB' :
-                                   server.os_version?.toLowerCase().includes('red hat') ? 'RH' :
-                                   server.os_version?.toLowerCase().includes('oracle')  ? 'OE' :
-                                   server.os_version?.toLowerCase().includes('rocky')   ? 'RK' :
-                                   server.os_version?.toLowerCase().includes('ubuntu')  ? 'UB' : 'LNX'
-                      const osName = server.os_release_id
-                        ? `${server.os_release_id.toUpperCase()} ${server.os_version_id || ''}`
-                        : server.os_version?.replace('(Plow)','').replace('(Ootpa)','').replace('(Ootpa)','').trim() || null
+                                   osVersionLower.includes('red hat') ? 'RH' :
+                                   osVersionLower.includes('oracle')  ? 'OE' :
+                                   osVersionLower.includes('rocky')   ? 'RK' :
+                                   osVersionLower.includes('ubuntu')  ? 'UB' :
+                                   osVersionLower.includes('suse') || osTypeLower.includes('sles') ? 'SUSE' :
+                                   osTypeLower.includes('linux') || osReleaseLower ? 'LNX' : '?'
+                      const iconColor = isWindows ? 'text-blue-400' : icon === '?' ? 'text-slate-600' : 'text-green-400'
+                      const osName = isWindows
+                        ? (server.os_type || server.os_version || 'Windows')
+                        : server.os_release_id
+                          ? `${server.os_release_id.toUpperCase()} ${server.os_version_id || ''}`
+                          : server.os_version?.replace('(Plow)','').replace('(Ootpa)','').trim() || server.os_type || null
                       return (
                         <div className="flex items-start gap-2">
-                          <span className="text-base mt-0.5 flex-shrink-0">{icon}</span>
+                          <span className={`text-[10px] font-bold mt-0.5 flex-shrink-0 bg-slate-700/60 px-1.5 py-0.5 rounded ${iconColor}`}>{icon}</span>
                           <div className="min-w-0">
                             {osName ? (
                               <div className="text-sm font-medium text-white truncate max-w-[180px]" title={osName}>
@@ -1873,7 +1901,7 @@ const Servers: React.FC = () => {
                       >
                         {startingNodeExporter === server.id ? 'Başlatılıyor...' : 'Başlat'}
                       </button>
-                    ) : server.status === 'ONLINE' ? (
+                    ) : server.status === 'ONLINE' && !((server.os_type || '').toLowerCase().includes('windows')) ? (
                       <button
                         onClick={() => {
                           setInstallResultByServerId(prev => { const next = { ...prev }; delete next[server.id]; return next })
