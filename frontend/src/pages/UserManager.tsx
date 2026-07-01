@@ -572,7 +572,9 @@ export default function UserManager() {
                           <td key={m.id} className="px-3 py-3">
                             <div className="flex justify-center">
                               {isAdmin ? (
-                                <CheckCircle2 size={15} className="text-slate-600" title="Admin — tam erişim" />
+                                <span title="Admin — tam erişim">
+                                  <CheckCircle2 size={15} className="text-slate-600" />
+                                </span>
                               ) : (
                                 <button
                                   onClick={() => handleToggle(u, m.id)}
