@@ -22,9 +22,10 @@ export function installFetchInterceptor() {
       (input as Request).url || ''
 
     const isApi = url.includes('/api/v1')
-    const isAuthEndpoint = url.includes('/api/v1/auth/')
+    // Sadece login/token endpoint'i token gerektirmez; diğer /auth/* uçları (users, me, change-password) token ister
+    const isLoginEndpoint = url.includes('/auth/token') || url.includes('/auth/login')
 
-    if (isApi && !isAuthEndpoint) {
+    if (isApi && !isLoginEndpoint) {
       const token = getToken()
       if (token) {
         const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined))
@@ -35,8 +36,8 @@ export function installFetchInterceptor() {
 
     const res = await originalFetch(input as any, init)
 
-    // Oturum süresi dolmuş / geçersiz → login'e gönder (auth uçları hariç).
-    if (res.status === 401 && isApi && !isAuthEndpoint) {
+    // Oturum süresi dolmuş / geçersiz → login'e gönder (login uçları hariç).
+    if (res.status === 401 && isApi && !isLoginEndpoint) {
       clearToken()
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login'
