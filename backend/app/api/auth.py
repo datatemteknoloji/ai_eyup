@@ -93,8 +93,17 @@ def logout(request: Request, db: Session = Depends(get_db),
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)):
-    return _user_dict(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.models.module import UserModule, DEFAULT_MODULES
+    d = _user_dict(user)
+    if user.role in ("admin", "superadmin"):
+        d["modules"] = [m["id"] for m in DEFAULT_MODULES]
+        d["is_admin"] = True
+    else:
+        rows = db.query(UserModule).filter(UserModule.user_id == user.id).all()
+        d["modules"] = [r.module_id for r in rows]
+        d["is_admin"] = False
+    return d
 
 
 @router.post("/change-password")

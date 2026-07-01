@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.models.credential import GlobalCredential
 from app.models.server import Server
 from app.models.app_settings import AppSettings
+from app.core.encryption import encrypt_secret, decrypt_secret
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,9 +82,9 @@ async def create_credential(data: CredentialCreate, db: Session = Depends(get_db
     cred = GlobalCredential(
         name=data.name,
         username=data.username,
-        password=data.password or None,
-        private_key=data.private_key or None,
-        sudo_password=data.sudo_password or None,
+        password=encrypt_secret(data.password) or None,
+        private_key=encrypt_secret(data.private_key) or None,
+        sudo_password=encrypt_secret(data.sudo_password) or None,
         port=data.port,
         is_default=is_first
     )
@@ -114,11 +115,11 @@ async def update_credential(credential_id: int, data: CredentialUpdate, db: Sess
     if data.username is not None:
         cred.username = data.username
     if data.password is not None and data.password != "":
-        cred.password = data.password
+        cred.password = encrypt_secret(data.password)
     if data.private_key is not None:
-        cred.private_key = data.private_key
+        cred.private_key = encrypt_secret(data.private_key)
     if data.sudo_password is not None:
-        cred.sudo_password = data.sudo_password
+        cred.sudo_password = encrypt_secret(data.sudo_password)
     if data.port is not None:
         cred.port = data.port
 
@@ -166,22 +167,25 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
 
     applied = 0
     failed = []
+    plain_password = decrypt_secret(cred.password) if cred.password else None
+    plain_key = decrypt_secret(cred.private_key) if cred.private_key else None
+    plain_sudo = decrypt_secret(cred.sudo_password) if cred.sudo_password else None
+
     for server in servers:
         if not server.connection_config:
             server.connection_config = {}
         server.connection_config["username"] = cred.username
-        if cred.password:
-            server.connection_config["password"] = cred.password
-        if cred.private_key:
-            server.connection_config["private_key"] = cred.private_key
-        if cred.sudo_password:
-            server.connection_config["sudo_password"] = cred.sudo_password
+        if plain_password:
+            server.connection_config["password"] = encrypt_secret(plain_password)
+        if plain_key:
+            server.connection_config["private_key"] = encrypt_secret(plain_key)
+        if plain_sudo:
+            server.connection_config["sudo_password"] = encrypt_secret(plain_sudo)
         server.connection_config["port"] = cred.port
         flag_modified(server, "connection_config")
-        
+
         # ai_ready: SSH test et, başarılıysa true (SADECE IP adresi olanlarda)
         if request.set_ai_ready:
-            # IP adresi yoksa ai_ready = False
             if not server.ip_address or not server.ip_address.strip():
                 logger.debug(f"SSH test atlandı (IP yok): {server.name}")
                 server.ai_ready = False
@@ -192,8 +196,8 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
                     ssh = SSHManager(
                         host=server.ip_address.strip(),
                         username=cred.username,
-                        password=cred.password if cred.password else None,
-                        private_key=cred.private_key if cred.private_key else None,
+                        password=plain_password,
+                        private_key=plain_key,
                         port=cred.port
                     )
                     ssh.connect()
@@ -250,12 +254,13 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
         # SSH test
         try:
             from app.services.ssh_manager import SSHManager
+            cfg = server.connection_config
             ssh = SSHManager(
                 host=server.ip_address.strip(),
-                username=server.connection_config.get("username"),
-                password=server.connection_config.get("password"),
-                private_key=server.connection_config.get("private_key"),
-                port=server.connection_config.get("port", 22)
+                username=cfg.get("username"),
+                password=decrypt_secret(cfg.get("password")),
+                private_key=decrypt_secret(cfg.get("private_key")),
+                port=cfg.get("port", 22)
             )
             ssh.connect()
             

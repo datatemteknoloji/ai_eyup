@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Shield, Cpu, MemoryStick, Download, Play, Square, RotateCcw,
-  Search, X, CheckCircle, XCircle } from 'lucide-react'
+  Search, X, CheckCircle, XCircle, Globe } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 
 const WIN_API = `${API_BASE_URL}/windows`
@@ -18,10 +18,13 @@ interface WindowsServer {
   os_type: string
   cpu_cores: number
   memory_gb: number
+  disk_gb?: number
   hypervisor_id: number | null
   hypervisor_name: string | null
   winrm_configured: boolean
-  winrm_port: number
+  winrm_source: 'server' | 'global' | null
+  winrm_port: number | null
+  confirmed_windows: boolean
 }
 
 interface ServiceItem {
@@ -70,14 +73,20 @@ const levelColor = (level: string) => {
 
 // ── Credential Modal ──────────────────────────────────────────────────────────
 
-const CredentialModal: React.FC<{ serverId: number; onClose: () => void }> = ({ serverId, onClose }) => {
+const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> = ({ server, onClose }) => {
   const queryClient = useQueryClient()
-  const [form, setForm] = useState({ username: '', password: '', port: 5985, use_https: false })
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    port: 5985,
+    use_https: false,
+    ip_address: server.ip_address || '',
+  })
   const [result, setResult] = useState<any>(null)
 
   const save = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/${serverId}/save-credentials`, {
+      const r = await fetch(`${WIN_API}/servers/${server.id}/save-credentials`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -90,14 +99,31 @@ const CredentialModal: React.FC<{ serverId: number; onClose: () => void }> = ({ 
     },
   })
 
+  const hasIp = !!(server.ip_address || form.ip_address.trim())
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="text-white font-semibold">WinRM Kimlik Bilgileri</h3>
+          <div>
+            <h3 className="text-white font-semibold">WinRM Kimlik Bilgileri</h3>
+            <p className="text-slate-500 text-xs mt-0.5">{server.name}</p>
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
         </div>
         <div className="space-y-3">
+          {/* IP Address — required if missing */}
+          <div>
+            <label className="text-xs mb-1 flex items-center gap-1">
+              <span className={!hasIp ? 'text-amber-400' : 'text-slate-400'}>IP Adresi</span>
+              {!server.ip_address && <span className="text-amber-500 text-[10px]">● Gerekli — hypervisor'dan alınamadı</span>}
+            </label>
+            <input
+              value={form.ip_address}
+              onChange={e => setForm(f => ({ ...f, ip_address: e.target.value }))}
+              className={`w-full bg-slate-700 border rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono ${!hasIp ? 'border-amber-500/60' : 'border-slate-600'}`}
+              placeholder="192.168.1.x" />
+          </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Kullanıcı Adı (DOMAIN\\user veya user)</label>
             <input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
@@ -112,7 +138,7 @@ const CredentialModal: React.FC<{ serverId: number; onClose: () => void }> = ({ 
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="text-xs text-slate-400 mb-1 block">Port</label>
+              <label className="text-xs text-slate-400 mb-1 block">WinRM Port</label>
               <input type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: Number(e.target.value) }))}
                 className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
@@ -124,15 +150,17 @@ const CredentialModal: React.FC<{ serverId: number; onClose: () => void }> = ({ 
           </div>
           {result && (
             <div className={`rounded-lg p-3 text-sm ${result.connection_test?.connected ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
-              {result.connection_test?.connected ? '✓ Bağlantı başarılı' : `✗ ${result.connection_test?.message || 'Bağlantı başarısız'}`}
+              {result.connection_test?.connected
+                ? '✓ Bağlantı başarılı'
+                : `✗ ${result.connection_test?.message || 'Bağlantı başarısız'}`}
             </div>
           )}
           <button
             onClick={() => save.mutate()}
-            disabled={save.isPending || !form.username || !form.password}
+            disabled={save.isPending || !form.username || !form.password || !form.ip_address.trim()}
             className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-medium text-sm transition-colors"
           >
-            {save.isPending ? 'Kaydediliyor...' : 'Kaydet & Test Et'}
+            {save.isPending ? 'Kaydediliyor & Test Ediliyor...' : 'Kaydet & Test Et'}
           </button>
         </div>
       </div>
@@ -566,14 +594,15 @@ const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = (
 
 const WindowsServers: React.FC = () => {
   const [selected, setSelected] = useState<WindowsServer | null>(null)
-  const [credServer, setCredServer] = useState<number | null>(null)
+  const [credServer, setCredServer] = useState<WindowsServer | null>(null)
   const [search, setSearch] = useState('')
+  const [showUnclassified, setShowUnclassified] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: servers = [], isLoading, refetch } = useQuery<WindowsServer[]>({
-    queryKey: ['windows-servers'],
+    queryKey: ['windows-servers', showUnclassified],
     queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers`)
+      const r = await fetch(`${WIN_API}/servers?include_unclassified=${showUnclassified}`)
       if (!r.ok) throw new Error('Yüklenemedi')
       return r.json()
     },
@@ -594,13 +623,15 @@ const WindowsServers: React.FC = () => {
     s.ip_address?.includes(search)
   )
 
+  const confirmedWindows = servers.filter(s => s.confirmed_windows)
+  const unclassified = servers.filter(s => !s.confirmed_windows)
   const online = servers.filter(s => s.status === 'ONLINE').length
   const configured = servers.filter(s => s.winrm_configured).length
 
   return (
     <div className="space-y-6">
       {credServer && (
-        <CredentialModal serverId={credServer} onClose={() => setCredServer(null)} />
+        <CredentialModal server={credServer} onClose={() => setCredServer(null)} />
       )}
       {selected && (
         <ServerDetail server={selected} onClose={() => setSelected(null)} />
@@ -612,19 +643,31 @@ const WindowsServers: React.FC = () => {
           <h1 className="text-xl font-bold text-white">Windows Sunucular</h1>
           <p className="text-slate-400 text-sm mt-0.5">WinRM ile yönetilen Windows VM'ler ve fiziksel sunucular</p>
         </div>
-        <button onClick={() => refetch()}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
-          <RefreshCw size={14} /> Yenile
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Toggle unclassified VMs */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <div
+              onClick={() => setShowUnclassified(v => !v)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${showUnclassified ? 'bg-blue-600' : 'bg-slate-600'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
+            </div>
+            <span className="text-xs text-slate-400">OS Belirsiz VM'ler</span>
+          </label>
+          <button onClick={() => refetch()}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
+            <RefreshCw size={14} /> Yenile
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Toplam', value: servers.length, color: 'text-white' },
+          { label: 'Windows Tespit', value: confirmedWindows.length, color: 'text-blue-400' },
+          { label: 'OS Belirsiz', value: unclassified.length, color: 'text-amber-400' },
           { label: 'Aktif', value: online, color: 'text-green-400' },
-          { label: 'WinRM Ayarlı', value: configured, color: 'text-blue-400' },
-          { label: 'Ayarsız', value: servers.length - configured, color: 'text-amber-400' },
+          { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -632,6 +675,17 @@ const WindowsServers: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {/* Unclassified notice */}
+      {showUnclassified && unclassified.length > 0 && (
+        <div className="flex items-start gap-3 p-4 bg-amber-500/8 border border-amber-500/25 rounded-xl text-sm">
+          <Shield size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <span className="text-amber-300 font-medium">{unclassified.length} VM</span>
+            <span className="text-amber-400/80"> hypervisor'dan senkronize edildi fakat işletim sistemi belirlenmedi. Bunlar Windows olabilir — WinRM bilgilerini girerek bağlantı kurun.</span>
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative max-w-xs">
@@ -650,9 +704,12 @@ const WindowsServers: React.FC = () => {
         <div className="flex flex-col items-center justify-center h-52 bg-slate-800 border border-slate-700 rounded-xl gap-3">
           <Shield size={40} className="text-slate-600" />
           <p className="text-slate-400 font-medium">Windows sunucu bulunamadı</p>
-          <p className="text-slate-500 text-sm text-center max-w-xs">
-            Hypervisor senkronizasyonundan Windows VM'ler otomatik eklenir,
-            veya Sunucular sayfasından os_type=windows olan sunucu ekleyin.
+          <p className="text-slate-500 text-sm text-center max-w-sm">
+            Henüz tanımlı Windows sunucu yok.<br/>
+            Hypervisor senkronizasyonundan Windows VM'ler otomatik eklenir.<br/>
+            <span className="text-slate-600">
+              "OS Belirsiz VM'ler" toggle'ı açarak sınıflandırılmamış VM'leri de görebilirsiniz.
+            </span>
           </p>
         </div>
       ) : (
@@ -671,17 +728,31 @@ const WindowsServers: React.FC = () => {
                   onClick={() => setSelected(srv)}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${srv.status === 'ONLINE' ? 'bg-blue-500/20' : 'bg-slate-700'}`}>
-                        <span className="text-[9px] font-bold text-blue-400">WIN</span>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        srv.confirmed_windows
+                          ? srv.status === 'ONLINE' ? 'bg-blue-500/20' : 'bg-slate-700'
+                          : 'bg-amber-500/10'
+                      }`}>
+                        <span className={`text-[9px] font-bold ${srv.confirmed_windows ? 'text-blue-400' : 'text-amber-500'}`}>
+                          {srv.confirmed_windows ? 'WIN' : '?'}
+                        </span>
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-white">{srv.name}</div>
-                        <div className="text-xs text-slate-500 font-mono">{srv.ip_address || '—'}</div>
+                        <div className="text-xs text-slate-500 font-mono">
+                          {srv.ip_address || srv.hostname || '—'}
+                          {srv.hypervisor_name && <span className="ml-2 text-slate-600">· {srv.hypervisor_name}</span>}
+                        </div>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">{statusBadge(srv.status)}</td>
-                  <td className="px-4 py-3 text-sm text-slate-300">{srv.os_type || 'Windows'}</td>
+                  <td className="px-4 py-3 text-sm">
+                    {srv.confirmed_windows
+                      ? <span className="text-slate-300">{srv.os_type}</span>
+                      : <span className="text-amber-500/70 text-xs italic">Belirsiz ({srv.os_type || 'boş'})</span>
+                    }
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="text-xs text-slate-400">
                       {srv.cpu_cores > 0 && <div>{srv.cpu_cores} CPU</div>}
@@ -691,9 +762,16 @@ const WindowsServers: React.FC = () => {
                   </td>
                   <td className="px-4 py-3">
                     {srv.winrm_configured ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-blue-400">
-                        <Wifi size={11} /> Port {srv.winrm_port}
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="inline-flex items-center gap-1 text-xs text-blue-400">
+                          <Wifi size={11} /> Port {srv.winrm_port}
+                        </span>
+                        {srv.winrm_source === 'global' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                            <Globe size={9} /> global
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-xs text-amber-500">
                         <WifiOff size={11} /> Ayarsız
@@ -703,7 +781,7 @@ const WindowsServers: React.FC = () => {
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex gap-1 justify-end">
                       {!srv.winrm_configured && (
-                        <button onClick={() => setCredServer(srv.id)}
+                        <button onClick={() => setCredServer(srv)}
                           className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg transition-colors">
                           <Settings size={11} /> WinRM Ayarla
                         </button>

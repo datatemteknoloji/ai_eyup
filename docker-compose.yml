@@ -46,6 +46,7 @@ services:
       - PROMETHEUS_URL=http://localhost:9090
       - PUSHGATEWAY_URL=http://localhost:9091
       - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - ./backend/app:/app/app

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import ThreadSessionLocal as SessionLocal
 from app.models.server import Server
 from app.models.credential import GlobalCredential
+from app.core.encryption import decrypt_secret
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,12 +21,14 @@ ROWS = 50
 
 def _get_creds(server: Server, gc: GlobalCredential | None) -> dict:
     cfg = server.connection_config or {}
+    raw_pw = cfg.get("password") or (gc.password if gc else None)
+    raw_key = cfg.get("private_key") or (gc.private_key if gc else None)
     return {
         "host":     server.ip_address,
         "port":     int(cfg.get("port") or (gc.port if gc else 22) or 22),
         "username": cfg.get("username") or (gc.username if gc else "root") or "root",
-        "password": cfg.get("password") or (gc.password if gc else None),
-        "key":      cfg.get("private_key") or (gc.private_key if gc else None),
+        "password": decrypt_secret(raw_pw) if raw_pw else None,
+        "key":      decrypt_secret(raw_key) if raw_key else None,
     }
 
 

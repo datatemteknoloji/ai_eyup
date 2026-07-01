@@ -41,7 +41,7 @@ INTENT_PATTERNS = {
     "capacity":        r"doluluk|kapasite|boş.*yer|ne kadar dolu|cpu.*memory.*dolu|yoğun|kapasit",
     "compare_vms":     r"karşılaştır|compare|fark.*nedir|farkı|vs\b|versus",
     "tools_status":    r"vmware\s+tools|vm.*tools|tools\s+(olan|olmayan|yüklü|kurulu)",
-    "os_filter":       r"\b(rhel|oel|oracle|windows|ubuntu|centos|rocky|linux)\b",
+    "os_filter":       r"\b(rhel|oel|oracle|windows|win\s*sunucu|ubuntu|centos|rocky|linux)\b",
     "powered_off":     r"kapalı|powered.off|shut.*down|çalışmayan",
     "assessment":      r"değerlendirme|assessment|genel\s+durum|rapor|özet|nasıl.*ortam|sağlık",
     "network":         r"network|ağ|10g|1g|bant\s*genişliği|interface",
@@ -378,15 +378,25 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
         else:
             filtered = [v for v in vms if v["tools_status"] and "running" in v["tools_status"].lower()]
 
-    # OS filtresi
+    # OS filtresi — os_release, os_version VE os_type alanlarının hepsine bakar
     os_map = {
         "rhel": "rhel", "oel": "ol", "oracle": "ol",
         "windows": "windows", "ubuntu": "ubuntu",
         "centos": "centos", "rocky": "rocky",
+        "linux": ("linux", "rhel", "centos", "ubuntu", "ol", "rocky", "sles"),
     }
+    intent_str = " ".join(intents)
     for kw, release in os_map.items():
-        if kw in " ".join(intents):
-            filtered = [v for v in filtered if release in (v["os_release"] or "").lower() or release in (v["os_version"] or "").lower()]
+        if kw in intent_str:
+            releases = (release,) if isinstance(release, str) else release
+            def _matches(v, releases=releases):
+                haystack = " ".join([
+                    (v["os_release"] or "").lower(),
+                    (v["os_version"] or "").lower(),
+                    (v["os_type"]    or "").lower(),
+                ])
+                return any(r in haystack for r in releases)
+            filtered = [v for v in filtered if _matches(v)]
             break
 
     for vm in filtered[:50]:  # token limiti için max 50 VM

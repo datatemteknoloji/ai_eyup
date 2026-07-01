@@ -251,7 +251,7 @@ function TypingIndicator() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function HypervisorChat() {
+export default function HypervisorChat({ embedded = false }: { embedded?: boolean }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -338,8 +338,9 @@ export default function HypervisorChat() {
   const isEmpty = messages.length === 0
 
   return (
-    <div className="flex flex-col h-screen bg-slate-900">
-      {/* Header */}
+    <div className={`flex flex-col bg-slate-900 ${embedded ? 'h-[calc(100vh-220px)] min-h-[500px]' : 'h-screen'}`}>
+      {/* Header — hidden when embedded inside another page */}
+      {!embedded && (
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50 bg-slate-900">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
@@ -360,6 +361,14 @@ export default function HypervisorChat() {
           </button>
         )}
       </div>
+      )}
+      {embedded && messages.length > 0 && (
+        <div className="flex justify-end px-6 py-2 border-b border-slate-700/50">
+          <button onClick={clearChat} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+            <RefreshCw size={13} /> Temizle
+          </button>
+        </div>
+      )}
 
       {/* Quick stats */}
       <QuickStatsBar />

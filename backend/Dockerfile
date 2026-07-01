@@ -18,6 +18,10 @@ COPY . .
 
 RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos
 
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /app appuser \
+    && chown -R appuser:appgroup /app
+USER appuser
+
 EXPOSE 8000
 
 # Production: no --reload, 2 worker

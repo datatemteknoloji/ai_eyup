@@ -263,6 +263,11 @@ const Settings: React.FC = () => {
   const queryClient = useQueryClient()
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
+  // WinRM credential state
+  const [winrmForm, setWinrmForm] = useState({ username: '', password: '', port: 5985, use_https: false })
+  const [winrmEditing, setWinrmEditing] = useState(false)
+  const [winrmApplyResult, setWinrmApplyResult] = useState<{ applied_to: number; servers: string[] } | null>(null)
+
   const [metricRetentionDays, setMetricRetentionDays] = useState<number>(30)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
   const [modelSaved, setModelSaved] = useState(false)
@@ -324,6 +329,53 @@ const Settings: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/servers/`)
       if (!res.ok) return []
       return res.json()
+    }
+  })
+
+  // WinRM Queries & Mutations
+  const { data: winrmCred } = useQuery<{ configured: boolean; username?: string; port?: number; use_https?: boolean; has_password?: boolean }>({
+    queryKey: ['winrm-global-cred'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/windows/global-credential`)
+      if (!res.ok) return { configured: false }
+      return res.json()
+    }
+  })
+
+  const saveWinrm = useMutation({
+    mutationFn: async (data: typeof winrmForm) => {
+      const res = await fetch(`${API_BASE_URL}/windows/global-credential`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['winrm-global-cred'] })
+      queryClient.invalidateQueries({ queryKey: ['windows-servers'] })
+      setWinrmEditing(false)
+    }
+  })
+
+  const deleteWinrm = useMutation({
+    mutationFn: async () => {
+      await fetch(`${API_BASE_URL}/windows/global-credential`, { method: 'DELETE' })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['winrm-global-cred'] })
+      queryClient.invalidateQueries({ queryKey: ['windows-servers'] })
+    }
+  })
+
+  const applyWinrm = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/windows/global-credential/apply`, { method: 'POST' })
+      return res.json()
+    },
+    onSuccess: (data) => {
+      setWinrmApplyResult(data)
+      queryClient.invalidateQueries({ queryKey: ['windows-servers'] })
     }
   })
 
@@ -439,7 +491,8 @@ const Settings: React.FC = () => {
   }
 
   const tabs = [
-    { id: 'credentials', name: 'Global Credentials' },
+    { id: 'credentials', name: 'Linux (SSH)' },
+    { id: 'winrm', name: 'Windows (WinRM)' },
     { id: 'ai', name: 'AI Ayarları' },
     { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
     { id: 'monitoring', name: 'Monitoring' },
@@ -659,6 +712,167 @@ const Settings: React.FC = () => {
                   <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ═══ WinRM Credentials ═══ */}
+          {activeTab === 'winrm' && (
+            <div>
+              <div className="flex flex-wrap items-start gap-3 mb-6">
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-xl font-semibold text-white">Windows (WinRM) Credentials</h2>
+                  <p className="text-slate-400 text-sm mt-1">WinRM kimlik bilgilerini tanımlayın ve Windows sunuculara toplu uygulayın</p>
+                </div>
+                {!winrmEditing && (
+                  <div className="flex gap-2">
+                    {winrmCred?.configured && (
+                      <button
+                        onClick={() => applyWinrm.mutate()}
+                        disabled={applyWinrm.isPending}
+                        className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
+                        {applyWinrm.isPending ? 'Uygulanıyor...' : '🖥 Tümüne Uygula'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setWinrmForm({ username: winrmCred?.username || '', password: '', port: winrmCred?.port || 5985, use_https: winrmCred?.use_https || false })
+                        setWinrmEditing(true)
+                        setWinrmApplyResult(null)
+                      }}
+                      className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
+                      {winrmCred?.configured ? '✏ Düzenle' : '+ Credential Ekle'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Form */}
+              {winrmEditing && (
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 mb-6">
+                  <h3 className="text-lg font-medium text-white mb-4">
+                    {winrmCred?.configured ? 'Global WinRM Credential Düzenle' : 'Global WinRM Credential Ekle'}
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1.5">Kullanıcı Adı *</label>
+                        <input type="text" required value={winrmForm.username}
+                          onChange={e => setWinrmForm({ ...winrmForm, username: e.target.value })}
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Administrator veya DOMAIN\\kullanici" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1.5">Şifre {winrmCred?.configured ? '(boş = değiştirme)' : '*'}</label>
+                        <input type="password" value={winrmForm.password}
+                          onChange={e => setWinrmForm({ ...winrmForm, password: e.target.value })}
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="••••••••" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1.5">WinRM Port</label>
+                        <input type="number" value={winrmForm.port}
+                          onChange={e => setWinrmForm({ ...winrmForm, port: parseInt(e.target.value) || 5985 })}
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input type="checkbox" id="winrm-https" checked={winrmForm.use_https}
+                        onChange={e => setWinrmForm({ ...winrmForm, use_https: e.target.checked })}
+                        className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
+                      <label htmlFor="winrm-https" className="text-sm text-slate-300 cursor-pointer">
+                        HTTPS kullan <span className="text-slate-500">(port 5986, SSL sertifikası gerekir)</span>
+                      </label>
+                    </div>
+                    <div className="flex justify-between items-center pt-2">
+                      {saveWinrm.isError && (
+                        <p className="text-red-400 text-sm">{(saveWinrm.error as Error)?.message}</p>
+                      )}
+                      <div className="flex gap-3 ml-auto">
+                        <button type="button" onClick={() => setWinrmEditing(false)}
+                          className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                        <button
+                          onClick={() => saveWinrm.mutate(winrmForm)}
+                          disabled={saveWinrm.isPending || !winrmForm.username || (!winrmForm.password && !winrmCred?.configured)}
+                          className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
+                          {saveWinrm.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Apply result */}
+              {winrmApplyResult && (
+                <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-sm text-green-300">
+                  <p className="font-medium mb-1">✓ {winrmApplyResult.applied_to} sunucuya uygulandı</p>
+                  {winrmApplyResult.servers.length > 0 && (
+                    <p className="text-green-400/70 text-xs">{winrmApplyResult.servers.join(', ')}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Credential card (if configured) */}
+              {!winrmCred?.configured && !winrmEditing ? (
+                <div className="text-center py-12 bg-cyber-deep/30 rounded-xl border border-dashed border-white/[0.06]">
+                  <span className="text-2xl font-bold text-blue-400 block mb-4">WIN</span>
+                  <p className="text-slate-400 mb-2">Henüz WinRM credential eklenmemiş</p>
+                  <p className="text-slate-500 text-sm">Global credential ekleyerek tüm Windows sunuculara toplu uygulayabilirsiniz</p>
+                </div>
+              ) : winrmCred?.configured && !winrmEditing && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border bg-blue-500/5 border-blue-500/30 p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="w-11 h-11 rounded-lg flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-600">
+                          <span className="text-xs font-bold text-white">WIN</span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-white font-medium">Global WinRM Credential</p>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium">VARSAYILAN</span>
+                          </div>
+                          <p className="text-slate-400 text-sm font-mono mt-0.5">
+                            {winrmCred.username}@:{winrmCred.port}
+                            {winrmCred.has_password && <span className="text-green-400 ml-2">● şifre</span>}
+                            <span className={`ml-2 text-xs ${winrmCred.use_https ? 'text-green-400' : 'text-slate-500'}`}>
+                              {winrmCred.use_https ? 'HTTPS' : 'HTTP'}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => applyWinrm.mutate()}
+                          disabled={applyWinrm.isPending}
+                          className="px-3 py-1.5 text-xs bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/20 font-medium disabled:opacity-50">
+                          {applyWinrm.isPending ? 'Uygulanıyor...' : 'Tümüne Uygula'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setWinrmForm({ username: winrmCred.username || '', password: '', port: winrmCred.port || 5985, use_https: winrmCred.use_https || false })
+                            setWinrmEditing(true)
+                          }}
+                          className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20">
+                          Düzenle
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const ok = await showConfirm('Global WinRM credential silinecek. Devam edilsin mi?')
+                            if (ok) deleteWinrm.mutate()
+                          }}
+                          className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20">
+                          Sil
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-slate-500 text-xs px-1">
+                    Bu credential, kendi özel WinRM ayarı olmayan tüm Windows sunucularda otomatik olarak kullanılır.
+                    "Tümüne Uygula" ile mevcut Windows sunuculara da kalıcı olarak yazılabilir.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

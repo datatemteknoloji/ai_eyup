@@ -61,6 +61,16 @@
   },
   {
     "targets": [
+      "192.168.1.62:9100"
+    ],
+    "labels": {
+      "server_id": "133",
+      "server_name": "enesapp-clone",
+      "job": "node-exporter"
+    }
+  },
+  {
+    "targets": [
       "192.168.1.190:9100"
     ],
     "labels": {

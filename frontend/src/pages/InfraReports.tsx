@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
+import HypervisorChatPage from './HypervisorChat'
 import {
   BarChart3, Zap, Shield, Server, TrendingUp, DollarSign,
   AlertTriangle, Cpu, RefreshCw, ChevronRight, Clock,
@@ -1570,6 +1571,7 @@ function ReportSummaryView({ type, data }: { type: string; data: Record<string, 
 // ── Ana sayfa ─────────────────────────────────────────────────────────────────
 
 export default function InfraReports() {
+  const [mainTab, setMainTab] = useState<'reports' | 'chat'>('reports')
   const [generating, setGenerating] = useState<string | null>(null)
   const [viewReport, setViewReport] = useState<{ type: string; title: string; data: Record<string, unknown>; markdown?: string } | null>(null)
   const [lastGenTimes, setLastGenTimes] = useState<Record<string, string>>({})
@@ -1640,17 +1642,51 @@ export default function InfraReports() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
+      {/* Header + Tab Bar */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Altyapı Raporları</h1>
-          <p className="text-slate-400 text-sm mt-1">19 rapor tipi · Gerçek veri · AI destekli analiz · Görsel dashboard</p>
+          <h1 className="text-2xl font-bold text-white">Altyapı Analizi</h1>
+          <p className="text-slate-400 text-sm mt-1">Raporlar ve AI asistan — tek ekranda altyapı zekası</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <Clock size={13} />
           <span>{history?.reports?.length || 0} rapor geçmişte</span>
         </div>
       </div>
+
+      {/* Main Tab Switcher */}
+      <div className="flex gap-1 bg-slate-800/60 border border-slate-700 rounded-xl p-1 w-fit">
+        <button
+          onClick={() => setMainTab('reports')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+            mainTab === 'reports'
+              ? 'bg-blue-600 text-white shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <BarChart3 size={15} /> Raporlar
+        </button>
+        <button
+          onClick={() => setMainTab('chat')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+            mainTab === 'chat'
+              ? 'bg-blue-600 text-white shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Bot size={15} /> AI Asistan
+        </button>
+      </div>
+
+      {/* Chat tab — HypervisorChat embedded without its own header */}
+      {mainTab === 'chat' && (
+        <div className="-mx-6 -mb-6 border-t border-slate-700/50">
+          <HypervisorChatPage embedded />
+        </div>
+      )}
+
+      {/* Reports tab content below */}
+      {mainTab === 'reports' && (<>
 
       {/* AI Soru */}
       <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border border-blue-700/40 rounded-xl p-4">
@@ -1790,6 +1826,7 @@ export default function InfraReports() {
           onClose={() => setViewReport(null)}
         />
       )}
+      </>)}
     </div>
   )
 }

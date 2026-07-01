@@ -89,16 +89,30 @@ class WinRMClient:
     @classmethod
     def from_server(cls, server) -> Optional["WinRMClient"]:
         """Build a WinRMClient from a Server ORM object."""
+        from app.core.encryption import decrypt_secret
         cfg = server.connection_config or {}
         username = cfg.get("username") or cfg.get("winrm_username")
-        password = cfg.get("password") or cfg.get("winrm_password")
+        raw_password = cfg.get("password") or cfg.get("winrm_password")
+        password = decrypt_secret(raw_password) if raw_password else None
         if not username or not password:
             return None
+
+        # Require winrm=True flag and a proper WinRM port (≥5985) to distinguish
+        # from SSH-only servers that also have username/password in connection_config.
+        winrm_port = cfg.get("winrm_port")
+        is_winrm = bool(cfg.get("winrm")) and winrm_port and int(winrm_port) >= 5985
+        if not is_winrm:
+            return None
+
+        host = (server.ip_address or "").strip() or (server.hostname or "").strip()
+        if not host:
+            return None
+
         return cls(
-            host=server.ip_address,
+            host=host,
             username=username,
             password=password,
-            port=cfg.get("winrm_port") or cfg.get("port") or 5985,
+            port=int(winrm_port),
             use_https=bool(cfg.get("winrm_https")),
             timeout=cfg.get("timeout") or 30,
         )

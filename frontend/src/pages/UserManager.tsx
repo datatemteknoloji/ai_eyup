@@ -1,0 +1,664 @@
+/**
+ * Kullanıcı & Modül Yönetimi — Admin
+ * Matris görünümü: kullanıcılar satır, modüller sütun, toggle otomatik kaydeder.
+ */
+import { useState, useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  UserPlus, Pencil, Trash2, KeyRound, Check, X, AlertTriangle,
+  ShieldCheck, Eye, Search, RefreshCw, CheckCircle2,
+  UserX, UserCheck, Package, Database,
+  Server, Shield, Cloud, Brain, Bot, FileUp, Wrench,
+} from 'lucide-react'
+import { API_BASE_URL } from '../config/api'
+import { useAuth } from '../auth/AuthContext'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface UserItem {
+  id: number; username: string; email: string | null; full_name: string | null
+  role: 'admin' | 'operator' | 'viewer'; is_active: boolean
+  last_login: string | null; created_at: string | null
+}
+interface ModuleInfo {
+  id: string; name: string; description: string
+  icon: string; color: string; sort_order: number; is_active: boolean
+}
+interface UserModuleSummary {
+  user_id: number; username: string; full_name: string | null
+  role: string; is_active: boolean; modules: string[]
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ROLE_BADGE: Record<string, string> = {
+  admin:    'bg-red-500/20 text-red-300 border-red-500/40',
+  operator: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
+  viewer:   'bg-slate-700/40 text-slate-400 border-slate-600/40',
+}
+const ROLE_ICON: Record<string, React.ReactNode> = {
+  admin: <ShieldCheck size={11} />, operator: <UserCheck size={11} />, viewer: <Eye size={11} />,
+}
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', operator: 'Operator', viewer: 'Viewer' }
+
+const MODULE_ICONS: Record<string, React.ReactNode> = {
+  Server: <Server size={14} />, Shield: <Shield size={14} />, Cloud: <Cloud size={14} />,
+  Brain: <Brain size={14} />, Bot: <Bot size={14} />, FileUp: <FileUp size={14} />,
+  Wrench: <Wrench size={14} />, Package: <Package size={14} />, Database: <Database size={14} />,
+}
+
+const MODULE_DOT: Record<string, string> = {
+  green: 'bg-green-400', blue: 'bg-blue-400', indigo: 'bg-indigo-400',
+  purple: 'bg-purple-400', cyan: 'bg-cyan-400', orange: 'bg-orange-400', teal: 'bg-teal-400',
+}
+const MODULE_ICON_COLOR: Record<string, string> = {
+  green: 'text-green-400', blue: 'text-blue-400', indigo: 'text-indigo-400',
+  purple: 'text-purple-400', cyan: 'text-cyan-400', orange: 'text-orange-400', teal: 'text-teal-400',
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+
+async function apiFetch(method: string, path: string, body?: unknown) {
+  const r = await fetch(`${API_BASE_URL}${path}`, {
+    method, headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }))
+    throw new Error(err.detail ?? 'İstek başarısız')
+  }
+  return r.json()
+}
+
+function relTime(iso: string | null) {
+  if (!iso) return '—'
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (m < 1) return 'az önce'; if (m < 60) return `${m}dk`
+  const h = Math.floor(m / 60); if (h < 24) return `${h}sa`
+  return `${Math.floor(h / 24)}g`
+}
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+
+function Avatar({ user }: { user: UserItem }) {
+  const c = { admin: 'bg-red-500/30 text-red-200', operator: 'bg-blue-500/30 text-blue-200', viewer: 'bg-slate-600 text-slate-300' }
+  return (
+    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0 ${c[user.role] ?? c.viewer}`}>
+      {((user.full_name || user.username)[0] ?? '?').toUpperCase()}
+    </div>
+  )
+}
+
+// ── Module Toggle Cell ────────────────────────────────────────────────────────
+
+function ModuleCell({ active, isAdmin, saving, onChange }: {
+  active: boolean; isAdmin: boolean; saving: boolean; onChange: () => void
+}) {
+  if (isAdmin) {
+    return <div className="flex justify-center"><CheckCircle2 size={15} className="text-slate-600" /></div>
+  }
+  return (
+    <div className="flex justify-center">
+      <button
+        onClick={onChange}
+        disabled={saving}
+        title={active ? 'Erişim var — kaldırmak için tıkla' : 'Erişim yok — vermek için tıkla'}
+        className={`w-9 h-5 rounded-full relative transition-colors duration-150 focus:outline-none disabled:opacity-50 ${active ? 'bg-cyan-500' : 'bg-slate-700 hover:bg-slate-600'}`}
+      >
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-150 ${active ? 'left-[18px]' : 'left-0.5'}`} />
+      </button>
+    </div>
+  )
+}
+
+// ── Add/Edit Modal ────────────────────────────────────────────────────────────
+
+function UserModal({ user, modules, currentModuleIds, onClose, onSaved }: {
+  user?: UserItem; modules: ModuleInfo[]; currentModuleIds?: string[]
+  onClose: () => void; onSaved: () => void
+}) {
+  const isEdit = !!user
+  const [form, setForm] = useState({
+    username: user?.username ?? '', full_name: user?.full_name ?? '',
+    email: user?.email ?? '', role: user?.role ?? 'operator',
+    password: '', is_active: user?.is_active ?? true,
+  })
+  const [selectedMods, setSelectedMods] = useState<Set<string>>(new Set(currentModuleIds ?? []))
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const set = (k: string, v: string | boolean) => setForm(f => ({ ...f, [k]: v }))
+  const toggleMod = (id: string) =>
+    setSelectedMods(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(null); setSaving(true)
+    try {
+      let uid: number
+      if (isEdit) {
+        await apiFetch('PATCH', `/auth/users/${user!.id}`, {
+          full_name: form.full_name || null, email: form.email || null,
+          role: form.role, is_active: form.is_active,
+        })
+        uid = user!.id
+      } else {
+        if (!form.username.trim()) throw new Error('Kullanıcı adı zorunlu')
+        if (!form.password.trim()) throw new Error('Şifre zorunlu')
+        const created = await apiFetch('POST', '/auth/users', {
+          username: form.username.trim(), full_name: form.full_name || null,
+          email: form.email || null, role: form.role, password: form.password,
+        })
+        uid = created.id
+      }
+      if (form.role !== 'admin') {
+        await apiFetch('PUT', `/modules/users/${uid}`, { module_ids: [...selectedMods] })
+      }
+      onSaved(); onClose()
+    } catch (e: any) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/60 flex-none">
+          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <UserPlus size={16} className="text-cyan-400" />
+            {isEdit ? 'Kullanıcıyı Düzenle' : 'Yeni Kullanıcı'}
+          </h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X size={18} /></button>
+        </div>
+        <form onSubmit={submit} className="flex-1 overflow-y-auto">
+          <div className="p-6 space-y-4">
+            {!isEdit && (
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1.5 block">Kullanıcı Adı *</label>
+                <input value={form.username} onChange={e => set('username', e.target.value)}
+                  placeholder="jdoe" required autoFocus
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1.5 block">Ad Soyad</label>
+                <input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="John Doe"
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1.5 block">E-posta</label>
+                <input value={form.email} onChange={e => set('email', e.target.value)} type="email" placeholder="jdoe@example.com"
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1.5 block">Rol</label>
+                <select value={form.role} onChange={e => set('role', e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50">
+                  <option value="operator">Operator</option>
+                  <option value="viewer">Viewer</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              {!isEdit ? (
+                <div>
+                  <label className="text-xs font-medium text-slate-400 mb-1.5 block">Şifre *</label>
+                  <input value={form.password} onChange={e => set('password', e.target.value)}
+                    type="password" placeholder="En az 4 karakter" required
+                    className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+                </div>
+              ) : (
+                <div className="flex items-end pb-1">
+                  <div className="flex items-center justify-between w-full py-2.5">
+                    <span className="text-sm text-slate-300">Aktif</span>
+                    <button type="button" onClick={() => set('is_active', !form.is_active)}
+                      className={`w-10 h-5 rounded-full relative transition-colors ${form.is_active ? 'bg-cyan-500' : 'bg-slate-700'}`}>
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.is_active ? 'left-[22px]' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modül seçimi */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Modül Erişimleri</label>
+                {form.role !== 'admin' && (
+                  <span className="text-[11px] text-slate-600">{selectedMods.size}/{modules.length} seçili</span>
+                )}
+              </div>
+              {form.role === 'admin' ? (
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-4 py-3 text-xs text-slate-500 flex items-center gap-2">
+                  <ShieldCheck size={13} className="text-red-400 shrink-0" />
+                  Admin rolü tüm modüllere otomatik erişir.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {modules.map(m => {
+                    const active = selectedMods.has(m.id)
+                    return (
+                      <button key={m.id} type="button" onClick={() => toggleMod(m.id)}
+                        className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                          active ? 'border-cyan-500/40 bg-cyan-500/10 text-white' : 'bg-slate-800/40 border-slate-700/40 text-slate-500 hover:border-slate-600'
+                        }`}>
+                        <span className={active ? MODULE_ICON_COLOR[m.color] ?? 'text-cyan-400' : 'opacity-40'}>
+                          {MODULE_ICONS[m.icon] ?? <Package size={14} />}
+                        </span>
+                        <span className="text-xs font-medium truncate flex-1">{m.name}</span>
+                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? (MODULE_DOT[m.color] ?? 'bg-cyan-400') : 'bg-slate-700'}`} />
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 bg-red-900/20 border border-red-700/40 rounded-xl px-4 py-3 text-sm text-red-300">
+                <AlertTriangle size={14} className="shrink-0" /> {error}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-3 px-6 pb-6">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm transition-colors">
+              İptal
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm disabled:opacity-60 transition-colors">
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+              {saving ? 'Kaydediliyor…' : isEdit ? 'Güncelle' : 'Kullanıcı Oluştur'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Reset Password Modal ───────────────────────────────────────────────────────
+
+function ResetPasswordModal({ user, onClose }: { user: UserItem; onClose: () => void }) {
+  const [pw, setPw] = useState(''); const [pw2, setPw2] = useState('')
+  const [saving, setSaving] = useState(false); const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (pw.length < 4) { setError('En az 4 karakter'); return }
+    if (pw !== pw2) { setError('Şifreler eşleşmiyor'); return }
+    setSaving(true); setError(null)
+    try { await apiFetch('POST', `/auth/users/${user.id}/password`, { new_password: pw }); setDone(true) }
+    catch (e: any) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/60">
+          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <KeyRound size={16} className="text-amber-400" /> Şifre Sıfırla
+          </h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X size={18} /></button>
+        </div>
+        {done ? (
+          <div className="p-6 text-center space-y-3">
+            <CheckCircle2 size={36} className="text-green-400 mx-auto" />
+            <p className="text-white font-medium">Şifre güncellendi</p>
+            <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm">Kapat</button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="p-6 space-y-4">
+            <p className="text-sm text-slate-400">@{user.username} için yeni şifre</p>
+            <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder="Yeni şifre" required autoFocus
+              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+            <input value={pw2} onChange={e => setPw2(e.target.value)} type="password" placeholder="Tekrar" required
+              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+            {error && <p className="text-sm text-red-400 flex items-center gap-1.5"><AlertTriangle size={13} /> {error}</p>}
+            <div className="flex gap-3">
+              <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm">İptal</button>
+              <button type="submit" disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-sm disabled:opacity-60">
+                {saving ? <RefreshCw size={13} className="animate-spin" /> : <KeyRound size={13} />}
+                {saving ? '…' : 'Sıfırla'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Delete Confirm ────────────────────────────────────────────────────────────
+
+function DeleteConfirm({ user, onClose, onDeleted }: {
+  user: UserItem; onClose: () => void; onDeleted: () => void
+}) {
+  const [loading, setLoading] = useState(false); const [error, setError] = useState<string | null>(null)
+  const confirm = async () => {
+    setLoading(true); setError(null)
+    try { await apiFetch('DELETE', `/auth/users/${user.id}`); onDeleted(); onClose() }
+    catch (e: any) { setError(e.message) }
+    finally { setLoading(false) }
+  }
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-red-700/50 rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
+            <Trash2 size={18} className="text-red-400" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-white">Kullanıcıyı Sil</h2>
+            <p className="text-xs text-slate-500">Geri alınamaz</p>
+          </div>
+        </div>
+        <p className="text-sm text-slate-300">
+          <span className="text-white font-medium">@{user.username}</span> silinsin mi?
+        </p>
+        {error && <p className="text-sm text-red-400 flex items-center gap-1.5"><AlertTriangle size={13} /> {error}</p>}
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm">İptal</button>
+          <button onClick={confirm} disabled={loading}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-medium text-sm disabled:opacity-60">
+            {loading ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            {loading ? '…' : 'Sil'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+export default function UserManager() {
+  const { user: me } = useAuth()
+  const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [modal, setModal] = useState<'add' | 'edit' | 'password' | 'delete' | null>(null)
+  const [target, setTarget] = useState<UserItem | null>(null)
+  // userId → Set<moduleId> — local optimistic state for toggles
+  const [localMods, setLocalMods] = useState<Record<number, Set<string>>>({})
+  const [savingCell, setSavingCell] = useState<string | null>(null) // "userId-moduleId"
+
+  const { data: usersData, isLoading: usersLoading } = useQuery<{ users: UserItem[] }>({
+    queryKey: ['users-list'],
+    queryFn: () => apiFetch('GET', '/auth/users'),
+    staleTime: 30_000,
+  })
+
+  const { data: modules = [] } = useQuery<ModuleInfo[]>({
+    queryKey: ['modules-list'],
+    queryFn: () => apiFetch('GET', '/modules/'),
+    staleTime: 60_000,
+  })
+
+  const { data: userMods = [], isLoading: modsLoading } = useQuery<UserModuleSummary[]>({
+    queryKey: ['modules-users'],
+    queryFn: () => apiFetch('GET', '/modules/users'),
+    staleTime: 30_000,
+    select: useCallback((data: UserModuleSummary[]) => {
+      // Sync into local state on fresh fetch
+      setLocalMods(prev => {
+        const next: Record<number, Set<string>> = {}
+        data.forEach(u => {
+          // Only update if not currently being edited (no pending saves)
+          next[u.user_id] = new Set(u.modules)
+        })
+        return next
+      })
+      return data
+    }, []),
+  })
+
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['users-list'] })
+    qc.invalidateQueries({ queryKey: ['modules-users'] })
+  }
+
+  const open = (m: typeof modal, u?: UserItem) => { setTarget(u ?? null); setModal(m) }
+
+  // Toggle a module for a user — optimistic update + immediate save
+  const toggleModule = async (user: UserItem, moduleId: string) => {
+    if (user.role === 'admin') return
+    const cellKey = `${user.id}-${moduleId}`
+    setSavingCell(cellKey)
+
+    const current = localMods[user.id] ?? new Set<string>()
+    const next = new Set(current)
+    next.has(moduleId) ? next.delete(moduleId) : next.add(moduleId)
+
+    // Optimistic update
+    setLocalMods(prev => ({ ...prev, [user.id]: next }))
+
+    try {
+      await apiFetch('PUT', `/modules/users/${user.id}`, { module_ids: [...next] })
+      // Invalidate background (doesn't reset local state due to select callback)
+      qc.invalidateQueries({ queryKey: ['modules-users'] })
+    } catch {
+      // Revert on error
+      setLocalMods(prev => ({ ...prev, [user.id]: current }))
+    } finally {
+      setSavingCell(null)
+    }
+  }
+
+  const filteredUsers = (usersData?.users ?? []).filter(u => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return u.username.toLowerCase().includes(q) ||
+      (u.full_name ?? '').toLowerCase().includes(q) ||
+      (u.email ?? '').toLowerCase().includes(q)
+  })
+
+  const modMap = new Map<number, UserModuleSummary>()
+  userMods.forEach(u => modMap.set(u.user_id, u))
+
+  const counts = { admin: 0, operator: 0, viewer: 0, inactive: 0 }
+  ;(usersData?.users ?? []).forEach(u => {
+    if (!u.is_active) counts.inactive++
+    else counts[u.role as keyof typeof counts]++
+  })
+
+  const isLoading = usersLoading || modsLoading
+
+  return (
+    <div className="p-6 space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-white">Kullanıcı Yönetimi</h1>
+          <p className="text-sm text-slate-400 mt-0.5">
+            Kullanıcıları ekle, rollerini ve modül erişimlerini tek ekrandan yönet
+          </p>
+        </div>
+        <button onClick={() => open('add')}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm transition-colors">
+          <UserPlus size={15} /> Yeni Kullanıcı
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Admin',    count: counts.admin,    color: 'text-red-400',   bg: 'bg-red-500/10 border-red-500/30' },
+          { label: 'Operator', count: counts.operator, color: 'text-blue-400',  bg: 'bg-blue-500/10 border-blue-500/30' },
+          { label: 'Viewer',   count: counts.viewer,   color: 'text-slate-300', bg: 'bg-slate-700/40 border-slate-600/40' },
+          { label: 'Pasif',    count: counts.inactive, color: 'text-slate-500', bg: 'bg-slate-800/60 border-slate-700/40' },
+        ].map(s => (
+          <div key={s.label} className={`border rounded-xl px-4 py-3 ${s.bg}`}>
+            <div className={`text-2xl font-bold ${s.color}`}>{s.count}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Kullanıcı ara…"
+            className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-4 py-2 w-52 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+        </div>
+        <button onClick={invalidateAll} className="ml-auto p-2 rounded-xl border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-colors" title="Yenile">
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      {/* Matrix Table */}
+      {isLoading ? (
+        <div className="text-center py-16 text-slate-500">Yükleniyor…</div>
+      ) : (
+        <div className="bg-slate-900/60 border border-slate-700/60 rounded-2xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-slate-700/60">
+                  {/* User column */}
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-56">
+                    Kullanıcı
+                  </th>
+                  {/* Module columns */}
+                  {modules.map(m => (
+                    <th key={m.id} className="px-2 py-3 text-center w-20">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={MODULE_ICON_COLOR[m.color] ?? 'text-slate-400'}>
+                          {MODULE_ICONS[m.icon] ?? <Package size={14} />}
+                        </span>
+                        <span className="text-[10px] text-slate-500 leading-tight text-center max-w-[60px] truncate">
+                          {m.name.split(' ')[0]}
+                        </span>
+                      </div>
+                    </th>
+                  ))}
+                  {/* Actions column */}
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    İşlemler
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {filteredUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan={modules.length + 2} className="text-center py-12 text-slate-600 text-sm">
+                      {search ? 'Arama kriterine uyan kullanıcı yok.' : 'Kullanıcı bulunamadı.'}
+                    </td>
+                  </tr>
+                ) : filteredUsers.map(u => {
+                  const mods = localMods[u.id] ?? new Set<string>()
+                  const isAdmin = u.role === 'admin'
+
+                  return (
+                    <tr key={u.id}
+                      className={`hover:bg-slate-800/30 transition-colors ${!u.is_active ? 'opacity-50' : ''}`}
+                    >
+                      {/* User info */}
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar user={u} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium text-white truncate max-w-[120px]">
+                                {u.full_name || u.username}
+                              </span>
+                              {u.id === me?.id && (
+                                <span className="text-[9px] text-cyan-400 border border-cyan-500/40 bg-cyan-500/10 px-1 py-0.5 rounded-full shrink-0">Siz</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${ROLE_BADGE[u.role]}`}>
+                                {ROLE_ICON[u.role]} {ROLE_LABEL[u.role]}
+                              </span>
+                              {!u.is_active && <UserX size={11} className="text-slate-600" />}
+                              {u.is_active && <span className="text-[10px] text-slate-600">{relTime(u.last_login)}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Module toggles */}
+                      {modules.map(m => (
+                        <td key={m.id} className="px-2 py-3">
+                          {savingCell === `${u.id}-${m.id}` ? (
+                            <div className="flex justify-center">
+                              <RefreshCw size={13} className="text-slate-500 animate-spin" />
+                            </div>
+                          ) : (
+                            <ModuleCell
+                              active={isAdmin || mods.has(m.id)}
+                              isAdmin={isAdmin}
+                              saving={savingCell !== null}
+                              onChange={() => toggleModule(u, m.id)}
+                            />
+                          )}
+                        </td>
+                      ))}
+
+                      {/* Actions */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-0.5 justify-end">
+                          <button onClick={() => open('edit', u)} title="Düzenle"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-700 transition-colors">
+                            <Pencil size={13} />
+                          </button>
+                          <button onClick={() => open('password', u)} title="Şifre Sıfırla"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-slate-700 transition-colors">
+                            <KeyRound size={13} />
+                          </button>
+                          {u.id !== me?.id && (
+                            <button onClick={() => open('delete', u)} title="Sil"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-700 transition-colors">
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      {!isLoading && modules.length > 0 && (
+        <div className="flex items-center gap-4 flex-wrap">
+          {modules.map(m => (
+            <div key={m.id} className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span className={MODULE_ICON_COLOR[m.color] ?? 'text-slate-400'}>
+                {MODULE_ICONS[m.icon] ?? <Package size={12} />}
+              </span>
+              {m.name}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modals */}
+      {modal === 'add' && (
+        <UserModal modules={modules} onClose={() => setModal(null)} onSaved={invalidateAll} />
+      )}
+      {modal === 'edit' && target && (
+        <UserModal
+          user={target}
+          modules={modules}
+          currentModuleIds={[...(localMods[target.id] ?? new Set())]}
+          onClose={() => setModal(null)}
+          onSaved={invalidateAll}
+        />
+      )}
+      {modal === 'password' && target && (
+        <ResetPasswordModal user={target} onClose={() => setModal(null)} />
+      )}
+      {modal === 'delete' && target && (
+        <DeleteConfirm user={target} onClose={() => setModal(null)} onDeleted={invalidateAll} />
+      )}
+    </div>
+  )
+}

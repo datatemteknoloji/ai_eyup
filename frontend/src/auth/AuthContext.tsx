@@ -10,6 +10,8 @@ export interface AuthUser {
   role: 'admin' | 'operator' | 'viewer'
   is_active: boolean
   last_login: string | null
+  modules: string[]      // erişilebilir modül ID'leri
+  is_admin: boolean
 }
 
 interface AuthContextValue {
@@ -18,6 +20,7 @@ interface AuthContextValue {
   login: (username: string, password: string) => Promise<void>
   logout: () => void
   refresh: () => Promise<void>
+  hasModule: (moduleId: string) => boolean
 }
 
 const AuthContext = createContext<AuthContextValue>(null as any)
@@ -35,8 +38,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const r = await fetch(`${API_BASE_URL}/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` },
       })
-      if (r.ok) setUser(await r.json())
-      else { clearToken(); setUser(null) }
+      if (r.ok) {
+        const data = await r.json()
+        // Ensure modules field exists (fallback for older backends)
+        setUser({
+          ...data,
+          modules: data.modules ?? [],
+          is_admin: data.is_admin ?? (data.role === 'admin'),
+        })
+      } else {
+        clearToken(); setUser(null)
+      }
     } catch {
       setUser(null)
     }
@@ -58,13 +70,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const data = await r.json()
     setToken(data.access_token)
-    setUser(data.user)
-  }, [])
+    // login response'dan user geliyorsa onu kullan, yoksa fetchMe çağır
+    if (data.user) {
+      setUser({
+        ...data.user,
+        modules: data.user.modules ?? [],
+        is_admin: data.user.is_admin ?? (data.user.role === 'admin'),
+      })
+    } else {
+      await fetchMe()
+    }
+  }, [fetchMe])
 
   const logout = useCallback(async () => {
     const token = getToken()
     if (token) {
-      // Backend'e token revocation bildir (fire-and-forget)
       fetch(`${API_BASE_URL}/auth/logout`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
@@ -75,8 +95,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/login'
   }, [])
 
+  /** Kullanıcının belirtilen modüle erişimi var mı? */
+  const hasModule = useCallback((moduleId: string): boolean => {
+    if (!user) return false
+    if (user.is_admin || user.role === 'admin') return true
+    return user.modules.includes(moduleId)
+  }, [user])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh: fetchMe }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refresh: fetchMe, hasModule }}>
       {children}
     </AuthContext.Provider>
   )

@@ -1129,7 +1129,7 @@ const Servers: React.FC = () => {
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [showOffline, setShowOffline] = useState(true) // Tüm VM'ler (offline dahil) göster
+  const [showOffline, setShowOffline] = useState(false)
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // Tümü — Linux + Windows + diğer
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other

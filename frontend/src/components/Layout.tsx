@@ -6,9 +6,98 @@ import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
   MessageCircle, Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft, Microscope, Sliders,
-  HardDrive, BarChart3, Server, Shield, Layers,
+  BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
+  KeyRound, X, Check,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+
+// ── Şifre Değiştir Modal ──────────────────────────────────────────────────────
+function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const [pw, setPw] = useState('')
+  const [pw2, setPw2] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (pw.length < 4) { setError('En az 4 karakter giriniz'); return }
+    if (pw !== pw2) { setError('Şifreler eşleşmiyor'); return }
+    setSaving(true); setError(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_password: pw }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.detail ?? 'Hata oluştu')
+      }
+      setDone(true)
+    } catch (e: any) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/60">
+          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <KeyRound size={16} className="text-amber-400" /> Şifremi Değiştir
+          </h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+        {done ? (
+          <div className="p-6 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
+              <Check size={24} className="text-green-400" />
+            </div>
+            <p className="text-white font-medium">Şifre güncellendi</p>
+            <p className="text-slate-400 text-sm">Bir sonraki girişte yeni şifrenizi kullanın.</p>
+            <button onClick={onClose}
+              className="w-full py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm transition-colors mt-2">
+              Kapat
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="p-6 space-y-4">
+            <div>
+              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Yeni Şifre</label>
+              <input value={pw} onChange={e => setPw(e.target.value)} type="password"
+                placeholder="En az 4 karakter" required autoFocus
+                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Yeni Şifre (Tekrar)</label>
+              <input value={pw2} onChange={e => setPw2(e.target.value)} type="password"
+                placeholder="Aynı şifreyi tekrar girin" required
+                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+            </div>
+            {error && (
+              <p className="text-sm text-red-400 flex items-center gap-1.5">
+                <AlertTriangle size={13} /> {error}
+              </p>
+            )}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm transition-colors">
+                İptal
+              </button>
+              <button type="submit" disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-sm disabled:opacity-60 transition-colors">
+                {saving ? <RefreshCw size={13} className="animate-spin" /> : <KeyRound size={13} />}
+                {saving ? '…' : 'Değiştir'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
 
 interface LayoutProps {
   children: React.ReactNode
@@ -17,18 +106,17 @@ interface LayoutProps {
 type ChildItem = { path: string; name: string; icon: React.ReactNode; badge?: () => React.ReactNode }
 type MenuItem =
   | { type: 'link'; path: string; name: string; icon: React.ReactNode }
-  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: ChildItem[] }
+  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: ChildItem[]; moduleId?: string }
   | { type: 'section'; label: string }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
-  const { user, logout } = useAuth()
+  const { user, logout, hasModule } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  // All platform groups default open
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    linux: true, windows: true, virt: true, aiops: true, ai: false,
-  })
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  // All platform groups default closed
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
     queryKey: ['ops-summary-nav'],
@@ -55,7 +143,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />,
+      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleId: 'linux',
       children: [
         { path: '/servers',       name: 'Linux Sunucular',  icon: <Monitor size={15} /> },
         { path: '/metrics',       name: 'Canlı Metrikler',  icon: <Activity size={15} /> },
@@ -68,7 +156,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     // ── Windows ───────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'windows', name: 'Windows Yönetimi', icon: <Shield size={18} />,
+      type: 'group', key: 'windows', name: 'Windows Yönetimi', icon: <Shield size={18} />, moduleId: 'windows',
       children: [
         { path: '/windows',         name: 'Windows Sunucular', icon: <Monitor size={15} /> },
         { path: '/windows/events',  name: 'Event Log',         icon: <ClipboardList size={15} /> },
@@ -78,17 +166,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     // ── Virtualization ────────────────────────────────────────────────────
     {
-      type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />,
+      type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
         { path: '/hypervisors',     name: 'Hypervisor\'lar',    icon: <Layers size={15} /> },
-        { path: '/infra-reports',   name: 'Altyapı Raporları',  icon: <BarChart3 size={15} /> },
-        { path: '/hypervisor-chat', name: 'Hypervisor Asistan', icon: <HardDrive size={15} /> },
+        { path: '/infra-reports',   name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
       ],
     },
 
     // ── AIOps ─────────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'aiops', name: 'AIOps', icon: <Brain size={18} />,
+      type: 'group', key: 'aiops', name: 'AIOps', icon: <Brain size={18} />, moduleId: 'aiops',
       children: [
         {
           path: '/ops', name: 'Komuta Merkezi', icon: <Zap size={15} />,
@@ -115,16 +202,38 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     // ── AI & Automation ───────────────────────────────────────────────────
     {
-      type: 'group', key: 'ai', name: 'AI & Otomasyon', icon: <Bot size={18} />,
+      type: 'group', key: 'ai', name: 'AI & Otomasyon', icon: <Bot size={18} />, moduleId: 'ai_automation',
       children: [
         { path: '/chat',  name: 'AI Chat',  icon: <MessageCircle size={15} /> },
         { path: '/agent', name: 'AI Agent', icon: <Bot size={15} /> },
       ],
     },
 
+    // ── Integrations ──────────────────────────────────────────────────────
+    {
+      type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
+      children: [
+        { path: '/ucmdb/import', name: 'UCMDB Import', icon: <FileUp size={15} /> },
+      ],
+    },
+
+    // ── Level 1 Operations ────────────────────────────────────────────────
+    {
+      type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
+      children: [
+        { path: '/level1',            name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
+        { path: '/level1/disk',       name: 'Disk & Depolama',   icon: <HardDrive size={15} /> },
+        { path: '/level1/asm',        name: 'Oracle ASM',        icon: <Database size={15} /> },
+        { path: '/level1/lvm',        name: 'LVM Yönetimi',      icon: <Layers size={15} /> },
+        { path: '/level1/service',    name: 'Servis Yönetimi',   icon: <Settings size={15} /> },
+        { path: '/level1/user',       name: 'Kullanıcı & Erişim',icon: <Users size={15} /> },
+      ],
+    },
+
     // ── System ────────────────────────────────────────────────────────────
-    { type: 'link', path: '/audit',    name: 'Audit Log', icon: <ScrollText size={18} /> },
-    { type: 'link', path: '/settings', name: 'Ayarlar',   icon: <Settings size={18} /> },
+    { type: 'link', path: '/audit',    name: 'Audit Log',          icon: <ScrollText size={18} /> },
+    { type: 'link', path: '/users',    name: 'Kullanıcı Yönetimi', icon: <Users size={18} /> },
+    { type: 'link', path: '/settings', name: 'Ayarlar',            icon: <Settings size={18} /> },
   ]
 
   // Flat link list for page title
@@ -137,7 +246,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const pageTitle = allLinks.find(l => isActive(l.path))?.name || 'Dashboard'
 
   const renderGroupItem = (item: Extract<MenuItem, { type: 'group' }>) => {
-    const isOpen = openGroups[item.key] !== false
+    const isOpen = openGroups[item.key] === true
     const groupPaths = item.children.map(c => c.path)
     const groupActive = isGroupActive(groupPaths)
 
@@ -249,6 +358,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               }
 
               if (item.type === 'link') {
+                // Kullanıcı ve Modül Yönetimi sadece admin
+                if ((item.path === '/modules' || item.path === '/users') && user?.role !== 'admin') return null
                 const active = isActive(item.path)
                 return (
                   <li key={item.path}>
@@ -267,6 +378,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   </li>
                 )
               }
+
+              // Modül filtresi: moduleId tanımlıysa kullanıcının erişimi olmalı
+              if (item.type === 'group' && item.moduleId && !hasModule(item.moduleId)) return null
 
               return renderGroupItem(item)
             })}
@@ -321,6 +435,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       <div className="text-sm text-white font-medium truncate">{user?.username}</div>
                       <div className="text-xs text-slate-400 truncate">{user?.email || '—'}</div>
                     </div>
+                    <button
+                      onClick={() => { setUserMenuOpen(false); setShowChangePassword(true) }}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                    >
+                      <KeyRound size={14} /> Şifremi Değiştir
+                    </button>
                     <Link
                       to="/settings"
                       onClick={() => setUserMenuOpen(false)}
@@ -328,6 +448,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     >
                       <Settings size={14} /> Ayarlar
                     </Link>
+                    <div className="border-t border-slate-700/60 my-1" />
                     <button
                       onClick={logout}
                       className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-red-300 hover:bg-red-500/10"
@@ -346,6 +467,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {children}
         </main>
       </div>
+
+      {/* Şifre değiştir modal */}
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
     </div>
   )
 }

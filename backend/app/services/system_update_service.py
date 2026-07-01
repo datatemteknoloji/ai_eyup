@@ -4,6 +4,7 @@ Sistem Güncelleme Servisi - SSH tabanlı check/apply
 import io, time, logging, paramiko
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+from app.core.encryption import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,12 @@ def _resolve_creds(server, global_cred=None,
     """
     cfg = server.connection_config or {}
     base_username = cfg.get("username") or (global_cred.username if global_cred else "root") or "root"
-    base_password = cfg.get("password") or (global_cred.password if global_cred else None)
-    base_key      = cfg.get("private_key") or (global_cred.private_key if global_cred else None)
-    base_sudo     = cfg.get("sudo_password") or (global_cred.sudo_password if global_cred else None)
+    _raw_pw  = cfg.get("password") or (global_cred.password if global_cred else None)
+    _raw_key = cfg.get("private_key") or (global_cred.private_key if global_cred else None)
+    _raw_sudo = cfg.get("sudo_password") or (global_cred.sudo_password if global_cred else None)
+    base_password = decrypt_secret(_raw_pw) if _raw_pw else None
+    base_key      = decrypt_secret(_raw_key) if _raw_key else None
+    base_sudo     = decrypt_secret(_raw_sudo) if _raw_sudo else None
 
     # Override geçerliyse kullan
     username = override_username or base_username

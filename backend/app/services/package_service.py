@@ -31,11 +31,15 @@ def _resolve_creds(server: Server, global_cred: Optional[GlobalCredential] = Non
                    override_user: Optional[str] = None,
                    override_password: Optional[str] = None,
                    override_sudo_password: Optional[str] = None) -> dict:
+    from app.core.encryption import decrypt_secret
     cfg = server.connection_config or {}
     base_user  = cfg.get("username") or (global_cred.username if global_cred else "root") or "root"
-    base_pass  = cfg.get("password") or (global_cred.password if global_cred else None)
-    base_sudo  = cfg.get("sudo_password") or (global_cred.sudo_password if global_cred else None)
-    base_key   = cfg.get("private_key") or (global_cred.private_key if global_cred else None)
+    _rp  = cfg.get("password") or (global_cred.password if global_cred else None)
+    _rs  = cfg.get("sudo_password") or (global_cred.sudo_password if global_cred else None)
+    _rk  = cfg.get("private_key") or (global_cred.private_key if global_cred else None)
+    base_pass  = decrypt_secret(_rp) if _rp else None
+    base_sudo  = decrypt_secret(_rs) if _rs else None
+    base_key   = decrypt_secret(_rk) if _rk else None
     base_port  = int(cfg.get("port") or (global_cred.port if global_cred else 22) or 22)
 
     return {

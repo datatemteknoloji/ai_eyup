@@ -181,3 +181,24 @@ try:
     api_router.include_router(windows.router, prefix="/windows", tags=["windows"])
 except Exception as e:
     logger.error(f"Could not load windows router: {e}", exc_info=True)
+
+# UCMDB Integration (static CSV/Excel import)
+try:
+    from app.api import ucmdb
+    api_router.include_router(ucmdb.router, prefix="/ucmdb", tags=["ucmdb"])
+except Exception as e:
+    logger.error(f"Could not load ucmdb router: {e}", exc_info=True)
+
+# Level 1 Operations (runbook tabanlı SSH operasyonlar)
+try:
+    from app.api import level1
+    api_router.include_router(level1.router, prefix="/level1", tags=["level1"])
+except Exception as e:
+    logger.error(f"Could not load level1 router: {e}", exc_info=True)
+
+# Modül yönetimi
+try:
+    from app.api import modules
+    api_router.include_router(modules.router, prefix="/modules", tags=["modules"])
+except Exception as e:
+    logger.error(f"Could not load modules router: {e}", exc_info=True)

@@ -12,15 +12,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+import json
+
 from app.core.database import get_db
 from app.models.server import Server
+from app.models.app_settings import AppSettings
 from app.services.windows.winrm_client import WinRMClient
+from app.core.encryption import encrypt_secret, decrypt_secret
 from app.services.windows.windows_info_collector import WindowsInfoCollector
 from app.services.windows.windows_update_service import WindowsUpdateService
 from app.services.windows.windows_exporter_installer import WindowsExporterInstaller
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+GLOBAL_WINRM_KEY = "global_winrm_credential"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -32,14 +38,45 @@ def _get_server_or_404(server_id: int, db: Session) -> Server:
     return s
 
 
-def _build_client(server: Server) -> WinRMClient:
+def _get_global_winrm(db: Session) -> Optional[Dict[str, Any]]:
+    """Retrieve and decrypt global WinRM credential from app_settings."""
+    row = db.query(AppSettings).filter(AppSettings.key == GLOBAL_WINRM_KEY).first()
+    if not row or not row.value:
+        return None
+    try:
+        data = json.loads(row.value)
+        if data.get("password"):
+            data["password"] = decrypt_secret(data["password"])
+        return data
+    except Exception:
+        return None
+
+
+def _build_client(server: Server, db: Optional[Session] = None) -> WinRMClient:
+    """Build WinRM client: server-specific credentials first, then global fallback."""
     client = WinRMClient.from_server(server)
-    if not client:
-        raise HTTPException(
-            status_code=400,
-            detail="Bu sunucu için WinRM kimlik bilgisi bulunamadı. Lütfen bağlantı ayarlarını kontrol edin.",
-        )
-    return client
+    if client:
+        return client
+
+    # Fallback: try global WinRM credential
+    if db is not None:
+        gcred = _get_global_winrm(db)
+        if gcred:
+            host = server.ip_address or server.hostname
+            if not host:
+                raise HTTPException(status_code=400, detail="Sunucunun IP adresi veya hostname'i yok.")
+            return WinRMClient(
+                host=host,
+                username=gcred["username"],
+                password=gcred["password"],
+                port=gcred.get("port", 5985),
+                use_https=gcred.get("use_https", False),
+            )
+
+    raise HTTPException(
+        status_code=400,
+        detail="Bu sunucu için WinRM kimlik bilgisi bulunamadı. Global veya sunucu bazlı WinRM credential tanımlayın.",
+    )
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -49,6 +86,7 @@ class WinRMCredentials(BaseModel):
     password: str
     port: int = 5985
     use_https: bool = False
+    ip_address: Optional[str] = None  # update server IP if provided
 
 
 class ServiceAction(BaseModel):
@@ -67,28 +105,60 @@ class ScheduleRebootRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/servers")
-def list_windows_servers(db: Session = Depends(get_db)):
-    """List all servers whose os_type contains 'windows'."""
+def list_windows_servers(
+    db: Session = Depends(get_db),
+    include_unclassified: bool = False,
+):
+    """
+    List Windows servers.
+    - Confirmed: os_type contains 'windows' or connection_config.winrm=True
+    - Unclassified (include_unclassified=True): os_type is empty/"other" from hypervisor sync
+    """
     servers = db.query(Server).all()
+    gcred = _get_global_winrm(db)  # check once for all servers
     result = []
     for s in servers:
         os_low = (s.os_type or "").lower()
-        if "windows" in os_low or (s.connection_config or {}).get("winrm"):
-            cfg = s.connection_config or {}
-            result.append({
-                "id": s.id,
-                "name": s.name,
-                "hostname": s.hostname,
-                "ip_address": s.ip_address,
-                "status": s.status,
-                "os_type": s.os_type,
-                "cpu_cores": s.cpu_cores,
-                "memory_gb": s.memory_gb,
-                "hypervisor_id": s.hypervisor_id,
-                "hypervisor_name": getattr(s.hypervisor, "name", None) if s.hypervisor_id else None,
-                "winrm_configured": bool(cfg.get("username") or cfg.get("winrm_username")),
-                "winrm_port": cfg.get("winrm_port") or cfg.get("port") or 5985,
-            })
+        cfg = s.connection_config or {}
+        is_confirmed_windows = "windows" in os_low or bool(cfg.get("winrm"))
+        is_unclassified = (
+            s.hypervisor_id is not None and
+            os_low in ("", "other", "unknown") and
+            not any(x in os_low for x in ("linux", "rhel", "centos", "ubuntu", "ol", "rocky"))
+        )
+
+        if not is_confirmed_windows and not (include_unclassified and is_unclassified):
+            continue
+
+        # winrm_configured: server-specific OR global credential available
+        winrm_port = cfg.get("winrm_port")
+        has_server_winrm = bool(cfg.get("winrm")) or (winrm_port and int(winrm_port) >= 5985)
+        has_server_creds = bool(cfg.get("username") or cfg.get("winrm_username"))
+        has_own_winrm = has_server_winrm and has_server_creds
+        has_global_winrm = bool(gcred) and bool(s.ip_address or s.hostname)
+
+        effective_port = (winrm_port or (5985 if has_server_winrm else None)) or (gcred["port"] if gcred else None)
+
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "hostname": s.hostname,
+            "ip_address": s.ip_address,
+            "status": s.status,
+            "os_type": s.os_type or ("unclassified" if is_unclassified else ""),
+            "cpu_cores": s.cpu_cores,
+            "memory_gb": s.memory_gb,
+            "disk_gb": getattr(s, "vm_disk_gb", None),
+            "hypervisor_id": s.hypervisor_id,
+            "hypervisor_name": getattr(s.hypervisor, "name", None) if s.hypervisor_id else None,
+            "winrm_configured": has_own_winrm or has_global_winrm,
+            "winrm_source": "server" if has_own_winrm else ("global" if has_global_winrm else None),
+            "winrm_port": effective_port,
+            "confirmed_windows": is_confirmed_windows,
+        })
+
+    # Sort: confirmed first, then by name
+    result.sort(key=lambda x: (0 if x["confirmed_windows"] else 1, x["name"] or ""))
     return result
 
 
@@ -96,7 +166,7 @@ def list_windows_servers(db: Session = Depends(get_db)):
 def test_connection(server_id: int, db: Session = Depends(get_db)):
     """Test WinRM connectivity for a server."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     result = client.test_connection()
     # Update status in DB
     if result["connected"]:
@@ -107,24 +177,33 @@ def test_connection(server_id: int, db: Session = Depends(get_db)):
 
 @router.post("/servers/{server_id}/save-credentials")
 def save_credentials(server_id: int, creds: WinRMCredentials, db: Session = Depends(get_db)):
-    """Save WinRM credentials to a server's connection_config."""
+    """Save WinRM credentials to a server's connection_config. Optionally update IP address."""
     server = _get_server_or_404(server_id, db)
     existing = dict(server.connection_config or {})
     existing.update({
         "username": creds.username,
-        "password": creds.password,
+        "password": encrypt_secret(creds.password),
         "winrm_port": creds.port,
         "winrm_https": creds.use_https,
         "winrm": True,
     })
     server.connection_config = existing
+
+    # Update IP address if provided
+    if creds.ip_address and creds.ip_address.strip():
+        server.ip_address = creds.ip_address.strip()
+
     if not server.os_type or "windows" not in server.os_type.lower():
         server.os_type = "windows"
     db.commit()
 
-    # Quick connection test
+    # Use the freshest host value for connection test
+    host = server.ip_address or server.hostname
+    if not host:
+        return {"saved": True, "connection_test": {"connected": False, "message": "IP adresi girilmedi, bağlantı testi yapılamadı"}}
+
     client = WinRMClient(
-        host=server.ip_address,
+        host=host,
         username=creds.username,
         password=creds.password,
         port=creds.port,
@@ -141,7 +220,7 @@ def save_credentials(server_id: int, creds: WinRMCredentials, db: Session = Depe
 def get_system_info(server_id: int, db: Session = Depends(get_db)):
     """Get comprehensive system information via WMI."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     collector = WindowsInfoCollector(client)
     info = collector.collect_all()
     # Sync basic info back to DB
@@ -166,7 +245,7 @@ def get_system_info(server_id: int, db: Session = Depends(get_db)):
 def get_performance(server_id: int, db: Session = Depends(get_db)):
     """Real-time CPU/RAM utilisation."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     collector = WindowsInfoCollector(client)
     return collector.get_performance()
 
@@ -175,7 +254,7 @@ def get_performance(server_id: int, db: Session = Depends(get_db)):
 def get_services(server_id: int, include_disabled: bool = False, db: Session = Depends(get_db)):
     """List Windows services."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     collector = WindowsInfoCollector(client)
     return collector.get_services(include_disabled=include_disabled)
 
@@ -189,7 +268,7 @@ def manage_service(
 ):
     """Start, stop, or restart a Windows service."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
 
     action = body.action.lower()
     if action == "start":
@@ -215,7 +294,7 @@ def get_event_logs(
 ):
     """Fetch Windows Event Log entries (System / Application / Security)."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     collector = WindowsInfoCollector(client)
     return collector.get_event_logs(log_name=log_name, count=count, min_level=min_level)
 
@@ -224,7 +303,7 @@ def get_event_logs(
 def list_updates(server_id: int, db: Session = Depends(get_db)):
     """List pending Windows updates."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     svc = WindowsUpdateService(client)
     return {"pending": svc.list_updates(), "installed": svc.get_installed_updates()}
 
@@ -237,7 +316,7 @@ def install_updates(
 ):
     """Install all or specific Windows updates."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     svc = WindowsUpdateService(client)
     if body.kb_ids:
         return svc.install_by_kb(body.kb_ids)
@@ -252,7 +331,7 @@ def schedule_reboot(
 ):
     """Schedule a Windows reboot."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     svc = WindowsUpdateService(client)
     return svc.schedule_reboot(delay_minutes=body.delay_minutes)
 
@@ -263,7 +342,7 @@ def schedule_reboot(
 def exporter_status(server_id: int, db: Session = Depends(get_db)):
     """Check windows_exporter installation status."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     installer = WindowsExporterInstaller(client)
     return installer.check_status()
 
@@ -272,7 +351,7 @@ def exporter_status(server_id: int, db: Session = Depends(get_db)):
 def install_exporter(server_id: int, db: Session = Depends(get_db)):
     """Download and install windows_exporter as a Windows service."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     installer = WindowsExporterInstaller(client)
     result = installer.install()
     if result.get("success"):
@@ -284,14 +363,14 @@ def install_exporter(server_id: int, db: Session = Depends(get_db)):
 @router.post("/servers/{server_id}/exporter/start")
 def start_exporter(server_id: int, db: Session = Depends(get_db)):
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     return WindowsExporterInstaller(client).start()
 
 
 @router.post("/servers/{server_id}/exporter/uninstall")
 def uninstall_exporter(server_id: int, db: Session = Depends(get_db)):
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     return WindowsExporterInstaller(client).uninstall()
 
 
@@ -305,8 +384,109 @@ class PSRequest(BaseModel):
 def run_powershell(server_id: int, body: PSRequest, db: Session = Depends(get_db)):
     """Execute arbitrary PowerShell on a Windows server (admin only)."""
     server = _get_server_or_404(server_id, db)
-    client = _build_client(server)
+    client = _build_client(server, db)
     return client.run_ps(body.script)
+
+
+# ── Global WinRM Credential ───────────────────────────────────────────────────
+
+class GlobalWinRMRequest(BaseModel):
+    username: str
+    password: str
+    port: int = 5985
+    use_https: bool = False
+
+
+@router.get("/global-credential")
+def get_global_winrm_credential(db: Session = Depends(get_db)):
+    """Return global WinRM credential (password masked)."""
+    gcred = _get_global_winrm(db)
+    if not gcred:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "username": gcred.get("username", ""),
+        "port": gcred.get("port", 5985),
+        "use_https": gcred.get("use_https", False),
+        "has_password": bool(gcred.get("password")),
+    }
+
+
+@router.post("/global-credential")
+def save_global_winrm_credential(body: GlobalWinRMRequest, db: Session = Depends(get_db)):
+    """Save (or update) the global WinRM credential (password encrypted at rest)."""
+    data = {
+        "username": body.username,
+        "password": encrypt_secret(body.password),
+        "port": body.port,
+        "use_https": body.use_https,
+    }
+    row = db.query(AppSettings).filter(AppSettings.key == GLOBAL_WINRM_KEY).first()
+    if row:
+        row.value = json.dumps(data)
+    else:
+        db.add(AppSettings(key=GLOBAL_WINRM_KEY, value=json.dumps(data)))
+    db.commit()
+    return {"saved": True, "username": body.username, "port": body.port}
+
+
+@router.delete("/global-credential", status_code=204)
+def delete_global_winrm_credential(db: Session = Depends(get_db)):
+    """Remove the global WinRM credential."""
+    row = db.query(AppSettings).filter(AppSettings.key == GLOBAL_WINRM_KEY).first()
+    if row:
+        db.delete(row)
+        db.commit()
+
+
+@router.post("/global-credential/apply")
+def apply_global_winrm_credential(db: Session = Depends(get_db)):
+    """
+    Apply the global WinRM credential to all Windows servers that don't have
+    their own per-server credential configured. Also marks them as os_type=windows.
+    """
+    gcred = _get_global_winrm(db)
+    if not gcred:
+        raise HTTPException(status_code=400, detail="Global WinRM credential tanımlanmamış")
+
+    servers = db.query(Server).all()
+    updated = []
+    for s in servers:
+        os_low = (s.os_type or "").lower()
+        if "windows" not in os_low:
+            continue
+        cfg = s.connection_config or {}
+        # Skip servers that already have their own WinRM credential
+        winrm_port = cfg.get("winrm_port")
+        has_own = bool(cfg.get("winrm")) and bool(cfg.get("username")) and \
+                  bool(winrm_port and int(winrm_port) >= 5985)
+        if has_own:
+            continue
+        cfg.update({
+            "username": gcred["username"],
+            "password": gcred["password"],
+            "winrm_port": gcred["port"],
+            "winrm_https": gcred["use_https"],
+            "winrm": True,
+            "_from_global": True,
+        })
+        s.connection_config = cfg
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(s, "connection_config")
+        updated.append(s.name or str(s.id))
+
+    db.commit()
+    return {"applied_to": len(updated), "servers": updated}
+
+
+@router.post("/global-credential/test")
+def test_global_winrm_credential(body: GlobalWinRMRequest):
+    """Quick connectivity test using the provided global credentials against no specific host."""
+    return {
+        "message": "Global credential kaydedildi. Sunucular üzerinde test etmek için 'Tümüne Uygula' butonunu kullanın.",
+        "username": body.username,
+        "port": body.port,
+    }
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
