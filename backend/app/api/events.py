@@ -88,6 +88,7 @@ async def list_events(
     resolved: Optional[bool] = None,
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
+    online_only: Optional[bool] = None,
     limit: int = Query(default=50, le=500),
     offset: int = 0,
     db: Session = Depends(get_db)
@@ -105,7 +106,22 @@ async def list_events(
     if acknowledged is not None:
         q = q.filter(SystemEvent.is_acknowledged == acknowledged)
     if search:
-        q = q.filter(SystemEvent.title.ilike(f"%{search}%"))
+        # Başlık VEYA sunucu adında ara
+        from sqlalchemy import or_
+        matching_server_ids = [
+            s.id for s in db.query(Server.id).filter(Server.name.ilike(f"%{search}%")).all()
+        ]
+        conditions = [SystemEvent.title.ilike(f"%{search}%")]
+        if matching_server_ids:
+            conditions.append(SystemEvent.server_id.in_(matching_server_ids))
+        q = q.filter(or_(*conditions))
+    if online_only:
+        # OFFLINE durumdaki sunucuların eventlerini hariç tut
+        offline_ids = [
+            s.id for s in db.query(Server.id).filter(Server.status == 'OFFLINE').all()
+        ]
+        if offline_ids:
+            q = q.filter(~SystemEvent.server_id.in_(offline_ids))
 
     total = q.count()
     events = q.order_by(desc(SystemEvent.created_at)).offset(offset).limit(limit).all()

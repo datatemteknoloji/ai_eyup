@@ -23,6 +23,8 @@ import TerminalPage from './pages/TerminalPage'
 import RootCauseAnalysis from './pages/RootCauseAnalysis'
 import BaselineManager from './pages/BaselineManager'
 import OpsCenter from './pages/OpsCenter'
+import HypervisorChat from './pages/HypervisorChat'
+import InfraReports from './pages/InfraReports'
 import Layout from './components/Layout'
 
 const queryClient = new QueryClient({
@@ -77,6 +79,8 @@ function App() {
                       <Route path="/dashboard" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
                       <Route path="/servers" element={<ErrorBoundary><Servers /></ErrorBoundary>} />
                       <Route path="/hypervisors" element={<ErrorBoundary><Hypervisors /></ErrorBoundary>} />
+                      <Route path="/hypervisor-chat" element={<ErrorBoundary><HypervisorChat /></ErrorBoundary>} />
+                      <Route path="/infra-reports" element={<ErrorBoundary><InfraReports /></ErrorBoundary>} />
                       <Route path="/chat" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
                       <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
                       <Route path="/metrics" element={<ErrorBoundary><LiveMetrics /></ErrorBoundary>} />

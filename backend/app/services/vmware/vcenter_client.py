@@ -532,6 +532,63 @@ class VCenterClient:
             logger.debug(f"_vm_disks_soap error: {e}")
             return 0
 
+    def _vm_datastore_soap(self, vm_id: str) -> str:
+        """
+        SOAP RetrieveProperties ile VM'in bağlı olduğu datastore adını okur.
+        config.datastoreUrl veya datastore referansı üzerinden çalışır.
+        Döner: datastore adı str (bulunamazsa "").
+        """
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return ""
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>config.datastoreUrl</vim25:pathSet>
+          <vim25:pathSet>config.files.vmPathName</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=15)
+            if resp.status_code != 200:
+                return ""
+            root = ET.fromstring(resp.text)
+            # config.files.vmPathName → "[DatastoreName] vm/vm.vmx"
+            for el in root.iter():
+                tag = el.tag.split("}")[-1]
+                if tag == "vmPathName" and el.text and el.text.startswith("["):
+                    end = el.text.find("]")
+                    if end > 1:
+                        return el.text[1:end].strip()
+            # config.datastoreUrl → DatastoreUrl array, name attribute
+            for el in root.iter():
+                tag = el.tag.split("}")[-1]
+                if tag == "DatastoreUrl":
+                    name_el = el.find(".//{urn:vim25}name") or el.find(".//{*}name")
+                    if name_el is not None and name_el.text:
+                        return name_el.text.strip()
+            return ""
+        except Exception as e:
+            logger.debug(f"_vm_datastore_soap error: {e}")
+            return ""
+
     def _vm_nics_soap(self, vm_id: str, guest_ip: str = "") -> list:
         """
         SOAP ile VM ağ adaptörlerini (MAC + label) okur.
@@ -645,27 +702,39 @@ class VCenterClient:
             guest_hostname = guest.get("host_name", "")
             guest_ip       = guest.get("ip_address", "")
 
-            # ── Disk kapasitesi ──────────────────────────────────────────────
+            # ── Disk kapasitesi & Datastore ──────────────────────────────────
             disk_gb = 0
+            datastore_name = ""
+
             # 1) REST disk list endpoint (yeni vCenter)
             disks_resp = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk")
             if disks_resp:
                 disk_list = disks_resp if isinstance(disks_resp, list) else (disks_resp.get("value") or [])
                 for disk in disk_list:
-                    # Bazı versiyonlar kapasiteyi list response'unda döner
                     cap_bytes = disk.get("capacity") or disk.get("value", {}).get("capacity") or 0
-                    if not cap_bytes:
-                        # REST disk detail endpoint — 404 alırsak pass
+                    if not cap_bytes or not datastore_name:
                         disk_key = disk.get("disk") or disk.get("key", "")
                         if disk_key:
                             dd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk/{disk_key}") or {}
                             val = dd.get("value") or dd
-                            cap_bytes = val.get("capacity", 0)
+                            cap_bytes = cap_bytes or val.get("capacity", 0)
+                            # Datastore adını backing'den çıkar: "[DatastoreName] vm/vm.vmdk"
+                            if not datastore_name:
+                                backing = val.get("backing") or {}
+                                vmdk = backing.get("vmdk_file", "")
+                                if vmdk and vmdk.startswith("["):
+                                    end = vmdk.find("]")
+                                    if end > 1:
+                                        datastore_name = vmdk[1:end].strip()
                     disk_gb += int(cap_bytes) // (1024 ** 3) if cap_bytes else 0
 
             # 2) Fallback: SOAP config.hardware.device
             if disk_gb == 0:
                 disk_gb = self._vm_disks_soap(vm_id)
+
+            # 3) Datastore fallback: SOAP datastore adını çek
+            if not datastore_name:
+                datastore_name = self._vm_datastore_soap(vm_id)
 
             # ── Ağ adaptörleri ───────────────────────────────────────────────
             networks: list = []
@@ -711,7 +780,7 @@ class VCenterClient:
                 "vm_tools_status":     (guest.get("tools_status") or ""),
                 "vm_network_info":     networks,
                 "vm_cluster":          str(cluster_name) if cluster_name else "",
-                "vm_datastore":        "",
+                "vm_datastore":        datastore_name,
                 "vm_hardware_version": hw_version,
                 "os_type":             (guest.get("family") or ""),
             }

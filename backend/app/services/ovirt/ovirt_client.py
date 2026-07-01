@@ -166,8 +166,11 @@ class OVirtClient:
             return ""
         if href.startswith("http"):
             return href
-        base = self.base_url.rsplit("/api", 1)[0]
-        return f"{base}{href}" if href.startswith("/") else f"{self.base_url}/{href}"
+        # href = "/ovirt-engine/api/..." → host + href (netloc only, no path duplication)
+        from urllib.parse import urlparse
+        parsed = urlparse(self.base_url)
+        base_host = f"{parsed.scheme}://{parsed.netloc}"
+        return f"{base_host}{href}" if href.startswith("/") else f"{self.base_url}/{href}"
 
     def _wait_job(self, job_href: str, timeout: int = 600) -> Tuple[bool, str]:
         """oVirt async job tamamlanana kadar bekle."""
@@ -479,7 +482,7 @@ class OVirtClient:
                         if disk_href:
                             dr2 = self.session.get(self._resolve_url(disk_href), timeout=8)
                             if dr2.status_code == 200:
-                                dd = dr2.json().get("disk") or {}
+                                dd = dr2.json().get("disk") or dr2.json()
                                 sds = (dd.get("storage_domains") or {}).get("storage_domain", [])
                                 if isinstance(sds, dict):
                                     sds = [sds]

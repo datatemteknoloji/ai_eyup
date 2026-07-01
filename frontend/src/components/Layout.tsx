@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../auth/AuthContext'
 import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
-  MessageCircle, Bot, Zap, RefreshCw, Package, Database, Terminal, Activity,
+  MessageCircle, Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft, Microscope, Sliders,
+  HardDrive, BarChart3,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 
@@ -46,7 +47,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const menuItems: MenuItem[] = [
     { type: 'link', path: '/dashboard',     name: 'Dashboard',       icon: <LayoutDashboard size={18} /> },
     { type: 'link', path: '/servers',       name: 'Sunucular',       icon: <Monitor size={18} /> },
-    { type: 'link', path: '/hypervisors',   name: 'Hypervisor\'lar', icon: <Cloud size={18} /> },
+    { type: 'link', path: '/hypervisors',      name: 'Hypervisor\'lar',     icon: <Cloud size={18} /> },
+    { type: 'link', path: '/hypervisor-chat', name: 'Hypervisor Asistan', icon: <HardDrive size={18} /> },
+    { type: 'link', path: '/infra-reports',   name: 'Altyapı Raporları',  icon: <BarChart3 size={18} /> },
     {
       type: 'group', name: 'AIOps', icon: <Brain size={18} />,
       children: [
@@ -64,7 +67,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { type: 'link', path: '/system-update', name: 'Sistem Güncelle', icon: <RefreshCw size={18} /> },
     { type: 'link', path: '/packages',      name: 'Paket & Yama',    icon: <Package size={18} /> },
     { type: 'link', path: '/repositories',  name: 'Local Repo',      icon: <Database size={18} /> },
-    { type: 'link', path: '/mcp',           name: 'Linux MCP',       icon: <Terminal size={18} /> },
     { type: 'link', path: '/metrics',       name: 'Canlı Metrikler', icon: <Activity size={18} /> },
     { type: 'link', path: '/audit',         name: 'Audit Log',       icon: <ScrollText size={18} /> },
     { type: 'link', path: '/settings',      name: 'Ayarlar',         icon: <Settings size={18} /> },

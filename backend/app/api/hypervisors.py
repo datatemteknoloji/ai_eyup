@@ -3,6 +3,7 @@ Hypervisors API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
 from app.core.database import get_db
@@ -515,3 +516,269 @@ async def delete_hypervisor(hypervisor_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting hypervisor: {str(e)}")
+
+
+# ── Doğal Dil Sorgulama ──────────────────────────────────────────────────────
+
+class HypervisorAskRequest(BaseModel):
+    question: str
+    model: Optional[str] = None
+    history: Optional[List[dict]] = None  # [{role, content}]
+
+
+@router.post("/ask")
+async def ask_hypervisor_question(
+    req: HypervisorAskRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Doğal dil ile hypervisor/VM sorgulama.
+
+    Örnek sorular:
+    - "Kaç ESX hostum var?"
+    - "Hangi ESX'de kaç VM çalışıyor?"
+    - "rhel8-10tst ile minio2'yi karşılaştır"
+    - "ESX hostlarımın doluluk durumu nedir?"
+    - "VMware Tools olmayan VM'ler hangileri?"
+    - "Ortam değerlendirmesi yap"
+    """
+    if not req.question or not req.question.strip():
+        raise HTTPException(status_code=400, detail="Soru boş olamaz")
+
+    try:
+        from app.services.hypervisor_intelligence import answer_hypervisor_question
+        result = answer_hypervisor_question(
+            db=db,
+            question=req.question.strip(),
+            model=req.model,
+            conversation_history=req.history,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sorgulama hatası: {str(e)}")
+
+
+@router.get("/ask/quick-stats")
+async def get_quick_stats(db: Session = Depends(get_db)):
+    """Üst bar için anlık özet istatistikler."""
+    from app.models.server import Server as ServerModel
+    from app.models.hypervisor_metric import HypervisorHostMetric
+    from sqlalchemy import func
+
+    vm_count = db.query(ServerModel).filter(ServerModel.hypervisor_id != None).count()  # noqa: E711
+    powered_on = db.query(ServerModel).filter(
+        ServerModel.hypervisor_id != None,  # noqa: E711
+        ServerModel.vm_power_state.in_(["POWERED_ON", "up", "running", "poweredOn"]),
+    ).count()
+
+    # ESX host metrikleri — en son kayıt başına
+    try:
+        rows = db.execute(text("""
+            SELECT DISTINCT ON (host_name)
+                cpu_usage_pct, mem_usage_pct
+            FROM hypervisor_host_metrics
+            ORDER BY host_name, timestamp DESC
+        """)).all()
+        host_count = len(rows)
+        avg_cpu = round(sum(r.cpu_usage_pct or 0 for r in rows) / host_count, 1) if host_count else 0
+        avg_mem = round(sum(r.mem_usage_pct or 0 for r in rows) / host_count, 1) if host_count else 0
+    except Exception:
+        host_count = 0
+        avg_cpu = 0.0
+        avg_mem = 0.0
+
+    return {
+        "host_count": host_count,
+        "vm_count": vm_count,
+        "vms_powered_on": powered_on,
+        "avg_cpu_pct": avg_cpu,
+        "avg_mem_pct": avg_mem,
+    }
+
+
+@router.get("/ask/suggestions")
+async def get_question_suggestions(db: Session = Depends(get_db)):
+    """Örnek sorular + mevcut VM adları."""
+    from app.models.server import Server as ServerModel
+    vm_names = [
+        r[0] for r in db.query(ServerModel.name)
+        .filter(ServerModel.hypervisor_id != None)  # noqa: E711
+        .limit(10).all()
+    ]
+    suggestions = [
+        "Kaç ESX / KVM hostum var?",
+        "Hangi host'ta kaç VM çalışıyor?",
+        "ESX hostlarımın CPU ve bellek doluluk durumu nedir?",
+        "VMware Tools yüklü olmayan VM'ler hangileri?",
+        "Çalışmayan (powered off) VM'ler hangileri?",
+        "RHEL tabanlı VM'leri listele",
+        "Oracle Linux VM'leri hangileri?",
+        "En yoğun ESX host hangisi?",
+        "En fazla boş belleği olan host hangisi?",
+        "Ortam genel sağlık değerlendirmesi yap",
+        "Disk alanı en doldu olan host hangisi?",
+    ]
+    # İlk 2 VM adıyla karşılaştırma sorusu ekle
+    if len(vm_names) >= 2:
+        suggestions.insert(2, f"'{vm_names[0]}' ile '{vm_names[1]}' VM'ini karşılaştır")
+
+    report_suggestions = [
+        "Executive Summary raporu oluştur",
+        "Kapasite raporu göster",
+        "Risk dashboard raporu ver",
+        "VM sağlık skoru raporu üret",
+        "6 aylık kapasite tahmin raporu",
+        "Maliyet raporu oluştur",
+        "Güvenlik uyumluluk raporu göster",
+        "Konsolidasyon raporu üret",
+        "En riskli varlıklar raporu",
+        "Performans darboğaz raporu",
+    ]
+
+    return {
+        "suggestions": suggestions,
+        "report_suggestions": report_suggestions,
+        "sample_vms": vm_names[:8],
+    }
+
+
+# ── Rapor Endpoint'leri ───────────────────────────────────────────────────────
+
+class ReportRequest(BaseModel):
+    report_type: str
+    save: bool = True
+
+
+@router.get("/reports/types")
+async def list_report_types():
+    """Desteklenen rapor tiplerini listele."""
+    from app.services.report_engine import REPORT_TITLES, REPORT_REGISTRY
+    return {
+        "report_types": [
+            {"type": k, "title": v, "available": True}
+            for k, v in REPORT_TITLES.items()
+        ]
+    }
+
+
+@router.post("/reports/generate")
+async def generate_report_endpoint(
+    req: ReportRequest,
+    db: Session = Depends(get_db),
+):
+    """Rapor üret ve DB'ye kaydet."""
+    from app.services.report_engine import generate_report, REPORT_REGISTRY
+    if req.report_type not in REPORT_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Bilinmeyen rapor tipi: {req.report_type}")
+    try:
+        data = generate_report(db, req.report_type, save=req.save)
+        from app.services.report_engine import format_report_as_markdown
+        md = format_report_as_markdown(req.report_type, data)
+        return {"success": True, "data": data, "markdown": md}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/latest/{report_type}")
+async def get_latest_report_endpoint(report_type: str, db: Session = Depends(get_db)):
+    """Son kaydedilen raporu getir (yoksa anlık üret)."""
+    from app.services.report_engine import get_latest_report, generate_report, REPORT_REGISTRY
+    if report_type not in REPORT_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Bilinmeyen rapor tipi: {report_type}")
+    from app.services.report_engine import format_report_as_markdown
+    cached = get_latest_report(db, report_type)
+    if cached:
+        md = format_report_as_markdown(report_type, cached)
+        return {"source": "cache", "data": cached, "markdown": md}
+    data = generate_report(db, report_type, save=True)
+    md = format_report_as_markdown(report_type, data)
+    return {"source": "fresh", "data": data, "markdown": md}
+
+
+@router.get("/reports/history")
+async def get_report_history(
+    report_type: Optional[str] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    """Kaydedilen raporların geçmişi."""
+    from app.models.infrastructure_report import InfrastructureReport
+    q = db.query(InfrastructureReport)
+    if report_type:
+        q = q.filter(InfrastructureReport.report_type == report_type)
+    rows = q.order_by(InfrastructureReport.generated_at.desc()).limit(limit).all()
+    return {
+        "reports": [
+            {
+                "id": r.id, "type": r.report_type,
+                "title": r.report_title,
+                "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+                "status": r.status,
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Business Service Map ──────────────────────────────────────────────────────
+
+class BusinessServiceCreate(BaseModel):
+    service_name: str
+    service_tier: str = "standard"
+    server_id: int
+    department: Optional[str] = None
+    owner: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.post("/business-services")
+async def create_business_service(req: BusinessServiceCreate, db: Session = Depends(get_db)):
+    """İş servisi → VM eşleşmesi ekle."""
+    from app.models.infrastructure_report import BusinessServiceMap
+    obj = BusinessServiceMap(**req.dict())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return {"id": obj.id, "service_name": obj.service_name}
+
+
+@router.get("/business-services")
+async def list_business_services(db: Session = Depends(get_db)):
+    from app.models.infrastructure_report import BusinessServiceMap
+    items = db.query(BusinessServiceMap).all()
+    return {"services": [{"id": i.id, "service_name": i.service_name, "server_id": i.server_id,
+                          "tier": i.service_tier, "dept": i.department} for i in items]}
+
+
+# ── Cost Config ──────────────────────────────────────────────────────────────
+
+class CostConfigUpdate(BaseModel):
+    cpu_per_core: float
+    ram_per_gb: float
+    storage_per_gb: float
+    currency: str = "TL"
+
+
+@router.put("/cost-config")
+async def update_cost_config(req: CostConfigUpdate, db: Session = Depends(get_db)):
+    from app.models.infrastructure_report import CostConfig
+    cfg = db.query(CostConfig).first()
+    if not cfg:
+        cfg = CostConfig(name="Varsayılan")
+        db.add(cfg)
+    cfg.cpu_per_core = req.cpu_per_core
+    cfg.ram_per_gb = req.ram_per_gb
+    cfg.storage_per_gb = req.storage_per_gb
+    cfg.currency = req.currency
+    db.commit()
+    return {"success": True}
+
+
+@router.get("/cost-config")
+async def get_cost_config(db: Session = Depends(get_db)):
+    from app.models.infrastructure_report import CostConfig
+    cfg = db.query(CostConfig).first()
+    if not cfg:
+        return {"cpu_per_core": 50, "ram_per_gb": 20, "storage_per_gb": 0.5, "currency": "TL"}
+    return {"cpu_per_core": cfg.cpu_per_core, "ram_per_gb": cfg.ram_per_gb,
+            "storage_per_gb": cfg.storage_per_gb, "currency": cfg.currency}

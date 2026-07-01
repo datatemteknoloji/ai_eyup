@@ -1,4 +1,8 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react'
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import {
+  Plus, ChevronDown, Settings2, Activity, Wifi,
+  Download, RefreshCw, CheckCircle2, AlertCircle,
+} from 'lucide-react'
 const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
@@ -53,7 +57,7 @@ interface Server {
 }
 
 // ─── Toplu Node Exporter Kur ──────────────────────────────────────────────────
-const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
+const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void; asMenuItem?: boolean }> = ({ servers, onDone, asMenuItem }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{success: number; failed: number} | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
@@ -85,28 +89,39 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void }
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
       <button
-      onClick={handleClick}
-      disabled={loading || notRunning.length === 0}
-      className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
-      title={`Node Exporter çalışmayan ${notRunning.length} AI-Ready sunucuya toplu kur`}
-    >
-      {loading ? (
-        <>
-          <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-          <span>Kuruluyor... ({notRunning.length})</span>
-        </>
-      ) : result ? (
-        <span>✓ {result.success} başarılı{result.failed > 0 ? ` · ${result.failed} hata` : ''}</span>
-      ) : (
-        <span>Metrik Kur {notRunning.length > 0 ? `(${notRunning.length})` : ''}</span>
-      )}
-    </button>
+        onClick={handleClick}
+        disabled={loading || notRunning.length === 0}
+        className={asMenuItem
+          ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
+          : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
+        title={`Node Exporter çalışmayan ${notRunning.length} AI-Ready sunucuya toplu kur`}
+      >
+        {loading ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            <span>Kuruluyor... ({notRunning.length})</span>
+          </>
+        ) : result ? (
+          <>
+            <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            <span>{result.success} başarılı{result.failed > 0 ? ` · ${result.failed} hata` : ''}</span>
+          </>
+        ) : (
+          <>
+            <Download size={15} className={`flex-shrink-0 ${notRunning.length > 0 ? 'text-amber-400' : 'text-slate-400'}`} />
+            <span>Metrik Kur</span>
+            {notRunning.length > 0 && (
+              <span className="ml-auto text-xs bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full font-medium">{notRunning.length}</span>
+            )}
+          </>
+        )}
+      </button>
     </>
   )
 }
 
 // ─── AI Ready Güncelle Butonu ─────────────────────────────────────────────────
-const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+const AiReadyUpdateButton: React.FC<{ onDone: () => void; asMenuItem?: boolean }> = ({ onDone, asMenuItem }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{ai_ready: number; not_ready: number; tested: number} | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
@@ -135,18 +150,26 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
+        className={asMenuItem
+          ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
+          : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
         title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
             <span>Test ediliyor...</span>
           </>
         ) : result ? (
-          <span>{result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+          <>
+            <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            <span>{result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+          </>
         ) : (
-          <span>AI Ready Güncelle</span>
+          <>
+            <Wifi size={15} className="flex-shrink-0 text-slate-400" />
+            <span>AI Ready Güncelle</span>
+          </>
         )}
       </button>
     </>
@@ -154,7 +177,7 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 }
 
 // ─── OS Bilgisi Yenile Butonu ──────────────────────────────────────────────────
-const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ servers, onDone }) => {
+const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void; asMenuItem?: boolean }> = ({ servers, onDone, asMenuItem }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<{updated: number; failed: number} | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
@@ -195,21 +218,108 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void }> = ({ 
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"
+        className={asMenuItem
+          ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
+          : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
         title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
             <span>OS Güncelleniyor...</span>
           </>
         ) : result ? (
-          <span>✓ {result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
+          <>
+            <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            <span>{result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
+          </>
         ) : (
-          <span>OS Bilgisini Yenile</span>
+          <>
+            <RefreshCw size={15} className="flex-shrink-0 text-slate-400" />
+            <span>OS Bilgisini Yenile</span>
+          </>
         )}
       </button>
     </>
+  )
+}
+
+// ─── İşlemler Dropdown ────────────────────────────────────────────────────────
+const ActionsDropdown: React.FC<{ servers: Server[]; refetch: () => void }> = ({ servers, refetch }) => {
+  const [open, setOpen] = useState(false)
+  const [checkLoading, setCheckLoading] = useState(false)
+  const [checkResult, setCheckResult] = useState<string | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const handleCheckHealth = async () => {
+    setCheckLoading(true); setCheckResult(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/servers/check-health`, { method: 'POST' })
+      const d = await r.json()
+      if (r.ok) {
+        setCheckResult(`${d.stats?.checked || 0} kontrol · ${d.stats?.updated || 0} güncellendi`)
+        refetch()
+        setTimeout(() => setCheckResult(null), 5000)
+      } else {
+        setCheckResult('Hata: ' + (d.detail || '?'))
+      }
+    } catch { setCheckResult('Bağlantı hatası') }
+    finally { setCheckLoading(false) }
+  }
+
+  const menuItemCls = "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-2 px-3 py-2 bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all text-sm"
+      >
+        <Settings2 size={15} />
+        <span>İşlemler</span>
+        <ChevronDown size={13} className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 bg-slate-800 border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 z-50 w-56 p-1.5 flex flex-col gap-0.5">
+          <p className="text-[10px] text-slate-500 px-3 pt-1 pb-0.5 uppercase tracking-wider font-medium">Toplu İşlemler</p>
+
+          {/* Durumları Kontrol Et */}
+          <button
+            onClick={handleCheckHealth}
+            disabled={checkLoading}
+            className={menuItemCls}
+          >
+            {checkLoading ? (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin flex-shrink-0" />
+            ) : checkResult?.startsWith('Hata') ? (
+              <AlertCircle size={15} className="text-red-400 flex-shrink-0" />
+            ) : checkResult ? (
+              <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            ) : (
+              <Activity size={15} className="text-slate-400 flex-shrink-0" />
+            )}
+            <span className="truncate">{checkResult ?? (checkLoading ? 'Kontrol ediliyor...' : 'Durumları Kontrol Et')}</span>
+          </button>
+
+          <AiReadyUpdateButton onDone={refetch} asMenuItem />
+
+          <div className="h-px bg-slate-700/60 mx-2 my-0.5" />
+
+          <BulkNodeExporterButton servers={servers} onDone={refetch} asMenuItem />
+          <OsRefreshButton servers={servers} onDone={refetch} asMenuItem />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1537,35 +1647,15 @@ const Servers: React.FC = () => {
             </select>
 
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={async () => {
-                try {
-                  const response = await fetch(`${API_BASE_URL}/servers/check-health`, { method: 'POST' })
-                  const data = await response.json()
-                  if (response.ok) {
-                    alert(`Durum kontrolü tamamlandı:\n${data.stats?.checked || 0} sunucu kontrol edildi\n${data.stats?.updated || 0} güncellendi`)
-                    queryClient.invalidateQueries({ queryKey: ['servers'] })
-                    queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] })
-                  } else {
-                    alert('Durum kontrolü başarısız: ' + (data.detail || 'Bilinmeyen hata'))
-                  }
-                } catch (err) {
-                  alert('Durum kontrolü hatası: ' + (err instanceof Error ? err.message : 'Ağ hatası'))
-                }
-              }}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all text-sm"
-            >
-              Durumları Kontrol Et
-            </button>
-            <AiReadyUpdateButton onDone={() => refetch()} />
-            <BulkNodeExporterButton servers={servers} onDone={() => refetch()} />
-            <OsRefreshButton servers={servers} onDone={() => refetch()} />
+          <div className="flex items-center gap-2">
+            <ActionsDropdown servers={servers} refetch={() => { refetch(); queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] }) }} />
+            <div className="w-px h-6 bg-slate-700/60" />
             <button
               onClick={() => setShowAddModal(true)}
               className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25 text-sm font-medium"
             >
-              + Yeni Sunucu
+              <Plus size={16} />
+              Yeni Sunucu
             </button>
           </div>
         </div>

@@ -205,14 +205,20 @@ function ComparePanel() {
   const [result, setResult] = useState<CompareResult | null>(null)
   const [error, setError] = useState('')
 
+  const [searchA, setSearchA] = useState('')
+  const [searchB, setSearchB] = useState('')
+
   const { data: serversData } = useQuery({
-    queryKey: ['servers-list'],
+    queryKey: ['servers-list-compare'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?limit=100`)
+      const r = await fetch(`${API_BASE_URL}/servers/?limit=300`)
       return r.json()
     },
   })
-  const servers: { id: number; name: string }[] = serversData?.servers ?? serversData ?? []
+  // Sadece online sunucular
+  const allServers: { id: number; name: string; status: string }[] =
+    serversData?.servers ?? serversData ?? []
+  const onlineServers = allServers.filter(s => s.status !== 'OFFLINE')
 
   const run = async () => {
     setLoading(true); setError(''); setResult(null)
@@ -241,27 +247,59 @@ function ComparePanel() {
     } finally { setLoading(false) }
   }
 
-  const serverOptions: { value: string; label: string }[] = [
-    { value: '', label: 'Tüm sunucular' },
-    ...servers.map((s: { id: number; name: string }) => ({ value: String(s.id), label: s.name })),
-  ]
+  const filteredServersA = onlineServers.filter(s =>
+    s.name.toLowerCase().includes(searchA.toLowerCase())
+  )
+  const filteredServersB = onlineServers.filter(s =>
+    s.name.toLowerCase().includes(searchB.toLowerCase())
+  )
+
+  const inputStyle = {
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    color: 'rgba(226,232,240,0.9)',
+  }
+  const inputCls = "w-full text-sm px-3 py-2 rounded-[6px] outline-none focus:border-cyan-500/40"
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Pencere A */}
+        {/* Sunucu A */}
         <div className="cyber-card p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ background: NEON.cyan }} />
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>Pencere A</span>
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>Sunucu A</span>
           </div>
           <input value={labelA} onChange={e => setLabelA(e.target.value)}
-            className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
-            placeholder="Pencere A etiketi" />
-          <Select value={serverIdA} onChange={setServerIdA}>
-            {serverOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </Select>
+            className={inputCls} style={inputStyle}
+            placeholder="Etiket (ör: Sorun öncesi)" />
+
+          {/* Arama kutusu + select */}
+          <div className="space-y-1">
+            <input
+              value={searchA}
+              onChange={e => setSearchA(e.target.value)}
+              className={inputCls + " text-xs"}
+              style={{ ...inputStyle, fontSize: 12 }}
+              placeholder="🔍  Sunucu ara..." />
+            <select
+              value={serverIdA}
+              onChange={e => { setServerIdA(e.target.value); setSearchA('') }}
+              className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
+              style={{ ...inputStyle, colorScheme: 'dark' }}
+            >
+              <option value="">— Sunucu seç —</option>
+              {filteredServersA.map(s => (
+                <option key={s.id} value={String(s.id)}>{s.name}</option>
+              ))}
+            </select>
+            {serverIdA && (
+              <div className="text-[11px] px-1" style={{ color: NEON.cyan }}>
+                ✓ {onlineServers.find(s => String(s.id) === serverIdA)?.name}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
@@ -278,19 +316,42 @@ function ComparePanel() {
           </div>
         </div>
 
-        {/* Pencere B */}
+        {/* Sunucu B */}
         <div className="cyber-card p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ background: NEON.orange }} />
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.orange }}>Pencere B</span>
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.orange }}>Sunucu B</span>
           </div>
           <input value={labelB} onChange={e => setLabelB(e.target.value)}
-            className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
-            placeholder="Pencere B etiketi" />
-          <Select value={serverIdB} onChange={setServerIdB}>
-            {serverOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </Select>
+            className={inputCls} style={inputStyle}
+            placeholder="Etiket (ör: Sorun sonrası)" />
+
+          {/* Arama kutusu + select */}
+          <div className="space-y-1">
+            <input
+              value={searchB}
+              onChange={e => setSearchB(e.target.value)}
+              className={inputCls + " text-xs"}
+              style={{ ...inputStyle, fontSize: 12 }}
+              placeholder="🔍  Sunucu ara..." />
+            <select
+              value={serverIdB}
+              onChange={e => { setServerIdB(e.target.value); setSearchB('') }}
+              className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
+              style={{ ...inputStyle, colorScheme: 'dark' }}
+            >
+              <option value="">— Sunucu seç —</option>
+              {filteredServersB.map(s => (
+                <option key={s.id} value={String(s.id)}>{s.name}</option>
+              ))}
+            </select>
+            {serverIdB && (
+              <div className="text-[11px] px-1" style={{ color: NEON.orange }}>
+                ✓ {onlineServers.find(s => String(s.id) === serverIdB)?.name}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
@@ -633,17 +694,35 @@ const RootCauseAnalysis: React.FC = () => {
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('log_entry')
+  const [serverFilter, setServerFilter] = useState('')
+  const [hideOffline, setHideOffline] = useState(true)
   const [analyses, setAnalyses] = useState<AnalysisState>({})
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
+  // Online sunucu listesi (dropdown için)
+  const { data: serversListData } = useQuery({
+    queryKey: ['rca-servers-online'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/servers/?limit=300`)
+      if (!r.ok) return { servers: [] }
+      return r.json()
+    },
+    staleTime: 60_000,
+  })
+  const allServers: { id: number; name: string; status: string }[] =
+    serversListData?.servers ?? serversListData ?? []
+  const onlineServers = allServers.filter(s => s.status !== 'OFFLINE')
+
   const { data, isLoading } = useQuery({
-    queryKey: ['rca-events', severityFilter, typeFilter, search],
+    queryKey: ['rca-events', severityFilter, typeFilter, search, serverFilter, hideOffline],
     queryFn: async () => {
       const params = new URLSearchParams({
         limit: '50', resolved: 'false',
         ...(severityFilter && { severity: severityFilter }),
         ...(typeFilter && { event_type: typeFilter }),
         ...(search && { search }),
+        ...(serverFilter && { server_id: serverFilter }),
+        ...(hideOffline && { online_only: 'true' }),
       })
       const res = await fetch(`${API_BASE_URL}/events/?${params}`)
       return res.json() as Promise<{ events: EventItem[]; total: number }>
@@ -729,8 +808,15 @@ const RootCauseAnalysis: React.FC = () => {
           </div>
 
           <Section>
-            <div className="flex flex-wrap gap-3 p-4">
-              <SearchInput value={search} onChange={setSearch} placeholder="Başlık veya sunucu ara..." width="flex-1" />
+            <div className="flex flex-wrap gap-3 p-4 items-center">
+              <SearchInput value={search} onChange={setSearch} placeholder="Başlık veya sunucu adı ara..." width="w-56" />
+              {/* Sunucu dropdown */}
+              <Select value={serverFilter} onChange={setServerFilter}>
+                <option value="">Tüm sunucular</option>
+                {onlineServers.map(s => (
+                  <option key={s.id} value={String(s.id)}>{s.name}</option>
+                ))}
+              </Select>
               <Select value={typeFilter} onChange={setTypeFilter}>
                 <option value="">Tüm tipler</option>
                 <option value="log_entry">Log Entry</option>
@@ -742,6 +828,19 @@ const RootCauseAnalysis: React.FC = () => {
                 <option value="warning">Uyarı</option>
                 <option value="info">Bilgi</option>
               </Select>
+              {/* Kapalı sunucu toggle */}
+              <label className="flex items-center gap-2 cursor-pointer select-none ml-auto"
+                style={{ color: 'rgba(148,163,184,0.75)', fontSize: 13 }}>
+                <div
+                  onClick={() => setHideOffline(h => !h)}
+                  className="relative w-9 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0"
+                  style={{ background: hideOffline ? 'rgba(6,182,212,0.5)' : 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  <div className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow"
+                    style={{ left: hideOffline ? '18px' : '2px' }} />
+                </div>
+                <span>Kapalı sunucuları gizle</span>
+              </label>
             </div>
           </Section>
 

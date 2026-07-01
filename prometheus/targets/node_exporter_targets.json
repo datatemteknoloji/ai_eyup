@@ -61,16 +61,6 @@
   },
   {
     "targets": [
-      "192.168.1.61:9100"
-    ],
-    "labels": {
-      "server_id": "130",
-      "server_name": "enesappeski",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
       "192.168.1.190:9100"
     ],
     "labels": {
