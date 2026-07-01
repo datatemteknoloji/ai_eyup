@@ -127,6 +127,12 @@ async def startup_tasks():
             _conn.execute(_sa_text(
                 "ALTER TABLE package_jobs ADD COLUMN IF NOT EXISTS live_log JSONB DEFAULT '{}'"
             ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS category VARCHAR(32) DEFAULT 'linux'"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'"
+            ))
     except Exception as _mig_e:
         logger.debug(f"schema migration skip: {_mig_e}")
     

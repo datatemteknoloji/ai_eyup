@@ -59,26 +59,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fetchMe])
 
   const login = useCallback(async (username: string, password: string) => {
-    const r = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      throw new Error(err.detail || 'Giriş başarısız')
-    }
-    const data = await r.json()
-    setToken(data.access_token)
-    // login response'dan user geliyorsa onu kullan, yoksa fetchMe çağır
-    if (data.user) {
-      setUser({
-        ...data.user,
-        modules: data.user.modules ?? [],
-        is_admin: data.user.is_admin ?? (data.user.role === 'admin'),
+    // loading=true: login geçişinde Layout'un eski user ile render etmesini engelle
+    setLoading(true)
+    try {
+      const r = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
       })
-    } else {
-      await fetchMe()
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.detail || 'Giriş başarısız')
+      }
+      const data = await r.json()
+      setToken(data.access_token)
+      if (data.user) {
+        setUser({
+          ...data.user,
+          modules: data.user.modules ?? [],
+          is_admin: data.user.is_admin ?? (data.user.role === 'admin'),
+        })
+      } else {
+        await fetchMe()
+      }
+    } finally {
+      setLoading(false)
     }
   }, [fetchMe])
 

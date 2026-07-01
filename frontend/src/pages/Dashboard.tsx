@@ -6,8 +6,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, RadialBarChart, RadialBar,
   AreaChart, Area,
 } from 'recharts'
+import { ShieldOff } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { ServerDetailDrawer } from './Servers'
+import { useAuth } from '../auth/AuthContext'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface DashboardServer {
@@ -477,12 +479,23 @@ function healthColor(score: number): string {
 // ── Hero Banner ────────────────────────────────────────────────────────────
 function DashboardHero({
   healthScore, onlineServers, totalServers, unresolvedEvents, openIncidents, lastRefresh,
+  showFleet = true, showOps = true,
 }: {
   healthScore: number; onlineServers: number; totalServers: number
   unresolvedEvents: number; openIncidents: number; lastRefresh: string
+  showFleet?: boolean; showOps?: boolean
 }) {
   const systemStatus = healthScore >= 80 ? 'Sistem Normal' : healthScore >= 50 ? 'Dikkat Gerekiyor' : 'Kritik Durum'
   const accent = healthColor(healthScore)
+
+  const chips = [
+    { label: 'Sağlık', value: `${healthScore}%`, color: accent },
+    ...(showFleet ? [{ label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.blue }] : []),
+    ...(showOps ? [
+      { label: 'Events', value: String(unresolvedEvents), color: unresolvedEvents ? NEON.orange : NEON.green },
+      { label: 'Incidents', value: String(openIncidents), color: openIncidents ? NEON.red : NEON.green },
+    ] : []),
+  ]
 
   return (
     <div
@@ -503,17 +516,13 @@ function DashboardHero({
           </p>
           <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{systemStatus}</h1>
           <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
-            {totalServers} sunucunun {onlineServers} tanesi çevrimiçi.
-            {unresolvedEvents > 0 && ` ${unresolvedEvents} açık event`}
-            {openIncidents > 0 && `, ${openIncidents} aktif incident`} takip ediliyor.
+            {showFleet && `${totalServers} sunucunun ${onlineServers} tanesi çevrimiçi.`}
+            {showOps && unresolvedEvents > 0 && ` ${unresolvedEvents} açık event`}
+            {showOps && openIncidents > 0 && `, ${openIncidents} aktif incident`}
+            {showOps && (unresolvedEvents > 0 || openIncidents > 0) && ' takip ediliyor.'}
           </p>
           <div className="flex flex-wrap gap-3 mt-5">
-            {[
-              { label: 'Sağlık', value: `${healthScore}%`, color: accent },
-              { label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.blue },
-              { label: 'Events', value: String(unresolvedEvents), color: unresolvedEvents ? NEON.orange : NEON.green },
-              { label: 'Incidents', value: String(openIncidents), color: openIncidents ? NEON.red : NEON.green },
-            ].map(chip => (
+            {chips.map(chip => (
               <div key={chip.label} className="px-3 py-1.5 rounded-lg text-xs font-medium"
                 style={{ background: `rgba(${hexToRgb(chip.color)},0.1)`, border: `1px solid rgba(${hexToRgb(chip.color)},0.25)`, color: chip.color }}>
                 <span className="opacity-70 mr-1.5">{chip.label}</span>
@@ -849,14 +858,20 @@ function DigestCard({ digest }: {
 
 // ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
 function QuickActionsPanel() {
-  const actions = [
-    { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.blue },
-    { label: 'AI Agent', desc: 'Otomasyon', to: '/agent', accent: NEON.cyan },
-    { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange },
-    { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green },
-    { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue },
-    { label: 'Ayarlar', desc: 'Yapılandırma', to: '/settings', accent: '#94a3b8' },
+  const { hasModule, user } = useAuth()
+  const allActions: { label: string; desc: string; to: string; accent: string; moduleId?: string; adminOnly?: boolean }[] = [
+    { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.blue, moduleId: 'ai_automation' },
+    { label: 'AI Agent', desc: 'Otomasyon', to: '/agent', accent: NEON.cyan, moduleId: 'ai_automation' },
+    { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange, moduleId: 'linux' },
+    { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green, moduleId: 'linux' },
+    { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue, moduleId: 'linux' },
+    { label: 'Ayarlar', desc: 'Yapılandırma', to: '/settings', accent: '#94a3b8', adminOnly: true },
   ]
+  const actions = allActions.filter(a =>
+    a.adminOnly ? user?.role === 'admin' : hasModule(a.moduleId!)
+  )
+
+  if (actions.length === 0) return null
 
   return (
     <div className="cyber-card p-5 animate-fade-in h-full">
@@ -1033,6 +1048,13 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────
 const Dashboard: React.FC = () => {
+  const { hasModule } = useAuth()
+  const showLinux = hasModule('linux')
+  const showVirt = hasModule('virtualization')
+  const showAiops = hasModule('aiops')
+  const showAiAutomation = hasModule('ai_automation')
+  const hasAnyModule = showLinux || showVirt || showAiops || showAiAutomation || hasModule('windows') || hasModule('integrations') || hasModule('level1')
+
   const [selectedServer, setSelectedServer] = useState<DashboardServer | null>(null)
   const [now, setNow] = useState(() => new Date())
 
@@ -1048,6 +1070,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) throw new Error('Failed to fetch servers')
       return r.json()
     },
+    enabled: showLinux,
     refetchInterval: 30_000,
   })
 
@@ -1058,6 +1081,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) throw new Error('Failed to fetch hypervisors')
       return r.json()
     },
+    enabled: showVirt,
   })
 
   const { data: eventStats } = useQuery<EventStats>({
@@ -1067,6 +1091,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return r.json()
     },
+    enabled: showAiops,
     refetchInterval: 60_000,
   })
 
@@ -1077,6 +1102,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
       return r.json()
     },
+    enabled: showAiops,
     refetchInterval: 60_000,
   })
 
@@ -1087,6 +1113,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return { total_servers: 0, servers: [] }
       return r.json()
     },
+    enabled: showLinux,
     refetchInterval: 60_000,
   })
 
@@ -1101,6 +1128,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return { total_online_installed: 0, total_live: 0, scrape_errors: 0 }
       return r.json()
     },
+    enabled: showLinux,
     refetchInterval: 60_000,
   })
 
@@ -1111,6 +1139,7 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return { events: [] }
       return r.json()
     },
+    enabled: showAiops,
     refetchInterval: 45_000,
   })
 
@@ -1127,10 +1156,11 @@ const Dashboard: React.FC = () => {
       if (!r.ok) return null
       return r.json()
     },
+    enabled: showAiops,
     refetchInterval: 300_000,  // 5 dk
   })
 
-  if (serversLoading || hypervisorsLoading) {
+  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading)) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
         <div className="relative w-16 h-16">
@@ -1164,69 +1194,101 @@ const Dashboard: React.FC = () => {
   const lastRefresh = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
 
   const secondaryStats = [
-    { label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 },
-    { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
-    { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
-    { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
+    ...(showVirt ? [{ label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 }] : []),
+    ...(showLinux ? [
+      { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
+      { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
+      { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
+    ] : []),
   ]
+
+  if (!hasAnyModule) {
+    return (
+      <div className="min-h-[50vh] flex flex-col items-center justify-center gap-3 text-center">
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(148,163,184,0.1)', border: '1px solid rgba(148,163,184,0.2)' }}>
+          <ShieldOff size={24} className="text-slate-500" />
+        </div>
+        <p className="text-slate-300 text-sm font-medium">Henüz bir modüle erişiminiz yok</p>
+        <p className="text-slate-500 text-xs max-w-sm">Görüntüleyebileceğiniz içerik için lütfen yöneticinize başvurun.</p>
+      </div>
+    )
+  }
 
   return (
     <>
       <div className="space-y-5 animate-fade-in pb-4">
-        <DashboardHero
-          healthScore={healthScore}
-          onlineServers={onlineServers}
-          totalServers={totalServers}
-          unresolvedEvents={eventStats?.unresolved ?? 0}
-          openIncidents={(incidentStats?.open ?? 0) + (incidentStats?.investigating ?? 0)}
-          lastRefresh={lastRefresh}
-        />
+        {(showLinux || showAiops) && (
+          <DashboardHero
+            healthScore={healthScore}
+            onlineServers={onlineServers}
+            totalServers={totalServers}
+            unresolvedEvents={eventStats?.unresolved ?? 0}
+            openIncidents={(incidentStats?.open ?? 0) + (incidentStats?.investigating ?? 0)}
+            lastRefresh={lastRefresh}
+            showFleet={showLinux}
+            showOps={showAiops}
+          />
+        )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.blue} pct={onlinePct} delay={0} />
-          <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
-          <HeroKpi label="Monitörlenen" value={monitoredLive} sub={`${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
-          <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {secondaryStats.map((s, i) => (
-            <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub} accent={s.accent} delay={200 + i * 40} />
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <div className="xl:col-span-2">
-            <ResourceUsageChart metrics={metricDashboard} />
+        {showLinux && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.blue} pct={onlinePct} delay={0} />
+            <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
+            <HeroKpi label="Monitörlenen" value={monitoredLive} sub={`${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
+            <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
           </div>
-          <AiOpsOverview eventStats={eventStats} incidentStats={incidentStats} />
-        </div>
+        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-          <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-          <OsDistChart servers={servers} />
-        </div>
+        {secondaryStats.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {secondaryStats.map((s, i) => (
+              <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub} accent={s.accent} delay={200 + i * 40} />
+            ))}
+          </div>
+        )}
 
-        {hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
+        {(showLinux || showAiops) && (
+          <div className={`grid grid-cols-1 gap-4 ${showLinux && showAiops ? 'xl:grid-cols-3' : ''}`}>
+            {showLinux && (
+              <div className={showAiops ? 'xl:col-span-2' : ''}>
+                <ResourceUsageChart metrics={metricDashboard} />
+              </div>
+            )}
+            {showAiops && <AiOpsOverview eventStats={eventStats} incidentStats={incidentStats} />}
+          </div>
+        )}
+
+        {showLinux && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+            <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+            <OsDistChart servers={servers} />
+          </div>
+        )}
+
+        {showVirt && hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
           <EsxResourcePanel hypervisors={hypervisors} />
         )}
 
-        {digest && (
+        {showAiops && digest && (
           <DigestCard digest={digest} />
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2">
-            <ActivityFeed events={recentEventsData?.events ?? []} />
-          </div>
+        <div className={`grid grid-cols-1 gap-4 ${showAiops ? 'lg:grid-cols-3' : ''}`}>
+          {showAiops && (
+            <div className="lg:col-span-2">
+              <ActivityFeed events={recentEventsData?.events ?? []} />
+            </div>
+          )}
           <QuickActionsPanel />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <RecentServers servers={servers.filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />
-          <HypervisorCards hypervisors={hypervisors} />
-        </div>
+        {(showLinux || showVirt) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {showLinux && <RecentServers servers={servers.filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />}
+            {showVirt && <HypervisorCards hypervisors={hypervisors} />}
+          </div>
+        )}
       </div>
 
       {selectedServer && (

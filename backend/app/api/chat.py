@@ -189,8 +189,10 @@ def _servers_mentioned_in_message(db: Session, message: str) -> List[Server]:
 
 @router.get("/sessions")
 async def list_chat_sessions(db: Session = Depends(get_db)):
-    """Tüm chat session'larını listele (DB'den)"""
-    sessions = db.query(ChatSession).order_by(
+    """Linux AI chat session'larını listele (DB'den)"""
+    sessions = db.query(ChatSession).filter(
+        ChatSession.category == "linux"
+    ).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
     result = []
@@ -209,6 +211,7 @@ async def create_chat_session(
     session = ChatSession(
         title="Yeni Chat",
         server_ids=server_ids or [],
+        category="linux",
     )
     db.add(session)
     db.commit()
@@ -269,12 +272,13 @@ async def delete_session(session_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/sessions")
 async def delete_all_sessions(db: Session = Depends(get_db)):
-    """Tüm chat session'larını sil (kalıcı)"""
-    count = db.query(ChatSession).count()
-    db.execute(delete(ChatMessage))
-    db.execute(delete(ChatSession))
-    db.commit()
-    return {"success": True, "cleared": count}
+    """Linux chat session'larını sil (kalıcı)"""
+    ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.category == "linux").all()]
+    if ids:
+        db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
+        db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
+        db.commit()
+    return {"success": True, "cleared": len(ids)}
 
 
 @router.post("/", response_model=ChatResponse)
@@ -292,6 +296,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             session = ChatSession(
                 title=title,
                 server_ids=request.server_ids or [],
+                category="linux",
             )
             db.add(session)
             db.commit()
@@ -1002,7 +1007,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             session_id = request.session_id
             if not session_id:
                 title = message[:50] + ("..." if len(message) > 50 else "")
-                session = ChatSession(title=title, server_ids=request.server_ids or [])
+                session = ChatSession(title=title, server_ids=request.server_ids or [], category="linux")
                 db.add(session)
                 db.commit()
                 db.refresh(session)

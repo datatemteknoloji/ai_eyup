@@ -3,13 +3,17 @@ import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../auth/AuthContext'
 import {
-  LayoutDashboard, Monitor, Cloud, Brain, ClipboardList, AlertTriangle, ScanSearch,
+  LayoutDashboard, Monitor, Cloud, Brain, ClipboardList,
   MessageCircle, Bot, Zap, RefreshCw, Package, Database, Activity,
-  ScrollText, Settings, LogOut, ChevronRight, ChevronLeft, Microscope, Sliders,
+  ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check,
+  KeyRound, X, Check, AlertTriangle,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import {
+  buildPlatformAiopsChildren,
+  PLATFORM_AIOPS_LABEL,
+} from '../config/platformAiops'
 
 // ── Şifre Değiştir Modal ──────────────────────────────────────────────────────
 function ChangePasswordModal({ onClose }: { onClose: () => void }) {
@@ -105,8 +109,8 @@ interface LayoutProps {
 
 type ChildItem = { path: string; name: string; icon: React.ReactNode; badge?: () => React.ReactNode }
 type MenuItem =
-  | { type: 'link'; path: string; name: string; icon: React.ReactNode }
-  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: ChildItem[]; moduleId?: string }
+  | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string }
+  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: ChildItem[]; moduleId?: string; moduleIds?: string[] }
   | { type: 'section'; label: string }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
@@ -118,6 +122,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // All platform groups default closed
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
+  const canLinuxAiops = hasModule('linux') || hasModule('aiops')
+
   const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
     queryKey: ['ops-summary-nav'],
     queryFn: async () => {
@@ -127,10 +133,24 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
     refetchInterval: 30_000,
     staleTime: 20_000,
+    enabled: canLinuxAiops,
+  })
+
+  const { data: virtOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+    queryKey: ['virt-ops-summary'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/ops/summary`)
+      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      return r.json()
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+    enabled: hasModule('virtualization'),
   })
 
   const isActive = (path: string) =>
-    location.pathname === path || (path === '/dashboard' && location.pathname === '/')
+    location.pathname === path ||
+    (path === '/hypervisors' && (location.pathname === '/' || location.pathname === '/dashboard'))
 
   const isGroupActive = (paths: string[]) => paths.some(p => isActive(p))
 
@@ -138,8 +158,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
 
   const menuItems: MenuItem[] = [
-    // ── Overview ─────────────────────────────────────────────────────────
-    { type: 'link', path: '/dashboard', name: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    // ── Ana ekran (sanallaştırma dashboard) ───────────────────────────────
+    { type: 'link', path: '/hypervisors', name: 'Dashboard', icon: <LayoutDashboard size={18} />, moduleId: 'virtualization' },
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
@@ -154,6 +174,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
 
+    // ── Linux AIOps ───────────────────────────────────────────────────────
+    {
+      type: 'group', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={18} />,
+      moduleIds: ['linux', 'aiops'],
+      children: buildPlatformAiopsChildren('linux', opsSummary),
+    },
+
     // ── Windows ───────────────────────────────────────────────────────────
     {
       type: 'group', key: 'windows', name: 'Windows Yönetimi', icon: <Shield size={18} />, moduleId: 'windows',
@@ -164,40 +191,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
 
+    // ── Windows AIOps ─────────────────────────────────────────────────────
+    {
+      type: 'group', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={18} />,
+      moduleId: 'windows',
+      children: buildPlatformAiopsChildren('windows'),
+    },
+
     // ── Virtualization ────────────────────────────────────────────────────
     {
       type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
-        { path: '/hypervisors',     name: 'Hypervisor\'lar',    icon: <Layers size={15} /> },
-        { path: '/infra-reports',   name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
+        { path: '/hypervisors',   name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
+        { path: '/infra-reports', name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
       ],
     },
 
-    // ── AIOps ─────────────────────────────────────────────────────────────
+    // ── Sanallaştırma AIOps ───────────────────────────────────────────────
     {
-      type: 'group', key: 'aiops', name: 'AIOps', icon: <Brain size={18} />, moduleId: 'aiops',
-      children: [
-        {
-          path: '/ops', name: 'Komuta Merkezi', icon: <Zap size={15} />,
-          badge: () => (opsSummary?.critical ?? 0) > 0 ? (
-            <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
-              {opsSummary!.critical > 99 ? '99+' : opsSummary!.critical}
-            </span>
-          ) : null,
-        },
-        {
-          path: '/events', name: 'Events', icon: <ClipboardList size={15} />,
-          badge: () => (opsSummary?.warning ?? 0) > 0 ? (
-            <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {opsSummary!.warning > 99 ? '99+' : opsSummary!.warning}
-            </span>
-          ) : null,
-        },
-        { path: '/incidents',  name: 'Incidents',          icon: <AlertTriangle size={15} /> },
-        { path: '/anomalies',  name: 'Anomaly Detection',  icon: <ScanSearch size={15} /> },
-        { path: '/rca',        name: 'Kök Neden Analizi',  icon: <Microscope size={15} /> },
-        { path: '/baseline',   name: 'Baseline Yönetimi',  icon: <Sliders size={15} /> },
-      ],
+      type: 'group', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={18} />,
+      moduleId: 'virtualization',
+      children: buildPlatformAiopsChildren('virt', virtOpsSummary),
     },
 
     // ── AI & Automation ───────────────────────────────────────────────────
@@ -360,6 +374,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               if (item.type === 'link') {
                 // Kullanıcı Yönetimi ve Ayarlar sadece admin
                 if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings') && user?.role !== 'admin') return null
+                if (item.moduleId && !hasModule(item.moduleId)) return null
                 const active = isActive(item.path)
                 return (
                   <li key={item.path}>
@@ -379,8 +394,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 )
               }
 
-              // Modül filtresi: moduleId tanımlıysa kullanıcının erişimi olmalı
-              if (item.type === 'group' && item.moduleId && !hasModule(item.moduleId)) return null
+              // Modül filtresi: moduleId veya moduleIds (OR) tanımlıysa erişim gerekli
+              if (item.type === 'group') {
+                const ids = item.moduleIds ?? (item.moduleId ? [item.moduleId] : undefined)
+                if (ids && !ids.some(id => hasModule(id))) return null
+              }
 
               return renderGroupItem(item)
             })}

@@ -12,6 +12,7 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
     server_ids = Column(JSON, default=list)  # İlgili sunucu ID'leri
+    category = Column(String(32), default="linux", index=True)  # linux | hypervisor
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -23,4 +24,5 @@ class ChatMessage(Base):
     session_id = Column(Integer, nullable=False, index=True)
     role = Column(String(20), nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
+    meta = Column(JSON, default=dict)  # intents, report_type, latency_ms, error
     created_at = Column(DateTime(timezone=True), server_default=func.now())

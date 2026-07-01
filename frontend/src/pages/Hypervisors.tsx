@@ -1,15 +1,53 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import {
+  Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
+  Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
+  Database, Settings, X, Check, AlertTriangle
+} from 'lucide-react'
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 
+const NEON = {
+  green: '#22c55e', red: '#ef4444', orange: '#f97316',
+  blue: '#3b82f6', cyan: '#06b6d4', purple: '#a855f7',
+}
+
+// ── Types ───────────────────────────────────────────────────────────────────
+interface Hypervisor {
+  id: number; name: string; type: string; hostname: string
+  ip_address: string; port: number; username: string; connection_config: any
+}
+
+interface VM {
+  id: number; name: string; hostname: string; ip_address: string
+  status: string; os_type: string; cpu_cores: number; memory_gb: number
+  hypervisor_id: number; hypervisor_vm_id: string; vm_power_state?: string
+  ai_ready?: boolean
+}
+
+interface EsxHost {
+  host_name: string; host_ref?: string; cpu_usage_pct: number; mem_usage_pct: number
+  cpu_total_mhz: number; cpu_usage_mhz: number; cpu_cores: number
+  mem_total_mb: number; mem_used_mb: number; ds_total_gb: number; ds_used_gb: number
+  ds_usage_pct: number; vms_running: number; vms_total: number
+  connection_state?: string; power_state?: string; maintenance_mode?: boolean
+  inventory?: { vendor?: string; model?: string; cpu_model?: string }
+}
+
+// ── Utilities ───────────────────────────────────────────────────────────────
+const fmtMem = (mb: number) => mb >= 1024 ? `${(mb/1024).toFixed(0)} GB` : `${mb} MB`
+const fmtDisk = (gb: number) => gb >= 1024 ? `${(gb/1024).toFixed(1)} TB` : `${gb.toFixed(0)} GB`
+
+// ── Confirm Modal ───────────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <span className="text-yellow-400 text-base">⚠</span>
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0">
+          <AlertTriangle className="w-4 h-4 text-yellow-400" />
         </div>
         <div>
           <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
@@ -24,138 +62,479 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
   </div>
 )
 
-interface Hypervisor {
-  id: number
-  name: string
-  type: string
-  hostname: string
-  ip_address: string
-  port: number
-  username: string
-  connection_config: any
+// ── Stat Card ───────────────────────────────────────────────────────────────
+const StatCard = ({ icon: Icon, label, value, sub, accent, trend }: {
+  icon: any; label: string; value: string | number; sub?: string; accent: string; trend?: number
+}) => (
+  <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-4 hover:border-slate-600/50 transition-all group">
+    <div className="flex items-start justify-between">
+      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `${accent}20` }}>
+        <Icon className="w-5 h-5" style={{ color: accent }} />
+      </div>
+      {trend !== undefined && (
+        <span className={`text-xs px-2 py-0.5 rounded-full ${trend >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          {trend >= 0 ? '+' : ''}{trend}%
+        </span>
+      )}
+    </div>
+    <div className="mt-3">
+      <div className="text-2xl font-bold text-white">{value}</div>
+      <div className="text-xs text-slate-400 mt-0.5">{label}</div>
+      {sub && <div className="text-[10px] text-slate-500">{sub}</div>}
+    </div>
+  </div>
+)
+
+// ── Resource Gauge ──────────────────────────────────────────────────────────
+const ResourceGauge = ({ label, used, total, unit, accent }: {
+  label: string; used: number; total: number; unit: string; accent: string
+}) => {
+  const pct = total > 0 ? Math.round((used / total) * 100) : 0
+  const free = total - used
+  const getColor = (p: number) => p >= 90 ? NEON.red : p >= 75 ? NEON.orange : accent
+
+  return (
+    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm font-medium text-white">{label}</span>
+        <span className="text-xs px-2 py-1 rounded-full" style={{ background: `${getColor(pct)}20`, color: getColor(pct) }}>
+          {pct}%
+        </span>
+      </div>
+      <div className="h-3 bg-slate-800 rounded-full overflow-hidden mb-3">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${accent}, ${getColor(pct)})`, boxShadow: `0 0 10px ${accent}60` }}
+        />
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-slate-400">Kullanılan: <span className="text-white font-medium">{unit === 'GB' ? fmtDisk(used) : fmtMem(used)}</span></span>
+        <span className="text-slate-400">Boş: <span className="text-green-400 font-medium">{unit === 'GB' ? fmtDisk(free) : fmtMem(free)}</span></span>
+      </div>
+    </div>
+  )
 }
 
-const Hypervisors: React.FC = () => {
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
-  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
+// ── VM Status Pie ───────────────────────────────────────────────────────────
+const VMStatusPie = ({ poweredOn, poweredOff }: { poweredOn: number; poweredOff: number }) => {
+  const total = poweredOn + poweredOff
+  if (total === 0) return null
+  
+  const data = [
+    { name: 'Çalışan', value: poweredOn, color: NEON.green },
+    { name: 'Kapalı', value: poweredOff, color: '#475569' },
+  ].filter(d => d.value > 0)
+
+  return (
+    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
+      <h3 className="text-sm font-medium text-white mb-4">VM Durum Dağılımı</h3>
+      <div className="flex items-center gap-6">
+        <div className="relative">
+          <ResponsiveContainer width={100} height={100}>
+            <PieChart>
+              <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={45} paddingAngle={3} dataKey="value">
+                {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+              </Pie>
+              <Tooltip formatter={(v: number) => [`${v} VM`, '']} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-lg font-bold text-white">{total}</span>
+          </div>
+        </div>
+        <div className="flex-1 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Power className="w-4 h-4 text-green-400" />
+              <span className="text-sm text-slate-300">Çalışan</span>
+            </div>
+            <span className="text-sm font-bold text-green-400">{poweredOn}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <PowerOff className="w-4 h-4 text-slate-500" />
+              <span className="text-sm text-slate-300">Kapalı</span>
+            </div>
+            <span className="text-sm font-bold text-slate-400">{poweredOff}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Host Resource Bar Chart ─────────────────────────────────────────────────
+const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
+  if (hosts.length === 0) return null
+
+  const data = hosts.slice(0, 6).map(h => ({
+    name: h.host_name.length > 12 ? h.host_name.slice(0, 12) + '...' : h.host_name,
+    CPU: h.cpu_usage_pct || 0,
+    RAM: h.mem_usage_pct || 0,
+    Disk: h.ds_usage_pct || 0,
+  }))
+
+  return (
+    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
+      <h3 className="text-sm font-medium text-white mb-4">Host Kaynak Kullanımı</h3>
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data} layout="vertical" margin={{ left: 0, right: 10 }}>
+          <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} width={80} axisLine={false} tickLine={false} />
+          <Tooltip 
+            contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+            formatter={(v: number) => [`${v}%`, '']}
+          />
+          <Bar dataKey="CPU" fill={NEON.cyan} radius={[0, 4, 4, 0]} barSize={8} />
+          <Bar dataKey="RAM" fill={NEON.purple} radius={[0, 4, 4, 0]} barSize={8} />
+          <Bar dataKey="Disk" fill={NEON.orange} radius={[0, 4, 4, 0]} barSize={8} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="flex justify-center gap-4 mt-2">
+        {[{ label: 'CPU', color: NEON.cyan }, { label: 'RAM', color: NEON.purple }, { label: 'Disk', color: NEON.orange }].map(l => (
+          <div key={l.label} className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />
+            <span className="text-xs text-slate-400">{l.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── VM Table ────────────────────────────────────────────────────────────────
+const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] }) => {
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all')
+  const [sortBy, setSortBy] = useState<'name' | 'cpu' | 'ram'>('name')
+
+  const hvMap = useMemo(() => {
+    const m: Record<number, string> = {}
+    hypervisors.forEach(h => { m[h.id] = h.name })
+    return m
+  }, [hypervisors])
+
+  const filtered = useMemo(() => {
+    let list = [...vms]
+    
+    if (search) {
+      const q = search.toLowerCase()
+      list = list.filter(v => v.name.toLowerCase().includes(q) || v.ip_address?.includes(q) || v.os_type?.toLowerCase().includes(q))
+    }
+    
+    if (filter === 'online') {
+      list = list.filter(v => v.status === 'ONLINE' || v.vm_power_state?.toLowerCase().includes('on'))
+    } else if (filter === 'offline') {
+      list = list.filter(v => v.status === 'OFFLINE' || v.vm_power_state?.toLowerCase().includes('off'))
+    }
+    
+    if (sortBy === 'cpu') list.sort((a, b) => (b.cpu_cores || 0) - (a.cpu_cores || 0))
+    else if (sortBy === 'ram') list.sort((a, b) => (b.memory_gb || 0) - (a.memory_gb || 0))
+    else list.sort((a, b) => a.name.localeCompare(b.name))
+    
+    return list
+  }, [vms, search, filter, sortBy])
+
+  const isPoweredOn = (vm: VM) => vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+
+  return (
+    <div className="bg-cyber-card rounded-xl border border-white/[0.06] overflow-hidden">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Monitor className="w-5 h-5 text-blue-400" />
+          <span className="text-sm font-medium text-white">Sanal Makineler</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">{vms.length}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input
+              type="text"
+              placeholder="VM ara..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 w-48"
+            />
+          </div>
+          {/* Filter */}
+          <select
+            value={filter}
+            onChange={e => setFilter(e.target.value as any)}
+            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+          >
+            <option value="all">Tümü</option>
+            <option value="online">Çalışan</option>
+            <option value="offline">Kapalı</option>
+          </select>
+          {/* Sort */}
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as any)}
+            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+          >
+            <option value="name">İsme Göre</option>
+            <option value="cpu">CPU'ya Göre</option>
+            <option value="ram">RAM'e Göre</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+        <table className="w-full">
+          <thead className="bg-slate-800/50 sticky top-0">
+            <tr className="text-xs text-slate-400 uppercase">
+              <th className="text-left px-5 py-3 font-medium">VM</th>
+              <th className="text-left px-5 py-3 font-medium">Hypervisor</th>
+              <th className="text-left px-5 py-3 font-medium">IP</th>
+              <th className="text-left px-5 py-3 font-medium">OS</th>
+              <th className="text-center px-5 py-3 font-medium">CPU</th>
+              <th className="text-center px-5 py-3 font-medium">RAM</th>
+              <th className="text-center px-5 py-3 font-medium">Durum</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/[0.04]">
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-5 py-12 text-center text-slate-500">
+                  {search || filter !== 'all' ? 'Filtreye uygun VM bulunamadı' : 'Henüz VM yok'}
+                </td>
+              </tr>
+            ) : (
+              filtered.slice(0, 100).map(vm => (
+                <tr key={vm.id} className="hover:bg-white/[0.02] transition-colors">
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isPoweredOn(vm) ? 'bg-green-500/15' : 'bg-slate-700/50'}`}>
+                        <Server className={`w-4 h-4 ${isPoweredOn(vm) ? 'text-green-400' : 'text-slate-500'}`} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-white">{vm.name}</div>
+                        {vm.ai_ready && <span className="text-[10px] text-cyan-400">AI Ready</span>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-sm text-slate-400">{hvMap[vm.hypervisor_id] || '-'}</td>
+                  <td className="px-5 py-3 text-sm text-slate-300 font-mono">{vm.ip_address || '-'}</td>
+                  <td className="px-5 py-3 text-sm text-slate-400">{vm.os_type || '-'}</td>
+                  <td className="px-5 py-3 text-center">
+                    <span className="text-sm text-white font-medium">{vm.cpu_cores || '-'}</span>
+                    {vm.cpu_cores > 0 && <span className="text-xs text-slate-500 ml-1">vCPU</span>}
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className="text-sm text-white font-medium">{vm.memory_gb || '-'}</span>
+                    {vm.memory_gb > 0 && <span className="text-xs text-slate-500 ml-1">GB</span>}
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      isPoweredOn(vm) ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-400'
+                    }`}>
+                      {isPoweredOn(vm) ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
+                      {isPoweredOn(vm) ? 'Çalışıyor' : 'Kapalı'}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        {filtered.length > 100 && (
+          <div className="px-5 py-3 text-center text-xs text-slate-500 border-t border-white/[0.04]">
+            İlk 100 VM gösteriliyor. Toplam: {filtered.length}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Host Cards ──────────────────────────────────────────────────────────────
+const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
+  const [expanded, setExpanded] = useState(false)
+  const getStatusColor = (pct: number) => pct >= 90 ? NEON.red : pct >= 75 ? NEON.orange : NEON.green
+
+  return (
+    <div className="bg-cyber-card rounded-xl border border-white/[0.06] overflow-hidden hover:border-slate-600/50 transition-all">
+      <div 
+        className="px-5 py-4 flex items-center justify-between cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
+            <Database className="w-5 h-5 text-cyan-400" />
+          </div>
+          <div>
+            <div className="text-sm font-medium text-white">{host.host_name}</div>
+            <div className="text-xs text-slate-500">{hvName} • {host.vms_running}/{host.vms_total} VM</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          {/* Quick Stats */}
+          <div className="flex gap-3">
+            <div className="text-center">
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.cpu_usage_pct) }}>{host.cpu_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-[10px] text-slate-500">CPU</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.mem_usage_pct) }}>{host.mem_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-[10px] text-slate-500">RAM</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.ds_usage_pct) }}>{host.ds_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-[10px] text-slate-500">Disk</div>
+            </div>
+          </div>
+          {expanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="px-5 py-4 border-t border-white/[0.06] bg-slate-900/30 space-y-4">
+          {/* Resource Bars */}
+          {[
+            { label: 'CPU', used: host.cpu_usage_mhz, total: host.cpu_total_mhz, unit: 'MHz', pct: host.cpu_usage_pct, color: NEON.cyan },
+            { label: 'RAM', used: host.mem_used_mb, total: host.mem_total_mb, unit: 'MB', pct: host.mem_usage_pct, color: NEON.purple },
+            { label: 'Disk', used: host.ds_used_gb, total: host.ds_total_gb, unit: 'GB', pct: host.ds_usage_pct, color: NEON.orange },
+          ].map(r => (
+            <div key={r.label}>
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-slate-400">{r.label}</span>
+                <span className="text-slate-300">
+                  {r.unit === 'GB' ? fmtDisk(r.used) : fmtMem(r.used)} / {r.unit === 'GB' ? fmtDisk(r.total) : fmtMem(r.total)}
+                  <span className="ml-2" style={{ color: getStatusColor(r.pct) }}>({r.pct?.toFixed(0)}%)</span>
+                </span>
+              </div>
+              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${r.pct}%`, background: r.color }} />
+              </div>
+            </div>
+          ))}
+
+          {/* Hardware Info */}
+          {host.inventory && (
+            <div className="pt-2 border-t border-white/[0.04] grid grid-cols-2 gap-2 text-xs">
+              {host.inventory.vendor && <div><span className="text-slate-500">Marka:</span> <span className="text-slate-300">{host.inventory.vendor}</span></div>}
+              {host.inventory.model && <div><span className="text-slate-500">Model:</span> <span className="text-slate-300">{host.inventory.model}</span></div>}
+              {host.inventory.cpu_model && <div className="col-span-2"><span className="text-slate-500">CPU:</span> <span className="text-slate-300">{host.inventory.cpu_model}</span></div>}
+              <div><span className="text-slate-500">Core:</span> <span className="text-slate-300">{host.cpu_cores}</span></div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Hypervisor Management Section ───────────────────────────────────────────
+const HypervisorManagement = ({ 
+  hypervisors, 
+  onAdd, 
+  onDelete, 
+  onSync 
+}: { 
+  hypervisors: Hypervisor[]
+  onAdd: () => void
+  onDelete: (id: number) => void
+  onSync: (id: number) => void
+}) => {
+  const getTypeColor = (type: string) => {
+    const colors: Record<string, string> = {
+      vmware: 'from-green-500 to-green-600',
+      hyperv: 'from-blue-500 to-blue-600',
+      kvm: 'from-orange-500 to-orange-600',
+      xen: 'from-blue-600 to-blue-700',
+      proxmox: 'from-red-500 to-red-600',
+    }
+    return colors[type.toLowerCase()] || 'from-slate-500 to-slate-600'
+  }
+
+  const getTypeLabel = (type: string) => {
+    const labels: Record<string, string> = { vmware: 'VMware', hyperv: 'Hyper-V', kvm: 'oVirt/KVM', xen: 'XEN', proxmox: 'Proxmox' }
+    return labels[type.toLowerCase()] || type.toUpperCase()
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-white">Hypervisor Bağlantıları</h3>
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
+        >
+          <Plus className="w-4 h-4" /> Ekle
+        </button>
+      </div>
+
+      {hypervisors.length === 0 ? (
+        <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
+          <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-400 mb-4">Henüz hypervisor bağlantısı yok</p>
+          <button onClick={onAdd} className="text-blue-400 hover:text-blue-300 text-sm">+ Hypervisor Ekle</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {hypervisors.map(hv => (
+            <div key={hv.id} className="bg-cyber-card rounded-xl border border-white/[0.06] p-5 hover:border-slate-600/50 transition-all">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${getTypeColor(hv.type)} flex items-center justify-center`}>
+                    <span className="text-xs font-bold text-white">{hv.type?.slice(0, 2).toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-white">{hv.name}</div>
+                    <div className="text-xs text-slate-500">{getTypeLabel(hv.type)}</div>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1.5 text-xs mb-4">
+                <div className="flex"><span className="w-12 text-slate-500">IP:</span><span className="text-slate-300 font-mono">{hv.ip_address}:{hv.port}</span></div>
+                <div className="flex"><span className="w-12 text-slate-500">User:</span><span className="text-slate-300">{hv.username}</span></div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onSync(hv.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/20 text-xs transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Sync VMs
+                </button>
+                <button
+                  onClick={() => onDelete(hv.id)}
+                  className="px-3 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 text-xs transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Add Hypervisor Modal ────────────────────────────────────────────────────
+const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) => {
   const [formData, setFormData] = useState({
-    name: '',
-    type: 'vmware',
-    hostname: '',
-    ip_address: '',
-    port: 443,
-    username: '',
-    password: ''
+    name: '', type: 'vmware', hostname: '', ip_address: '', port: 443, username: '', password: ''
   })
-  const [connectionTest, setConnectionTest] = useState<{
-    tested: boolean
-    success: boolean
-    message: string
-    details: string
-  } | null>(null)
   const [testing, setTesting] = useState(false)
-
-  const queryClient = useQueryClient()
-
-  const { data: hypervisors = [], isLoading, isError, error, refetch } = useQuery<Hypervisor[]>({
-    queryKey: ['hypervisors'],
-    queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/hypervisors/`)
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.msg || JSON.stringify(data) || 'Hypervisor listesi alınamadı'
-        throw new Error(detail)
-      }
-      if (!Array.isArray(data)) {
-        throw new Error(data?.message || data?.error || 'Beklenmeyen yanıt')
-      }
-      return data
-    }
-  })
-
-  const createMutation = useMutation({
-    mutationFn: async (data: typeof formData) => {
-      const response = await fetch(`${API_BASE_URL}/hypervisors/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      })
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to create hypervisor')
-      }
-      return response.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
-      setShowAddModal(false)
-      setFormData({ name: '', type: 'vmware', hostname: '', ip_address: '', port: 443, username: '', password: '' })
-    }
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, { method: 'DELETE' })
-      if (!response.ok) throw new Error('Failed to delete hypervisor')
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
-    }
-  })
-
-  const syncVMsMutation = useMutation({
-    mutationFn: async (hypervisorId: number) => {
-      const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisorId}/sync-vms`, {
-        method: 'POST'
-      })
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Sync failed')
-      }
-      return response.json()
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      alert(`${data.synced_count} VM senkronize edildi. Toplam: ${data.total_vms} VM bulundu\n${data.errors.length > 0 ? `\n⚠️ Hatalar:\n${data.errors.join('\n')}` : ''}`)
-    },
-    onError: (error: Error) => {
-      alert(`❌ Sync hatası: ${error.message}`)
-    }
-  })
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
   const testConnection = async () => {
     setTesting(true)
-    setConnectionTest(null)
-    
+    setTestResult(null)
     try {
-      const response = await fetch(`${API_BASE_URL}/hypervisors/test-connection`, {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: formData.type,
-          hostname: formData.hostname || formData.ip_address,
-          ip_address: formData.ip_address,
-          port: formData.port,
-          username: formData.username,
-          password: formData.password
-        })
+        body: JSON.stringify({ type: formData.type, hostname: formData.hostname || formData.ip_address, ip_address: formData.ip_address, port: formData.port, username: formData.username, password: formData.password })
       })
-      
-      const result = await response.json()
-      setConnectionTest({
-        tested: true,
-        success: result.success,
-        message: result.message,
-        details: result.details || ''
-      })
-    } catch (error: any) {
-      setConnectionTest({
-        tested: true,
-        success: false,
-        message: '❌ Test başarısız',
-        details: error.message || 'Bağlantı hatası'
-      })
+      const data = await r.json()
+      setTestResult({ success: data.success, message: data.message })
+    } catch {
+      setTestResult({ success: false, message: 'Bağlantı hatası' })
     } finally {
       setTesting(false)
     }
@@ -163,63 +542,185 @@ const Hypervisors: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    
-    // Bağlantı testi yapılmadıysa veya başarısız olduysa uyar
-    if (!connectionTest?.tested) {
-      alert('Lütfen önce "Bağlantıyı Test Et" butonuna basarak credential\'ları doğrulayın!')
-      return
-    }
-    
-    if (!connectionTest.success) {
-      alert('❌ Bağlantı testi başarısız! Kullanıcı adı ve şifreyi kontrol edin.')
-      return
-    }
-    
-    createMutation.mutate(formData)
-  }
-  
-  // Form değiştiğinde test sonucunu sıfırla
-  const handleFormChange = (field: string, value: any) => {
-    setFormData({ ...formData, [field]: value })
-    setConnectionTest(null) // Form değişince test sonucunu sıfırla
+    if (!testResult?.success) return
+    onCreate(formData)
+    onClose()
   }
 
-  const getTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      vmware: 'VM', hyperv: 'HV', kvm: 'KVM', xen: 'XEN', proxmox: 'PX'
-    }
-    return labels[type.toLowerCase()] || type.slice(0, 3).toUpperCase()
-  }
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
+        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Hypervisor Ekle</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Adı *</label>
+            <input type="text" required value={formData.name} onChange={e => { setFormData({...formData, name: e.target.value}); setTestResult(null) }}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="vCenter Production" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Tip *</label>
+            <select value={formData.type} onChange={e => { setFormData({...formData, type: e.target.value}); setTestResult(null) }}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
+              <option value="vmware">VMware vCenter / ESXi</option>
+              <option value="hyperv">Microsoft Hyper-V</option>
+              <option value="kvm">KVM / oVirt</option>
+              <option value="proxmox">Proxmox VE</option>
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs text-slate-400 mb-1.5">IP Adresi *</label>
+              <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="192.168.1.100" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">Port</label>
+              <input type="number" value={formData.port} onChange={e => { setFormData({...formData, port: parseInt(e.target.value) || 443}); setTestResult(null) }}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+            <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+            <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+          </div>
 
-  const getTypeColor = (type: string) => {
-    const colors: Record<string, string> = {
-      vmware: 'from-green-500 to-green-600',
-      hyperv: 'from-blue-500 to-blue-600',
-      kvm: 'from-orange-500 to-orange-600',
-      xen: 'from-blue-600 to-blue-700',
-      proxmox: 'from-red-500 to-red-600'
-    }
-    return colors[type.toLowerCase()] || 'from-slate-500 to-slate-600'
-  }
+          <button type="button" onClick={testConnection} disabled={testing || !formData.username || !formData.password}
+            className="w-full py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2">
+            {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> Test Ediliyor...</> : 'Bağlantıyı Test Et'}
+          </button>
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          {testResult && (
+            <div className={`p-3 rounded-lg border ${testResult.success ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+              <div className="flex items-center gap-2">
+                {testResult.success ? <Check className="w-4 h-4 text-green-400" /> : <X className="w-4 h-4 text-red-400" />}
+                <span className={`text-sm ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>{testResult.message}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+            <button type="submit" disabled={!testResult?.success}
+              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-sm font-medium">
+              Ekle
+            </button>
+          </div>
+        </form>
       </div>
-    )
-  }
+    </div>
+  )
+}
 
-  if (isError) {
+// ══════════════════════════════════════════════════════════════════════════════
+// ── Main Component ────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+const Hypervisors: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>('dashboard')
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
+  const queryClient = useQueryClient()
+
+  // Hypervisors
+  const { data: hypervisors = [], isLoading: hvLoading } = useQuery<Hypervisor[]>({
+    queryKey: ['hypervisors'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/`)
+      if (!r.ok) throw new Error('Hypervisor listesi alınamadı')
+      return r.json()
+    }
+  })
+
+  // VMs (servers with hypervisor_id)
+  const { data: allServers = [] } = useQuery<VM[]>({
+    queryKey: ['servers'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/servers/`)
+      if (!r.ok) return []
+      return r.json()
+    }
+  })
+
+  const vms = useMemo(() => allServers.filter(s => s.hypervisor_id), [allServers])
+
+  // ESX Host Metrics
+  const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
+  const [hostsLoading, setHostsLoading] = useState(true)
+
+  useEffect(() => {
+    const vmwareHvs = hypervisors.filter(h => h.type?.toLowerCase() === 'vmware')
+    if (vmwareHvs.length === 0) { setHostsLoading(false); return }
+
+    Promise.all(
+      vmwareHvs.map(hv =>
+        fetch(`${API_BASE_URL}/hypervisors/${hv.id}/host-metrics`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => (data?.hosts || []).map((h: EsxHost) => ({ hvName: hv.name, host: h })))
+          .catch(() => [])
+      )
+    ).then(results => {
+      setAllHosts(results.flat())
+      setHostsLoading(false)
+    })
+  }, [hypervisors])
+
+  // Mutations
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      if (!r.ok) throw new Error((await r.json()).detail || 'Ekleme hatası')
+      return r.json()
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error('Silme hatası')
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+  })
+
+  const syncMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}/sync-vms`, { method: 'POST' })
+      if (!r.ok) throw new Error((await r.json()).detail || 'Sync hatası')
+      return r.json()
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      alert(`${data.synced_count} yeni VM eklendi. Toplam: ${data.total_vms} VM`)
+    }
+  })
+
+  // Stats
+  const poweredOn = vms.filter(v => v.status === 'ONLINE' || v.vm_power_state?.toLowerCase().includes('on')).length
+  const poweredOff = vms.length - poweredOn
+  const totalVmCpu = vms.reduce((acc, v) => acc + (v.cpu_cores || 0), 0)
+  const totalVmRam = vms.reduce((acc, v) => acc + (v.memory_gb || 0), 0)
+
+  // Host totals
+  const totalHostCpu = allHosts.reduce((acc, h) => acc + (h.host.cpu_total_mhz || 0), 0)
+  const usedHostCpu = allHosts.reduce((acc, h) => acc + (h.host.cpu_usage_mhz || 0), 0)
+  const totalHostMem = allHosts.reduce((acc, h) => acc + (h.host.mem_total_mb || 0), 0)
+  const usedHostMem = allHosts.reduce((acc, h) => acc + (h.host.mem_used_mb || 0), 0)
+  const totalHostDisk = allHosts.reduce((acc, h) => acc + (h.host.ds_total_gb || 0), 0)
+  const usedHostDisk = allHosts.reduce((acc, h) => acc + (h.host.ds_used_gb || 0), 0)
+
+  if (hvLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4 p-6">
-        <p className="text-red-400 font-medium">Hypervisor listesi yüklenemedi</p>
-        <p className="text-slate-400 text-sm text-center max-w-md">
-          {error instanceof Error ? error.message : 'Backend bağlantısını kontrol edin. API: ' + API_BASE_URL}
-        </p>
-        <button onClick={() => refetch()} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">
-          Tekrar dene
-        </button>
+      <div className="min-h-[50vh] flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
       </div>
     )
   }
@@ -227,266 +728,125 @@ const Hypervisors: React.FC = () => {
   return (
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <p className="text-slate-400">Toplam {hypervisors.length} hypervisor</p>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25"
-        >
-          + Yeni Hypervisor
-        </button>
-      </div>
+      {showAddModal && <AddHypervisorModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
 
-      {/* Grid */}
-      {hypervisors.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {hypervisors.map((hv) => (
-            <div
-              key={hv.id}
-              className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg hover:shadow-slate-900/50"
+      <div className="space-y-6">
+        {/* Quick Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
+          <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
+          <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.purple} />
+          <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
+          <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
+          <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 bg-cyber-card rounded-xl border border-white/[0.06] w-fit">
+          {[
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+            { id: 'vms', icon: Monitor, label: 'VM Listesi' },
+            { id: 'hosts', icon: Database, label: 'Host\'lar' },
+            { id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === tab.id 
+                  ? 'bg-blue-600 text-white' 
+                  : 'text-slate-400 hover:text-white hover:bg-white/[0.05]'
+              }`}
             >
-              <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getTypeColor(hv.type)} flex items-center justify-center shadow-lg`}>
-                      <span className="text-sm font-bold text-white">{getTypeLabel(hv.type)}</span>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-white">{hv.name}</h3>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-white/[0.07] text-slate-300">
-                        {hv.type.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      if (await showConfirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
-                        deleteMutation.mutate(hv.id)
-                      }
-                    }}
-                    className="text-slate-500 hover:text-red-400 transition-colors p-1"
-                    title="Sil"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center text-slate-400 min-w-0">
-                    <span className="w-20 flex-shrink-0">Host:</span>
-                    <span className="text-white font-mono truncate" title={hv.hostname || '-'}>{hv.hostname || '-'}</span>
-                  </div>
-                  <div className="flex items-center text-slate-400 min-w-0">
-                    <span className="w-20 flex-shrink-0">IP:</span>
-                    <span className="text-white font-mono truncate">{hv.ip_address}:{hv.port}</span>
-                  </div>
-                  {hv.username && (
-                    <div className="flex items-center text-slate-400 min-w-0">
-                      <span className="w-20 flex-shrink-0">User:</span>
-                      <span className="text-white truncate" title={hv.username}>{hv.username}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-4 pt-4 border-t border-white/[0.06] flex justify-between">
-                  <button 
-                    onClick={() => syncVMsMutation.mutate(hv.id)}
-                    disabled={syncVMsMutation.isPending}
-                    className="text-blue-400 hover:text-blue-300 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                  >
-                    {syncVMsMutation.isPending ? (
-                      <>
-                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400"></div>
-                        <span>Syncing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="inline-block animate-spin text-sm">↺</span>
-                        <span>Sync VMs</span>
-                      </>
-                    )}
-                  </button>
-                  <span className="text-slate-500 text-xs">
-                    {hv.type.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            </div>
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
           ))}
         </div>
-      ) : (
-        <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-12 text-center">
-          <div className="w-16 h-16 bg-white/[0.07] rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-xs font-bold text-blue-400">HV</span>
-          </div>
-          <h3 className="text-lg font-medium text-white mb-2">Henüz hypervisor eklenmemiş</h3>
-          <p className="text-slate-400 mb-4">Sanal makinelerinizi yönetmek için bir hypervisor ekleyin</p>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
-          >
-            <span className="mr-2">➕</span>
-            Hypervisor Ekle
-          </button>
-        </div>
-      )}
 
-      {/* Add Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-white">Yeni Hypervisor Ekle</h2>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                ✕
-              </button>
+        {/* Tab Content */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            {/* Resource Gauges */}
+            {allHosts.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <ResourceGauge label="CPU Kullanımı" used={usedHostCpu} total={totalHostCpu} unit="MHz" accent={NEON.cyan} />
+                <ResourceGauge label="Bellek Kullanımı" used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.purple} />
+                <ResourceGauge label="Depolama Kullanımı" used={usedHostDisk} total={totalHostDisk} unit="GB" accent={NEON.orange} />
+              </div>
+            )}
+
+            {/* Charts Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <VMStatusPie poweredOn={poweredOn} poweredOff={poweredOff} />
+              <HostResourceChart hosts={allHosts.map(h => h.host)} />
             </div>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Hypervisor Adı *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => handleFormChange('name', e.target.value)}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="örn: vCenter Production"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Tip *</label>
-                <select
-                  value={formData.type}
-                  onChange={(e) => handleFormChange('type', e.target.value)}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="vmware">VMware vCenter / ESXi</option>
-                  <option value="hyperv">Microsoft Hyper-V</option>
-                  <option value="kvm">KVM / oVirt</option>
-                  <option value="xen">Xen</option>
-                  <option value="proxmox">Proxmox VE</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">IP Adresi *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.ip_address}
-                    onChange={(e) => handleFormChange('ip_address', e.target.value)}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="192.168.1.100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Port</label>
-                  <input
-                    type="number"
-                    value={formData.port}
-                    onChange={(e) => handleFormChange('port', parseInt(e.target.value) || 443)}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Kullanıcı Adı *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.username}
-                  onChange={(e) => handleFormChange('username', e.target.value)}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={formData.type === 'kvm' ? 'örn. admin (@internal otomatik eklenir)' : 'administrator@vsphere.local'}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Şifre *</label>
-                <input
-                  type="password"
-                  required
-                  value={formData.password}
-                  onChange={(e) => handleFormChange('password', e.target.value)}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="••••••••"
-                />
-              </div>
-              
-              {/* Test Connection Button */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={testConnection}
-                  disabled={testing || !formData.username || !formData.password}
-                  className="w-full py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
-                >
-                  {testing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
-                      <span>Test Ediliyor...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>●</span>
-                      <span>Bağlantıyı Test Et</span>
-                    </>
-                  )}
-                </button>
-              </div>
 
-              {/* Test Result */}
-              {connectionTest && (
-                <div className={`p-4 rounded-lg border ${
-                  connectionTest.success 
-                    ? 'bg-green-500/10 border-green-500/30' 
-                    : 'bg-red-500/10 border-red-500/30'
-                }`}>
-                  <div className="flex items-start gap-3">
-                    <span className="text-sm font-bold" style={{color: connectionTest.success ? 'var(--success)' : 'var(--error)'}}>{connectionTest.success ? 'OK' : 'ERR'}</span>
-                    <div className="flex-1">
-                      <p className={`font-medium ${
-                        connectionTest.success ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {connectionTest.message}
-                      </p>
-                      {connectionTest.details && (
-                        <p className="text-sm text-slate-400 mt-1">{connectionTest.details}</p>
-                      )}
-                    </div>
-                  </div>
+            {/* Recent VMs */}
+            {vms.length > 0 && (
+              <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-medium text-white">Son Eklenen VM'ler</h3>
+                  <button onClick={() => setActiveTab('vms')} className="text-xs text-blue-400 hover:text-blue-300">Tümünü Gör →</button>
                 </div>
-              )}
-
-              <div className="flex justify-end space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 transition-colors"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  disabled={createMutation.isPending || !connectionTest?.success}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={!connectionTest?.success ? 'Önce bağlantıyı test edin' : ''}
-                >
-                  {createMutation.isPending ? 'Ekleniyor...' : '➕ Hypervisor Ekle'}
-                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {vms.slice(0, 8).map(vm => {
+                    const isOn = vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+                    return (
+                      <div key={vm.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isOn ? 'bg-green-500/15' : 'bg-slate-700'}`}>
+                          <Server className={`w-4 h-4 ${isOn ? 'text-green-400' : 'text-slate-500'}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm text-white truncate">{vm.name}</div>
+                          <div className="text-xs text-slate-500">{vm.cpu_cores} vCPU • {vm.memory_gb} GB</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              {createMutation.isError && (
-                <p className="text-red-400 text-sm">
-                  Hata: {createMutation.error instanceof Error ? createMutation.error.message : 'Bilinmeyen hata'}
-                </p>
-              )}
-            </form>
+            )}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {activeTab === 'vms' && <VMTable vms={vms} hypervisors={hypervisors} />}
+
+        {activeTab === 'hosts' && (
+          <div className="space-y-4">
+            {hostsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+              </div>
+            ) : allHosts.length === 0 ? (
+              <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
+                <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">Host verisi bulunamadı</p>
+                <p className="text-xs text-slate-500 mt-1">VMware hypervisor ekleyip sync yapın</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {allHosts.map(({ hvName, host }) => (
+                  <HostCard key={`${hvName}-${host.host_name}`} host={host} hvName={hvName} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'hypervisors' && (
+          <HypervisorManagement
+            hypervisors={hypervisors}
+            onAdd={() => setShowAddModal(true)}
+            onDelete={async (id) => {
+              if (await showConfirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
+                deleteMutation.mutate(id)
+              }
+            }}
+            onSync={(id) => syncMutation.mutate(id)}
+          />
+        )}
+      </div>
     </>
   )
 }

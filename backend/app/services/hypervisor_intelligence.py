@@ -66,10 +66,7 @@ REPORT_KEYWORD_MAP = {
     "operations":             [r"operasyon\s+rapor|ops.*report|aktivite\s+rapor"],
     "performance_bottleneck": [r"darboğaz|bottleneck|performans.*sorun|cpu\s+ready|latency"],
     "sla":                    [r"sla|erişilebilirlik|uptime|kesinti.*rapor"],
-    "backup":                 [r"backup\s+rapor|yedek.*rapor|rpo|rto"],
-    "dr_readiness":           [r"dr\s+hazırlık|disaster\s+recovery|felaket.*kurtarma"],
     "business_impact":        [r"iş\s+servisi|business\s+impact|servis\s+etki"],
-    "chargeback":             [r"chargeback|showback|departman.*maliyet|birim.*maliyet"],
 }
 
 

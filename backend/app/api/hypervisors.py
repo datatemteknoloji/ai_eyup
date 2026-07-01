@@ -1,6 +1,7 @@
 """
 Hypervisors API endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -11,6 +12,7 @@ from app.models.hypervisor import Hypervisor, HypervisorType
 from app.schemas.hypervisor import HypervisorCreate, HypervisorUpdate, HypervisorResponse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _mask_hv_config(cfg: dict | None) -> dict:
@@ -598,12 +600,166 @@ async def delete_hypervisor(hypervisor_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error deleting hypervisor: {str(e)}")
 
 
+# ── Sanallaştırma Komuta Merkezi (AIOps) ─────────────────────────────────────
+
+@router.get("/ops/command-center")
+async def virt_command_center(db: Session = Depends(get_db)):
+    """vCenter / OLVM manager, ESX host kaynakları ve platform logları."""
+    from app.services.virt_ops_center import build_virt_command_center
+    try:
+        return build_virt_command_center(db)
+    except Exception as e:
+        logger.exception("virt command center error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ops/summary")
+async def virt_ops_summary_endpoint(db: Session = Depends(get_db)):
+    """Navbar badge — sanallaştırma katmanı özet."""
+    from app.services.virt_ops_center import virt_ops_summary
+    return virt_ops_summary(db)
+
+
 # ── Doğal Dil Sorgulama ──────────────────────────────────────────────────────
+
+HV_SESSION_CATEGORY = "hypervisor"
+
+
+def _hv_session_title(question: str) -> str:
+    q = question.strip()
+    return (q[:57] + "...") if len(q) > 60 else q
+
+
+def _hv_session_dict(session, message_count: int = 0) -> dict:
+    return {
+        "id": session.id,
+        "title": session.title,
+        "created_at": session.created_at.isoformat() if session.created_at else "",
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "message_count": message_count,
+    }
+
+
+def _hv_message_dict(msg) -> dict:
+    return {
+        "id": msg.id,
+        "session_id": msg.session_id,
+        "role": msg.role,
+        "content": msg.content,
+        "meta": msg.meta or {},
+        "created_at": msg.created_at.isoformat() if msg.created_at else "",
+    }
+
 
 class HypervisorAskRequest(BaseModel):
     question: str
     model: Optional[str] = None
     history: Optional[List[dict]] = None  # [{role, content}]
+    session_id: Optional[int] = None
+
+
+@router.get("/ask/sessions")
+async def list_hypervisor_sessions(
+    q: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """Hypervisor AI asistan oturum geçmişi (arama destekli)."""
+    from app.models.chat_session import ChatSession, ChatMessage
+    from sqlalchemy import or_, func as sa_func
+
+    query = db.query(ChatSession).filter(ChatSession.category == HV_SESSION_CATEGORY)
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        msg_ids = [
+            r[0] for r in db.query(ChatMessage.session_id)
+            .filter(ChatMessage.content.ilike(term))
+            .distinct()
+            .all()
+        ]
+        filters = [ChatSession.title.ilike(term)]
+        if msg_ids:
+            filters.append(ChatSession.id.in_(msg_ids))
+        query = query.filter(or_(*filters))
+
+    sessions = (
+        query.order_by(sa_func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc())
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    result = []
+    for s in sessions:
+        count = db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
+        result.append(_hv_session_dict(s, message_count=count))
+    return result
+
+
+@router.post("/ask/sessions")
+async def create_hypervisor_session(db: Session = Depends(get_db)):
+    """Yeni hypervisor AI oturumu."""
+    from app.models.chat_session import ChatSession
+    from datetime import datetime, timezone
+
+    session = ChatSession(title="Yeni Sohbet", server_ids=[], category=HV_SESSION_CATEGORY)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return _hv_session_dict(session, message_count=0)
+
+
+@router.get("/ask/sessions/{session_id}/messages")
+async def get_hypervisor_session_messages(session_id: int, db: Session = Depends(get_db)):
+    """Oturum mesajlarını getir."""
+    from app.models.chat_session import ChatSession, ChatMessage
+
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.category == HV_SESSION_CATEGORY,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Oturum bulunamadı")
+
+    rows = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    return {"session_id": session_id, "messages": [_hv_message_dict(m) for m in rows]}
+
+
+@router.delete("/ask/sessions/{session_id}")
+async def delete_hypervisor_session(session_id: int, db: Session = Depends(get_db)):
+    """Tek oturumu sil."""
+    from app.models.chat_session import ChatSession, ChatMessage
+    from sqlalchemy import delete
+
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.category == HV_SESSION_CATEGORY,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Oturum bulunamadı")
+    db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    db.delete(session)
+    db.commit()
+    return {"success": True}
+
+
+@router.delete("/ask/sessions")
+async def delete_all_hypervisor_sessions(db: Session = Depends(get_db)):
+    """Tüm hypervisor oturumlarını sil."""
+    from app.models.chat_session import ChatSession, ChatMessage
+    from sqlalchemy import delete
+
+    ids = [
+        s.id for s in db.query(ChatSession.id).filter(ChatSession.category == HV_SESSION_CATEGORY).all()
+    ]
+    if ids:
+        db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
+        db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
+        db.commit()
+    return {"success": True, "deleted": len(ids)}
 
 
 @router.post("/ask")
@@ -612,29 +768,88 @@ async def ask_hypervisor_question(
     db: Session = Depends(get_db),
 ):
     """
-    Doğal dil ile hypervisor/VM sorgulama.
+    Doğal dil ile hypervisor/VM sorgulama ve rapor istekleri.
 
     Örnek sorular:
     - "Kaç ESX hostum var?"
-    - "Hangi ESX'de kaç VM çalışıyor?"
-    - "rhel8-10tst ile minio2'yi karşılaştır"
-    - "ESX hostlarımın doluluk durumu nedir?"
-    - "VMware Tools olmayan VM'ler hangileri?"
-    - "Ortam değerlendirmesi yap"
+    - "Kapasite raporu oluştur"
+    - "Executive summary raporu ver"
     """
     if not req.question or not req.question.strip():
         raise HTTPException(status_code=400, detail="Soru boş olamaz")
 
+    from app.models.chat_session import ChatSession, ChatMessage
+    from datetime import datetime, timezone
+
+    question = req.question.strip()
+    session_id = req.session_id
+
     try:
+        if session_id:
+            session = db.query(ChatSession).filter(
+                ChatSession.id == session_id,
+                ChatSession.category == HV_SESSION_CATEGORY,
+            ).first()
+            if not session:
+                raise HTTPException(status_code=404, detail="Oturum bulunamadı")
+        else:
+            session = ChatSession(
+                title=_hv_session_title(question),
+                server_ids=[],
+                category=HV_SESSION_CATEGORY,
+            )
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+            session_id = session.id
+
+        db.add(ChatMessage(session_id=session_id, role="user", content=question))
+        db.commit()
+
+        # DB'den konuşma geçmişi (son 8 mesaj, yeni user hariç)
+        prior = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.asc())
+            .all()
+        )
+        history = [{"role": m.role, "content": m.content} for m in prior[:-1]][-8:]
+        if req.history:
+            history = req.history[-8:]
+
         from app.services.hypervisor_intelligence import answer_hypervisor_question
         result = answer_hypervisor_question(
             db=db,
-            question=req.question.strip(),
+            question=question,
             model=req.model,
-            conversation_history=req.history,
+            conversation_history=history,
         )
-        return result
+
+        assistant_meta = {
+            "intents": result.get("intents") or [],
+            "report_type": result.get("report_type"),
+            "report_title": result.get("report_title"),
+            "latency_ms": result.get("latency_ms"),
+            "error": result.get("error"),
+        }
+        db.add(ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content=result.get("answer") or "",
+            meta=assistant_meta,
+        ))
+        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session:
+            if session.title == "Yeni Sohbet" or not session.title.strip():
+                session.title = _hv_session_title(question)
+            session.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        return {**result, "session_id": session_id}
+    except HTTPException:
+        raise
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Sorgulama hatası: {str(e)}")
 
 

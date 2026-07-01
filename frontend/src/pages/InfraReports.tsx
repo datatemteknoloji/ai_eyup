@@ -8,7 +8,7 @@ import {
   BarChart3, Zap, Shield, Server, TrendingUp, DollarSign,
   AlertTriangle, Cpu, RefreshCw, ChevronRight, Clock,
   CheckCircle2, XCircle, Loader2, Download, Bot, FileDown, Eye, HardDrive,
-  Activity, Lock, Layers, Target, Database, Network, PackageOpen,
+  Activity, Layers, Target, Network, PackageOpen,
   Building2, ArrowUpRight, ArrowDownRight, Minus, Info,
 } from 'lucide-react'
 import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
@@ -20,7 +20,7 @@ const REPORT_CATALOG = [
   { type: 'capacity',               title: 'Kapasite Raporu',             icon: <Server size={18} />,    color: 'purple',  desc: 'CPU, RAM, storage kapasitesi ve doluluk tahmini' },
   { type: 'risk',                   title: 'Risk Dashboard',              icon: <AlertTriangle size={18} />, color: 'red', desc: 'Kritik host, datastore, cluster ve HA/DR riskler' },
   { type: 'vm_health',              title: 'VM Sağlık Skoru',             icon: <Zap size={18} />,       color: 'green',   desc: 'Her VM\'in performans, backup ve alarm bazlı sağlık puanı' },
-  { type: 'resource_usage',         title: 'Kaynak Kullanım Raporu',      icon: <Cpu size={18} />,       color: 'amber',   desc: 'En çok CPU, RAM, disk ve network tüketen VM\'ler' },
+  { type: 'resource_usage',         title: 'Kaynak Tahsis Raporu',        icon: <Cpu size={18} />,       color: 'amber',   desc: 'En çok CPU, RAM ve disk tahsis edilen VM\'ler (allocation)' },
   { type: 'security_compliance',    title: 'Güvenlik & Uyumluluk',        icon: <Shield size={18} />,    color: 'teal',    desc: 'VMware Tools, patch, versiyon uyumluluk takibi' },
   { type: 'consolidation',          title: 'Konsolidasyon Raporu',        icon: <RefreshCw size={18} />, color: 'orange',  desc: 'Boşta, kapalı veya gereksiz çalışan VM ve kaynaklar' },
   { type: 'lifecycle',              title: 'Yaşam Döngüsü Raporu',        icon: <Clock size={18} />,     color: 'slate',   desc: 'Eski sürüm, destek süresi biten, yenileme gereken bileşenler' },
@@ -30,11 +30,8 @@ const REPORT_CATALOG = [
   { type: 'riskiest_assets',        title: 'En Riskli Varlıklar',         icon: <Target size={18} />,    color: 'red',     desc: 'Kesinti oluşturma ihtimali yüksek host ve VM\'ler' },
   { type: 'operations',             title: 'Operasyon Raporu',            icon: <BarChart3 size={18} />, color: 'indigo',  desc: 'Olay sayıları, event tipleri, günlük trend' },
   { type: 'performance_bottleneck', title: 'Performans Darboğaz',         icon: <Zap size={18} />,       color: 'yellow',  desc: 'CPU saturation, memory pressure, disk latency sorunları' },
-  { type: 'sla',                    title: 'SLA Raporu',                  icon: <CheckCircle2 size={18} />, color: 'green', desc: 'Erişilebilirlik ve kesinti performansı' },
-  { type: 'backup',                 title: 'Backup & Recoverability',     icon: <Database size={18} />,  color: 'blue',    desc: 'Backup başarı oranı, RPO/RTO uyumu' },
-  { type: 'dr_readiness',           title: 'DR Hazırlık Raporu',          icon: <Lock size={18} />,      color: 'purple',  desc: 'Felaket kurtarma hazırlık durumu ve öneriler' },
+  { type: 'sla',                    title: 'Erişilebilirlik Raporu',      icon: <CheckCircle2 size={18} />, color: 'green', desc: 'Olay yoğunluğundan tahmini erişilebilirlik (uptime)' },
   { type: 'business_impact',        title: 'Business Service Impact',     icon: <Building2 size={18} />, color: 'slate',   desc: 'Arıza durumunda hangi iş servisleri etkilenir' },
-  { type: 'chargeback',             title: 'Chargeback / Showback',       icon: <DollarSign size={18} />, color: 'emerald', desc: 'Departman veya proje bazında kaynak ve maliyet dağılımı' },
 ]
 
 const COLOR_MAP: Record<string, string> = {
@@ -1316,121 +1313,6 @@ function SlaView({ d }: { d: any }) {
   )
 }
 
-function BackupView({ d }: { d: any }) {
-  const recs = d.recommendations || []
-  const integrated = d.integration_status === 'connected'
-  return (
-    <div className="space-y-5">
-      {/* Status banner */}
-      <div className={`rounded-xl border p-4 flex items-start gap-3 ${integrated ? 'bg-green-500/5 border-green-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
-        {integrated
-          ? <CheckCircle2 size={20} className="text-green-400 flex-shrink-0 mt-0.5" />
-          : <AlertTriangle size={20} className="text-amber-400 flex-shrink-0 mt-0.5" />
-        }
-        <div>
-          <p className={`font-medium text-sm ${integrated ? 'text-green-300' : 'text-amber-300'}`}>
-            {integrated ? 'Backup Sistemi Bağlı' : 'Backup Sistemi Entegre Edilmemiş'}
-          </p>
-          <p className="text-slate-400 text-xs mt-1">{d.message}</p>
-        </div>
-      </div>
-      <KpiCard label="Backup Durumu Bilinmeyen Çalışan VM" value={d.powered_on_vms_needing_backup ?? 0}
-        color="amber" icon={<Database size={12} />}
-        sub="Backup entegrasyonu olmadan doğrulanamıyor" />
-      {/* Recommendations */}
-      {recs.length > 0 && (
-        <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
-          <SectionHeader title="Öneriler" icon={<Info size={14} />} />
-          <div className="space-y-2">
-            {recs.map((rec: string, i: number) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <span className="text-blue-400 flex-shrink-0 mt-0.5">→</span>
-                <span className="text-slate-300">{rec}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {/* Best practices */}
-      <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-        <SectionHeader title="Backup Best Practices" icon={<Shield size={14} />} />
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          {[
-            { label: 'RPO Hedefi', value: '≤ 4 saat (kritik sistemler)' },
-            { label: 'RTO Hedefi', value: '≤ 2 saat (production)' },
-            { label: 'Retention', value: 'Min. 30 gün' },
-            { label: 'Test Sıklığı', value: '3 ayda bir restore testi' },
-          ].map((item, i) => (
-            <div key={i} className="bg-slate-800/40 rounded-lg p-2">
-              <div className="text-slate-500">{item.label}</div>
-              <div className="text-white font-medium mt-0.5">{item.value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function DrReadinessView({ d }: { d: any }) {
-  const drScore = d.dr_score ?? 0
-  const recs = d.recommendations || []
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-4 gap-3 items-start">
-        <div className="flex flex-col items-center bg-slate-800/40 rounded-xl p-4 border border-slate-700/30">
-          <ScoreGauge score={drScore} max={100} label="DR Hazırlık" size={96} />
-        </div>
-        <KpiCard label="Host Redundancy" value={d.has_redundancy ? 'Var ✓' : 'Yok ✗'}
-          color={d.has_redundancy ? 'green' : 'red'}
-          sub={`${d.host_count ?? 0} host`} />
-        <KpiCard label="Production VM" value={d.production_vms ?? 0}
-          color={(d.production_vms ?? 0) > 0 ? 'blue' : 'amber'} />
-        <KpiCard label="DR Skoru" value={`${drScore}/100`}
-          color={drScore >= 70 ? 'green' : drScore >= 50 ? 'amber' : 'red'} />
-      </div>
-      {/* Roadmap */}
-      <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
-        <SectionHeader title="DR Hazırlık Değerlendirmesi" icon={<Shield size={14} />} />
-        <div className="space-y-2">
-          {[
-            { label: 'Host Redundancy (HA)', done: d.has_redundancy },
-            { label: 'Production VM Etiketleme', done: (d.production_vms ?? 0) > 0 },
-            { label: 'DR Skoru ≥ 70', done: drScore >= 70 },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-3 text-sm">
-              {item.done
-                ? <CheckCircle2 size={16} className="text-green-400 flex-shrink-0" />
-                : <XCircle size={16} className="text-red-400 flex-shrink-0" />
-              }
-              <span className={item.done ? 'text-green-300' : 'text-slate-400'}>{item.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      {recs.length > 0 && (
-        <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-          <SectionHeader title="Öneriler" icon={<Info size={14} />} />
-          <div className="space-y-2">
-            {recs.map((rec: string, i: number) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <span className="text-blue-400 flex-shrink-0">→</span>
-                <span className="text-slate-300">{rec}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {d.note && (
-        <div className="flex items-start gap-2 text-xs text-slate-500">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
-          <span>{d.note}</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
 function BusinessImpactView({ d }: { d: any }) {
   const services = d.services || []
   const highRisk = d.high_risk_candidates || []
@@ -1490,53 +1372,6 @@ function BusinessImpactView({ d }: { d: any }) {
   )
 }
 
-function ChargebackView({ d }: { d: any }) {
-  const cur = d.currency || 'TL'
-  const breakdown = d.department_breakdown || []
-  const total = d.total_monthly || 0
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-5 flex flex-col items-center">
-          <span className="text-slate-400 text-xs mb-2">Aylık Toplam</span>
-          <span className="text-4xl font-bold text-emerald-400">{total.toLocaleString('tr-TR')}</span>
-          <span className="text-slate-400 text-sm mt-1">{cur}</span>
-        </div>
-        <KpiCard label="Departman Sayısı" value={breakdown.length} color="blue" icon={<Building2 size={12} />} />
-      </div>
-      <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
-        <SectionHeader title="Departman Bazında Maliyet Dağılımı" icon={<DollarSign size={14} />} />
-        <div className="space-y-3">
-          {breakdown.map((dept: any, i: number) => {
-            const pct = total > 0 ? (dept.monthly_cost / total) * 100 : 0
-            return (
-              <div key={i}>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-slate-300">{dept.department}</span>
-                  <div className="flex gap-3">
-                    <span className="text-slate-500">{dept.vm_count} VM · {dept.vcpu} vCPU · {dept.ram_gb} GB</span>
-                    <span className="text-emerald-400 font-medium">{dept.monthly_cost?.toLocaleString('tr-TR')} {cur}</span>
-                    <span className="text-slate-500 w-8 text-right">%{Math.round(pct)}</span>
-                  </div>
-                </div>
-                <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-      {d.note && (
-        <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
-          <span>{d.note}</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Ana rapor görsel router ────────────────────────────────────────────────────
 
 function ReportSummaryView({ type, data }: { type: string; data: Record<string, unknown> }) {
@@ -1556,10 +1391,7 @@ function ReportSummaryView({ type, data }: { type: string; data: Record<string, 
   if (type === 'operations') return <OperationsView d={d} />
   if (type === 'performance_bottleneck') return <BottleneckView d={d} />
   if (type === 'sla') return <SlaView d={d} />
-  if (type === 'backup') return <BackupView d={d} />
-  if (type === 'dr_readiness') return <DrReadinessView d={d} />
   if (type === 'business_impact') return <BusinessImpactView d={d} />
-  if (type === 'chargeback') return <ChargebackView d={d} />
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <BarChart3 size={40} className="text-slate-600 mb-3" />
@@ -1576,8 +1408,7 @@ export default function InfraReports() {
   const [viewReport, setViewReport] = useState<{ type: string; title: string; data: Record<string, unknown>; markdown?: string } | null>(null)
   const [lastGenTimes, setLastGenTimes] = useState<Record<string, string>>({})
   const [chatQuestion, setChatQuestion] = useState('')
-  const [chatAnswer, setChatAnswer] = useState<{ answer: string; report_type?: string; latency_ms?: number } | null>(null)
-  const [chatLoading, setChatLoading] = useState(false)
+  const [pendingChatQuestion, setPendingChatQuestion] = useState<string | null>(null)
 
   const { data: history, refetch: refetchHistory } = useQuery({
     queryKey: ['report-history'],
@@ -1625,19 +1456,11 @@ export default function InfraReports() {
     setViewReport({ type, title: cat?.title || type, data, markdown })
   }
 
-  async function handleChatAsk() {
+  function handleChatAsk() {
     if (!chatQuestion.trim()) return
-    setChatLoading(true); setChatAnswer(null)
-    try {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: chatQuestion }),
-      })
-      const data = await r.json()
-      setChatAnswer(data)
-    } catch { setChatAnswer({ answer: 'Bağlantı hatası.' }) }
-    finally { setChatLoading(false) }
+    setPendingChatQuestion(chatQuestion.trim())
+    setChatQuestion('')
+    setMainTab('chat')
   }
 
   return (
@@ -1681,7 +1504,11 @@ export default function InfraReports() {
       {/* Chat tab — HypervisorChat embedded without its own header */}
       {mainTab === 'chat' && (
         <div className="-mx-6 -mb-6 border-t border-slate-700/50">
-          <HypervisorChatPage embedded />
+          <HypervisorChatPage
+            embedded
+            initialQuestion={pendingChatQuestion}
+            onInitialQuestionUsed={() => setPendingChatQuestion(null)}
+          />
         </div>
       )}
 
@@ -1702,37 +1529,15 @@ export default function InfraReports() {
             placeholder="Örn: Kapasite raporu oluştur · VM sağlık skoru · Executive summary · En riskli VM'ler..."
             className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
           />
-          <button onClick={handleChatAsk} disabled={chatLoading || !chatQuestion.trim()}
+          <button onClick={handleChatAsk} disabled={!chatQuestion.trim()}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2 transition-all">
-            {chatLoading ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
-            Sor
+            <ChevronRight size={14} />
+            AI Asistan'da Sor
           </button>
         </div>
-        {chatAnswer && (
-          <div className="mt-4 bg-slate-800/60 border border-slate-700/50 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              {chatAnswer.report_type
-                ? <div className="flex items-center gap-2 text-xs text-blue-400">
-                    <BarChart3 size={12} />
-                    <span>Rapor: {chatAnswer.report_type} · {chatAnswer.latency_ms}ms</span>
-                  </div>
-                : <div />
-              }
-              <button
-                onClick={() => exportMarkdownToPrintWindow(chatAnswer.answer, {
-                  title: chatAnswer.report_type ? `${chatAnswer.report_type} Raporu` : 'Hypervisor AI Analizi',
-                  subtitle: new Date().toLocaleString('tr-TR'),
-                  filename: `analiz_${new Date().toISOString().split('T')[0]}`,
-                })}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-red-900/30 text-red-400 hover:bg-red-900/50 border border-red-700/30 transition-all">
-                <FileDown size={11} /> PDF İndir
-              </button>
-            </div>
-            <div className="prose prose-invert prose-sm max-w-none prose-headings:text-blue-300 prose-table:text-xs">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatAnswer.answer}</ReactMarkdown>
-            </div>
-          </div>
-        )}
+        <p className="text-xs text-slate-500 mt-2">
+          Sorunuz AI Asistan sekmesine yönlendirilir ve geçmişe kaydedilir.
+        </p>
       </div>
 
       {/* Rapor kataloğu */}

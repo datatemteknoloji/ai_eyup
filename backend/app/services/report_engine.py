@@ -13,22 +13,25 @@ executive_summary       Genel sağlık özeti
 capacity                CPU/RAM/storage kapasitesi
 risk                    Kritik riskler
 vm_health               VM başına sağlık skoru
-resource_usage          En çok tüketen VM'ler
+resource_usage          En çok kaynak tahsis edilen VM'ler (tahsisat, gerçek tüketim değil)
 security_compliance     Tools, patch, versiyon uyum
 consolidation           Boşta/kapalı VM'ler
 lifecycle               HW/OS yaşam döngüsü
 anomaly                 Anormal davranışlar
 forecast                3/6/12 ay kapasite tahmini
-sla                     Kesinti & erişilebilirlik
+sla                     Olay yoğunluğundan tahmini erişilebilirlik
 operations              Operasyonel aktivite
 performance_bottleneck  Darboğaz tespiti
 riskiest_assets         En riskli varlıklar
 business_impact         Servis etki analizi
-finance                 Maliyet / chargeback
-dr_readiness            DR hazırlık durumu
-backup                  Backup & recoverability
-ai_summary              AI yönetici özeti (LLM)
-chargeback              Departman maliyet dağılımı
+finance                 Maliyet / showback (tahsisat bazlı)
+
+Not: "backup", "dr_readiness" ve "chargeback" raporları kaldırıldı. İlk ikisi
+gerçek backup/DR entegrasyonu (Veeam/SRM/vSphere HA verisi) olmadan anlamlı
+veri üretemiyordu. "chargeback" ise departman ataması (Business Service Map)
+tanımlanmadığı sürece "finance" raporuyla aynı hesabı tek bir "Genel" grubunda
+tekrar ediyordu; departman ataması yapıldığında finance raporu zaten yeterli
+görünürlüğü sağlıyor.
 """
 from __future__ import annotations
 
@@ -965,54 +968,6 @@ def generate_sla_report(db: Session) -> Dict[str, Any]:
     }
 
 
-def generate_backup_report(db: Session) -> Dict[str, Any]:
-    """Backup raporu — şu an backup entegrasyonu olmadığı için bilgi ekranı."""
-    vms = _get_vms(db)
-    powered_on = [v for v in vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")]
-    no_backup_info = len(powered_on)
-
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "integration_status": "not_connected",
-        "message": "Backup sistemi entegrasyonu henüz yapılandırılmamış.",
-        "recommendations": [
-            "Veeam Backup & Replication veya NAKIVO gibi bir backup çözümü entegre edin.",
-            f"{no_backup_info} çalışan VM'in backup durumu bilinmiyor.",
-            "Kritik production VM'ler için RPO ≤ 4 saat hedeflenmelidir.",
-            "En az günlük snapshot alınması önerilir.",
-        ],
-        "powered_on_vms_needing_backup": no_backup_info,
-    }
-
-
-def generate_dr_readiness(db: Session) -> Dict[str, Any]:
-    vms = _get_vms(db)
-    hosts = _latest_host_metrics(db)
-
-    prod_vms = [v for v in vms if v["tier"] == "production"]
-    no_redundancy_hosts = len(hosts) < 2
-
-    recommendations = []
-    if no_redundancy_hosts:
-        recommendations.append("Tek ESX host var — HA için en az 2 host gereklidir.")
-    if not prod_vms:
-        recommendations.append("Production tier etiketli VM yok. Servers sayfasından tier atayın.")
-    else:
-        recommendations.append(f"{len(prod_vms)} production VM tespit edildi — backup önceliği bunlara verilmeli.")
-    recommendations.append("vSphere HA veya vMotion yapılandırmasını kontrol edin.")
-    recommendations.append("DR testini en az 6 ayda bir gerçekleştirin.")
-
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "host_count": len(hosts),
-        "has_redundancy": not no_redundancy_hosts,
-        "production_vms": len(prod_vms),
-        "recommendations": recommendations,
-        "dr_score": 40 if no_redundancy_hosts else (70 if not prod_vms else 60),
-        "note": "DR hazırlık skoru manuel SR/DR politika tanımıyla iyileştirilebilir.",
-    }
-
-
 def generate_business_impact(db: Session) -> Dict[str, Any]:
     from app.models.infrastructure_report import BusinessServiceMap
     from app.models.server import Server
@@ -1049,47 +1004,6 @@ def generate_business_impact(db: Session) -> Dict[str, Any]:
     }
 
 
-def generate_chargeback_report(db: Session) -> Dict[str, Any]:
-    from app.models.infrastructure_report import CostConfig, BusinessServiceMap
-    from app.models.server import Server
-
-    vms = _get_vms(db)
-    cost_cfg = db.query(CostConfig).first()
-    cpu_rate = cost_cfg.cpu_per_core if cost_cfg else 50.0
-    ram_rate = cost_cfg.ram_per_gb if cost_cfg else 20.0
-    disk_rate = cost_cfg.storage_per_gb if cost_cfg else 0.5
-    currency = cost_cfg.currency if cost_cfg else "TL"
-
-    mappings = db.query(BusinessServiceMap).all()
-    dept_map: Dict[int, str] = {m.server_id: m.department or "Tanımsız" for m in mappings}
-
-    dept_costs: Dict[str, Dict] = {}
-    for v in vms:
-        dept = dept_map.get(v["id"], "Genel")
-        cost = (
-            (v["cpu_count"] or 0) * cpu_rate +
-            (v["memory_gb"] or 0) * ram_rate +
-            (v["disk_gb"] or 0) * disk_rate
-        )
-        if dept not in dept_costs:
-            dept_costs[dept] = {"department": dept, "vm_count": 0, "vcpu": 0, "ram_gb": 0, "monthly_cost": 0}
-        dept_costs[dept]["vm_count"] += 1
-        dept_costs[dept]["vcpu"] += v["cpu_count"] or 0
-        dept_costs[dept]["ram_gb"] += v["memory_gb"] or 0
-        dept_costs[dept]["monthly_cost"] = round(dept_costs[dept]["monthly_cost"] + cost, 2)
-
-    breakdown = sorted(dept_costs.values(), key=lambda x: -x["monthly_cost"])
-    total = sum(d["monthly_cost"] for d in breakdown)
-
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "currency": currency,
-        "total_monthly": round(total, 2),
-        "department_breakdown": breakdown,
-        "note": "Kesin chargeback için Business Service Map tanımlaması yapın." if not mappings else "",
-    }
-
-
 # ── Ana Dispatch ──────────────────────────────────────────────────────────────
 
 REPORT_REGISTRY: Dict[str, Any] = {
@@ -1108,10 +1022,7 @@ REPORT_REGISTRY: Dict[str, Any] = {
     "operations":              generate_operations_report,
     "performance_bottleneck":  generate_performance_bottleneck,
     "sla":                     generate_sla_report,
-    "backup":                  generate_backup_report,
-    "dr_readiness":            generate_dr_readiness,
     "business_impact":         generate_business_impact,
-    "chargeback":              generate_chargeback_report,
 }
 
 REPORT_TITLES: Dict[str, str] = {
@@ -1119,7 +1030,7 @@ REPORT_TITLES: Dict[str, str] = {
     "capacity":                "Kapasite Raporu",
     "risk":                    "Risk Dashboard",
     "vm_health":               "VM Sağlık Skoru",
-    "resource_usage":          "Kaynak Kullanım Raporu",
+    "resource_usage":          "Kaynak Tahsis Raporu",
     "security_compliance":     "Güvenlik ve Uyumluluk Raporu",
     "consolidation":           "Konsolidasyon Raporu",
     "lifecycle":               "Yaşam Döngüsü Raporu",
@@ -1129,11 +1040,8 @@ REPORT_TITLES: Dict[str, str] = {
     "riskiest_assets":         "En Riskli Varlıklar",
     "operations":              "Operasyon Raporu",
     "performance_bottleneck":  "Performans Darboğaz Raporu",
-    "sla":                     "SLA Raporu",
-    "backup":                  "Backup ve Recoverability Raporu",
-    "dr_readiness":            "DR Hazırlık Raporu",
+    "sla":                     "Erişilebilirlik Raporu (Tahmini)",
     "business_impact":         "Business Service Impact",
-    "chargeback":              "Chargeback / Showback Raporu",
 }
 
 
@@ -1310,22 +1218,25 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
                 [[v["vm"], f"{v['score']}/100", v["grade"], ", ".join(v["issues"][:3])] for v in cvms[:20]]
             )
 
-    # ── Kaynak Kullanım ────────────────────────────────────────────────────────
+    # ── Kaynak Tahsisi ───────────────────────────────────────────────────────
     elif report_type == "resource_usage":
         s = data.get("summary", {})
         lines += [
             f"**Çalışan VM:** {s.get('powered_on_vms', 0)}",
             f"**Toplam Tahsis CPU:** {s.get('total_allocated_vcpu', 0)} vCPU",
             f"**Toplam Tahsis RAM:** {s.get('total_allocated_ram_gb', 0)} GB",
-            f"**Toplam Tahsis Disk:** {s.get('total_allocated_disk_gb', 0)} GB", "",
-            "## En Çok CPU Kullanan VM'ler",
+            f"**Toplam Tahsis Disk:** {s.get('total_allocated_disk_gb', 0)} GB",
+            "",
+            "*Not: Bu değerler tahsisat (allocation) bazlıdır, gerçek zamanlı kaynak tüketimi değildir.*",
+            "",
+            "## En Çok CPU Tahsis Edilen VM'ler",
         ] + tbl(
             ["VM", "vCPU", "Hypervisor"],
             [[v["vm"], v["vcpu"], v.get("hypervisor","?")] for v in data.get("top_cpu_consumers", [])]
-        ) + ["", "## En Çok RAM Kullanan VM'ler"] + tbl(
+        ) + ["", "## En Çok RAM Tahsis Edilen VM'ler"] + tbl(
             ["VM", "RAM (GB)", "Hypervisor"],
             [[v["vm"], v["ram_gb"], v.get("hypervisor","?")] for v in data.get("top_ram_consumers", [])]
-        ) + ["", "## En Çok Disk Kullanan VM'ler"] + tbl(
+        ) + ["", "## En Çok Disk Tahsis Edilen VM'ler"] + tbl(
             ["VM", "Disk (GB)", "Hypervisor"],
             [[v["vm"], v["disk_gb"], v.get("hypervisor","?")] for v in data.get("top_disk_consumers", [])]
         )
@@ -1448,15 +1359,16 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
     # ── En Riskli Varlıklar ──────────────────────────────────────────────────
     elif report_type == "riskiest_assets":
         lines += [
-            f"**Toplam Risk Skoru:** {data.get('overall_risk_score', 0)}", "",
+            f"**Riskli Host Sayısı:** {data.get('total_risky_hosts', 0)}",
+            f"**Riskli VM Sayısı:** {data.get('total_risky_vms', 0)}", "",
             "## En Riskli Host'lar",
         ] + tbl(
-            ["Host", "Risk Skoru", "Sorunlar"],
-            [[h["host"], h.get("risk_score", 0), ", ".join(h.get("issues", [])[:3])]
+            ["Host", "Risk Skoru", "Sebepler"],
+            [[h["host"], h.get("risk_score", 0), ", ".join(h.get("reasons", [])[:3])]
              for h in data.get("riskiest_hosts", [])[:10]]
         ) + ["", "## En Riskli VM'ler"] + tbl(
-            ["VM", "Risk Skoru", "Sorunlar"],
-            [[v["vm"], v.get("risk_score", 0), ", ".join(v.get("issues", [])[:3])]
+            ["VM", "Risk Skoru", "Sebepler"],
+            [[v["vm"], v.get("risk_score", 0), ", ".join(v.get("reasons", [])[:3])]
              for v in data.get("riskiest_vms", [])[:10]]
         )
 
@@ -1465,98 +1377,74 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
         lines += [
             f"**Periyot:** {data.get('period_days', 30)} gün",
             f"**Toplam Olay:** {data.get('total_events', 0)}",
-            f"**Kritik:** {data.get('critical_count', 0)} | **Uyarı:** {data.get('warning_count', 0)}", "",
-            "## Olay Tipi Dağılımı",
+            f"**Etkilenen Sunucu:** {data.get('unique_servers', 0)}", "",
+            "## Olay Tipi / Önem Derecesi Dağılımı",
         ] + tbl(
-            ["Tip", "Adet"],
-            [[t["type"], t["count"]] for t in data.get("event_type_breakdown", [])[:15]]
-        ) + ["", "## Günlük Trend (Son 7 Gün)"] + tbl(
-            ["Tarih", "Olay"],
-            [[d["date"], d["count"]] for d in data.get("daily_trend", [])[-7:]]
-        ) + ["", "## En Aktif Sunucular"] + tbl(
-            ["Sunucu", "Olay"],
-            [[s["server"], s["count"]] for s in data.get("top_servers", [])[:10]]
+            ["Tip", "Önem", "Adet", "Etkilenen Sunucu"],
+            [[b["type"], b["severity"], b["count"], b["unique_servers"]] for b in data.get("event_breakdown", [])[:15]]
+        ) + ["", "## Günlük Trend"] + tbl(
+            ["Tarih", "Toplam", "Kritik"],
+            [[d["day"], d["total"], d["critical"]] for d in data.get("daily_trend", [])[:10]]
         )
+        note = data.get("note")
+        if note:
+            lines += ["", f"*Not: {note}*"]
 
     # ── Performans Darboğaz ───────────────────────────────────────────────────
     elif report_type == "performance_bottleneck":
+        bns = data.get("bottlenecks", [])
         lines += [
-            f"**Darboğaz Skoru:** {data.get('bottleneck_score', 0)}/100", "",
-            "## CPU Sorunları",
+            f"**Kritik Darboğaz Sayısı:** {data.get('critical_count', 0)}/{len(bns)}", "",
+            "## Host Bazında Darboğaz Durumu",
         ] + tbl(
-            ["VM/Host", "Sorun", "Değer"],
-            [[b["name"], b.get("issue","?"), b.get("value","?")]
-             for b in data.get("cpu_issues", [])[:10]]
-        ) + ["", "## RAM Sorunları"] + tbl(
-            ["VM/Host", "Sorun", "Değer"],
-            [[b["name"], b.get("issue","?"), b.get("value","?")]
-             for b in data.get("memory_issues", [])[:10]]
-        ) + ["", "## Disk Sorunları"] + tbl(
-            ["VM/Host", "Sorun", "Değer"],
-            [[b["name"], b.get("issue","?"), b.get("value","?")]
-             for b in data.get("disk_issues", [])[:10]]
+            ["Host", "CPU%", "Peak CPU (24s)", "RAM%", "Peak RAM (24s)", "Disk%", "Durum", "Sorunlar"],
+            [[b["host"], f"%{b.get('current_cpu',0)}", (f"%{b['peak_cpu_24h']}" if b.get('peak_cpu_24h') is not None else "-"),
+              f"%{b.get('current_mem',0)}", (f"%{b['peak_mem_24h']}" if b.get('peak_mem_24h') is not None else "-"),
+              f"%{b.get('current_ds',0)}", b.get("severity","Normal"), ", ".join(b.get("issues", [])[:2])]
+             for b in bns]
         )
 
-    # ── SLA Raporu ────────────────────────────────────────────────────────────
+    # ── SLA / Erişilebilirlik Raporu ─────────────────────────────────────────
     elif report_type == "sla":
         lines += [
-            f"**SLA Skoru:** {data.get('sla_score', 0)}/100",
+            f"**SLA Hedefi:** %{data.get('sla_target_pct', 99)}",
             f"**Periyot:** {data.get('period_days', 30)} gün",
-            f"**Toplam Olay:** {data.get('total_incidents', 0)}",
-            f"**Kritik Kesinti:** {data.get('critical_incidents', 0)}", "",
-            "## Sunucu SLA Durumu",
+            f"**SLA Sağlayan Sunucu:** {data.get('servers_meeting_sla', 0)}",
+            f"**SLA Tutturamayan Sunucu:** {data.get('servers_missing_sla', 0)}",
+            f"**Genel Uyum:** %{data.get('overall_sla_compliance_pct', 100)}", "",
+            "## Sunucu Erişilebilirlik Durumu",
         ] + tbl(
-            ["Sunucu", "Olay", "Durum"],
-            [[s.get("server","?"), s.get("event_count",0), s.get("sla_status","?")]
-             for s in data.get("server_sla", [])[:15]]
+            ["Sunucu", "Tahmini Uptime%", "Kritik Olay (30g)", "SLA"],
+            [[s.get("server","?"), f"%{s.get('estimated_uptime_pct',0)}", s.get("critical_events_30d",0),
+              "✓" if s.get("sla_met") else "✗"]
+             for s in data.get("sla_items", [])[:20]]
         )
-
-    # ── Backup Raporu ────────────────────────────────────────────────────────
-    elif report_type == "backup":
-        lines += [
-            f"**Backup Skoru:** {data.get('backup_score', 0)}/100",
-            f"**Toplam VM:** {data.get('total_vms', 0)}",
-            f"**Backup Durumu Bilinmiyor:** {data.get('unknown_backup_count', 0)}", "",
-            "## Öneriler",
-        ] + [f"- {r}" for r in data.get("recommendations", [])]
-
-    # ── DR Hazırlık ───────────────────────────────────────────────────────────
-    elif report_type == "dr_readiness":
-        lines += [
-            f"**DR Hazırlık Skoru:** {data.get('dr_score', 0)}/100",
-            f"**Toplam VM:** {data.get('total_vms', 0)}",
-            f"**Kapalı VM:** {data.get('powered_off_count', 0)}", "",
-        ] + tbl(
-            ["Metrik", "Değer"],
-            [
-                ["Tools Yüklü Çalışan VM", data.get("tools_compliant_count", 0)],
-                ["Aktif Olay (7 gün)", data.get("active_events_7d", 0)],
-                ["HA Hazır Host", data.get("ha_ready_hosts", 0)],
-            ]
-        ) + ["", "## Öneriler"] + [f"- {r}" for r in data.get("recommendations", [])]
+        note = data.get("note")
+        if note:
+            lines += ["", f"*Not: {note}*"]
 
     # ── Business Impact ───────────────────────────────────────────────────────
     elif report_type == "business_impact":
-        lines += [
-            f"**Etkilenebilir VM:** {data.get('total_vms', 0)}",
-            f"**Kritik Tier VM:** {data.get('critical_tier_count', 0)}", "",
-            "## İş Servisi Haritası",
-        ] + tbl(
-            ["Servis", "VM Sayısı", "Tier"],
-            [[s.get("service","?"), s.get("vm_count",0), s.get("tier","?")] for s in data.get("service_map", [])[:15]]
-        )
-
-    # ── Chargeback / Showback ────────────────────────────────────────────────
-    elif report_type == "chargeback":
-        cur = data.get("currency", "TL")
-        lines += [
-            f"**Aylık Toplam:** {data.get('total_monthly', 0):,.0f} {cur}", "",
-            "## Departman Bazında Maliyet",
-        ] + tbl(
-            ["Departman", f"Aylık ({cur})"],
-            [[d.get("department","?"), f"{d.get('monthly_cost',0):,.0f}"]
-             for d in data.get("department_breakdown", [])[:15]]
-        )
+        if data.get("mapped_services", 0) == 0 and data.get("high_risk_candidates") is not None:
+            lines += [
+                f"**Tanımlı İş Servisi:** 0",
+                f"*{data.get('message','')}*",
+                "",
+                "## Yüksek Risk Adayları (Production Tier, servis eşleşmesi tanımlanmamış)",
+            ] + tbl(
+                ["VM", "Sebep"],
+                [[v.get("vm","?"), v.get("reason","?")] for v in data.get("high_risk_candidates", [])[:15]]
+            )
+            if data.get("setup_instructions"):
+                lines += ["", f"*{data['setup_instructions']}*"]
+        else:
+            lines += [
+                f"**Tanımlı İş Servisi:** {data.get('mapped_services', 0)}", "",
+                "## İş Servisi Haritası",
+            ] + tbl(
+                ["Servis", "VM Sayısı"],
+                [[s.get("service","?"), s.get("vm_count",0)] for s in data.get("services", [])[:15]]
+            )
 
     # ── Fallback (veri varsa key-value, yoksa bilgi mesajı) ───────────────────
     else:
