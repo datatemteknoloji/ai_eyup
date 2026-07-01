@@ -59,6 +59,20 @@ def _user_dict(u: User) -> dict:
     }
 
 
+def _user_dict_with_modules(u: User, db: Session) -> dict:
+    """_user_dict + modules/is_admin — login ve /me aynı şekli döndürsün diye ortak yardımcı."""
+    from app.models.module import UserModule, DEFAULT_MODULES
+    d = _user_dict(u)
+    if u.role in ("admin", "superadmin"):
+        d["modules"] = [m["id"] for m in DEFAULT_MODULES]
+        d["is_admin"] = True
+    else:
+        rows = db.query(UserModule).filter(UserModule.user_id == u.id).all()
+        d["modules"] = [r.module_id for r in rows]
+        d["is_admin"] = False
+    return d
+
+
 @router.post("/login")
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == req.username).first()
@@ -75,7 +89,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     token = create_access_token(user.username, extra={"uid": user.id, "role": user.role})
     record_audit(db, category="auth", action="auth.login", status="success",
                  actor=user, summary=f"Giriş yapıldı: {user.username}", ip_address=ip)
-    return {"access_token": token, "token_type": "bearer", "user": _user_dict(user)}
+    return {"access_token": token, "token_type": "bearer", "user": _user_dict_with_modules(user, db)}
 
 
 @router.post("/logout")
@@ -94,16 +108,7 @@ def logout(request: Request, db: Session = Depends(get_db),
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    from app.models.module import UserModule, DEFAULT_MODULES
-    d = _user_dict(user)
-    if user.role in ("admin", "superadmin"):
-        d["modules"] = [m["id"] for m in DEFAULT_MODULES]
-        d["is_admin"] = True
-    else:
-        rows = db.query(UserModule).filter(UserModule.user_id == user.id).all()
-        d["modules"] = [r.module_id for r in rows]
-        d["is_admin"] = False
-    return d
+    return _user_dict_with_modules(user, db)
 
 
 @router.post("/change-password")
