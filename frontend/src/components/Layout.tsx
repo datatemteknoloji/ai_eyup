@@ -358,8 +358,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               }
 
               if (item.type === 'link') {
-                // Kullanıcı ve Modül Yönetimi sadece admin
-                if ((item.path === '/modules' || item.path === '/users') && user?.role !== 'admin') return null
+                // Kullanıcı Yönetimi ve Ayarlar sadece admin
+                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings') && user?.role !== 'admin') return null
                 const active = isActive(item.path)
                 return (
                   <li key={item.path}>
@@ -441,13 +441,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     >
                       <KeyRound size={14} /> Şifremi Değiştir
                     </button>
-                    <Link
-                      to="/settings"
-                      onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
-                    >
-                      <Settings size={14} /> Ayarlar
-                    </Link>
+                    {user?.role === 'admin' && (
+                      <Link
+                        to="/settings"
+                        onClick={() => setUserMenuOpen(false)}
+                        className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                      >
+                        <Settings size={14} /> Ayarlar
+                      </Link>
+                    )}
                     <div className="border-t border-slate-700/60 my-1" />
                     <button
                       onClick={logout}

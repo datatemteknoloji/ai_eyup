@@ -60,6 +60,13 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>
 }
 
+// Admin koruması — admin değilse dashboard'a yönlendir (menüden gizli olsa da URL ile erişimi engeller)
+const RequireAdmin: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth()
+  if (user?.role !== 'admin') return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -91,7 +98,7 @@ function App() {
                       <Route path="/level1" element={<ErrorBoundary><Level1Ops /></ErrorBoundary>} />
                       <Route path="/level1/:category" element={<ErrorBoundary><Level1Ops /></ErrorBoundary>} />
                       <Route path="/modules" element={<Navigate to="/users" replace />} />
-                      <Route path="/users" element={<ErrorBoundary><UserManager /></ErrorBoundary>} />
+                      <Route path="/users" element={<RequireAdmin><ErrorBoundary><UserManager /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/chat" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
                       <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
                       <Route path="/metrics" element={<ErrorBoundary><LiveMetrics /></ErrorBoundary>} />
@@ -107,7 +114,7 @@ function App() {
                       <Route path="/repositories" element={<ErrorBoundary><Repositories /></ErrorBoundary>} />
                       <Route path="/system-update" element={<ErrorBoundary><SystemUpdate /></ErrorBoundary>} />
                       <Route path="/audit" element={<ErrorBoundary><AuditLog /></ErrorBoundary>} />
-                      <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
+                      <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>
                   </ErrorBoundary>
                 </WithLayout>
