@@ -499,6 +499,32 @@ async def get_host_metrics(
             .order_by(HypervisorHostMetric.host_name)
             .all()
         )
+
+        from app.models.hypervisor_inventory import HypervisorHostInventory
+        inv_rows = (
+            db.query(HypervisorHostInventory)
+            .filter(HypervisorHostInventory.hypervisor_id == hypervisor_id)
+            .all()
+        )
+        inv_by_ref = {i.host_ref: i for i in inv_rows}
+
+        def _inv_dict(r):
+            inv = inv_by_ref.get(r.host_ref)
+            if not inv:
+                return None
+            return {
+                "vendor":         inv.vendor,
+                "model":          inv.model,
+                "uuid":           inv.uuid,
+                "cpu_model":      inv.cpu_model,
+                "pnics":          inv.pnics or [],
+                "vswitches":      inv.vswitches or [],
+                "portgroups":     inv.portgroups or [],
+                "vnics":          inv.vnics or [],
+                "dns":            inv.dns or {},
+                "last_synced_at": inv.last_synced_at.isoformat() if inv.last_synced_at else None,
+            }
+
         return {
             "hypervisor_id":   hypervisor_id,
             "hypervisor_name": hv.name,
@@ -523,6 +549,7 @@ async def get_host_metrics(
                     "connection_state": r.connection_state,
                     "power_state":      r.power_state,
                     "maintenance_mode": r.maintenance_mode,
+                    "inventory":        _inv_dict(r),
                 }
                 for r in rows
             ],

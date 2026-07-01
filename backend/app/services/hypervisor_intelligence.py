@@ -174,6 +174,38 @@ def _get_esx_hosts(db: Session) -> List[Dict[str, Any]]:
     return result
 
 
+def _get_host_inventory(db: Session) -> Dict[str, Dict[str, Any]]:
+    """
+    ESX host donanım kimliği (vendor/model) ve ağ envanterini (pnic/vswitch/
+    portgroup/VLAN/vnic/DNS) host_name → {...} sözlüğü olarak getirir.
+    """
+    try:
+        rows = db.execute(text("""
+            SELECT DISTINCT ON (hypervisor_id, host_ref)
+                host_name, vendor, model, uuid, cpu_model,
+                pnics, vswitches, portgroups, vnics, dns
+            FROM hypervisor_host_inventory
+            ORDER BY hypervisor_id, host_ref, last_synced_at DESC
+        """)).all()
+    except Exception:
+        return {}
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        out[r.host_name] = {
+            "vendor":     r.vendor,
+            "model":      r.model,
+            "uuid":       r.uuid,
+            "cpu_model":  r.cpu_model,
+            "pnics":      r.pnics or [],
+            "vswitches":  r.vswitches or [],
+            "portgroups": r.portgroups or [],
+            "vnics":      r.vnics or [],
+            "dns":        r.dns or {},
+        }
+    return out
+
+
 def _get_vms(db: Session, hypervisor_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """VM envanterini çek."""
     q = db.query(Server).filter(Server.hypervisor_id != None)  # noqa: E711
@@ -233,6 +265,7 @@ def build_context(
     intents = detect_intent(question)
     hypervisors = _get_hypervisors(db)
     esx_hosts = _get_esx_hosts(db)
+    host_inventory = _get_host_inventory(db)
     vms = _get_vms(db)
 
     # Hypervisor → host mapping
@@ -261,14 +294,90 @@ def build_context(
     for h in sorted(esx_hosts, key=lambda x: -x["cpu_pct"]):
         hv_name = hv_map.get(h["hypervisor_id"], {}).get("name", "?")
         maint = " [BAKIM MODU]" if h["maintenance"] else ""
+        inv = host_inventory.get(h["host"], {})
+        hw_line = ""
+        if inv.get("vendor") or inv.get("model"):
+            hw_line = f"\n    Donanım: {inv.get('vendor') or 'Bilinmiyor'} {inv.get('model') or ''}".rstrip()
+            if inv.get("cpu_model"):
+                hw_line += f" | CPU: {inv['cpu_model']}"
         host_lines.append(
             f"  - {h['host']} [{hv_name}]{maint}\n"
             f"    CPU: %{h['cpu_pct']} kullanımda (%{h['cpu_free_pct']} boş, {h['cpu_cores']} core)\n"
             f"    RAM: %{h['mem_pct']} kullanımda ({h['mem_free_gb']} GB boş / {h['mem_total_gb']} GB toplam)\n"
             f"    Disk: %{h['ds_pct']} kullanımda ({h['ds_free_gb']} GB boş / {h['ds_total_gb']} GB toplam)\n"
             f"    VM: {h['vms_running']} çalışan / {h['vms_total']} toplam"
+            f"{hw_line}"
         )
     parts.append(f"## ESX / KVM HOST'LARI ({len(esx_hosts)} adet)\n" + "\n".join(host_lines))
+
+    # ── Bölüm 2b: Ağ envanteri (NIC/vSwitch/port group/VLAN/VMkernel) ────────
+    # Sadece network/donanım ile ilgili sorularda detay eklenir — gereksiz token şişmesin.
+    if "network" in intents or "assessment" in intents:
+        net_lines = []
+        for h in esx_hosts:
+            inv = host_inventory.get(h["host"])
+            if not inv:
+                continue
+            lines = [f"  - {h['host']}:"]
+            if inv.get("vendor") or inv.get("model"):
+                lines.append(f"    Donanım: {inv.get('vendor') or '?'} {inv.get('model') or ''} (UUID: {inv.get('uuid') or '?'})")
+
+            pnics = inv.get("pnics") or []
+            if pnics:
+                pnic_txt = ", ".join(
+                    f"{p.get('device','?')} ({p.get('link_speed_mb','?')}Mb, MTU {p.get('mtu','?')}, MAC {p.get('mac','?')})"
+                    for p in pnics
+                )
+                lines.append(f"    Fiziksel NIC: {pnic_txt}")
+            else:
+                lines.append("    Fiziksel NIC: Veri yok")
+
+            vswitches = inv.get("vswitches") or []
+            if vswitches:
+                vs_txt = ", ".join(
+                    f"{vs.get('name','?')} ({len(vs.get('pnics') or [])} pnic, {len(vs.get('portgroups') or [])} port group)"
+                    for vs in vswitches
+                )
+                lines.append(f"    vSwitch: {vs_txt}")
+            else:
+                lines.append("    vSwitch: Veri yok")
+
+            portgroups = inv.get("portgroups") or []
+            if portgroups:
+                pg_txt = ", ".join(
+                    f"{pg.get('name','?')} (VLAN {pg.get('vlan_id') if pg.get('vlan_id') is not None else '0'}, {pg.get('vswitch_name','?')})"
+                    for pg in portgroups
+                )
+                lines.append(f"    Port Group / VLAN: {pg_txt}")
+            else:
+                lines.append("    Port Group / VLAN: Veri yok")
+
+            vnics = inv.get("vnics") or []
+            if vnics:
+                vn_txt = ", ".join(
+                    f"{vn.get('device','?')}={vn.get('ip_address') or '?'}/{vn.get('subnet_mask') or '?'} "
+                    f"({'DHCP' if vn.get('dhcp') else 'Statik'}, MTU {vn.get('mtu','?')}, {vn.get('portgroup','?')})"
+                    for vn in vnics
+                )
+                lines.append(f"    VMkernel NIC: {vn_txt}")
+            else:
+                lines.append("    VMkernel NIC: Veri yok")
+
+            dns = inv.get("dns") or {}
+            if dns.get("servers"):
+                dhcp_txt = "DHCP" if dns.get("dhcp") else "Statik"
+                lines.append(f"    DNS: {', '.join(dns['servers'])} ({dhcp_txt}, domain: {dns.get('domain_name') or '?'})")
+
+            net_lines.append("\n".join(lines))
+
+        if net_lines:
+            parts.append(f"## ESX HOST AĞ & DONANIM ENVANTERİ\n" + "\n".join(net_lines))
+        else:
+            parts.append(
+                "## ESX HOST AĞ & DONANIM ENVANTERİ\n"
+                "  Henüz senkronize edilmemiş — vCenter'dan host ağ envanteri sync bekleniyor "
+                "(arka planda 15 dk'da bir otomatik çalışır, veya manuel sync tetiklenebilir)."
+            )
 
     # ── Bölüm 3: VM envanteri ────────────────────────────────────────────────
     if "compare_vms" in intents and vm_names_to_compare:

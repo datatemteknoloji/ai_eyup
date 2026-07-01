@@ -1122,6 +1122,11 @@ class VCenterClient:
                     "connection_state": flat.get("connectionState", "unknown"),
                     "power_state":      flat.get("powerState", "unknown"),
                     "maintenance_mode": in_maint,
+                    # summary.hardware zaten çekiliyor — vendor/model bedavaya çıkar
+                    "host_vendor":      flat.get("vendor"),
+                    "host_model":       flat.get("model"),
+                    "host_uuid":        flat.get("uuid"),
+                    "cpu_model":        flat.get("cpuModel"),
                 })
 
             if results:
@@ -1359,3 +1364,210 @@ class VCenterClient:
 
         except Exception as e:
             logger.debug(f"_enrich_vms_running error: {e}")
+
+    @staticmethod
+    def _xml_struct_to_dict(el, tag_fn):
+        """
+        Bir XML elementini nested dict/list yapısına çevirir (genel amaçlı).
+        Aynı tag birden fazla kez tekrar ediyorsa (örn. birden fazla pnic/vswitch) liste olur.
+        Leaf node (çocuğu olmayan) ise doğrudan text değerini döner.
+        """
+        children = list(el)
+        if not children:
+            return el.text
+        out: dict = {}
+        for child in children:
+            tag = tag_fn(child)
+            val = VCenterClient._xml_struct_to_dict(child, tag_fn)
+            if tag in out:
+                if not isinstance(out[tag], list):
+                    out[tag] = [out[tag]]
+                out[tag].append(val)
+            else:
+                out[tag] = val
+        return out
+
+    def get_all_host_network_info(self) -> Dict[str, Dict]:
+        """
+        vCenter'daki tüm ESX host'ların ağ yapılandırmasını (fiziksel NIC, vSwitch,
+        port group/VLAN, VMkernel NIC, DNS) ve donanım kimlik bilgisini (vendor/model/uuid)
+        döner. host_ref → {...} sözlüğü şeklinde.
+
+        get_all_host_stats() metriklerden ayrı tutulur çünkü bu bilgi çok nadir değişir
+        (metrikler 15 dk'da bir, bu ise daha seyrek senkronize edilebilir).
+        """
+        import re
+        import xml.etree.ElementTree as ET
+
+        soap_url     = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("get_all_host_network_info: SOAP login failed")
+            return {}
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>HostSystem</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>config.network</vim25:pathSet>
+          <vim25:pathSet>hardware.systemInfo</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          {self._HOST_TRAVERSAL}
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+        def _tag(el): return el.tag.split("}")[-1]
+
+        def _as_list(x):
+            if x is None:
+                return []
+            return x if isinstance(x, list) else [x]
+
+        try:
+            resp = soap_session.post(soap_url, data=soap_body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code != 200:
+                logger.warning(f"get_all_host_network_info HTTP {resp.status_code}: {resp.text[:300]}")
+                return {}
+
+            root_xml = ET.fromstring(resp.text)
+            out: Dict[str, Dict] = {}
+
+            for rv in root_xml.iter():
+                if _tag(rv) != "returnval":
+                    continue
+
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                host_ref = obj_el.text if obj_el is not None else None
+                if not host_ref:
+                    continue
+
+                host_name = None
+                net_struct: dict = {}
+                hw_struct: dict = {}
+
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"),  None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = (n_el.text or "").strip()
+
+                    if pname == "name":
+                        host_name = v_el.text
+                    elif pname == "config.network":
+                        net_struct = self._xml_struct_to_dict(v_el, _tag) or {}
+                    elif pname == "hardware.systemInfo":
+                        hw_struct = self._xml_struct_to_dict(v_el, _tag) or {}
+
+                # ── Fiziksel NIC'ler ──────────────────────────────────────────────
+                pnics = []
+                for p in _as_list(net_struct.get("pnic")):
+                    if not isinstance(p, dict):
+                        continue
+                    link = p.get("linkSpeed") if isinstance(p.get("linkSpeed"), dict) else {}
+                    spec = p.get("spec") if isinstance(p.get("spec"), dict) else {}
+                    pnics.append({
+                        "device":        p.get("device"),
+                        "mac":           p.get("mac"),
+                        "link_speed_mb": link.get("speedMb"),
+                        "full_duplex":   link.get("duplex"),
+                        "mtu":           spec.get("mtu"),
+                    })
+
+                # ── vSwitch'ler ───────────────────────────────────────────────────
+                # vSwitch.pnic/portgroup referansları "key-vim.host.PhysicalNic-vmnic1" gibi
+                # MOR key'leri olarak gelir; okunabilirlik için bilinen ön eki temizliyoruz.
+                def _short_key(k):
+                    if not isinstance(k, str):
+                        return k
+                    return re.sub(r"^key-vim\.host\.\w+-", "", k)
+
+                vswitches = []
+                for vs in _as_list(net_struct.get("vswitch")):
+                    if not isinstance(vs, dict):
+                        continue
+                    spec = vs.get("spec") if isinstance(vs.get("spec"), dict) else {}
+                    vswitches.append({
+                        "name":       vs.get("name"),
+                        "num_ports":  spec.get("numPorts"),
+                        "pnics":      [_short_key(k) for k in _as_list(vs.get("pnic"))],
+                        "portgroups": [_short_key(k) for k in _as_list(vs.get("portgroup"))],
+                    })
+
+                # ── Port group / VLAN ─────────────────────────────────────────────
+                portgroups = []
+                for pg in _as_list(net_struct.get("portgroup")):
+                    if not isinstance(pg, dict):
+                        continue
+                    spec = pg.get("spec") if isinstance(pg.get("spec"), dict) else {}
+                    portgroups.append({
+                        "name":         spec.get("name"),
+                        "vlan_id":      spec.get("vlanId"),
+                        "vswitch_name": spec.get("vswitchName"),
+                    })
+
+                # ── VMkernel NIC'ler (vnic) ────────────────────────────────────────
+                vnics = []
+                for vn in _as_list(net_struct.get("vnic")):
+                    if not isinstance(vn, dict):
+                        continue
+                    spec = vn.get("spec") if isinstance(vn.get("spec"), dict) else {}
+                    ip   = spec.get("ip") if isinstance(spec.get("ip"), dict) else {}
+                    dhcp_val = ip.get("dhcp")
+                    vnics.append({
+                        "device":      vn.get("device"),
+                        "portgroup":   vn.get("portgroup"),
+                        "mtu":         spec.get("mtu"),
+                        "ip_address":  ip.get("ipAddress"),
+                        "subnet_mask": ip.get("subnetMask"),
+                        "dhcp":        str(dhcp_val).lower() == "true" if dhcp_val is not None else None,
+                    })
+
+                # ── DNS ayarları ──────────────────────────────────────────────────
+                dns_struct = net_struct.get("dnsConfig") if isinstance(net_struct.get("dnsConfig"), dict) else {}
+                dns_dhcp   = dns_struct.get("dhcp")
+                dns_info = {
+                    "host_name":   dns_struct.get("hostName"),
+                    "domain_name": dns_struct.get("domainName"),
+                    "dhcp":        str(dns_dhcp).lower() == "true" if dns_dhcp is not None else None,
+                    "servers":     _as_list(dns_struct.get("address")),
+                }
+
+                out[host_ref] = {
+                    "host_name":  host_name,
+                    "vendor":     hw_struct.get("vendor"),
+                    "model":      hw_struct.get("model"),
+                    "uuid":       hw_struct.get("uuid"),
+                    "pnics":      pnics,
+                    "vswitches":  vswitches,
+                    "portgroups": portgroups,
+                    "vnics":      vnics,
+                    "dns":        dns_info,
+                }
+
+            logger.info(f"get_all_host_network_info: {len(out)} ESX host ({self.host})")
+            return out
+
+        except Exception as e:
+            logger.error(f"get_all_host_network_info error: {e}", exc_info=True)
+            return {}

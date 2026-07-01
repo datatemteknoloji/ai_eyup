@@ -12,6 +12,7 @@ from typing import Dict, Any
 from sqlalchemy.orm import Session
 from app.models.hypervisor import Hypervisor, HypervisorType
 from app.models.hypervisor_metric import HypervisorHostMetric
+from app.models.hypervisor_inventory import HypervisorHostInventory
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,49 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
             db.rollback()
             errors.append(f"{hv.name}: {e}")
             logger.error(f"ESX metric sync hatası ({hv.name}): {e}", exc_info=True)
+            continue
+
+        # ── Donanım/ağ envanteri — nadiren değişir, ayrı tabloya upsert edilir ──
+        try:
+            cpu_model_by_ref = {
+                stat.get("host_ref"): stat.get("cpu_model") for stat in host_stats
+            }
+            net_info = client.get_all_host_network_info()
+            for host_ref, info in net_info.items():
+                row = (
+                    db.query(HypervisorHostInventory)
+                    .filter(
+                        HypervisorHostInventory.hypervisor_id == hv.id,
+                        HypervisorHostInventory.host_ref == host_ref,
+                    )
+                    .first()
+                )
+                if row is None:
+                    row = HypervisorHostInventory(hypervisor_id=hv.id, host_ref=host_ref)
+                    db.add(row)
+
+                row.host_name   = info.get("host_name") or row.host_name or "unknown"
+                row.vendor      = info.get("vendor")
+                row.model       = info.get("model")
+                row.uuid        = info.get("uuid")
+                row.cpu_model   = cpu_model_by_ref.get(host_ref)
+                row.pnics       = info.get("pnics") or []
+                row.vswitches   = info.get("vswitches") or []
+                row.portgroups  = info.get("portgroups") or []
+                row.vnics       = info.get("vnics") or []
+                row.dns         = info.get("dns") or {}
+                row.last_synced_at = now
+
+            db.commit()
+            if net_info:
+                logger.info(
+                    f"ESX network envanteri: {hv.name} → {len(net_info)} host güncellendi"
+                )
+
+        except Exception as e:
+            db.rollback()
+            errors.append(f"{hv.name} (network envanteri): {e}")
+            logger.warning(f"ESX network envanteri hatası ({hv.name}): {e}")
 
     return {
         "hypervisors": len(vmware_hvs),

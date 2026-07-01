@@ -10,6 +10,7 @@ from app.models.app_settings import AppSettings
 from app.models.event import SystemEvent, Alert, Incident, BaselineMetric, RunbookExecution
 from app.models.metric import MetricData, MetricAggregation, MetricThreshold
 from app.models.hypervisor_metric import HypervisorHostMetric
+from app.models.hypervisor_inventory import HypervisorHostInventory
 from app.models.package_job import PackageFile, PackageJob
 from app.models.repository import RepoSource, RepoSyncJob, RepoPackage
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
