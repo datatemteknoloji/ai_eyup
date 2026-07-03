@@ -21,9 +21,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent, Incident
+from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.baseline_engine import apply_baseline_filter
 from app.services.storm_detector import apply_tier_filter, check_and_handle_storm, auto_resolve_by_ttl
+from app.services.platform_scope import is_windows_server
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,25 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
     incidents_touched = set()
     now = datetime.utcnow()
     window_start = now - timedelta(hours=ACTIVE_EVENT_WINDOW_HOURS)
+
+    _platform_cache: Dict[int, str] = {}
+
+    def _server_platform(sid: Optional[int]) -> Optional[str]:
+        """Metrik anomalisinin ait olduğu OS platformunu belirler (Ops Center filtreleri için).
+
+        Not: Prometheus/OS metrikleri her zaman guest OS seviyesindedir (windows_exporter /
+        node_exporter) — VM olsa dahi "virt" değil, OS'a göre "windows"/"linux" etiketlenir.
+        Sanallaştırmaya özgü olaylar (vCenter event/alarm) zaten ayrı bir source ile "virt"
+        etiketleniyor.
+        """
+        if not sid:
+            return None
+        if sid in _platform_cache:
+            return _platform_cache[sid]
+        srv = db.query(Server).filter(Server.id == sid).first()
+        platform = ("windows" if is_windows_server(srv) else "linux") if srv else None
+        _platform_cache[sid] = platform
+        return platform
 
     for a in anomalies:
         try:
@@ -88,6 +109,7 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                 "threshold_warning": a.get("threshold_warning"),
                 "threshold_critical": a.get("threshold_critical"),
                 "detected_at": a.get("detected_at"),
+                "platform": _server_platform(server_id),
             }
 
             # ── Tier filtresi uygula (prod/staging/dev) ─────────────────────

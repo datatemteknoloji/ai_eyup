@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.server import Server
 from app.models.event import SystemEvent
 from app.services.incident_auto import auto_create_or_link_incident
+from app.services.platform_scope import is_linux_server
 from app.models.credential import GlobalCredential
 from app.services.ssh_manager import SSHManager
 
@@ -307,6 +308,7 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
             title=clean_title,
             description=raw_line,
             raw_data={
+                "platform": "linux",
                 "category": log["category"],
                 "collected_at": now.isoformat(),
                 "min_occurrences_critical": LOG_MIN_OCCURRENCES_CRITICAL,
@@ -343,12 +345,11 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
     q = db.query(Server).filter(Server.status.in_(["ONLINE", "WARNING"]))
     if only_ai_ready:
         q = q.filter(Server.ai_ready == True)
-    servers = q.all()
-    servers = [s for s in servers if (s.connection_config or {}).get("username") or True]
-
     global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
     if not global_cred:
         global_cred = db.query(GlobalCredential).first()
+    servers = q.all()
+    servers = [s for s in servers if is_linux_server(s)]
 
     total_saved = 0
     server_results = []

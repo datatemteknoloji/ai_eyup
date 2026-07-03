@@ -35,12 +35,19 @@ try:
 except Exception as e:
     logger.error(f"Could not load servers router: {e}", exc_info=True)
 
-# Chat
+# Chat (Linux)
 try:
     from app.api import chat
     api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 except Exception as e:
     logger.error(f"Could not load chat router: {e}", exc_info=True)
+
+# Chat (Windows)
+try:
+    from app.api import windows_chat
+    api_router.include_router(windows_chat.router, prefix="/windows-chat", tags=["windows-chat"])
+except Exception as e:
+    logger.error(f"Could not load windows_chat router: {e}", exc_info=True)
 
 # Alerts
 try:

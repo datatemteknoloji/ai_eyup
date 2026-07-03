@@ -15,6 +15,7 @@ from app.core.config import settings, get_active_model
 from app.models.event import Incident, SystemEvent
 from app.models.server import Server
 from app.models.user import User
+from app.services.platform_scope import filter_incidents_for_platform
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,19 +39,24 @@ class IncidentUpdate(BaseModel):
 
 
 @router.get("/stats")
-async def incident_stats(db: Session = Depends(get_db)):
+async def incident_stats(
+    platform: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     """Incident istatistikleri"""
-    total = db.query(Incident).count()
-    open_count = db.query(Incident).filter(Incident.status == "open").count()
-    investigating = db.query(Incident).filter(Incident.status == "investigating").count()
-    resolved = db.query(Incident).filter(Incident.status.in_(["resolved", "closed"])).count()
-    critical = db.query(Incident).filter(Incident.severity == "critical", Incident.status == "open").count()
+    incidents = db.query(Incident).all()
+    incidents = filter_incidents_for_platform(incidents, platform, db)
+    total = len(incidents)
+    open_count = sum(1 for i in incidents if i.status == "open")
+    investigating = sum(1 for i in incidents if i.status == "investigating")
+    resolved = sum(1 for i in incidents if i.status in ("resolved", "closed"))
+    critical = sum(1 for i in incidents if i.severity == "critical" and i.status == "open")
     return {
         "total": total,
         "open": open_count,
         "investigating": investigating,
         "resolved": resolved,
-        "critical": critical
+        "critical": critical,
     }
 
 
@@ -59,6 +65,7 @@ async def list_incidents(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     search: Optional[str] = None,
+    platform: Optional[str] = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db)
@@ -72,8 +79,11 @@ async def list_incidents(
     if search:
         q = q.filter(Incident.title.ilike(f"%{search}%"))
 
-    total = q.count()
-    incidents = q.order_by(desc(Incident.created_at)).offset(offset).limit(limit).all()
+    all_matching = q.order_by(desc(Incident.created_at)).all()
+    if platform:
+        all_matching = filter_incidents_for_platform(all_matching, platform, db)
+    total = len(all_matching)
+    incidents = all_matching[offset : offset + limit]
 
     result = []
     for inc in incidents:

@@ -12,6 +12,7 @@ from sqlalchemy import func as sa_func, or_
 from sqlalchemy.orm import Session
 
 from app.models.audit_log import AuditLog
+from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.server import Server
@@ -227,6 +228,45 @@ def _platform_logs(db: Session, hours: int = 24, limit: int = 40) -> List[Dict[s
     return logs
 
 
+def _vcenter_logs_from_db(db: Session, hours: int = 24, limit: int = 50) -> List[Dict[str, Any]]:
+    """DB'deki vCenter event/alarm/task kayıtlarını komuta merkezi log formatına çevirir."""
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = (
+        db.query(SystemEvent)
+        .filter(
+            SystemEvent.source.in_(["vcenter_event", "vcenter_alarm", "vcenter_task"]),
+            SystemEvent.created_at >= since,
+        )
+        .order_by(SystemEvent.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    logs = []
+    for r in rows:
+        raw = r.raw_data or {}
+        source_label = {
+            "vcenter_event": "vCenter Event",
+            "vcenter_alarm": "vCenter Alarm",
+            "vcenter_task": "vCenter Task",
+        }.get(r.source or "", "vCenter")
+        logs.append({
+            "id": f"vcenter-{r.id}",
+            "source": r.source,
+            "source_label": source_label,
+            "severity": r.severity or "info",
+            "category": raw.get("category") or r.event_type,
+            "action": raw.get("action") or raw.get("event_type_id"),
+            "title": r.title,
+            "detail": r.description,
+            "actor": raw.get("actor") or raw.get("user_name"),
+            "platform": raw.get("platform_label") or "vCenter",
+            "host_name": raw.get("host_name") or raw.get("host_ref"),
+            "hypervisor_id": raw.get("hypervisor_id"),
+            "timestamp": raw.get("timestamp") or (r.created_at.isoformat() if r.created_at else None),
+        })
+    return logs
+
+
 def build_virt_command_center(db: Session) -> Dict[str, Any]:
     """Sanallaştırma komuta merkezi verisi."""
     hypervisors = db.query(Hypervisor).all()
@@ -269,6 +309,7 @@ def build_virt_command_center(db: Session) -> Dict[str, Any]:
                 continue
             max_sev = max(SEV_RANK.get(i["severity"], 0) for i in issues)
             card = {
+                "alert_type": "host",
                 "hypervisor_id": hv.id,
                 "hypervisor_name": hv.name,
                 "platform": platform,
@@ -306,23 +347,28 @@ def build_virt_command_center(db: Session) -> Dict[str, Any]:
                     "timestamp": issue.get("timestamp"),
                 })
 
+    for p in platforms:
+        if p["status"] == "critical":
+            critical_hosts.append(_platform_alert_card(p))
+        elif p["status"] == "warning":
+            warning_hosts.append(_platform_alert_card(p))
+
     critical_hosts.sort(key=lambda c: (-SEV_RANK.get(c["max_severity"], 0), -(c["mem_usage_pct"] or 0)))
     warning_hosts.sort(key=lambda c: (-(c["mem_usage_pct"] or 0),))
 
     platform_logs = _platform_logs(db)
+    vcenter_logs = _vcenter_logs_from_db(db, hours=24, limit=50)
     all_logs = sorted(
-        platform_logs + resource_logs,
+        platform_logs + vcenter_logs + resource_logs,
         key=lambda x: x.get("timestamp") or "",
         reverse=True,
-    )[:60]
+    )[:80]
 
-    manager_crit = sum(1 for p in platforms if p["status"] == "critical")
-    manager_warn = sum(1 for p in platforms if p["status"] == "warning")
     total_hosts = sum(p["host_count"] for p in platforms)
 
     health = _health_score(
-        crit_count + manager_crit,
-        warn_count + manager_warn,
+        len(critical_hosts),
+        len(warning_hosts),
         total_hosts,
         len(platforms),
     )
@@ -350,11 +396,52 @@ def build_virt_command_center(db: Session) -> Dict[str, Any]:
         "platforms": platforms,
         "critical_hosts": critical_hosts[:20],
         "warning_hosts": warning_hosts[:30],
-        "critical_count": crit_count + manager_crit,
-        "warning_count": warn_count + manager_warn,
+        "critical_count": len(critical_hosts),
+        "warning_count": len(warning_hosts),
+        "critical_host_count": crit_count,
+        "critical_platform_count": sum(1 for p in platforms if p["status"] == "critical"),
+        "warning_host_count": warn_count,
+        "warning_platform_count": sum(1 for p in platforms if p["status"] == "warning"),
         "platform_logs": all_logs,
+        "vcenter_log_count": len(vcenter_logs),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "window_hours": 24,
+    }
+
+
+def _suggest_platform_actions(issues: List[Dict[str, Any]], platform: str) -> List[str]:
+    actions: List[str] = []
+    titles = {i.get("title", "") for i in issues}
+    if any("Metrik sync" in t for t in titles):
+        actions.append("ESX/host metrik senkronizasyonunu çalıştırın")
+    if any("host bağlantı" in t for t in titles):
+        actions.append(f"{platform} bağlantısını ve etkilenen host'ları kontrol edin")
+    if any("metrik verisi yok" in t for t in titles):
+        actions.append("Hypervisor metrik toplayıcısının çalıştığını doğrulayın")
+    if not actions:
+        actions.append(f"{platform} yönetim konsolunu ve API erişimini kontrol edin")
+    return actions[:4]
+
+
+def _platform_alert_card(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Yönetim platformu (vCenter/OLVM) uyarısını host listesinde gösterilebilir karta çevirir."""
+    return {
+        "alert_type": "platform",
+        "hypervisor_id": p["id"],
+        "hypervisor_name": p["name"],
+        "platform": p["platform"],
+        "host_name": p["name"],
+        "max_severity": p["status"],
+        "cpu_usage_pct": p.get("avg_cpu_pct") or 0,
+        "mem_usage_pct": p.get("avg_mem_pct") or 0,
+        "ds_usage_pct": p.get("avg_disk_pct") or 0,
+        "vms_running": p.get("vm_running", 0),
+        "vms_total": p.get("vm_total", 0),
+        "connection_state": None,
+        "maintenance_mode": False,
+        "last_updated": p.get("last_metric_at"),
+        "issues": p.get("issues") or [],
+        "suggested_actions": _suggest_platform_actions(p.get("issues") or [], p["platform"]),
     }
 
 

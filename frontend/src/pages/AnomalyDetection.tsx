@@ -6,6 +6,7 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
   SearchInput, Select, Section, EmptyState, Tabs,
 } from '../components/aiops/ui'
+import type { PlatformAiopsProps } from '../utils/platformApi'
 
 type LogListResponse = {
   anomalies: Array<{
@@ -269,7 +270,7 @@ function CorrelationTab() {
   )
 }
 
-const AnomalyDetection: React.FC = () => {
+const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [tab, setTab] = useState('metric')
   const [serverSearch, setServerSearch] = useState('')
   const [backfillDays, setBackfillDays] = useState(7)
@@ -282,18 +283,18 @@ const AnomalyDetection: React.FC = () => {
     refetchInterval: 30000,
   })
   const { data: metricData, isLoading: metricLoading } = useQuery<{ anomalies: MetricAnomaly[] }>({
-    queryKey: ['metric-anomalies-live'],
-    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/`); if (!r.ok) throw new Error(); return r.json() },
+    queryKey: ['metric-anomalies-live', platform],
+    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/?platform=${platform}`); if (!r.ok) throw new Error(); return r.json() },
     refetchInterval: 60000,
   })
   const { data, isLoading, isFetching, error, refetch } = useQuery<LogListResponse>({
-    queryKey: ['anomaly-log-list-30d'],
-    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/list?days=30`); if (!r.ok) throw new Error(); return r.json() },
+    queryKey: ['anomaly-log-list-30d', platform],
+    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/list?days=30&platform=${platform}`); if (!r.ok) throw new Error(); return r.json() },
     refetchInterval: 60000,
   })
   const { data: heatmapData, isLoading: heatmapLoading, error: heatmapError } = useQuery<LogHeatmapResponse>({
-    queryKey: ['anomaly-log-heatmap-30d'],
-    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/heatmap?days=30`); if (!r.ok) throw new Error(); return r.json() },
+    queryKey: ['anomaly-log-heatmap-30d', platform],
+    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/heatmap?days=30&platform=${platform}`); if (!r.ok) throw new Error(); return r.json() },
     refetchInterval: 60000,
   })
 

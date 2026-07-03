@@ -21,6 +21,7 @@ interface PlatformCard {
 }
 
 interface HostAlert {
+  alert_type?: 'host' | 'platform'
   hypervisor_id: number; hypervisor_name: string; platform: string
   host_name: string; max_severity: string
   cpu_usage_pct: number; mem_usage_pct: number; ds_usage_pct: number
@@ -33,6 +34,7 @@ interface HostAlert {
 
 interface PlatformLog {
   id: string | number; source: string; severity: string
+  source_label?: string
   category?: string; action?: string; title: string
   detail?: string; actor?: string; status?: string
   platform?: string; host_name?: string; timestamp: string | null
@@ -50,6 +52,10 @@ interface VirtOpsData {
   warning_hosts: HostAlert[]
   critical_count: number
   warning_count: number
+  critical_host_count?: number
+  critical_platform_count?: number
+  warning_host_count?: number
+  warning_platform_count?: number
   platform_logs: PlatformLog[]
   generated_at: string
 }
@@ -171,6 +177,7 @@ function HostAlertCard({ host, onSelect, selected }: {
   host: HostAlert; onSelect: () => void; selected: boolean
 }) {
   const sev = host.max_severity
+  const isPlatform = host.alert_type === 'platform'
   return (
     <button
       onClick={onSelect}
@@ -185,20 +192,35 @@ function HostAlertCard({ host, onSelect, selected }: {
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-bold ${SEV_BADGE[sev]}`}>
               {sev.toUpperCase()}
             </span>
-            <span className="text-[10px] text-slate-500">{host.platform}</span>
+            {isPlatform ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                Yönetim Platformu
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-500">{host.platform}</span>
+            )}
           </div>
-          <div className="text-white font-semibold mt-1 truncate">{host.host_name}</div>
-          <div className="text-xs text-slate-500">{host.hypervisor_name} · {host.vms_running}/{host.vms_total} VM</div>
+          <div className="text-white font-semibold mt-1 truncate flex items-center gap-1.5">
+            {isPlatform && <Cloud size={14} className="text-cyan-400 shrink-0" />}
+            {host.host_name}
+          </div>
+          <div className="text-xs text-slate-500">
+            {isPlatform
+              ? `${host.platform} · ${host.vms_running}/${host.vms_total} VM`
+              : `${host.hypervisor_name} · ${host.vms_running}/${host.vms_total} VM`}
+          </div>
         </div>
-        <div className="text-right text-xs shrink-0">
-          <div className={host.cpu_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
-            CPU %{host.cpu_usage_pct?.toFixed(0)}
+        {!isPlatform && (
+          <div className="text-right text-xs shrink-0">
+            <div className={host.cpu_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
+              CPU %{host.cpu_usage_pct?.toFixed(0)}
+            </div>
+            <div className={host.mem_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
+              RAM %{host.mem_usage_pct?.toFixed(0)}
+            </div>
+            <div className="text-slate-500">Disk %{host.ds_usage_pct?.toFixed(0)}</div>
           </div>
-          <div className={host.mem_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
-            RAM %{host.mem_usage_pct?.toFixed(0)}
-          </div>
-          <div className="text-slate-500">Disk %{host.ds_usage_pct?.toFixed(0)}</div>
-        </div>
+        )}
       </div>
       <div className="flex flex-wrap gap-1 mt-2">
         {host.issues.slice(0, 3).map((i, idx) => (
@@ -230,7 +252,13 @@ function LogTimeline({ logs }: { logs: PlatformLog[] }) {
           <div className="min-w-0 flex-1">
             <div className="text-sm text-slate-200 leading-snug">{log.title}</div>
             <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-500">
-              <span>{log.source === 'audit' ? 'Audit' : 'Kaynak Mon.'}</span>
+              <span>{
+                log.source_label
+                || (log.source === 'audit' ? 'Audit'
+                  : log.source === 'resource_monitor' ? 'Kaynak Mon.'
+                  : log.source?.startsWith('vcenter_') ? 'vCenter'
+                  : log.source)
+              }</span>
               {log.platform && <span>{log.platform}</span>}
               {log.host_name && <span>{log.host_name}</span>}
               {log.actor && <span>{log.actor}</span>}
@@ -320,6 +348,23 @@ export default function VirtOpsCenter() {
               <Activity size={12} /> Altyapı Analizi
             </Link>
             <button
+              onClick={async () => {
+                try {
+                  const r = await fetch(`${API_BASE_URL}/hypervisors/sync-vcenter-events`, { method: 'POST' })
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+                  await refetch()
+                  invalidate()
+                } catch (e) {
+                  alert('vCenter event sync hatası: ' + e)
+                }
+              }}
+              disabled={isFetching}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
+            >
+              <ScrollText size={12} />
+              vCenter Event Sync
+            </button>
+            <button
               onClick={() => { refetch(); invalidate() }}
               disabled={isFetching}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
@@ -344,8 +389,13 @@ export default function VirtOpsCenter() {
                 <div className={`text-2xl font-bold ${data.critical_count > 0 ? 'text-red-400' : 'text-slate-600'}`}>
                   {data.critical_count}
                 </div>
-                <div className="text-[10px] text-slate-500 flex items-center justify-center gap-1">
-                  <ShieldAlert size={10} /> Kritik
+                <div className="text-[10px] text-slate-500 flex flex-col items-center justify-center gap-0.5">
+                  <span className="flex items-center gap-1"><ShieldAlert size={10} /> Kritik</span>
+                  {((data.critical_host_count ?? 0) > 0 || (data.critical_platform_count ?? 0) > 0) && (
+                    <span className="text-slate-600">
+                      {data.critical_host_count ?? 0} host · {data.critical_platform_count ?? 0} platform
+                    </span>
+                  )}
                 </div>
               </div>
               <div className={`px-4 py-2 rounded-xl border text-center min-w-[72px] ${
@@ -429,16 +479,23 @@ export default function VirtOpsCenter() {
           ) : (
             <>
               <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Server size={13} /> Host Kaynak Uyarıları ({filteredHosts.length})
+                <Server size={13} /> Aktif Uyarılar ({filteredHosts.length})
               </h2>
               <div className="space-y-3">
                 {filteredHosts.map(h => (
                   <HostAlertCard
-                    key={`${h.hypervisor_id}-${h.host_name}`}
+                    key={`${h.alert_type || 'host'}-${h.hypervisor_id}-${h.host_name}`}
                     host={h}
-                    selected={selectedHost?.host_name === h.host_name && selectedHost?.hypervisor_id === h.hypervisor_id}
+                    selected={
+                      selectedHost?.host_name === h.host_name
+                      && selectedHost?.hypervisor_id === h.hypervisor_id
+                      && (selectedHost?.alert_type || 'host') === (h.alert_type || 'host')
+                    }
                     onSelect={() => setSelectedHost(prev =>
-                      prev?.host_name === h.host_name ? null : h
+                      prev?.host_name === h.host_name
+                      && prev?.hypervisor_id === h.hypervisor_id
+                      && (prev?.alert_type || 'host') === (h.alert_type || 'host')
+                        ? null : h
                     )}
                   />
                 ))}
@@ -475,7 +532,7 @@ export default function VirtOpsCenter() {
         {/* Platform logs */}
         <div className="w-[380px] flex-shrink-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/90 py-2 -mt-2 z-10">
-            <ScrollText size={13} /> Platform Logları (24s)
+            <ScrollText size={13} /> Platform Logları — vCenter Event / Alarm (24s)
           </h2>
           <LogTimeline logs={filteredLogs} />
         </div>

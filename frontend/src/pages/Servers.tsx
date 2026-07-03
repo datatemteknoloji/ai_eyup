@@ -1201,9 +1201,10 @@ const Servers: React.FC = () => {
 
   // Önce sunucu listesini al (Node Exporter durumu olmadan)
   const { data: servers = [], isLoading, isFetching, isError, error, refetch } = useQuery<Server[]>({
-    queryKey: ['servers'],
+    queryKey: ['servers', 'linux'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/servers/`)
+      // Bu sayfa Linux modülü altında — sadece Linux (Windows olmayan) sunucular gösterilir.
+      const response = await fetch(`${API_BASE_URL}/servers/?platform=linux`)
       if (!response.ok) {
         let detail = `HTTP ${response.status}`
         try {

@@ -11,10 +11,11 @@ import { API_BASE_URL } from '../config/api'
 import {
   NEON, PageHeader, GhostButton, PrimaryButton, Section, EmptyState, Select,
 } from '../components/aiops/ui'
+import type { PlatformAiopsProps } from '../utils/platformApi'
 
 // ── Tipler ───────────────────────────────────────────────────────────────────
 
-interface Server { id: number; name: string; hostname?: string }
+interface Server { id: number; name: string; hostname?: string; os_type?: string }
 
 interface RecurrenceMetric {
   metric: string
@@ -193,7 +194,7 @@ function SuppressModal({
 
 type Tab = 'recurrence' | 'rules'
 
-const BaselineManager: React.FC = () => {
+const BaselineManager: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState<Tab>('recurrence')
   const [selectedServer, setSelectedServer] = useState('')
@@ -207,7 +208,13 @@ const BaselineManager: React.FC = () => {
       return r.json()
     },
   })
-  const servers: Server[] = serversData?.servers ?? serversData ?? []
+  const serversRaw: Server[] = serversData?.servers ?? serversData ?? []
+  const servers = serversRaw.filter(s => {
+    const os = (s.os_type || '').toLowerCase()
+    if (platform === 'windows') return os.includes('windows')
+    if (platform === 'virt') return false
+    return !os.includes('windows')
+  })
 
   // Tekrarlayan metrikler
   const { data: recurrenceData, isLoading: recLoading } = useQuery({

@@ -81,6 +81,45 @@ function ScoreGauge({ score, max = 100, label, size = 100 }: {
   )
 }
 
+function DataQualityBanner({ quality }: { quality: any }) {
+  if (!quality) return null
+  const level = quality.quality_level || 'Orta'
+  const levelStyles: Record<string, string> = {
+    'İyi': 'border-green-500/30 bg-green-500/10 text-green-300',
+    'Orta': 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+    'Düşük': 'border-red-500/30 bg-red-500/10 text-red-200',
+  }
+  const lastMetric = quality.last_host_metric_at
+    ? new Date(quality.last_host_metric_at).toLocaleString('tr-TR')
+    : 'yok'
+  return (
+    <div className={`rounded-xl border p-4 ${levelStyles[level] || levelStyles['Orta']}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <Info size={16} className="flex-shrink-0 mt-0.5 opacity-80" />
+          <div>
+            <p className="text-sm font-medium">Veri Kalitesi: {level}</p>
+            <p className="text-xs opacity-80 mt-1">
+              {quality.vm_total ?? 0} VM · metadata %{quality.vm_metadata_completeness_pct ?? 0} ·
+              {' '}{quality.host_metrics_hosts ?? 0} host metrik · son metrik: {lastMetric}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          <span className="px-2 py-1 rounded-md bg-black/20">HV bağlı: %{quality.vm_with_hypervisor_pct ?? 0}</span>
+          <span className="px-2 py-1 rounded-md bg-black/20">Eksik disk: {quality.vm_missing_disk_count ?? 0}</span>
+          <span className="px-2 py-1 rounded-md bg-black/20">Eski sync: {quality.vm_stale_sync_count ?? 0}</span>
+        </div>
+      </div>
+      {quality.warnings?.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs opacity-90 list-disc list-inside">
+          {quality.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function KpiCard({ label, value, sub, color = 'slate', icon, trend }: {
   label: string; value: string | number; sub?: string; color?: string
   icon?: React.ReactNode; trend?: 'up' | 'down' | 'flat'
@@ -388,6 +427,19 @@ function ExecSummaryView({ d }: { d: any }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+      {(d.recommendations?.length ?? 0) > 0 && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+          <SectionHeader title="Önerilen Aksiyonlar" icon={<Target size={14} />} />
+          <ul className="space-y-2 mt-2">
+            {d.recommendations.map((rec: string, i: number) => (
+              <li key={i} className="text-sm text-blue-100 flex items-start gap-2">
+                <ChevronRight size={14} className="flex-shrink-0 mt-0.5 text-blue-400" />
+                {rec}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
@@ -904,6 +956,7 @@ function LifecycleView({ d }: { d: any }) {
 function AnomalyView({ d }: { d: any }) {
   const topServers = d.top_anomaly_servers || []
   const topTypes = d.top_event_types || []
+  const metricAnomalies = d.host_metric_anomalies || []
   const maxEvt = Math.max(...topServers.map((s: any) => s.total || 0), 1)
   const maxType = Math.max(...topTypes.map((t: any) => t.count || 0), 1)
   return (
@@ -913,9 +966,24 @@ function AnomalyView({ d }: { d: any }) {
         <KpiCard label="Toplam Olay" value={d.total_events ?? 0} color="slate" />
         <KpiCard label="Kritik Olay" value={d.critical_count ?? 0}
           color={(d.critical_count ?? 0) > 0 ? 'red' : 'green'} icon={<AlertTriangle size={12} />} />
-        <KpiCard label="Uyarı" value={d.warning_count ?? 0}
-          color={(d.warning_count ?? 0) > 0 ? 'amber' : 'green'} />
+        <KpiCard label="Virt Platform" value={d.virt_platform_events ?? 0} color="purple" icon={<Layers size={12} />} />
       </div>
+      {metricAnomalies.length > 0 && (
+        <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+          <SectionHeader title="Host Metrik Anomalileri (24s vs 7g ort.)" count={metricAnomalies.length} icon={<Activity size={14} />} />
+          <div className="space-y-2">
+            {metricAnomalies.slice(0, 8).map((h: any, i: number) => (
+              <div key={i} className="flex items-start justify-between gap-3 text-xs bg-slate-800/50 rounded-lg p-2.5 border border-slate-700/30">
+                <div>
+                  <span className="text-white font-medium">{h.host}</span>
+                  <div className="text-slate-400 mt-1">{h.issues?.join(' · ')}</div>
+                </div>
+                <SeverityBadge level={h.severity || 'Uyarı'} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4">
         {topServers.length > 0 && (
           <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
@@ -950,6 +1018,12 @@ function AnomalyView({ d }: { d: any }) {
           </div>
         )}
       </div>
+      {d.analysis_note && (
+        <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
+          <Info size={12} className="flex-shrink-0 mt-0.5" />
+          <span>{d.analysis_note}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1128,6 +1202,9 @@ function RiskiestAssetsView({ d }: { d: any }) {
 function OperationsView({ d }: { d: any }) {
   const breakdown = d.event_breakdown || []
   const daily = d.daily_trend || []
+  const virtPlatform = d.virt_platform || {}
+  const virtLogs = virtPlatform.recent_logs || []
+  const virtBreakdown = virtPlatform.breakdown || []
   const maxEvt = Math.max(...breakdown.map((e: any) => e.count || 0), 1)
   const maxDay = Math.max(...daily.map((e: any) => e.total || 0), 1)
   const sevColor: Record<string, string> = {
@@ -1136,9 +1213,10 @@ function OperationsView({ d }: { d: any }) {
   }
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         <KpiCard label="Periyot" value={`${d.period_days ?? 30} Gün`} color="blue" icon={<Clock size={12} />} />
         <KpiCard label="Toplam Olay" value={d.total_events ?? breakdown.reduce((a: number, b: any) => a + (b.count || 0), 0)} color="slate" />
+        <KpiCard label="Virt Platform" value={virtPlatform.total_events ?? 0} color="purple" icon={<Layers size={12} />} />
         <KpiCard label="Etkilenen Sunucu" value={d.unique_servers ?? 0} color="slate" icon={<Server size={12} />} />
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -1185,6 +1263,39 @@ function OperationsView({ d }: { d: any }) {
           </div>
         )}
       </div>
+      {(virtBreakdown.length > 0 || virtLogs.length > 0) && (
+        <div className="grid grid-cols-2 gap-4">
+          {virtBreakdown.length > 0 && (
+            <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+              <SectionHeader title="Sanallaştırma Platform Olayları" icon={<Layers size={14} />} />
+              <div className="space-y-2">
+                {virtBreakdown.slice(0, 10).map((e: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 truncate">{e.type}</span>
+                    <span className="text-slate-400">{e.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {virtLogs.length > 0 && (
+            <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+              <SectionHeader title="Son Platform Logları" icon={<Activity size={14} />} />
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {virtLogs.slice(0, 12).map((log: any, i: number) => (
+                  <div key={i} className="text-xs border-b border-slate-700/30 pb-2">
+                    <div className="text-slate-200 truncate">{log.title}</div>
+                    <div className="text-slate-500 mt-0.5">
+                      {log.host || '-'} · {log.action || log.severity}
+                      {log.created_at ? ` · ${new Date(log.created_at).toLocaleDateString('tr-TR')}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {d.note && (
         <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
           <Info size={12} className="flex-shrink-0 mt-0.5" />
@@ -1420,6 +1531,16 @@ export default function InfraReports() {
     staleTime: 30_000,
   })
 
+  const { data: dataQuality } = useQuery({
+    queryKey: ['report-data-quality'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/reports/data-quality`)
+      if (!r.ok) return null
+      return r.json()
+    },
+    staleTime: 60_000,
+  })
+
   const histMap: Record<string, string> = {}
   for (const rpt of (history?.reports || [])) {
     if (!histMap[rpt.type] || rpt.generated_at > histMap[rpt.type]) {
@@ -1514,6 +1635,8 @@ export default function InfraReports() {
 
       {/* Reports tab content below */}
       {mainTab === 'reports' && (<>
+
+      <DataQualityBanner quality={dataQuality} />
 
       {/* AI Soru */}
       <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border border-blue-700/40 rounded-xl p-4">

@@ -31,6 +31,8 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_anomaly_scan()))
         self.tasks.append(asyncio.create_task(self._periodic_log_collection()))
+        self.tasks.append(asyncio.create_task(self._periodic_windows_log_collection()))
+        self.tasks.append(asyncio.create_task(self._periodic_virt_log_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
@@ -140,6 +142,67 @@ class BackgroundTaskManager:
                 break
             except Exception as e:
                 logger.error(f"Log collection task error: {e}")
+                await asyncio.sleep(900)
+
+    async def _periodic_windows_log_collection(self):
+        """Windows sunuculardan WinRM ile event log toplama."""
+        logger.info("Windows log collection task started (900s interval)")
+        await asyncio.sleep(120)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.windows_log_collector import collect_all_windows_logs
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, collect_all_windows_logs, db)
+                    if result.get("total_saved", 0) > 0:
+                        logger.warning(
+                            "Windows log collection: %s yeni log, %s sunucu",
+                            result["total_saved"],
+                            result["servers_with_logs"],
+                        )
+                except Exception as e:
+                    logger.error(f"Windows log collection error: {e}")
+                finally:
+                    db.close()
+                await asyncio.sleep(900)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Windows log task error: {e}")
+                await asyncio.sleep(900)
+
+    async def _periodic_virt_log_sync(self):
+        """Hypervisor olaylarını SystemEvent'e senkronize et."""
+        logger.info("Virt log sync task started (900s interval)")
+        await asyncio.sleep(150)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.virt_log_collector import sync_virt_logs_to_db
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, sync_virt_logs_to_db, db)
+                    if result.get("total_saved", 0) > 0:
+                        logger.info(
+                            "Virt log sync: %s yeni olay (virt=%s, vcenter=%s)",
+                            result["total_saved"],
+                            result.get("virt_saved", 0),
+                            result.get("vcenter_saved", 0),
+                        )
+                        from app.services import qa_cache
+                        qa_cache.invalidate_all()
+                except Exception as e:
+                    logger.error(f"Virt log sync error: {e}")
+                finally:
+                    db.close()
+                await asyncio.sleep(900)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Virt log sync task error: {e}")
                 await asyncio.sleep(900)
 
     async def _periodic_anomaly_scan(self):
@@ -260,6 +323,8 @@ class BackgroundTaskManager:
                         f"Inventory sync: {result['total_synced']} sunucu, "
                         f"{len(result['hypervisors'])} hypervisor"
                     )
+                    from app.services import qa_cache
+                    qa_cache.invalidate_all()
                 except Exception as e:
                     logger.error(f"Inventory sync error: {e}", exc_info=True)
                 finally:
@@ -477,6 +542,8 @@ class BackgroundTaskManager:
                     await asyncio.get_event_loop().run_in_executor(
                         None, _run_vm_sync_batch, db
                     )
+                    from app.services import qa_cache
+                    qa_cache.invalidate_all()
                 except Exception as e:
                     logger.error(f"VM auto-sync error: {e}", exc_info=True)
                 finally:

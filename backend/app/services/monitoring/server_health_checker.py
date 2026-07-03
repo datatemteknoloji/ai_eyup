@@ -31,13 +31,18 @@ class ServerHealthChecker:
             return False, str(e)[:80]
 
     @staticmethod
-    def check_server_status(server: Server) -> Tuple[str, str]:
+    def check_server_status(server: Server, db: Session = None) -> Tuple[str, str]:
         """(status, sebep) döner. Sebep sadece OFFLINE/WARNING için dolu."""
         if not (server.ip_address or "").strip():
             # IP yoksa (hypervisor sync'ten gelmiş, guest tools yok vb.)
             # mevcut durumu koru; her seferinde OFFLINE yazıp log doldurmayalım.
             current = (server.status or "UNKNOWN").upper()
             return current, ""
+
+        # Windows sunucular SSH (22) çalıştırmaz — WinRM portunu (5985/5986) kontrol et.
+        from app.services.platform_scope import is_windows_server
+        if is_windows_server(server):
+            return ServerHealthChecker._check_windows_status(server, db)
 
         port = 22
         try:
@@ -66,6 +71,46 @@ class ServerHealthChecker:
         return "ONLINE", ""
 
     @staticmethod
+    def _check_windows_status(server: Server, db: Session = None) -> Tuple[str, str]:
+        """Windows sunucular için WinRM tabanlı sağlık kontrolü."""
+        cfg = server.connection_config or {}
+        try:
+            port = int(cfg.get("winrm_port") or 5985)
+        except Exception:
+            port = 5985
+
+        is_reachable, ping_reason = ServerHealthChecker.ping_server(server.ip_address, port=port)
+        if not is_reachable:
+            return "OFFLINE", f"tcp_{port}_ulasilamiyor:{ping_reason}"
+
+        try:
+            from app.services.windows.winrm_client import WinRMClient
+            client = WinRMClient.from_server(server)
+            if client is None and db is not None:
+                from app.api.windows import _get_global_winrm
+                gcred = _get_global_winrm(db)
+                if gcred:
+                    host = (server.ip_address or server.hostname or "").strip()
+                    client = WinRMClient(
+                        host=host,
+                        username=gcred.get("username"),
+                        password=gcred.get("password"),
+                        port=int(gcred.get("port") or 5985),
+                        use_https=bool(gcred.get("use_https")),
+                    )
+            if client is None:
+                # Kimlik bilgisi yok — port açık ama doğrulanamadı; SSH'siz Linux
+                # sunucularla tutarlı olacak şekilde ONLINE say.
+                return "ONLINE", ""
+
+            result = client.test_connection()
+            if result.get("connected"):
+                return "ONLINE", ""
+            return "WARNING", "winrm_baglanamadi"
+        except Exception as e:
+            return "WARNING", f"winrm_hata:{str(e)[:50]}"
+
+    @staticmethod
     def _sync_ai_ready(server: Server, status: str, reason: str) -> bool:
         """SSH erişilemeyen sunucularda ai_ready bayrağını temizle."""
         if not server.ai_ready:
@@ -73,7 +118,7 @@ class ServerHealthChecker:
         if status == "OFFLINE":
             server.ai_ready = False
             return True
-        if status == "WARNING" and reason.startswith(("ssh_", "ssh_hata")):
+        if status == "WARNING" and reason.startswith(("ssh_", "winrm_")):
             server.ai_ready = False
             return True
         return False
@@ -88,7 +133,7 @@ class ServerHealthChecker:
             for server in servers:
                 stats["checked"] += 1
                 old_status = server.status
-                new_status, reason = ServerHealthChecker.check_server_status(server)
+                new_status, reason = ServerHealthChecker.check_server_status(server, db)
 
                 if ServerHealthChecker._sync_ai_ready(server, new_status, reason):
                     stats["ai_ready_cleared"] += 1

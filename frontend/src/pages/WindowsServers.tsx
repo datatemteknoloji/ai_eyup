@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Shield, Cpu, MemoryStick, Download, Play, Square, RotateCcw,
-  Search, X, CheckCircle, XCircle, Globe } from 'lucide-react'
+  Search, X, CheckCircle, XCircle, Globe, CheckCircle2, BrainCircuit } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 
 const WIN_API = `${API_BASE_URL}/windows`
@@ -25,6 +26,7 @@ interface WindowsServer {
   winrm_source: 'server' | 'global' | null
   winrm_port: number | null
   confirmed_windows: boolean
+  ai_ready: boolean
 }
 
 interface ServiceItem {
@@ -170,9 +172,14 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
 
 // ── Server Detail Panel ───────────────────────────────────────────────────────
 
-const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = ({ server, onClose }) => {
-  const [tab, setTab] = useState<'info' | 'services' | 'events' | 'updates' | 'exporter'>('info')
+const ServerDetail: React.FC<{
+  server: WindowsServer
+  onClose: () => void
+  initialTab?: 'info' | 'services' | 'events' | 'updates' | 'exporter'
+}> = ({ server, onClose, initialTab }) => {
+  const [tab, setTab] = useState<'info' | 'services' | 'events' | 'updates' | 'exporter'>(initialTab || 'info')
   const [logChannel, setLogChannel] = useState('System')
+  const [logLevel, setLogLevel] = useState(4) // 1=Kritik 2=Hata 3=Uyarı 4=Tümü (Information dahil)
   const [serviceSearch, setServiceSearch] = useState('')
   const queryClient = useQueryClient()
 
@@ -206,9 +213,9 @@ const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = (
   })
 
   const eventsQ = useQuery({
-    queryKey: ['win-events', server.id, logChannel],
+    queryKey: ['win-events', server.id, logChannel, logLevel],
     queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/${server.id}/event-logs?log_name=${logChannel}&count=50`)
+      const r = await fetch(`${WIN_API}/servers/${server.id}/event-logs?log_name=${logChannel}&count=50&min_level=${logLevel}`)
       return r.json() as Promise<EventLogEntry[]>
     },
     enabled: tab === 'events' && server.winrm_configured,
@@ -443,13 +450,26 @@ const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = (
           {/* Event Log Tab */}
           {tab === 'events' && server.winrm_configured && (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                {['System', 'Application', 'Security'].map(ch => (
-                  <button key={ch} onClick={() => setLogChannel(ch)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${logChannel === ch ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}>
-                    {ch}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex gap-2">
+                  {['System', 'Application', 'Security'].map(ch => (
+                    <button key={ch} onClick={() => setLogChannel(ch)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${logChannel === ch ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}>
+                      {ch}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={logLevel}
+                  onChange={e => setLogLevel(Number(e.target.value))}
+                  className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  title="Önem seviyesi filtresi"
+                >
+                  <option value={4}>Tümü (Bilgi dahil)</option>
+                  <option value={3}>Uyarı ve üzeri</option>
+                  <option value={2}>Hata ve üzeri</option>
+                  <option value={1}>Sadece Kritik</option>
+                </select>
               </div>
               {eventsQ.isPending && <p className="text-slate-400 text-sm">Event log yükleniyor...</p>}
               <div className="space-y-1.5 max-h-[480px] overflow-y-auto">
@@ -466,7 +486,13 @@ const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = (
                     <div className="text-slate-400 text-xs mt-0.5 line-clamp-2">{ev.Message}</div>
                   </div>
                 ))}
-                {eventsQ.data?.length === 0 && <p className="text-slate-500 text-sm text-center py-6">Hata/uyarı kaydı yok</p>}
+                {!eventsQ.isPending && eventsQ.data?.length === 0 && (
+                  <p className="text-slate-500 text-sm text-center py-6">
+                    Bu kanalda/seviyede kayıt yok. Seçili filtre: <span className="text-slate-400">{logChannel}</span>,{' '}
+                    <span className="text-slate-400">{logLevel === 4 ? 'Tümü' : logLevel === 3 ? 'Uyarı+' : logLevel === 2 ? 'Hata+' : 'Kritik'}</span>.
+                    Farklı bir kanal veya "Tümü" seviyesini deneyin.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -590,14 +616,81 @@ const ServerDetail: React.FC<{ server: WindowsServer; onClose: () => void }> = (
   )
 }
 
+// ── WinRM AI Ready Güncelle Butonu ──────────────────────────────────────────────
+const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<{ ai_ready_count: number; not_ready_count: number; tested: number } | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  const handleClick = async () => {
+    setConfirmOpen(false)
+    setLoading(true); setResult(null)
+    try {
+      const r = await fetch(`${WIN_API}/update-ai-ready`, { method: 'POST' })
+      if (r.ok) {
+        const d = await r.json()
+        setResult(d)
+        onDone()
+        setTimeout(() => setResult(null), 8000)
+      }
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <>
+      {confirmOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <p className="text-sm text-slate-200">
+              Tüm Windows sunucularında WinRM bağlantısı test edilecek. Sunucuya özel kimlik bilgisi yoksa global WinRM kimlik bilgisi denenecek. Bağlanabilenler → AI Ready = ✅, bağlanamayanlar → ❌. Devam?
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>
+              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Devam</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <button
+        onClick={() => setConfirmOpen(true)}
+        disabled={loading}
+        className="flex items-center gap-2 px-4 py-2 bg-blue-600/90 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+        title="WinRM Credentials ile bağlanıp AI Ready durumunu güncelle"
+      >
+        {loading ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            Test ediliyor...
+          </>
+        ) : result ? (
+          <>
+            <CheckCircle2 size={14} className="text-green-300" />
+            {result.ai_ready_count} AI Ready · {result.not_ready_count} bağlanamadı
+          </>
+        ) : (
+          <>
+            <BrainCircuit size={14} /> AI Ready Güncelle
+          </>
+        )}
+      </button>
+    </>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const WindowsServers: React.FC = () => {
+  const location = useLocation()
+  const routeTab: 'events' | 'updates' | null =
+    location.pathname === '/windows/events' ? 'events' :
+    location.pathname === '/windows/updates' ? 'updates' : null
+
   const [selected, setSelected] = useState<WindowsServer | null>(null)
   const [credServer, setCredServer] = useState<WindowsServer | null>(null)
   const [search, setSearch] = useState('')
   const [showUnclassified, setShowUnclassified] = useState(false)
   const queryClient = useQueryClient()
+  const autoOpenedRef = useRef<string | null>(null)
 
   const { data: servers = [], isLoading, refetch } = useQuery<WindowsServer[]>({
     queryKey: ['windows-servers', showUnclassified],
@@ -608,6 +701,18 @@ const WindowsServers: React.FC = () => {
     },
     refetchInterval: 60_000,
   })
+
+  // "Event Log" / "Windows Update" menülerinden gelindiğinde, WinRM'i ayarlı
+  // ilk sunucunun ilgili sekmesini otomatik açar — aksi halde bu menüler
+  // ana sunucu listesiyle aynı görünüp "hiçbir şey açılmıyor" izlenimi verir.
+  useEffect(() => {
+    if (!routeTab || autoOpenedRef.current === routeTab || servers.length === 0) return
+    const candidate = servers.find(s => s.winrm_configured)
+    if (candidate) {
+      setSelected(candidate)
+      autoOpenedRef.current = routeTab
+    }
+  }, [routeTab, servers])
 
   const testConn = useMutation({
     mutationFn: async (id: number) => {
@@ -627,6 +732,7 @@ const WindowsServers: React.FC = () => {
   const unclassified = servers.filter(s => !s.confirmed_windows)
   const online = servers.filter(s => s.status === 'ONLINE').length
   const configured = servers.filter(s => s.winrm_configured).length
+  const aiReadyCount = servers.filter(s => s.ai_ready).length
 
   return (
     <div className="space-y-6">
@@ -634,14 +740,22 @@ const WindowsServers: React.FC = () => {
         <CredentialModal server={credServer} onClose={() => setCredServer(null)} />
       )}
       {selected && (
-        <ServerDetail server={selected} onClose={() => setSelected(null)} />
+        <ServerDetail server={selected} onClose={() => setSelected(null)} initialTab={routeTab || undefined} />
       )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">Windows Sunucular</h1>
-          <p className="text-slate-400 text-sm mt-0.5">WinRM ile yönetilen Windows VM'ler ve fiziksel sunucular</p>
+          <h1 className="text-xl font-bold text-white">
+            {routeTab === 'events' ? 'Windows Event Log' : routeTab === 'updates' ? 'Windows Update' : 'Windows Sunucular'}
+          </h1>
+          <p className="text-slate-400 text-sm mt-0.5">
+            {routeTab === 'events'
+              ? 'Bir sunucu seçerek WinRM üzerinden canlı Event Log kayıtlarını görüntüleyin'
+              : routeTab === 'updates'
+              ? 'Bir sunucu seçerek bekleyen Windows güncellemelerini görüntüleyin ve kurun'
+              : "WinRM ile yönetilen Windows VM'ler ve fiziksel sunucular"}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {/* Toggle unclassified VMs */}
@@ -654,6 +768,7 @@ const WindowsServers: React.FC = () => {
             </div>
             <span className="text-xs text-slate-400">OS Belirsiz VM'ler</span>
           </label>
+          <WinRmAiReadyButton onDone={refetch} />
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
             <RefreshCw size={14} /> Yenile
@@ -662,12 +777,13 @@ const WindowsServers: React.FC = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
           { label: 'Windows Tespit', value: confirmedWindows.length, color: 'text-blue-400' },
           { label: 'OS Belirsiz', value: unclassified.length, color: 'text-amber-400' },
           { label: 'Aktif', value: online, color: 'text-green-400' },
           { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
+          { label: 'AI Ready', value: aiReadyCount, color: 'text-emerald-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -769,6 +885,15 @@ const WindowsServers: React.FC = () => {
                         {srv.winrm_source === 'global' && (
                           <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
                             <Globe size={9} /> global
+                          </span>
+                        )}
+                        {srv.ai_ready ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
+                            <CheckCircle2 size={9} /> AI Ready
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-600">
+                            <XCircle size={9} /> AI Ready değil
                           </span>
                         )}
                       </div>

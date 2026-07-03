@@ -51,15 +51,22 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     from app.models.credential import GlobalCredential
     from app.core.database import ThreadSessionLocal as SessionLocal
 
+    from app.services.platform_scope import is_windows_server
+
     server_ids = (body or {}).get("server_ids")
     q = db.query(Server)
     if server_ids:
         q = q.filter(Server.id.in_(server_ids))
-    # Sadece IP'si olan sunucular
-    server_list = q.filter(
-        Server.ip_address != None,
-        Server.ip_address != "",
-    ).all()
+    # Sadece IP'si olan sunucular — Windows sunucular hariç (onlar WinRM ile
+    # `/windows/update-ai-ready` üzerinden test edilir, SSH port 22 testi
+    # Windows'ta anlamsız/yanlış negatif üretir).
+    server_list = [
+        s for s in q.filter(
+            Server.ip_address != None,
+            Server.ip_address != "",
+        ).all()
+        if not is_windows_server(s)
+    ]
 
     # Global credential — sadece ana thread'de oku
     global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
@@ -190,10 +197,32 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
 
 
 @router.get("/")
-async def list_servers(db: Session = Depends(get_db), include_node_exporter_status: bool = False):
-    """Tüm sunucuları listele"""
+async def list_servers(
+    db: Session = Depends(get_db),
+    include_node_exporter_status: bool = False,
+    platform: str | None = None,
+):
+    """
+    Sunucuları listele.
+
+    `platform` verilmezse (varsayılan) tüm sunucular döner — Ansible, Paket
+    Yöneticisi, Sistem Güncelleme gibi platform-bağımsız araçlar bunu kullanır.
+    `platform=linux` verilirse yalnızca Linux (Windows olmayan) sunucular
+    döner — Linux modülünün "Sunucular" sayfası bunu kullanır.
+    """
     try:
-        servers = db.query(Server).all()
+        query = db.query(Server)
+        if platform in ("linux", "windows", "virt"):
+            from app.services.platform_scope import is_linux_server, is_windows_server, vm_filter_condition
+            if platform == "virt":
+                query = query.filter(vm_filter_condition())
+                servers = query.all()
+            elif platform == "windows":
+                servers = [s for s in query.all() if is_windows_server(s)]
+            else:
+                servers = [s for s in query.all() if is_linux_server(s)]
+        else:
+            servers = query.all()
         result = []
         conn_config = None
         for s in servers:
@@ -556,7 +585,7 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Server not found")
         
         old_status = server.status
-        new_status, _ = ServerHealthChecker.check_server_status(server)
+        new_status, _ = ServerHealthChecker.check_server_status(server, db)
         server.status = new_status
         db.commit()
         

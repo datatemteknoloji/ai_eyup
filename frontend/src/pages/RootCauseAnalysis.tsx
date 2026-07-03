@@ -2,6 +2,8 @@ import React, { useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
+import type { PlatformAiopsProps } from '../utils/platformApi'
+import { appendPlatform } from '../utils/platformApi'
 import {
   NEON, PageHeader, GhostButton, PrimaryButton, SeverityBadge,
   SearchInput, Select, Section, EmptyState,
@@ -689,7 +691,7 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
 
 type Tab = 'log' | 'compare' | 'awr'
 
-const RootCauseAnalysis: React.FC = () => {
+const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [activeTab, setActiveTab] = useState<Tab>('log')
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
@@ -714,16 +716,16 @@ const RootCauseAnalysis: React.FC = () => {
   const onlineServers = allServers.filter(s => s.status !== 'OFFLINE')
 
   const { data, isLoading } = useQuery({
-    queryKey: ['rca-events', severityFilter, typeFilter, search, serverFilter, hideOffline],
+    queryKey: ['rca-events', platform, severityFilter, typeFilter, search, serverFilter, hideOffline],
     queryFn: async () => {
-      const params = new URLSearchParams({
+      const params = appendPlatform(new URLSearchParams({
         limit: '50', resolved: 'false',
         ...(severityFilter && { severity: severityFilter }),
         ...(typeFilter && { event_type: typeFilter }),
         ...(search && { search }),
         ...(serverFilter && { server_id: serverFilter }),
         ...(hideOffline && { online_only: 'true' }),
-      })
+      }), platform)
       const res = await fetch(`${API_BASE_URL}/events/?${params}`)
       return res.json() as Promise<{ events: EventItem[]; total: number }>
     },

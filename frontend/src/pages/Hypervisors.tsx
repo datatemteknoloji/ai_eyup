@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import {
   Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
   Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
-  Database, Settings, X, Check, AlertTriangle
+  Database, Settings, X, Check, AlertTriangle, BarChart3,
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 
@@ -739,6 +740,16 @@ const Hypervisors: React.FC = () => {
           <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
           <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
           <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
+        </div>
+
+        <div className="flex justify-end">
+          <Link
+            to="/infra-reports"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition-colors"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Altyapı Raporları
+          </Link>
         </div>
 
         {/* Tabs */}

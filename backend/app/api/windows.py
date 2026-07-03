@@ -155,6 +155,7 @@ def list_windows_servers(
             "winrm_source": "server" if has_own_winrm else ("global" if has_global_winrm else None),
             "winrm_port": effective_port,
             "confirmed_windows": is_confirmed_windows,
+            "ai_ready": bool(s.ai_ready),
         })
 
     # Sort: confirmed first, then by name
@@ -168,10 +169,11 @@ def test_connection(server_id: int, db: Session = Depends(get_db)):
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
     result = client.test_connection()
-    # Update status in DB
+    # Update status + ai_ready in DB
+    server.ai_ready = bool(result["connected"])
     if result["connected"]:
         server.status = "ONLINE"
-        db.commit()
+    db.commit()
     return result
 
 
@@ -210,10 +212,138 @@ def save_credentials(server_id: int, creds: WinRMCredentials, db: Session = Depe
         use_https=creds.use_https,
     )
     test = client.test_connection()
+    server.ai_ready = bool(test["connected"])
     if test["connected"]:
         server.status = "ONLINE"
-        db.commit()
+    db.commit()
     return {"saved": True, "connection_test": test}
+
+
+@router.post("/update-ai-ready")
+def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
+    """
+    Tüm Windows sunucularında WinRM bağlantısını test eder.
+    Bağlanabilenler → ai_ready=True, bağlanamayanlar → ai_ready=False.
+    Sunucunun kendi WinRM kimlik bilgisi öncelikli; yoksa Ayarlar'daki global
+    WinRM kimlik bilgisi kullanılır — global kimlik bilgisiyle bağlantı
+    başarılı olursa sunucuya kalıcı olarak uygulanır (Linux SSH akışındaki
+    Global Credential mantığıyla aynı).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.core.database import ThreadSessionLocal as SessionLocal
+    from app.core.encryption import decrypt_secret
+    from app.services.platform_scope import is_windows_server
+
+    server_ids = (body or {}).get("server_ids")
+    q = db.query(Server).filter(Server.ip_address != None, Server.ip_address != "")  # noqa: E711
+    if server_ids:
+        q = q.filter(Server.id.in_(server_ids))
+    candidates = [s for s in q.all() if is_windows_server(s)]
+
+    if not candidates:
+        return {
+            "tested": 0, "ai_ready_count": 0, "not_ready_count": 0, "results": [],
+            "message": "Windows olarak sınıflandırılmış, IP'si olan sunucu bulunamadı.",
+        }
+
+    gcred = _get_global_winrm(db)  # şifresi çözülmüş — sadece ana thread'de oku
+
+    server_snapshots = [
+        {
+            "id": s.id,
+            "name": s.name or s.hostname or f"#{s.id}",
+            "host": (s.ip_address or s.hostname or "").strip(),
+            "cfg": dict(s.connection_config or {}),
+        }
+        for s in candidates
+    ]
+
+    def _test_one(snap: dict):
+        cfg = snap["cfg"]
+        host = snap["host"]
+        own_username = cfg.get("username") or cfg.get("winrm_username")
+        own_raw_password = cfg.get("password") or cfg.get("winrm_password")
+        winrm_port_cfg = cfg.get("winrm_port")
+        has_own = bool(
+            cfg.get("winrm") and own_username and own_raw_password
+            and winrm_port_cfg and int(winrm_port_cfg) >= 5985
+        )
+
+        used_global = False
+        if has_own:
+            username = own_username
+            password = decrypt_secret(own_raw_password)
+            port = int(winrm_port_cfg)
+            use_https = bool(cfg.get("winrm_https"))
+        elif gcred:
+            username = gcred.get("username")
+            password = gcred.get("password")
+            port = int(gcred.get("port") or 5985)
+            use_https = bool(gcred.get("use_https"))
+            used_global = True
+        else:
+            return snap["id"], False, "WinRM kimlik bilgisi yok (sunucuya özel veya global tanımlı değil)", False
+
+        if not host or not username or not password:
+            return snap["id"], False, "IP/hostname veya kullanıcı adı/şifre eksik", used_global
+
+        try:
+            client = WinRMClient(host=host, username=username, password=password, port=port, use_https=use_https)
+            result = client.test_connection()
+            return snap["id"], bool(result.get("connected")), result.get("message", ""), used_global
+        except Exception as exc:
+            return snap["id"], False, str(exc), used_global
+
+    results = []
+    snap_by_id = {snap["id"]: snap for snap in server_snapshots}
+    with ThreadPoolExecutor(max_workers=20, thread_name_prefix="winrm-ai-ready") as pool:
+        futures = {pool.submit(_test_one, snap): snap for snap in server_snapshots}
+        for fut in as_completed(futures):
+            server_id, ok, message, used_global = fut.result()
+            snap = snap_by_id[server_id]
+            results.append({
+                "id": server_id, "name": snap["name"], "connected": ok,
+                "message": message, "used_global_credential": used_global,
+            })
+
+    thread_db = SessionLocal()
+    try:
+        for r in results:
+            row = thread_db.query(Server).filter_by(id=r["id"]).first()
+            if not row:
+                continue
+            row.ai_ready = r["connected"]
+            if r["connected"]:
+                row.status = "ONLINE"
+                if not (row.os_type or "").strip():
+                    row.os_type = "windows"
+                if r["used_global_credential"] and gcred:
+                    new_cfg = dict(row.connection_config or {})
+                    new_cfg.update({
+                        "username": gcred["username"],
+                        "password": encrypt_secret(gcred["password"]),
+                        "winrm": True,
+                        "winrm_port": gcred.get("port", 5985),
+                        "winrm_https": gcred.get("use_https", False),
+                        "_from_global": True,
+                    })
+                    row.connection_config = new_cfg
+                    flag_modified(row, "connection_config")
+        thread_db.commit()
+    finally:
+        thread_db.close()
+
+    ready_count = sum(1 for r in results if r["connected"])
+    logger.info("Windows AI Ready güncellendi: %s hazır, %s bağlanamadı", ready_count, len(results) - ready_count)
+    return {
+        "tested": len(results),
+        "ai_ready_count": ready_count,
+        "not_ready_count": len(results) - ready_count,
+        "results": sorted(results, key=lambda r: r["name"] or ""),
+    }
 
 
 @router.get("/servers/{server_id}/info")
@@ -464,7 +594,7 @@ def apply_global_winrm_credential(db: Session = Depends(get_db)):
             continue
         cfg.update({
             "username": gcred["username"],
-            "password": gcred["password"],
+            "password": encrypt_secret(gcred["password"]),
             "winrm_port": gcred["port"],
             "winrm_https": gcred["use_https"],
             "winrm": True,

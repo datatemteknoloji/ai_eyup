@@ -3,7 +3,7 @@ VMware vCenter REST API Client
 """
 import requests
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -96,6 +96,23 @@ class VCenterClient:
             return response.get("value", [])
         return []
     
+    @staticmethod
+    def _guest_os_family_fallback(guest_os_id: str) -> str:
+        """VMware `guest_OS` alanından ("WINDOWS_2019_64", "RHEL_8_64" vb.) family tahmini üretir.
+
+        `guest/identity` endpoint'i (family/full_name) VMware Tools'un VM içinde
+        çalışıyor olmasını gerektirir — Tools kurulu değilse boş döner ve VM
+        yanlışlıkla Linux sayılabilir (windows/linux platform modüllerinin
+        sunucuyu doğru sınıflandırması için kritik). `guest_OS` ise VM
+        oluşturulurken belirlenen konfigürasyon alanıdır, Tools'a bağlı değildir.
+        """
+        g = (guest_os_id or "").upper()
+        if not g:
+            return ""
+        if "WIN" in g:
+            return "windowsGuest"
+        return "linuxGuest"
+
     def get_vm_details(self, vm_id: str) -> Optional[Dict]:
         """Tek bir VM'in detaylarını getir"""
         response = self._api_call("GET", f"/vcenter/vm/{vm_id}")
@@ -128,16 +145,19 @@ class VCenterClient:
             # Detaylı bilgi al
             details = self.get_vm_details(vm_id) if vm_id else None
             guest_info = self.get_vm_guest_info(vm_id) if vm_id else None
-            
+            os_family = (guest_info.get("family", "") if guest_info else "") or \
+                self._guest_os_family_fallback((details or {}).get("guest_OS", ""))
+
             # Inventory formatı
             vm_data = {
                 "name": vm_name,
+                "vm_id": vm_id or "",
                 "ip_address": guest_info.get("ip_address", "") if guest_info else "",
                 "hostname": guest_info.get("host_name", vm_name) if guest_info else vm_name,
-                "os_type": guest_info.get("family", "") if guest_info else "",
+                "os_type": os_family,
                 "cpu_cores": details.get("cpu", {}).get("count", 0) if details else 0,
                 "memory_gb": int(details.get("memory", {}).get("size_MiB", 0) / 1024) if details else 0,
-                "power_state": vm.get("power_state", "UNKNOWN")
+                "power_state": vm.get("power_state", "UNKNOWN"),
             }
             inventory.append(vm_data)
         
@@ -782,7 +802,7 @@ class VCenterClient:
                 "vm_cluster":          str(cluster_name) if cluster_name else "",
                 "vm_datastore":        datastore_name,
                 "vm_hardware_version": hw_version,
-                "os_type":             (guest.get("family") or ""),
+                "os_type":             (guest.get("family") or "") or self._guest_os_family_fallback(details.get("guest_OS", "")),
             }
         except Exception as e:
             logger.error(f"VCenter get_vm_full_details error: {e}", exc_info=True)
@@ -1140,6 +1160,159 @@ class VCenterClient:
 
         except Exception as e:
             logger.error(f"get_all_host_stats error: {e}", exc_info=True)
+            return []
+
+    # Folder → Datacenter → vmFolder (recursive) → VirtualMachine
+    _VM_TRAVERSAL = """
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToVmF</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToVmF</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>vmFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>"""
+
+    def get_all_vm_live_stats(self) -> List[Dict]:
+        """
+        Tüm VM'lerin CANLI performans/durum verisini tek SOAP çağrısıyla toplar:
+        güç durumu, boot zamanı (→ uptime), CPU/RAM anlık kullanım, memory
+        ballooning/swap ve snapshot sayısı/en eski snapshot tarihi.
+
+        Bu, DB'de saklanmayan (VM CPU Ready hariç — o PerformanceManager
+        historical stats gerektirir ve burada yok) birçok "canlı" metriği tek
+        seferde getirir; AI Q&A katmanı bunu on-demand çağırır (30-60 sn sürebilir,
+        fleet büyüklüğüne göre).
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("get_all_vm_live_stats: SOAP login failed")
+            return []
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>runtime.powerState</vim25:pathSet>
+          <vim25:pathSet>runtime.bootTime</vim25:pathSet>
+          <vim25:pathSet>runtime.host</vim25:pathSet>
+          <vim25:pathSet>summary.quickStats</vim25:pathSet>
+          <vim25:pathSet>snapshot</vim25:pathSet>
+          <vim25:pathSet>config.hardware.numCPU</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          {self._VM_TRAVERSAL}
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+        try:
+            resp = soap_session.post(soap_url, data=soap_body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=60)
+            if resp.status_code != 200:
+                logger.warning(f"get_all_vm_live_stats HTTP {resp.status_code}: {resp.text[:300]}")
+                return []
+
+            root_xml = ET.fromstring(resp.text)
+            results = []
+
+            def _tag(el): return el.tag.split("}")[-1]
+
+            for rv in root_xml.iter():
+                if _tag(rv) != "returnval":
+                    continue
+
+                vm_ref = None
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                if obj_el is not None:
+                    vm_ref = obj_el.text
+
+                flat: dict = {}
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = n_el.text or ""
+
+                    if pname == "snapshot":
+                        create_times = [c.text for c in v_el.iter() if _tag(c) == "createTime" and c.text]
+                        flat["snapshot_count"] = len(create_times)
+                        flat["snapshot_oldest"] = min(create_times) if create_times else None
+                        continue
+                    if pname == "summary.quickStats":
+                        for child in v_el:
+                            flat[_tag(child)] = child.text
+                        continue
+                    # skaler değerler (name, runtime.powerState, runtime.bootTime, config.hardware.numCPU)
+                    if v_el.text and v_el.text.strip():
+                        flat[pname] = v_el.text.strip()
+
+                def _f(k, default=None):
+                    v = flat.get(k)
+                    try:
+                        return float(v) if v is not None else default
+                    except Exception:
+                        return default
+
+                def _i(k, default=None):
+                    v = flat.get(k)
+                    try:
+                        return int(float(v)) if v is not None else default
+                    except Exception:
+                        return default
+
+                results.append({
+                    "vm_ref": vm_ref,
+                    "name": flat.get("name", vm_ref or "unknown"),
+                    "power_state": flat.get("runtime.powerState", "unknown"),
+                    "boot_time": flat.get("runtime.bootTime"),
+                    "host_ref": flat.get("runtime.host"),
+                    "num_cpu": _i("config.hardware.numCPU"),
+                    "cpu_usage_mhz": _f("overallCpuUsage"),
+                    "cpu_demand_mhz": _f("overallCpuDemand"),
+                    "guest_mem_usage_mb": _f("guestMemoryUsage"),
+                    "host_mem_usage_mb": _f("hostMemoryUsage"),
+                    "ballooned_mb": _f("balloonedMemory"),
+                    "swapped_mb": _f("swappedMemory"),
+                    "compressed_kb": _f("compressedMemory"),
+                    "uptime_seconds": _i("uptimeSeconds"),
+                    "snapshot_count": flat.get("snapshot_count", 0),
+                    "snapshot_oldest": flat.get("snapshot_oldest"),
+                })
+
+            logger.info(f"get_all_vm_live_stats: {len(results)} VM ({self.host})")
+            return results
+
+        except Exception as e:
+            logger.error(f"get_all_vm_live_stats error: {e}", exc_info=True)
             return []
 
     @staticmethod
@@ -1571,3 +1744,470 @@ class VCenterClient:
         except Exception as e:
             logger.error(f"get_all_host_network_info error: {e}", exc_info=True)
             return {}
+
+    # ── vCenter Event / Alarm / Task Toplama (SOAP EventManager) ───────────────
+
+    def _soap_tag(self, el) -> str:
+        return el.tag.split("}")[-1]
+
+    def _soap_post(self, soap_session, soap_url: str, body: str, timeout: int = 60):
+        import xml.etree.ElementTree as ET
+        try:
+            resp = soap_session.post(
+                soap_url,
+                data=body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl,
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                logger.warning("SOAP HTTP %s: %s", resp.status_code, resp.text[:300])
+                return None
+            return ET.fromstring(resp.text)
+        except Exception as exc:
+            logger.error("SOAP post error: %s", exc)
+            return None
+
+    def _get_service_content_refs(self, soap_session, soap_url: str) -> Dict[str, str]:
+        """eventManager, alarmManager, rootFolder MOR referanslarını döner."""
+        body = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveServiceContent>
+      <vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this>
+    </vim25:RetrieveServiceContent>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body, timeout=15)
+        refs: Dict[str, str] = {
+            "eventManager": "eventManager",
+            "alarmManager": "alarmManager",
+            "rootFolder": "group-d1",
+        }
+        if root is None:
+            return refs
+        for el in root.iter():
+            tag = self._soap_tag(el)
+            if tag in refs and el.text:
+                refs[tag] = el.text
+        return refs
+
+    @staticmethod
+    def _map_vim_event_severity(event_type_id: str, message: str, extra: Dict) -> str:
+        et = (event_type_id or "").lower()
+        msg = (message or "").lower()
+        blob = f"{et} {msg}"
+
+        if extra.get("task_error"):
+            return "critical"
+        if extra.get("alarm_status") in ("red", "critical"):
+            return "critical"
+        if extra.get("alarm_status") in ("yellow", "warning"):
+            return "warning"
+
+        critical_kw = (
+            "error", "failed", "failure", "fault", "lost", "cannot", "denied",
+            "timeout", "corrupt", "invalid", "disconnected", "notresponding",
+            "hostconnectionlost", "vmfailed", "alarmstatuschanged",
+        )
+        warning_kw = ("warning", "degraded", "queued", "pending", "reconfigured")
+
+        if any(k in blob for k in critical_kw):
+            if "warning" in blob and "error" not in blob and "failed" not in blob:
+                return "warning"
+            return "critical"
+        if any(k in blob for k in warning_kw):
+            return "warning"
+        return "info"
+
+    def _parse_vim_event_element(self, el) -> Optional[Dict]:
+        """Tek bir SOAP Event returnval elementini normalize eder."""
+        data: Dict[str, Any] = {}
+        for child in el:
+            tag = self._soap_tag(child)
+            if tag in ("host", "vm", "computeResource", "datacenter", "ds", "net"):
+                data[tag] = {"type": child.get("type"), "value": child.text}
+            elif tag in ("key", "chainId", "createdTime", "userName", "fullFormattedMessage",
+                         "message", "eventTypeId", "changeTag"):
+                data[tag] = child.text or ""
+            elif tag == "info" and self._soap_tag(child) == "TaskInfo":
+                for sub in child:
+                    st = self._soap_tag(sub)
+                    if st == "error":
+                        data["task_error"] = True
+                    elif st == "state" and (sub.text or "").lower() == "error":
+                        data["task_error"] = True
+            elif tag in ("to", "from") and self._soap_tag(child) == "AlarmStatus":
+                for sub in child:
+                    if self._soap_tag(sub) == "overallStatus":
+                        data["alarm_status"] = (sub.text or "").lower()
+
+        event_key = data.get("key") or data.get("chainId")
+        if not event_key:
+            return None
+
+        # xsi:type genelde gerçek event sınıfını taşır (örn. "UserLoginSessionEvent",
+        # "TaskEvent", "AlarmStatusChangedEvent") — eventTypeId çoğu event tipinde boştur.
+        xsi_type = el.get("{http://www.w3.org/2001/XMLSchema-instance}type") or ""
+        event_type = data.get("eventTypeId") or xsi_type or self._soap_tag(el)
+        title = (
+            data.get("fullFormattedMessage")
+            or data.get("message")
+            or event_type
+            or "vCenter event"
+        )
+        host_ref = (data.get("host") or {}).get("value")
+        vm_ref = (data.get("vm") or {}).get("value")
+        severity = self._map_vim_event_severity(
+            event_type,
+            title,
+            {"task_error": data.get("task_error"), "alarm_status": data.get("alarm_status")},
+        )
+        kind = "vcenter_task" if "task" in (event_type or "").lower() else "vcenter_event"
+        if "alarm" in (event_type or "").lower():
+            kind = "vcenter_alarm"
+
+        return {
+            "id": f"evt-{event_key}",
+            "kind": kind,
+            "severity": severity,
+            "event_key": str(event_key),
+            "chain_id": data.get("chainId"),
+            "event_type_id": event_type,
+            "title": title[:500],
+            "user_name": data.get("userName"),
+            "host_ref": host_ref,
+            "vm_ref": vm_ref,
+            "timestamp": data.get("createdTime"),
+            "change_tag": data.get("changeTag"),
+        }
+
+    def _get_vcenter_current_time(self, soap_session, soap_url: str):
+        """
+        ServiceInstance.CurrentTime() — vCenter'ın kendi saatini döner.
+
+        Backend host saati ile vCenter saati arasında drift olabilir (örn. test/demo
+        ortamlarında yıl farkı). Event zaman filtrelemesini vCenter'ın kendi saatine
+        göre yapmak, tüm event'lerin yanlışlıkla "eski" sayılıp atlanmasını önler.
+        """
+        from datetime import datetime, timezone
+
+        body = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:CurrentTime>
+      <vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this>
+    </vim25:CurrentTime>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            root = self._soap_post(soap_session, soap_url, body, timeout=15)
+            if root is None:
+                return None
+            for el in root.iter():
+                if self._soap_tag(el) == "returnval" and el.text:
+                    return datetime.fromisoformat(el.text.replace("Z", "+00:00"))
+        except Exception as exc:
+            logger.warning("vCenter CurrentTime alınamadı: %s", exc)
+        return None
+
+    def _query_vim_events(self, soap_session, soap_url: str, event_manager: str,
+                          hours: int = 48, max_events: int = 800,
+                          event_type_ids: Optional[List[str]] = None,
+                          max_pages: int = 6) -> List[Dict]:
+        """
+        EventManager.CreateCollectorForEvents + latestPage/GetPreviousPage ile event stream okur.
+
+        Not: QueryEvents(filter.time.beginTime=...) bazı vCenter kurulumlarında
+        (özellikle yoğun event DB'lerinde) boş dönebiliyor veya zaman aşımına
+        uğruyor. Collector tabanlı yaklaşım VMware'in resmi önerdiği, güvenilir
+        yöntemdir: filtresiz collector oluşturulur, sayfalar geriye doğru okunur
+        ve `hours` sınırına client tarafında uygulanır.
+
+        `event_type_ids` verilirse EventFilterSpec.type + EventFilterSpec.time.beginTime
+        ile sunucu tarafında filtreleme yapılır (örn. sadece VM restart/create/remove
+        event'leri) — bu, login/logout gürültüsü olmadan çok daha geniş bir zaman
+        penceresini (7-30 gün) az sayfa ile taramayı mümkün kılar.
+        NOT: EventFilterSpec alan sırası önemlidir (WSDL: entity, time, ..., eventTypeId).
+        """
+        from datetime import datetime, timezone, timedelta
+
+        reference_now = self._get_vcenter_current_time(soap_session, soap_url) or datetime.now(timezone.utc)
+        cutoff = reference_now - timedelta(hours=hours)
+        page_size = min(max(max_events, 100), 1000)
+
+        if event_type_ids:
+            begin_time_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+            type_filter_xml = "".join(
+                f"<vim25:eventTypeId>{t}</vim25:eventTypeId>" for t in event_type_ids
+            )
+            filter_xml = (
+                "<vim25:filter>"
+                f"<vim25:time><vim25:beginTime>{begin_time_str}</vim25:beginTime></vim25:time>"
+                f"{type_filter_xml}"
+                "</vim25:filter>"
+            )
+        else:
+            filter_xml = "<vim25:filter></vim25:filter>"
+
+        create_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:CreateCollectorForEvents>
+      <vim25:_this type="EventManager">{event_manager}</vim25:_this>
+      {filter_xml}
+    </vim25:CreateCollectorForEvents>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, create_body, timeout=30)
+        if root is None:
+            return []
+
+        collector_ref = None
+        for el in root.iter():
+            if self._soap_tag(el) == "returnval" and el.text:
+                collector_ref = el.text
+                break
+        if not collector_ref:
+            logger.warning("CreateCollectorForEvents: collector referansı alınamadı")
+            return []
+
+        try:
+            page_size_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:SetCollectorPageSize>
+      <vim25:_this type="EventHistoryCollector">{collector_ref}</vim25:_this>
+      <vim25:maxCount>{page_size}</vim25:maxCount>
+    </vim25:SetCollectorPageSize>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            self._soap_post(soap_session, soap_url, page_size_body, timeout=20)
+
+            events: List[Dict] = []
+            stop = False
+
+            for page_num in range(max_pages):
+                if page_num == 0:
+                    prop_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>EventHistoryCollector</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>latestPage</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="EventHistoryCollector">{collector_ref}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                    page_root = self._soap_post(soap_session, soap_url, prop_body, timeout=30)
+                else:
+                    prev_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:GetPreviousPage>
+      <vim25:_this type="EventHistoryCollector">{collector_ref}</vim25:_this>
+    </vim25:GetPreviousPage>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                    page_root = self._soap_post(soap_session, soap_url, prev_body, timeout=30)
+
+                if page_root is None:
+                    break
+
+                page_events: List[Dict] = []
+                for el in page_root.iter():
+                    tag = self._soap_tag(el)
+                    if tag not in ("Event",) and "Event" not in tag:
+                        continue
+                    if tag == "propSet":
+                        continue
+                    parsed = self._parse_vim_event_element(el)
+                    if parsed:
+                        page_events.append(parsed)
+
+                if not page_events:
+                    break
+
+                for ev in page_events:
+                    ts = ev.get("timestamp")
+                    if ts:
+                        try:
+                            ev_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if ev_dt < cutoff:
+                                stop = True
+                                continue
+                        except Exception:
+                            pass
+                    events.append(ev)
+
+                # Dönen sayfa istenen page_size'dan azsa collector'da başka sayfa
+                # kalmamış demektir — GetPreviousPage'i gereksiz çağırmak bazı
+                # vCenter sürümlerinde "Unable to resolve WSDL method" SOAP hatası
+                # üretebiliyor (tükenmiş collector). Erken çıkış hem hatayı önler
+                # hem de gereksiz round-trip'i engeller.
+                if len(page_events) < page_size:
+                    break
+
+                if stop or len(events) >= max_events:
+                    break
+
+            events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+            return events[:max_events]
+        finally:
+            destroy_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:DestroyCollector>
+      <vim25:_this type="EventHistoryCollector">{collector_ref}</vim25:_this>
+    </vim25:DestroyCollector>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                self._soap_post(soap_session, soap_url, destroy_body, timeout=10)
+            except Exception:
+                pass
+
+    def _query_triggered_alarms(self, soap_session, soap_url: str,
+                                alarm_manager: str, root_folder: str) -> List[Dict]:
+        """AlarmManager.GetAlarmState — tetiklenmiş (red/yellow) alarmlar."""
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:GetAlarmState>
+      <vim25:_this type="AlarmManager">{alarm_manager}</vim25:_this>
+      <vim25:entity type="Folder">{root_folder}</vim25:entity>
+    </vim25:GetAlarmState>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body, timeout=60)
+        if root is None:
+            return []
+
+        alarms: List[Dict] = []
+        for el in root.iter():
+            if self._soap_tag(el) != "returnval":
+                continue
+            entity_type = entity_val = alarm_val = status = time_val = None
+            for child in el:
+                tag = self._soap_tag(child)
+                if tag == "entity":
+                    entity_type = child.get("type")
+                    entity_val = child.text
+                elif tag == "alarm":
+                    alarm_val = child.text
+                elif tag == "overallStatus":
+                    status = (child.text or "").lower()
+                elif tag == "time":
+                    time_val = child.text
+
+            if status not in ("red", "yellow"):
+                continue
+
+            alarms.append({
+                "id": f"alarm-{alarm_val}-{entity_type}-{entity_val}",
+                "kind": "vcenter_alarm",
+                "severity": "critical" if status == "red" else "warning",
+                "event_key": f"{alarm_val}:{entity_val}",
+                "title": f"vCenter alarm ({status}): {entity_type}/{entity_val}",
+                "alarm_ref": alarm_val,
+                "entity_type": entity_type,
+                "entity_ref": entity_val,
+                "overall_status": status,
+                "timestamp": time_val,
+            })
+        return alarms
+
+    def collect_platform_logs(self, hours: int = 48, max_events: int = 800) -> Dict[str, Any]:
+        """
+        vCenter'dan event stream, tetiklenmiş alarmlar ve task hatalarını toplar.
+        SOAP EventManager + AlarmManager kullanır (REST event API yok).
+        """
+        from datetime import datetime, timezone
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {"events": [], "alarms": [], "errors": ["SOAP oturumu açılamadı"]}
+
+        refs = self._get_service_content_refs(soap_session, soap_url)
+        errors: List[str] = []
+
+        events: List[Dict] = []
+        try:
+            events = self._query_vim_events(
+                soap_session, soap_url, refs["eventManager"], hours=hours, max_events=max_events,
+            )
+        except Exception as exc:
+            logger.error("QueryEvents error (%s): %s", self.host, exc, exc_info=True)
+            errors.append(f"QueryEvents: {exc}")
+
+        alarms: List[Dict] = []
+        try:
+            alarms = self._query_triggered_alarms(
+                soap_session, soap_url, refs["alarmManager"], refs["rootFolder"],
+            )
+        except Exception as exc:
+            logger.error("GetAlarmState error (%s): %s", self.host, exc, exc_info=True)
+            errors.append(f"GetAlarmState: {exc}")
+
+        task_events = [e for e in events if e.get("kind") == "vcenter_task"]
+        logger.info(
+            "vCenter %s: %d event, %d alarm, %d task-event",
+            self.host, len(events), len(alarms), len(task_events),
+        )
+        return {
+            "events": events,
+            "alarms": alarms,
+            "task_events": task_events,
+            "errors": errors,
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def query_lifecycle_events(
+        self,
+        event_type_ids: List[str],
+        days: int = 7,
+        max_events: int = 3000,
+        max_pages: int = 30,
+    ) -> Dict[str, Any]:
+        """
+        Belirli event tiplerini (örn. VM restart/create/remove/migrate) geniş bir
+        zaman penceresinde (gün bazlı) sorgular. `collect_platform_logs`'un aksine
+        server-side type filtresi kullanır — login/logout gürültüsü olmadan 7-30
+        günlük tarih aralığını az sayfa ile tarayabilir. Bağımsız login/logout
+        döngüsü yürütür (VCenterClient zaten login/logout edilmiş olsa da tekrar
+        SOAP oturumu açar — SOAP ve REST oturumları ayrıdır).
+        """
+        from datetime import datetime, timezone
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {"events": [], "errors": ["SOAP oturumu açılamadı"]}
+
+        try:
+            refs = self._get_service_content_refs(soap_session, soap_url)
+            events = self._query_vim_events(
+                soap_session, soap_url, refs["eventManager"],
+                hours=days * 24, max_events=max_events,
+                event_type_ids=event_type_ids, max_pages=max_pages,
+            )
+            return {
+                "events": events,
+                "errors": [],
+                "collected_at": datetime.now(timezone.utc).isoformat(),
+                "reference_time": None,
+            }
+        except Exception as exc:
+            logger.error("query_lifecycle_events error (%s): %s", self.host, exc, exc_info=True)
+            return {"events": [], "errors": [str(exc)]}
+

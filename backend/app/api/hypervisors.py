@@ -620,6 +620,31 @@ async def virt_ops_summary_endpoint(db: Session = Depends(get_db)):
     return virt_ops_summary(db)
 
 
+@router.post("/sync-vcenter-events")
+async def sync_vcenter_events_all(db: Session = Depends(get_db)):
+    """Tüm VMware hypervisor'lardan vCenter event/alarm/task sync."""
+    from app.services.vcenter_event_collector import sync_all_vcenter_events
+    try:
+        return sync_all_vcenter_events(db, hours=48)
+    except Exception as e:
+        logger.exception("vCenter event sync error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{hypervisor_id}/sync-vcenter-events")
+async def sync_vcenter_events_one(hypervisor_id: int, db: Session = Depends(get_db)):
+    """Tek hypervisor için vCenter event/alarm/task sync."""
+    from app.services.vcenter_event_collector import sync_vcenter_events_for_hypervisor
+    hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+    if not hv:
+        raise HTTPException(status_code=404, detail="Hypervisor bulunamadı")
+    try:
+        return sync_vcenter_events_for_hypervisor(db, hv, hours=48)
+    except Exception as e:
+        logger.exception("vCenter event sync error for %s", hypervisor_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Doğal Dil Sorgulama ──────────────────────────────────────────────────────
 
 HV_SESSION_CATEGORY = "hypervisor"
@@ -858,11 +883,12 @@ async def get_quick_stats(db: Session = Depends(get_db)):
     """Üst bar için anlık özet istatistikler."""
     from app.models.server import Server as ServerModel
     from app.models.hypervisor_metric import HypervisorHostMetric
+    from app.services.platform_scope import vm_filter_condition
     from sqlalchemy import func
 
-    vm_count = db.query(ServerModel).filter(ServerModel.hypervisor_id != None).count()  # noqa: E711
+    vm_count = db.query(ServerModel).filter(vm_filter_condition()).count()
     powered_on = db.query(ServerModel).filter(
-        ServerModel.hypervisor_id != None,  # noqa: E711
+        vm_filter_condition(),
         ServerModel.vm_power_state.in_(["POWERED_ON", "up", "running", "poweredOn"]),
     ).count()
 
@@ -895,9 +921,10 @@ async def get_quick_stats(db: Session = Depends(get_db)):
 async def get_question_suggestions(db: Session = Depends(get_db)):
     """Örnek sorular + mevcut VM adları."""
     from app.models.server import Server as ServerModel
+    from app.services.platform_scope import vm_filter_condition
     vm_names = [
         r[0] for r in db.query(ServerModel.name)
-        .filter(ServerModel.hypervisor_id != None)  # noqa: E711
+        .filter(vm_filter_condition())
         .limit(10).all()
     ]
     suggestions = [
@@ -942,6 +969,13 @@ async def get_question_suggestions(db: Session = Depends(get_db)):
 class ReportRequest(BaseModel):
     report_type: str
     save: bool = True
+
+
+@router.get("/reports/data-quality")
+async def get_report_data_quality_endpoint(db: Session = Depends(get_db)):
+    """Rapor veri kalitesi özeti (envanter tazeliği, metrik kapsamı)."""
+    from app.services.report_engine import _report_data_quality
+    return _report_data_quality(db)
 
 
 @router.get("/reports/types")

@@ -107,11 +107,46 @@ interface LayoutProps {
   children: React.ReactNode
 }
 
-type ChildItem = { path: string; name: string; icon: React.ReactNode; badge?: () => React.ReactNode }
+type LinkChild = {
+  type: 'link'
+  path: string
+  name: string
+  icon: React.ReactNode
+  badge?: () => React.ReactNode
+  moduleId?: string
+  moduleIds?: string[]
+}
+type SubgroupChild = {
+  type: 'subgroup'
+  key: string
+  name: string
+  icon: React.ReactNode
+  children: LinkChild[]
+  moduleId?: string
+  moduleIds?: string[]
+}
+type GroupChild = LinkChild | SubgroupChild
 type MenuItem =
   | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string }
-  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: ChildItem[]; moduleId?: string; moduleIds?: string[] }
+  | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: GroupChild[]; moduleId?: string; moduleIds?: string[] }
   | { type: 'section'; label: string }
+
+function toLinkChildren(items: ReturnType<typeof buildPlatformAiopsChildren>): LinkChild[] {
+  return items.map(c => ({ type: 'link', ...c }))
+}
+
+function collectGroupPaths(children: GroupChild[]): string[] {
+  return children.flatMap(c => (c.type === 'link' ? [c.path] : collectGroupPaths(c.children)))
+}
+
+function childVisible(child: GroupChild, hasModule: (id: string) => boolean): boolean {
+  const ids = child.moduleIds ?? (child.moduleId ? [child.moduleId] : undefined)
+  if (ids && !ids.some(id => hasModule(id))) return false
+  if (child.type === 'subgroup') {
+    return child.children.some(c => childVisible(c, hasModule))
+  }
+  return true
+}
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
@@ -127,13 +162,25 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
     queryKey: ['ops-summary-nav'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/ops/summary`)
+      const r = await fetch(`${API_BASE_URL}/ops/summary?platform=linux`)
       if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
       return r.json()
     },
     refetchInterval: 30_000,
     staleTime: 20_000,
     enabled: canLinuxAiops,
+  })
+
+  const { data: windowsOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+    queryKey: ['windows-ops-summary'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/ops/summary?platform=windows`)
+      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      return r.json()
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+    enabled: hasModule('windows'),
   })
 
   const { data: virtOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
@@ -150,76 +197,81 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const isActive = (path: string) =>
     location.pathname === path ||
-    (path === '/hypervisors' && (location.pathname === '/' || location.pathname === '/dashboard'))
+    (path === '/dashboard' && location.pathname === '/')
 
   const isGroupActive = (paths: string[]) => paths.some(p => isActive(p))
 
-  const toggleGroup = (key: string) =>
-    setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  const toggleGroup = (key: string, defaultOpen = false) =>
+    setOpenGroups(prev => {
+      const current = prev[key] ?? defaultOpen
+      return { ...prev, [key]: !current }
+    })
+
+  const linuxAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('linux', opsSummary))
+  const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary))
+  const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary))
 
   const menuItems: MenuItem[] = [
-    // ── Ana ekran (sanallaştırma dashboard) ───────────────────────────────
-    { type: 'link', path: '/hypervisors', name: 'Dashboard', icon: <LayoutDashboard size={18} />, moduleId: 'virtualization' },
+    // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
+    { type: 'link', path: '/dashboard', name: 'Dashboard', icon: <LayoutDashboard size={18} /> },
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleId: 'linux',
+      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleIds: ['linux', 'aiops'],
       children: [
-        { path: '/servers',       name: 'Linux Sunucular',  icon: <Monitor size={15} /> },
-        { path: '/metrics',       name: 'Canlı Metrikler',  icon: <Activity size={15} /> },
-        { path: '/packages',      name: 'Paket & Yama',     icon: <Package size={15} /> },
-        { path: '/system-update', name: 'Sistem Güncelle',  icon: <RefreshCw size={15} /> },
-        { path: '/repositories',  name: 'Local Repo',       icon: <Database size={15} /> },
-        { path: '/ansible',       name: 'Ansible/AWX',      icon: <Zap size={15} /> },
+        { type: 'link', path: '/linux/dashboard', name: 'Dashboard',          icon: <LayoutDashboard size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/servers',       name: 'Linux Sunucular',  icon: <Monitor size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/metrics',       name: 'Canlı Metrikler',  icon: <Activity size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/packages',      name: 'Paket & Yama',     icon: <Package size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/system-update', name: 'Sistem Güncelle',  icon: <RefreshCw size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/repositories',  name: 'Local Repo',       icon: <Database size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/ansible',       name: 'Ansible/AWX',      icon: <Zap size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/chat',          name: 'AI Analiz',        icon: <MessageCircle size={15} />, moduleId: 'linux' },
+        {
+          type: 'subgroup', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={15} />,
+          moduleIds: ['linux', 'aiops'],
+          children: linuxAiopsLinks,
+        },
       ],
-    },
-
-    // ── Linux AIOps ───────────────────────────────────────────────────────
-    {
-      type: 'group', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={18} />,
-      moduleIds: ['linux', 'aiops'],
-      children: buildPlatformAiopsChildren('linux', opsSummary),
     },
 
     // ── Windows ───────────────────────────────────────────────────────────
     {
       type: 'group', key: 'windows', name: 'Windows Yönetimi', icon: <Shield size={18} />, moduleId: 'windows',
       children: [
-        { path: '/windows',         name: 'Windows Sunucular', icon: <Monitor size={15} /> },
-        { path: '/windows/events',  name: 'Event Log',         icon: <ClipboardList size={15} /> },
-        { path: '/windows/updates', name: 'Windows Update',    icon: <RefreshCw size={15} /> },
+        { type: 'link', path: '/windows/dashboard', name: 'Dashboard',           icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/windows',         name: 'Windows Sunucular', icon: <Monitor size={15} /> },
+        { type: 'link', path: '/windows/events',  name: 'Event Log',         icon: <ClipboardList size={15} /> },
+        { type: 'link', path: '/windows/updates', name: 'Windows Update',    icon: <RefreshCw size={15} /> },
+        { type: 'link', path: '/windows/chat',    name: 'AI Analiz',         icon: <MessageCircle size={15} /> },
+        {
+          type: 'subgroup', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={15} />,
+          moduleId: 'windows',
+          children: windowsAiopsLinks,
+        },
       ],
-    },
-
-    // ── Windows AIOps ─────────────────────────────────────────────────────
-    {
-      type: 'group', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={18} />,
-      moduleId: 'windows',
-      children: buildPlatformAiopsChildren('windows'),
     },
 
     // ── Virtualization ────────────────────────────────────────────────────
     {
       type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
-        { path: '/hypervisors',   name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
-        { path: '/infra-reports', name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
+        { type: 'link', path: '/hypervisors',   name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/infra-reports', name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
+        {
+          type: 'subgroup', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={15} />,
+          moduleId: 'virtualization',
+          children: virtAiopsLinks,
+        },
       ],
-    },
-
-    // ── Sanallaştırma AIOps ───────────────────────────────────────────────
-    {
-      type: 'group', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={18} />,
-      moduleId: 'virtualization',
-      children: buildPlatformAiopsChildren('virt', virtOpsSummary),
     },
 
     // ── AI & Automation ───────────────────────────────────────────────────
     {
       type: 'group', key: 'ai', name: 'AI & Otomasyon', icon: <Bot size={18} />, moduleId: 'ai_automation',
       children: [
-        { path: '/chat',  name: 'AI Chat',  icon: <MessageCircle size={15} /> },
-        { path: '/agent', name: 'AI Agent', icon: <Bot size={15} /> },
+        { type: 'link', path: '/chat',  name: 'AI Chat',  icon: <MessageCircle size={15} /> },
+        { type: 'link', path: '/agent', name: 'AI Agent', icon: <Bot size={15} /> },
       ],
     },
 
@@ -227,7 +279,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
-        { path: '/ucmdb/import', name: 'UCMDB Import', icon: <FileUp size={15} /> },
+        { type: 'link', path: '/ucmdb/import', name: 'UCMDB Import', icon: <FileUp size={15} /> },
       ],
     },
 
@@ -235,12 +287,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
       children: [
-        { path: '/level1',            name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
-        { path: '/level1/disk',       name: 'Disk & Depolama',   icon: <HardDrive size={15} /> },
-        { path: '/level1/asm',        name: 'Oracle ASM',        icon: <Database size={15} /> },
-        { path: '/level1/lvm',        name: 'LVM Yönetimi',      icon: <Layers size={15} /> },
-        { path: '/level1/service',    name: 'Servis Yönetimi',   icon: <Settings size={15} /> },
-        { path: '/level1/user',       name: 'Kullanıcı & Erişim',icon: <Users size={15} /> },
+        { type: 'link', path: '/level1',            name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
+        { type: 'link', path: '/level1/disk',       name: 'Disk & Depolama',   icon: <HardDrive size={15} /> },
+        { type: 'link', path: '/level1/asm',        name: 'Oracle ASM',        icon: <Database size={15} /> },
+        { type: 'link', path: '/level1/lvm',        name: 'LVM Yönetimi',      icon: <Layers size={15} /> },
+        { type: 'link', path: '/level1/service',    name: 'Servis Yönetimi',   icon: <Settings size={15} /> },
+        { type: 'link', path: '/level1/user',       name: 'Kullanıcı & Erişim',icon: <Users size={15} /> },
       ],
     },
 
@@ -253,21 +305,86 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Flat link list for page title
   const allLinks: { path: string; name: string }[] = menuItems.flatMap(item => {
     if (item.type === 'link') return [{ path: item.path, name: item.name }]
-    if (item.type === 'group') return item.children.map(c => ({ path: c.path, name: `${item.name} — ${c.name}` }))
+    if (item.type === 'group') {
+      return item.children.flatMap(c => {
+        if (c.type === 'link') return [{ path: c.path, name: `${item.name} — ${c.name}` }]
+        return c.children.map(link => ({ path: link.path, name: `${item.name} — ${c.name} — ${link.name}` }))
+      })
+    }
     return []
   })
 
   const pageTitle = allLinks.find(l => isActive(l.path))?.name || 'Dashboard'
 
+  const renderLinkChild = (child: LinkChild, indent = false) => {
+    const childActive = isActive(child.path)
+    const badge = child.badge?.()
+    return (
+      <li key={child.path}>
+        <Link
+          to={child.path}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
+            indent ? 'pl-2' : ''
+          } ${
+            childActive
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
+              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+          }`}
+        >
+          <span className="flex-shrink-0 text-current">{child.icon}</span>
+          <span className="font-medium truncate flex-1">{child.name}</span>
+          {badge}
+        </Link>
+      </li>
+    )
+  }
+
+  const renderGroupChild = (child: GroupChild) => {
+    if (!childVisible(child, hasModule)) return null
+
+    if (child.type === 'link') {
+      return renderLinkChild(child)
+    }
+
+    const subPaths = collectGroupPaths(child.children)
+    const subActive = isGroupActive(subPaths)
+    const isSubOpen = openGroups[child.key] ?? subActive
+
+    return (
+      <li key={child.key} className="pt-1">
+        <button
+          onClick={() => toggleGroup(child.key, subActive)}
+          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
+            subActive ? 'text-white bg-slate-700/40' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+          }`}
+        >
+          <span className="flex-shrink-0 text-current">{child.icon}</span>
+          <span className="font-medium truncate flex-1 text-left">{child.name}</span>
+          <ChevronRight size={12} className={`text-slate-500 transition-transform duration-200 flex-shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
+        </button>
+        {isSubOpen && (
+          <ul className="mt-0.5 ml-2 pl-2 border-l border-slate-700/40 space-y-0.5">
+            {child.children.filter(c => childVisible(c, hasModule)).map(link => renderLinkChild(link, true))}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
   const renderGroupItem = (item: Extract<MenuItem, { type: 'group' }>) => {
-    const isOpen = openGroups[item.key] === true
-    const groupPaths = item.children.map(c => c.path)
+    const visibleChildren = item.children.filter(c => childVisible(c, hasModule))
+    const isOpen = openGroups[item.key] ?? isGroupActive(collectGroupPaths(visibleChildren))
+    const groupPaths = collectGroupPaths(visibleChildren)
     const groupActive = isGroupActive(groupPaths)
+
+    const flatLinks = visibleChildren.flatMap(c =>
+      c.type === 'link' ? [c] : c.children.filter(l => childVisible(l, hasModule)),
+    )
 
     return (
       <li key={`group-${item.key}`}>
         <button
-          onClick={() => sidebarOpen && toggleGroup(item.key)}
+          onClick={() => sidebarOpen && toggleGroup(item.key, groupActive)}
           className={`w-full flex items-center px-3 py-2 rounded-lg transition-all duration-200 ${
             groupActive
               ? 'text-white bg-slate-700/60'
@@ -286,33 +403,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Expanded children */}
         {sidebarOpen && isOpen && (
           <ul className="mt-0.5 ml-3 pl-3 border-l border-slate-700/60 space-y-0.5">
-            {item.children.map(child => {
-              const childActive = isActive(child.path)
-              const badge = child.badge?.()
-              return (
-                <li key={child.path}>
-                  <Link
-                    to={child.path}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
-                      childActive
-                        ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-                    }`}
-                  >
-                    <span className="flex-shrink-0 text-current">{child.icon}</span>
-                    <span className="font-medium truncate flex-1">{child.name}</span>
-                    {badge}
-                  </Link>
-                </li>
-              )
-            })}
+            {visibleChildren.map(child => renderGroupChild(child))}
           </ul>
         )}
 
         {/* Collapsed: show all child icons */}
         {!sidebarOpen && (
           <div className="mt-0.5 space-y-0.5">
-            {item.children.map(child => {
+            {flatLinks.map(child => {
               const childActive = isActive(child.path)
               return (
                 <Link

@@ -12,6 +12,7 @@ import {
   ScanSearch, ArrowRight, Eye, BellOff, BarChart3, Terminal,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import type { PlatformAiopsProps } from '../utils/platformApi'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ServerInfo { id: number | null; name: string; hostname: string; ip: string; tier: string }
@@ -767,8 +768,9 @@ function ActivityTimeline() {
 }
 
 // ── Ana Sayfa ─────────────────────────────────────────────────────────────────
-export default function OpsCenter() {
+export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const qc = useQueryClient()
+  const eventsPath = platform === 'linux' ? '/linux/events' : platform === 'windows' ? '/windows/aiops/events' : '/virt/events'
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [tierFilter, setTierFilter] = useState<'all' | 'production' | 'staging' | 'development'>('all')
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning'>('all')
@@ -776,9 +778,9 @@ export default function OpsCenter() {
   const [detailCard, setDetailCard] = useState<ServerCard | null>(null)
 
   const { data, isLoading, refetch } = useQuery<CommandCenterData>({
-    queryKey: ['ops-command-center'],
+    queryKey: ['ops-command-center', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/ops/command-center`)
+      const r = await fetch(`${API_BASE_URL}/ops/command-center?platform=${platform}`)
       if (!r.ok) throw new Error('ops/command-center error')
       return r.json()
     },
@@ -1047,7 +1049,7 @@ export default function OpsCenter() {
           {/* Bottom nav */}
           <div className="grid grid-cols-4 gap-2 pt-4 border-t border-slate-800/60">
             {[
-              { to: '/events',    icon: <Activity size={13} />,    label: 'Events' },
+              { to: eventsPath, icon: <Activity size={13} />,    label: 'Events' },
               { to: '/incidents', icon: <Siren size={13} />,       label: 'Incidents' },
               { to: '/baseline',  icon: <BellOff size={13} />,     label: 'Baseline' },
               { to: '/rca',       icon: <ScanSearch size={13} />,  label: 'Kök Neden' },

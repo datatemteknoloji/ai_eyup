@@ -49,6 +49,12 @@ interface FeedEvent {
   created_at?: string; resolved: boolean
 }
 
+export type DashboardScope = 'admin' | 'linux' | 'windows'
+
+function isWindowsOs(s: DashboardServer) {
+  return (s.os_type || '').toLowerCase().includes('windows')
+}
+
 // ── Design tokens (aligned with DESIGN.md) ────────────────────────────────
 const NEON = {
   cyan:   '#38bdf8', blue:   '#3b82f6', purple: '#3b82f6',
@@ -479,11 +485,11 @@ function healthColor(score: number): string {
 // ── Hero Banner ────────────────────────────────────────────────────────────
 function DashboardHero({
   healthScore, onlineServers, totalServers, unresolvedEvents, openIncidents, lastRefresh,
-  showFleet = true, showOps = true,
+  showFleet = true, showOps = true, title = 'Altyapı Komuta Merkezi',
 }: {
   healthScore: number; onlineServers: number; totalServers: number
   unresolvedEvents: number; openIncidents: number; lastRefresh: string
-  showFleet?: boolean; showOps?: boolean
+  showFleet?: boolean; showOps?: boolean; title?: string
 }) {
   const systemStatus = healthScore >= 80 ? 'Sistem Normal' : healthScore >= 50 ? 'Dikkat Gerekiyor' : 'Kritik Durum'
   const accent = healthColor(healthScore)
@@ -512,7 +518,7 @@ function DashboardHero({
       <div className="relative flex flex-col lg:flex-row lg:items-center gap-8">
         <div className="flex-1">
           <p className="text-xs uppercase tracking-[0.2em] mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>
-            Altyapı Komuta Merkezi
+            {title}
           </p>
           <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{systemStatus}</h1>
           <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
@@ -692,12 +698,18 @@ function SectionTitle({ title, accent, sub }: { title: string; accent: string; s
 }
 
 // ── AIOps Özet ─────────────────────────────────────────────────────────────
-function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats; incidentStats?: IncidentStats }) {
+function AiOpsOverview({
+  eventStats, incidentStats,
+  eventsPath = '/linux/events', incidentsPath = '/linux/incidents', anomaliesPath = '/linux/anomalies',
+}: {
+  eventStats?: EventStats; incidentStats?: IncidentStats
+  eventsPath?: string; incidentsPath?: string; anomaliesPath?: string
+}) {
   const items = [
-    { label: 'Açık Event', value: eventStats?.unresolved ?? 0, color: NEON.orange, to: '/events' },
-    { label: 'Kritik Event', value: (eventStats?.critical ?? 0) + (eventStats?.emergency ?? 0), color: NEON.red, to: '/events' },
-    { label: 'Açık Incident', value: incidentStats?.open ?? 0, color: NEON.blue, to: '/incidents' },
-    { label: 'RCA Bekleyen', value: incidentStats?.investigating ?? 0, color: NEON.cyan, to: '/incidents' },
+    { label: 'Açık Event', value: eventStats?.unresolved ?? 0, color: NEON.orange, to: eventsPath },
+    { label: 'Kritik Event', value: (eventStats?.critical ?? 0) + (eventStats?.emergency ?? 0), color: NEON.red, to: eventsPath },
+    { label: 'Açık Incident', value: incidentStats?.open ?? 0, color: NEON.blue, to: incidentsPath },
+    { label: 'RCA Bekleyen', value: incidentStats?.investigating ?? 0, color: NEON.cyan, to: incidentsPath },
   ]
 
   return (
@@ -714,11 +726,11 @@ function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats;
         ))}
       </div>
       <div className="flex gap-2">
-        <Link to="/anomalies" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
+        <Link to={anomaliesPath} className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
           style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
           Anomaly Detection →
         </Link>
-        <Link to="/incidents" className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
+        <Link to={incidentsPath} className="flex-1 text-center py-2 rounded-lg text-xs font-medium text-white transition-colors"
           style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
           Incidents →
         </Link>
@@ -728,7 +740,7 @@ function AiOpsOverview({ eventStats, incidentStats }: { eventStats?: EventStats;
 }
 
 // ── Aktivite Akışı ─────────────────────────────────────────────────────────
-function ActivityFeed({ events }: { events: FeedEvent[] }) {
+function ActivityFeed({ events, eventsPath = '/linux/events' }: { events: FeedEvent[]; eventsPath?: string }) {
   const sevStyle: Record<string, { color: string; bg: string }> = {
     critical: { color: NEON.red, bg: 'rgba(239,68,68,0.10)' },
     emergency: { color: NEON.red, bg: 'rgba(239,68,68,0.10)' },
@@ -740,7 +752,7 @@ function ActivityFeed({ events }: { events: FeedEvent[] }) {
     <div className="cyber-card animate-fade-in h-full flex flex-col">
       <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
         <SectionTitle title="Canlı Aktivite" accent={NEON.orange} sub="Son açık eventler" />
-        <Link to="/events" className="text-xs" style={{ color: 'var(--accent)' }}>Tümü →</Link>
+        <Link to={eventsPath} className="text-xs" style={{ color: 'var(--accent)' }}>Tümü →</Link>
       </div>
       <div className="flex-1 overflow-y-auto max-h-80">
         {events.length === 0 ? (
@@ -857,19 +869,22 @@ function DigestCard({ digest }: {
 }
 
 // ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
-function QuickActionsPanel() {
+function QuickActionsPanel({ scope = 'admin' }: { scope?: DashboardScope }) {
   const { hasModule, user } = useAuth()
-  const allActions: { label: string; desc: string; to: string; accent: string; moduleId?: string; adminOnly?: boolean }[] = [
+  const allActions: { label: string; desc: string; to: string; accent: string; moduleId?: string; adminOnly?: boolean; scopes?: DashboardScope[] }[] = [
     { label: 'AI Chat', desc: 'Soru sor', to: '/chat', accent: NEON.blue, moduleId: 'ai_automation' },
     { label: 'AI Agent', desc: 'Otomasyon', to: '/agent', accent: NEON.cyan, moduleId: 'ai_automation' },
-    { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange, moduleId: 'linux' },
-    { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green, moduleId: 'linux' },
-    { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue, moduleId: 'linux' },
+    { label: 'Güncelle', desc: 'Patch & repo', to: '/system-update', accent: NEON.orange, moduleId: 'linux', scopes: ['admin', 'linux'] },
+    { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green, moduleId: 'linux', scopes: ['admin', 'linux'] },
+    { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue, moduleId: 'linux', scopes: ['admin', 'linux'] },
+    { label: 'WinRM', desc: 'Windows sunucular', to: '/windows', accent: NEON.blue, moduleId: 'windows', scopes: ['admin', 'windows'] },
+    { label: 'Hypervisor', desc: 'Sanallaştırma', to: '/hypervisors', accent: NEON.purple, moduleId: 'virtualization', scopes: ['admin'] },
     { label: 'Ayarlar', desc: 'Yapılandırma', to: '/settings', accent: '#94a3b8', adminOnly: true },
   ]
-  const actions = allActions.filter(a =>
-    a.adminOnly ? user?.role === 'admin' : hasModule(a.moduleId!)
-  )
+  const actions = allActions.filter(a => {
+    if (a.scopes && !a.scopes.includes(scope)) return false
+    return a.adminOnly ? user?.role === 'admin' : hasModule(a.moduleId!)
+  })
 
   if (actions.length === 0) return null
 
@@ -1047,13 +1062,30 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
 
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────
-const Dashboard: React.FC = () => {
+const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) => {
   const { hasModule } = useAuth()
-  const showLinux = hasModule('linux')
-  const showVirt = hasModule('virtualization')
-  const showAiops = hasModule('aiops')
-  const showAiAutomation = hasModule('ai_automation')
-  const hasAnyModule = showLinux || showVirt || showAiops || showAiAutomation || hasModule('windows') || hasModule('integrations') || hasModule('level1')
+  const isAdminScope = scope === 'admin'
+  const isLinuxScope = scope === 'linux'
+  const isWindowsScope = scope === 'windows'
+
+  const showLinux = isLinuxScope || (isAdminScope && hasModule('linux'))
+  const showVirt = isAdminScope && hasModule('virtualization')
+  const showWindowsPanel = isWindowsScope || (isAdminScope && hasModule('windows'))
+  const showAiops = isLinuxScope
+    ? (hasModule('linux') || hasModule('aiops'))
+    : isWindowsScope
+      ? hasModule('windows')
+      : (isAdminScope && hasModule('aiops'))
+  const showAiAutomation = isAdminScope && hasModule('ai_automation')
+
+  const aiopsPlatform = isLinuxScope ? 'linux' : isWindowsScope ? 'windows' : undefined
+  const eventsPath = isLinuxScope ? '/linux/events' : isWindowsScope ? '/windows/aiops/events' : '/linux/events'
+  const incidentsPath = isLinuxScope ? '/linux/incidents' : isWindowsScope ? '/windows/aiops/incidents' : '/linux/incidents'
+  const anomaliesPath = isLinuxScope ? '/linux/anomalies' : isWindowsScope ? '/windows/aiops/anomalies' : '/linux/anomalies'
+  const heroTitle = isLinuxScope ? 'Linux Yönetimi' : isWindowsScope ? 'Windows Yönetimi' : 'Altyapı Komuta Merkezi'
+
+  const hasAnyModule = showLinux || showVirt || showAiops || showAiAutomation || showWindowsPanel
+    || hasModule('integrations') || hasModule('level1')
 
   const [selectedServer, setSelectedServer] = useState<DashboardServer | null>(null)
   const [now, setNow] = useState(() => new Date())
@@ -1063,14 +1095,30 @@ const Dashboard: React.FC = () => {
     return () => clearInterval(t)
   }, [])
 
-  const { data: servers = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
+  const { data: serversRaw = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
     queryKey: ['servers'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/servers/`)
       if (!r.ok) throw new Error('Failed to fetch servers')
       return r.json()
     },
-    enabled: showLinux,
+    enabled: showLinux && !isWindowsScope,
+    refetchInterval: 30_000,
+  })
+  const servers = serversRaw.filter(s => !isWindowsOs(s))
+
+  interface WindowsDashboardServer {
+    id: number; name: string; hostname: string; ip_address: string; status: string
+    winrm_configured?: boolean; cpu_cores?: number; memory_gb?: number
+  }
+  const { data: windowsServers = [], isLoading: windowsLoading } = useQuery<WindowsDashboardServer[]>({
+    queryKey: ['windows-dashboard-servers'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/windows/servers`)
+      if (!r.ok) return []
+      return r.json()
+    },
+    enabled: isWindowsScope || (isAdminScope && hasModule('windows')),
     refetchInterval: 30_000,
   })
 
@@ -1085,9 +1133,10 @@ const Dashboard: React.FC = () => {
   })
 
   const { data: eventStats } = useQuery<EventStats>({
-    queryKey: ['event-stats'],
+    queryKey: ['event-stats', aiopsPlatform ?? 'all'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/events/stats`)
+      const q = aiopsPlatform ? `?platform=${aiopsPlatform}` : ''
+      const r = await fetch(`${API_BASE_URL}/events/stats${q}`)
       if (!r.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return r.json()
     },
@@ -1096,9 +1145,10 @@ const Dashboard: React.FC = () => {
   })
 
   const { data: incidentStats } = useQuery<IncidentStats>({
-    queryKey: ['incident-stats'],
+    queryKey: ['incident-stats', aiopsPlatform ?? 'all'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/incidents/stats`)
+      const q = aiopsPlatform ? `?platform=${aiopsPlatform}` : ''
+      const r = await fetch(`${API_BASE_URL}/incidents/stats${q}`)
       if (!r.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
       return r.json()
     },
@@ -1133,9 +1183,10 @@ const Dashboard: React.FC = () => {
   })
 
   const { data: recentEventsData } = useQuery<{ events: FeedEvent[] }>({
-    queryKey: ['dashboard-events'],
+    queryKey: ['dashboard-events', aiopsPlatform ?? 'all'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=8`)
+      const q = aiopsPlatform ? `&platform=${aiopsPlatform}` : ''
+      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=8${q}`)
       if (!r.ok) return { events: [] }
       return r.json()
     },
@@ -1160,7 +1211,7 @@ const Dashboard: React.FC = () => {
     refetchInterval: 300_000,  // 5 dk
   })
 
-  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading)) {
+  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading) || (isWindowsScope && windowsLoading)) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
         <div className="relative w-16 h-16">
@@ -1172,18 +1223,25 @@ const Dashboard: React.FC = () => {
     )
   }
 
-  const totalServers    = servers.length
-  const onlineServers   = servers.filter(s => s.status === 'ONLINE').length
-  const offlineServers  = servers.filter(s => s.status === 'OFFLINE').length
-  const warningServers  = servers.filter(s => s.status === 'WARNING').length
-  const criticalServers = servers.filter(s => s.status === 'CRITICAL').length
-  const aiReadyServers  = servers.filter(s => s.ai_ready && s.status === 'ONLINE').length
-  const totalCpu        = servers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
-  const totalRam        = servers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
-  const monitoredInstalled = metricsOverview?.total_online_installed
-    ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length
-  const monitoredLive = metricsOverview?.total_live
-    ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length
+  const fleetServers = isWindowsScope ? windowsServers : servers
+  const totalServers    = fleetServers.length
+  const onlineServers   = fleetServers.filter(s => s.status === 'ONLINE').length
+  const offlineServers  = fleetServers.filter(s => s.status === 'OFFLINE').length
+  const warningServers  = fleetServers.filter(s => s.status === 'WARNING').length
+  const criticalServers = fleetServers.filter(s => s.status === 'CRITICAL').length
+  const aiReadyServers  = isWindowsScope
+    ? fleetServers.filter(s => s.status === 'ONLINE').length
+    : servers.filter(s => s.ai_ready && s.status === 'ONLINE').length
+  const totalCpu        = fleetServers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
+  const totalRam        = fleetServers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+  const monitoredInstalled = isWindowsScope
+    ? onlineServers
+    : (metricsOverview?.total_online_installed
+      ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length)
+  const monitoredLive = isWindowsScope
+    ? onlineServers
+    : (metricsOverview?.total_live
+      ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length)
 
   const onlinePct   = totalServers > 0 ? (onlineServers / totalServers) * 100 : 100
   const monitorPct  = totalServers > 0 ? (monitoredLive / totalServers) * 100 : 0
@@ -1198,6 +1256,10 @@ const Dashboard: React.FC = () => {
     ...(showLinux ? [
       { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
       { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
+      { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
+    ] : []),
+    ...(isWindowsScope ? [
+      { label: 'WinRM Hazır', value: windowsServers.filter(s => s.winrm_configured).length, sub: `${totalServers} sunucu`, accent: NEON.cyan, pct: totalServers > 0 ? (windowsServers.filter(s => s.winrm_configured).length / totalServers) * 100 : 0 },
       { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
     ] : []),
   ]
@@ -1217,7 +1279,7 @@ const Dashboard: React.FC = () => {
   return (
     <>
       <div className="space-y-5 animate-fade-in pb-4">
-        {(showLinux || showAiops) && (
+        {(showLinux || showAiops || isWindowsScope) && (
           <DashboardHero
             healthScore={healthScore}
             onlineServers={onlineServers}
@@ -1225,16 +1287,22 @@ const Dashboard: React.FC = () => {
             unresolvedEvents={eventStats?.unresolved ?? 0}
             openIncidents={(incidentStats?.open ?? 0) + (incidentStats?.investigating ?? 0)}
             lastRefresh={lastRefresh}
-            showFleet={showLinux}
+            showFleet={showLinux || isWindowsScope}
             showOps={showAiops}
+            title={heroTitle}
           />
         )}
 
-        {showLinux && (
+        {(showLinux || isWindowsScope) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            <HeroKpi label="Toplam Sunucu" value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.blue} pct={onlinePct} delay={0} />
-            <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
-            <HeroKpi label="Monitörlenen" value={monitoredLive} sub={`${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
+            <HeroKpi label={isWindowsScope ? 'Windows Sunucu' : 'Toplam Sunucu'} value={totalServers} sub={`${onlineServers} çevrimiçi`} accent={NEON.blue} pct={onlinePct} delay={0} />
+            {!isWindowsScope && (
+              <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
+            )}
+            {isWindowsScope && (
+              <HeroKpi label="WinRM" value={windowsServers.filter(s => s.winrm_configured).length} sub="yapılandırılmış" accent={NEON.cyan} pct={totalServers > 0 ? (windowsServers.filter(s => s.winrm_configured).length / totalServers) * 100 : 0} delay={50} />
+            )}
+            <HeroKpi label={isWindowsScope ? 'Erişilebilir' : 'Monitörlenen'} value={monitoredLive} sub={isWindowsScope ? `${offlineServers} offline` : `${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
             <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
           </div>
         )}
@@ -1248,14 +1316,32 @@ const Dashboard: React.FC = () => {
         )}
 
         {(showLinux || showAiops) && (
-          <div className={`grid grid-cols-1 gap-4 ${showLinux && showAiops ? 'xl:grid-cols-3' : ''}`}>
+          <div className={`grid grid-cols-1 gap-4 ${(showLinux || isWindowsScope) && showAiops ? 'xl:grid-cols-3' : ''}`}>
             {showLinux && (
               <div className={showAiops ? 'xl:col-span-2' : ''}>
                 <ResourceUsageChart metrics={metricDashboard} />
               </div>
             )}
-            {showAiops && <AiOpsOverview eventStats={eventStats} incidentStats={incidentStats} />}
+            {showAiops && (
+              <AiOpsOverview
+                eventStats={eventStats}
+                incidentStats={incidentStats}
+                eventsPath={eventsPath}
+                incidentsPath={incidentsPath}
+                anomaliesPath={anomaliesPath}
+              />
+            )}
           </div>
+        )}
+
+        {isWindowsScope && showAiops && (
+          <AiOpsOverview
+            eventStats={eventStats}
+            incidentStats={incidentStats}
+            eventsPath={eventsPath}
+            incidentsPath={incidentsPath}
+            anomaliesPath={anomaliesPath}
+          />
         )}
 
         {showLinux && (
@@ -1277,15 +1363,42 @@ const Dashboard: React.FC = () => {
         <div className={`grid grid-cols-1 gap-4 ${showAiops ? 'lg:grid-cols-3' : ''}`}>
           {showAiops && (
             <div className="lg:col-span-2">
-              <ActivityFeed events={recentEventsData?.events ?? []} />
+              <ActivityFeed events={recentEventsData?.events ?? []} eventsPath={eventsPath} />
             </div>
           )}
-          <QuickActionsPanel />
+          <QuickActionsPanel scope={scope} />
         </div>
 
-        {(showLinux || showVirt) && (
+        {(showLinux || showVirt || isWindowsScope) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {showLinux && <RecentServers servers={servers.filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />}
+            {isWindowsScope && (
+              <div className="cyber-card animate-fade-in">
+                <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.blue }} />
+                    <h2 className="text-sm font-semibold text-white">Windows Sunucular</h2>
+                  </div>
+                  <Link to="/windows" className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Tümünü Gör →</Link>
+                </div>
+                <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+                  {windowsServers.slice(0, 8).map(s => (
+                    <Link key={s.id} to="/windows"
+                      className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-800/60 transition-colors"
+                      style={{ border: '1px solid var(--border)' }}>
+                      <div>
+                        <p className="text-sm font-medium text-white">{s.name}</p>
+                        <p className="text-xs text-slate-500">{s.ip_address}</p>
+                      </div>
+                      <span className={`text-[10px] font-semibold ${s.status === 'ONLINE' ? 'text-green-400' : 'text-slate-500'}`}>{s.status}</span>
+                    </Link>
+                  ))}
+                  {windowsServers.length === 0 && (
+                    <p className="text-sm text-slate-500 text-center py-6">Windows sunucu bulunamadı</p>
+                  )}
+                </div>
+              </div>
+            )}
             {showVirt && <HypervisorCards hypervisors={hypervisors} />}
           </div>
         )}

@@ -7,6 +7,7 @@ import AuditLog from './pages/AuditLog'
 import Servers from './pages/Servers'
 import Hypervisors from './pages/Hypervisors'
 import Chat from './pages/Chat'
+import WindowsChat from './pages/WindowsChat'
 import Agent from './pages/Agent'
 import LiveMetrics from './pages/LiveMetrics'
 import Settings from './pages/Settings'
@@ -22,6 +23,9 @@ import UCMDBImport from './pages/UCMDBImport'
 import Level1Ops from './pages/Level1Ops'
 import UserManager from './pages/UserManager'
 import Layout from './components/Layout'
+import {
+  AdminDashboardPage, LinuxDashboardPage, WindowsDashboardPage,
+} from './pages/PlatformDashboardPages'
 import { RequirePlatformAiops } from './components/RequirePlatformAiops'
 import {
   LinuxOpsPage, VirtOpsPage, WindowsOpsPage,
@@ -76,9 +80,9 @@ const RequireModule: React.FC<{ moduleId: string; children: React.ReactNode }> =
   return <>{children}</>
 }
 
-// Ana sayfa — sanallaştırma modülü varsa hypervisor dashboard, yoksa ilk erişilebilir modüle yönlendir
+// Ana sayfa — admin genel dashboard, diğerleri modül dashboard'una
 const HomeRedirect: React.FC = () => {
-  const { hasModule, loading } = useAuth()
+  const { hasModule, loading, user } = useAuth()
   if (loading) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
@@ -86,10 +90,11 @@ const HomeRedirect: React.FC = () => {
       </div>
     )
   }
+  if (user?.role === 'admin') return <Navigate to="/dashboard" replace />
+  if (hasModule('linux')) return <Navigate to="/linux/dashboard" replace />
   if (hasModule('virtualization')) return <Navigate to="/hypervisors" replace />
-  if (hasModule('linux')) return <Navigate to="/servers" replace />
+  if (hasModule('windows')) return <Navigate to="/windows/dashboard" replace />
   if (hasModule('aiops')) return <Navigate to="/linux/ops" replace />
-  if (hasModule('windows')) return <Navigate to="/windows" replace />
   if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
   if (hasModule('level1')) return <Navigate to="/level1" replace />
   if (hasModule('integrations')) return <Navigate to="/ucmdb/import" replace />
@@ -115,7 +120,9 @@ function App() {
                   <ErrorBoundary>
                     <Routes>
                       <Route path="/" element={<ErrorBoundary><HomeRedirect /></ErrorBoundary>} />
-                      <Route path="/dashboard" element={<Navigate to="/" replace />} />
+                      <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
+                      <Route path="/linux/dashboard" element={<RequireModule moduleId="linux"><ErrorBoundary><LinuxDashboardPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/windows/dashboard" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsDashboardPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/servers" element={<RequireModule moduleId="linux"><ErrorBoundary><Servers /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisors" element={<RequireModule moduleId="virtualization"><ErrorBoundary><Hypervisors /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt-ops" element={<Navigate to="/virt/ops" replace />} />
@@ -156,6 +163,7 @@ function App() {
                       <Route path="/windows" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/events" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/updates" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
+                      <Route path="/windows/chat" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsChat /></ErrorBoundary></RequireModule>} />
                       <Route path="/ucmdb/import" element={<RequireModule moduleId="integrations"><ErrorBoundary><UCMDBImport /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/:category" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />

@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.models.server import Server
 from app.models.metric import MetricData
 from app.services.anomaly_detector import detect_all_anomalies, detect_anomalies_for_server
+from app.services.platform_scope import get_linux_server_ids, get_windows_server_ids, apply_platform_filter
 from datetime import datetime, timedelta
 import statistics
 
@@ -18,6 +19,7 @@ router = APIRouter()
 @router.get("/")
 async def get_anomalies(
     server_id: Optional[int] = Query(None),
+    platform: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Tum sunucular veya belirli bir sunucu icin anlık anomali tespiti yap."""
@@ -28,6 +30,14 @@ async def get_anomalies(
         anomalies = detect_anomalies_for_server(db, server)
     else:
         anomalies = detect_all_anomalies(db)
+        if platform == "linux":
+            linux_ids = set(get_linux_server_ids(db))
+            anomalies = [a for a in anomalies if a.get("server_id") in linux_ids]
+        elif platform == "windows":
+            win_ids = set(get_windows_server_ids(db))
+            anomalies = [a for a in anomalies if a.get("server_id") in win_ids]
+        elif platform == "virt":
+            anomalies = []
 
     critical = [a for a in anomalies if a["severity"] == "critical"]
     warning = [a for a in anomalies if a["severity"] == "warning"]
@@ -298,19 +308,31 @@ async def backfill_logs(
 
 
 @router.get("/logs/list")
-async def get_log_anomaly_list(days: int = Query(30, ge=7, le=90), db: Session = Depends(get_db)):
+async def get_log_anomaly_list(
+    days: int = Query(30, ge=7, le=90),
+    platform: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
     """Isı haritası ile aynı veri kaynağından (log_entry) son N gün detay listesi."""
     from app.models.event import SystemEvent
 
     now = datetime.utcnow()
     since = now - timedelta(days=days)
 
-    events = db.query(SystemEvent).join(Server, Server.id == SystemEvent.server_id).filter(
+    if platform == "virt":
+        # Sanallaştırma modülünün kendi Komuta Merkezi log paneli var
+        # (vCenter event/alarm/task) — OS log tabanlı bu anomali listesi
+        # sanallaştırma için henüz uygulanmıyor; karışıklığı önlemek için boş dön.
+        return {"days": days, "total": 0, "critical_count": 0, "warning_count": 0, "anomalies": [], "generated_at": now.isoformat()}
+
+    q = db.query(SystemEvent).join(Server, Server.id == SystemEvent.server_id).filter(
         Server.ai_ready == True,  # noqa: E712 — sadece AI Ready sunucular
         func.lower(SystemEvent.event_type).in_(["log_entry", "log"]),
         SystemEvent.created_at >= since,
         func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
-    ).order_by(SystemEvent.created_at.desc()).limit(2000).all()
+    )
+    q = apply_platform_filter(q, platform, db)
+    events = q.order_by(SystemEvent.created_at.desc()).limit(2000).all()
 
     sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
     rows = []
@@ -341,17 +363,30 @@ async def get_log_anomaly_list(days: int = Query(30, ge=7, le=90), db: Session =
         "generated_at": now.isoformat(),
     }
 @router.get("/logs/heatmap")
-async def get_log_anomaly_heatmap(days: int = Query(30, ge=7, le=90), db: Session = Depends(get_db)):
+async def get_log_anomaly_heatmap(
+    days: int = Query(30, ge=7, le=90),
+    platform: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
     """Son N gun loglarindan sunucu-gun bazli anomali isi haritasi dondurur."""
     from app.models.event import SystemEvent
 
     now = datetime.utcnow()
     since = now - timedelta(days=days - 1)
 
+    if platform == "virt":
+        # bkz. /logs/list — sanallaştırma için OS log tabanlı ısı haritası yok.
+        return {"days": days, "dates": [], "rows": [], "max_cell_score": 0, "total_count": 0, "total_score": 0, "generated_at": now.isoformat()}
+
     # Sadece AI Ready sunucular AIOps ısı haritasında gösterilir.
-    servers = db.query(Server).filter(
-        Server.ai_ready == True  # noqa: E712
-    ).order_by(Server.name.asc()).all()
+    servers_q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
+    if platform == "linux":
+        ids = set(get_linux_server_ids(db))
+        servers_q = servers_q.filter(Server.id.in_(ids)) if ids else servers_q.filter(False)
+    elif platform == "windows":
+        ids = set(get_windows_server_ids(db))
+        servers_q = servers_q.filter(Server.id.in_(ids)) if ids else servers_q.filter(False)
+    servers = servers_q.order_by(Server.name.asc()).all()
     server_ids = [s.id for s in servers]
 
     day_labels = [
@@ -362,12 +397,14 @@ async def get_log_anomaly_heatmap(days: int = Query(30, ge=7, le=90), db: Sessio
     matrix = {s.id: {d: {"count": 0, "score": 0} for d in day_labels} for s in servers}
 
     if server_ids:
-        events = db.query(SystemEvent).filter(
+        q = db.query(SystemEvent).filter(
             SystemEvent.server_id.in_(server_ids),
             func.lower(SystemEvent.event_type).in_(["log_entry", "log"]),
             SystemEvent.created_at >= since,
             func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
-        ).all()
+        )
+        q = apply_platform_filter(q, platform, db)
+        events = q.all()
 
         sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
 

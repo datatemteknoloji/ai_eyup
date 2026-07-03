@@ -12,7 +12,7 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
     server_ids = Column(JSON, default=list)  # İlgili sunucu ID'leri
-    category = Column(String(32), default="linux", index=True)  # linux | hypervisor
+    category = Column(String(32), default="linux", index=True)  # linux | windows | hypervisor
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
@@ -29,6 +29,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.event import SystemEvent, Incident
 from app.models.server import Server
+from app.services.platform_scope import (
+    apply_platform_filter,
+    get_linux_server_ids,
+    get_windows_server_ids,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -69,33 +74,32 @@ def _server_map(db: Session) -> Dict[int, Dict[str, Any]]:
     }
 
 
-def _active_events(db: Session, since: datetime) -> List[SystemEvent]:
+def _active_events(db: Session, since: datetime, platform: Optional[str] = None) -> List[SystemEvent]:
     """Aktif, bilinmeyen, onaylanmamış, snooze'suz eventler."""
-    rows: List[SystemEvent] = (
-        db.query(SystemEvent)
-        .filter(
-            SystemEvent.resolved == False,        # noqa: E712
-            SystemEvent.is_known == False,        # noqa: E712
-            SystemEvent.is_acknowledged == False, # noqa: E712
-            SystemEvent.last_seen >= since,
-            or_(
-                SystemEvent.event_type != "log_entry",
-                and_(
-                    SystemEvent.event_type == "log_entry",
-                    SystemEvent.severity == "critical",
-                    SystemEvent.occurrence_count >= 3,
-                ),
-                and_(
-                    SystemEvent.event_type == "log_entry",
-                    SystemEvent.severity == "warning",
-                    SystemEvent.occurrence_count >= 2,
-                ),
+    q = db.query(SystemEvent).filter(
+        SystemEvent.resolved == False,        # noqa: E712
+        SystemEvent.is_known == False,        # noqa: E712
+        SystemEvent.is_acknowledged == False, # noqa: E712
+        SystemEvent.last_seen >= since,
+        or_(
+            SystemEvent.event_type != "log_entry",
+            and_(
+                SystemEvent.event_type == "log_entry",
+                SystemEvent.severity == "critical",
+                SystemEvent.occurrence_count >= 3,
             ),
-        )
-        .order_by(SystemEvent.last_seen.desc())
-        .limit(3000)
-        .all()
+            and_(
+                SystemEvent.event_type == "log_entry",
+                SystemEvent.severity == "warning",
+                SystemEvent.occurrence_count >= 2,
+            ),
+        ),
     )
+    # apply_platform_filter .filter() çağırır — SQLAlchemy, LIMIT/OFFSET
+    # uygulanmış bir Query üzerinde .filter() çağrılmasına izin vermiyor,
+    # bu yüzden platform filtresi order_by/limit'ten ÖNCE uygulanmalı.
+    q = apply_platform_filter(q, platform, db)
+    rows: List[SystemEvent] = q.order_by(SystemEvent.last_seen.desc()).limit(3000).all()
     return [e for e in rows if not _is_snoozed(e.id)]
 
 
@@ -143,6 +147,7 @@ def _calc_health_score(events: List[SystemEvent], server_count: int) -> Dict[str
 def _build_server_card(
     server_info: Dict[str, Any],
     events: List[SystemEvent],
+    platform: Optional[str] = None,
 ) -> Dict[str, Any]:
     max_sev = max(events, key=lambda e: SEV_RANK.get(e.severity, 0)).severity
     last_ev = max(events, key=lambda e: e.last_seen or datetime.min)
@@ -184,11 +189,37 @@ def _build_server_card(
         "metrics": metrics,
         "last_seen": last_ev.last_seen.isoformat() if last_ev.last_seen else None,
         # Aksiyon önerileri
-        "suggested_actions": _suggest_actions(events, server_info),
+        "suggested_actions": _suggest_actions(events, server_info, platform),
     }
 
 
-def _suggest_actions(events: List[SystemEvent], server: Dict[str, Any]) -> List[str]:
+def _suggest_actions(events: List[SystemEvent], server: Dict[str, Any], platform: Optional[str] = None) -> List[str]:
+    if platform == "windows":
+        actions = []
+        if any(e.event_type == "log_entry" for e in events):
+            actions.append("Event Viewer → System/Application kritik kayıtları incele")
+        if any("service" in (e.title or "").lower() for e in events):
+            actions.append("Get-Service | Where Status -eq Stopped")
+        if any("disk" in (e.title or "").lower() or "storage" in (e.title or "").lower() for e in events):
+            actions.append("Get-PSDrive -PSProvider FileSystem")
+        if not actions:
+            actions.append("Get-WinEvent -LogName System -MaxEvents 20 | Where Level -le 3")
+        return actions[:4]
+
+    if platform == "virt":
+        actions = []
+        for ev in events:
+            cat = (ev.raw_data or {}).get("category", "")
+            if cat == "memory":
+                actions.append("VM bellek overcommit ve balloon kontrolü")
+            elif cat == "cpu":
+                actions.append("Host CPU ready time / co-stop metriklerini incele")
+            elif cat == "disk":
+                actions.append("Datastore ve snapshot birikimini kontrol et")
+        if not actions:
+            actions.append("Hypervisor yönetim konsolunda host/task loglarını incele")
+        return actions[:4]
+
     actions = []
     metrics = {(ev.raw_data or {}).get("metric") or ev.event_type for ev in events}
 
@@ -221,7 +252,10 @@ def _suggest_actions(events: List[SystemEvent], server: Dict[str, Any]) -> List[
 # ── API Endpoint'leri ─────────────────────────────────────────────────────────
 
 @router.get("/command-center")
-async def command_center(db: Session = Depends(get_db)):
+async def command_center(
+    platform: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
     """
     Sunucu odaklı alarm merkezi:
       - storms: ortak metrik fırtınaları
@@ -232,23 +266,27 @@ async def command_center(db: Session = Depends(get_db)):
     """
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
+    if platform == "windows":
+        win_ids = set(get_windows_server_ids(db))
+        smap = {k: v for k, v in smap.items() if k in win_ids}
+    elif platform == "linux":
+        linux_ids = set(get_linux_server_ids(db))
+        smap = {k: v for k, v in smap.items() if k in linux_ids}
+    elif platform == "virt":
+        smap = {}
     total_servers = len(smap)
 
-    events = _active_events(db, since)
+    events = _active_events(db, since, platform=platform)
 
-    # Bastırılan / bilinen / onaylanmış sayısı
-    green_count: int = (
-        db.query(SystemEvent)
-        .filter(
-            SystemEvent.last_seen >= since,
-            or_(
-                SystemEvent.resolved == True,       # noqa: E712
-                SystemEvent.is_known == True,       # noqa: E712
-                SystemEvent.is_acknowledged == True, # noqa: E712
-            ),
-        )
-        .count()
+    green_q = db.query(SystemEvent).filter(
+        SystemEvent.last_seen >= since,
+        or_(
+            SystemEvent.resolved == True,       # noqa: E712
+            SystemEvent.is_known == True,       # noqa: E712
+            SystemEvent.is_acknowledged == True, # noqa: E712
+        ),
     )
+    green_count: int = apply_platform_filter(green_q, platform, db).count()
 
     # ── Storm tespiti ─────────────────────────────────────────────────────────
     storm_incidents: List[Incident] = (
@@ -303,14 +341,29 @@ async def command_center(db: Session = Depends(get_db)):
     warning_servers: List[Dict[str, Any]] = []
 
     for server_id, sevs in by_server.items():
-        si = smap.get(server_id, {
-            "id": server_id, "name": f"server#{server_id}",
-            "hostname": "", "ip": "", "tier": "unknown"
-        }) if server_id else {
-            "id": None, "name": "Bilinmeyen", "hostname": "", "ip": "", "tier": "unknown"
-        }
+        if platform == "virt" and server_id is not None:
+            continue
+        if server_id and platform in ("linux", "windows") and server_id not in smap:
+            continue
 
-        card = _build_server_card(si, sevs)
+        if server_id:
+            si = smap.get(server_id, {
+                "id": server_id, "name": f"server#{server_id}",
+                "hostname": "", "ip": "", "tier": "unknown",
+            })
+        elif platform == "virt":
+            raw = sevs[0].raw_data or {} if sevs else {}
+            si = {
+                "id": None,
+                "name": raw.get("host_name") or raw.get("platform_label") or "Hypervisor",
+                "hostname": raw.get("host_name") or "",
+                "ip": "",
+                "tier": "infrastructure",
+            }
+        else:
+            si = {"id": None, "name": "Bilinmeyen", "hostname": "", "ip": "", "tier": "unknown"}
+
+        card = _build_server_card(si, sevs, platform)
         max_sev = card["max_severity"]
         tier = si.get("tier", "unknown")
 
@@ -342,29 +395,34 @@ async def command_center(db: Session = Depends(get_db)):
 
 
 @router.get("/summary")
-async def ops_summary(db: Session = Depends(get_db)):
+async def ops_summary(
+    platform: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
     """Hafif özet — navbar badge."""
     since = datetime.utcnow() - timedelta(hours=24)
-    critical = (
-        db.query(SystemEvent)
-        .filter(
+    crit_q = apply_platform_filter(
+        db.query(SystemEvent).filter(
             SystemEvent.resolved == False,        # noqa: E712
             SystemEvent.is_known == False,        # noqa: E712
             SystemEvent.severity.in_(["critical", "emergency"]),
             SystemEvent.last_seen >= since,
-        )
-        .count()
+        ),
+        platform,
+        db,
     )
-    warning = (
-        db.query(SystemEvent)
-        .filter(
+    critical = crit_q.count()
+    warn_q = apply_platform_filter(
+        db.query(SystemEvent).filter(
             SystemEvent.resolved == False,        # noqa: E712
             SystemEvent.is_known == False,        # noqa: E712
             SystemEvent.severity == "warning",
             SystemEvent.last_seen >= since,
-        )
-        .count()
+        ),
+        platform,
+        db,
     )
+    warning = warn_q.count()
     open_incidents = (
         db.query(Incident)
         .filter(Incident.status.in_(["open", "investigating"]))

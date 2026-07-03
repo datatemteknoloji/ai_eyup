@@ -39,7 +39,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,12 @@ def _latest_host_metrics(db: Session) -> List[Dict]:
 def _get_vms(db: Session) -> List[Dict]:
     from app.models.server import Server
     from app.models.hypervisor import Hypervisor
-    vms = db.query(Server).filter(Server.hypervisor_id != None).all()  # noqa: E711
+    vms = db.query(Server).filter(
+        or_(
+            Server.hypervisor_id.isnot(None),
+            Server.server_type == "VIRTUAL",
+        )
+    ).all()
     hvs = {hv.id: hv.name for hv in db.query(Hypervisor).all()}
     result = []
     for v in vms:
@@ -150,6 +155,222 @@ def _get_active_events(db: Session, days: int = 7) -> List[Dict]:
     return result
 
 
+def _get_virt_platform_events(db: Session, days: int = 30) -> List[Dict]:
+    """Sanallaştırma platformu olayları (virt_collector / virt_resource kaynaklı)."""
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = db.execute(text("""
+        SELECT e.id, e.server_id, s.name as server_name,
+               e.event_type, e.title, e.severity, e.source,
+               e.created_at, e.occurrence_count, e.raw_data
+        FROM system_events e
+        LEFT JOIN servers s ON e.server_id = s.id
+        WHERE e.created_at >= :since
+          AND (
+            e.source IN ('virt_collector', 'virt_resource', 'vcenter_event', 'vcenter_alarm', 'vcenter_task')
+            OR e.event_type IN ('virt_log', 'virt_resource', 'vcenter_event', 'vcenter_alarm', 'vcenter_task')
+          )
+        ORDER BY e.created_at DESC
+        LIMIT 300
+    """), {"since": since}).all()
+    result = []
+    for r in rows:
+        raw = r.raw_data or {}
+        result.append({
+            "id": r.id,
+            "server_id": r.server_id,
+            "server": r.server_name or raw.get("host_name") or "Platform",
+            "type": r.event_type,
+            "title": r.title,
+            "severity": r.severity,
+            "source": r.source,
+            "action": raw.get("action"),
+            "actor": raw.get("actor"),
+            "hypervisor_id": raw.get("hypervisor_id"),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "occurrences": r.occurrence_count or 1,
+        })
+    return result
+
+
+def _detect_host_metric_anomalies(db: Session) -> List[Dict]:
+    """Son 24 saatte baseline'a göre anormal host metrik artışları."""
+    rows = db.execute(text("""
+        WITH recent AS (
+            SELECT host_name,
+                   MAX(cpu_usage_pct) AS peak_cpu,
+                   MAX(mem_usage_pct) AS peak_mem,
+                   MAX(ds_usage_pct) AS peak_ds
+            FROM hypervisor_host_metrics
+            WHERE timestamp >= NOW() - INTERVAL '24 hours'
+            GROUP BY host_name
+        ),
+        baseline AS (
+            SELECT host_name,
+                   AVG(cpu_usage_pct) AS avg_cpu,
+                   AVG(mem_usage_pct) AS avg_mem,
+                   AVG(ds_usage_pct) AS avg_ds
+            FROM hypervisor_host_metrics
+            WHERE timestamp >= NOW() - INTERVAL '7 days'
+            GROUP BY host_name
+        )
+        SELECT r.host_name,
+               r.peak_cpu, b.avg_cpu,
+               r.peak_mem, b.avg_mem,
+               r.peak_ds, b.avg_ds
+        FROM recent r
+        JOIN baseline b ON r.host_name = b.host_name
+    """)).all()
+
+    anomalies = []
+    for r in rows:
+        issues = []
+        avg_cpu = float(r.avg_cpu or 0)
+        avg_mem = float(r.avg_mem or 0)
+        avg_ds = float(r.avg_ds or 0)
+        peak_cpu = float(r.peak_cpu or 0)
+        peak_mem = float(r.peak_mem or 0)
+        peak_ds = float(r.peak_ds or 0)
+
+        if avg_cpu >= 5 and peak_cpu >= max(85, avg_cpu * 1.45):
+            issues.append(f"CPU spike (%{round(peak_cpu, 1)} vs ort. %{round(avg_cpu, 1)})")
+        if avg_mem >= 5 and peak_mem >= max(85, avg_mem * 1.35):
+            issues.append(f"RAM spike (%{round(peak_mem, 1)} vs ort. %{round(avg_mem, 1)})")
+        if avg_ds >= 5 and peak_ds >= max(80, avg_ds * 1.25):
+            issues.append(f"Disk spike (%{round(peak_ds, 1)} vs ort. %{round(avg_ds, 1)})")
+
+        if issues:
+            anomalies.append({
+                "host": r.host_name,
+                "issues": issues,
+                "peak_cpu_pct": round(peak_cpu, 1),
+                "avg_cpu_pct": round(avg_cpu, 1),
+                "peak_mem_pct": round(peak_mem, 1),
+                "avg_mem_pct": round(avg_mem, 1),
+                "severity": "Kritik" if any("RAM" in i or "CPU" in i for i in issues) else "Uyarı",
+            })
+
+    anomalies.sort(key=lambda x: -(len(x["issues"]) * 10 + x["peak_cpu_pct"]))
+    return anomalies[:20]
+
+
+def _report_data_quality(db: Session) -> Dict[str, Any]:
+    """Rapor güvenilirliği için envanter ve metrik tazeliği özeti."""
+    from app.models.server import Server
+    from app.models.hypervisor import Hypervisor
+
+    virtual_servers = db.query(Server).filter(
+        or_(
+            Server.hypervisor_id.isnot(None),
+            Server.server_type == "VIRTUAL",
+        )
+    ).all()
+    total_vms = len(virtual_servers)
+    with_hypervisor = sum(1 for v in virtual_servers if v.hypervisor_id)
+    with_disk = sum(1 for v in virtual_servers if v.vm_disk_gb)
+    with_tools = sum(1 for v in virtual_servers if v.vm_tools_status)
+    with_datastore = sum(1 for v in virtual_servers if v.vm_datastore)
+    stale_cutoff = datetime.utcnow() - timedelta(hours=24)
+    stale_sync = sum(
+        1 for v in virtual_servers
+        if not v.vm_last_sync or v.vm_last_sync.replace(tzinfo=None) < stale_cutoff
+    )
+
+    hosts = _latest_host_metrics(db)
+    last_host_metric = None
+    for h in hosts:
+        ts = h.get("last_update")
+        if ts and (last_host_metric is None or ts > last_host_metric):
+            last_host_metric = ts
+
+    hypervisors = db.query(Hypervisor).all()
+    hv_sync_info = []
+    for hv in hypervisors:
+        hv_sync_info.append({
+            "name": hv.name,
+            "type": hv.hypervisor_type.value if hv.hypervisor_type else "",
+            "last_sync": hv.last_sync.isoformat() if hv.last_sync else None,
+        })
+
+    meta_fields = 4
+    meta_score = 0
+    if total_vms:
+        meta_score = round(
+            (
+                (with_hypervisor / total_vms)
+                + (with_disk / total_vms)
+                + (with_tools / total_vms)
+                + (with_datastore / total_vms)
+            ) / meta_fields * 100,
+            1,
+        )
+
+    warnings: List[str] = []
+    if total_vms == 0:
+        warnings.append("Envanterde sanal sunucu yok — hypervisor VM senkronizasyonu çalıştırın.")
+    elif with_hypervisor < total_vms * 0.8:
+        warnings.append(f"{total_vms - with_hypervisor} VM hypervisor ile eşleşmemiş.")
+    if total_vms and with_disk < total_vms * 0.5:
+        warnings.append("Disk tahsisat bilgisi eksik — VM detay zenginleştirmesi gerekli.")
+    if not hosts:
+        warnings.append("Host metrikleri yok — yalnızca VMware ESX metrik senkronu desteklenir.")
+    elif stale_sync > total_vms * 0.3 and total_vms:
+        warnings.append(f"{stale_sync} VM'in detay senkronu 24 saatten eski.")
+
+    if meta_score >= 80 and hosts and not warnings:
+        quality_level = "İyi"
+    elif meta_score >= 55 or hosts:
+        quality_level = "Orta"
+    else:
+        quality_level = "Düşük"
+
+    return {
+        "vm_total": total_vms,
+        "vm_with_hypervisor_pct": round(with_hypervisor / total_vms * 100, 1) if total_vms else 0,
+        "vm_metadata_completeness_pct": meta_score,
+        "vm_missing_disk_count": total_vms - with_disk,
+        "vm_missing_tools_count": total_vms - with_tools,
+        "vm_stale_sync_count": stale_sync,
+        "host_metrics_hosts": len(hosts),
+        "last_host_metric_at": last_host_metric,
+        "hypervisor_sync": hv_sync_info,
+        "warnings": warnings,
+        "quality_level": quality_level,
+    }
+
+
+def _build_executive_recommendations(
+    hosts: List[Dict],
+    vms: List[Dict],
+    events: List[Dict],
+    data_quality: Dict[str, Any],
+) -> List[str]:
+    recs: List[str] = []
+    critical_cnt = sum(1 for e in events if e["severity"] in ("critical", "error"))
+
+    if data_quality.get("quality_level") == "Düşük":
+        recs.append("Envanter kalitesi düşük — hypervisor VM sync ve detay zenginleştirmesini çalıştırın.")
+    if not hosts:
+        recs.append("Kapasite/tahmin raporları için ESX host metrik senkronizasyonunu etkinleştirin.")
+    if critical_cnt > 0:
+        recs.append(f"{critical_cnt} aktif kritik olay var — Virt AIOps olay merkezini inceleyin.")
+    high_mem = [h for h in hosts if h["mem_pct"] > 85]
+    if high_mem:
+        recs.append(f"{len(high_mem)} host bellek baskısı altında — kapasite planlaması yapın.")
+    no_tools = [
+        v for v in vms
+        if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")
+        and (not v["tools_status"] or "running" not in (v["tools_status"] or "").lower())
+    ]
+    if no_tools:
+        recs.append(f"{len(no_tools)} çalışan VM'de guest tools eksik — güvenlik/uyumluluk riski.")
+    powered_off = [v for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn")]
+    if len(powered_off) >= 5:
+        recs.append(f"{len(powered_off)} kapalı VM — konsolidasyon raporu ile kaynak geri kazanımı değerlendirin.")
+    if not recs:
+        recs.append("Kritik bulgu yok — mevcut kapasite ve uyumluluk seviyesi korunuyor.")
+    return recs[:8]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RAPOR FONKSİYONLARI
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,6 +390,8 @@ def generate_executive_summary(db: Session) -> Dict[str, Any]:
     avg_ds = round(sum(h["ds_pct"] for h in hosts) / len(hosts), 1) if hosts else 0
 
     risk_level = "Kritik" if critical_cnt > 5 else ("Yüksek" if critical_cnt > 0 else "Normal")
+    data_quality = _report_data_quality(db)
+    recommendations = _build_executive_recommendations(hosts, vms, events, data_quality)
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -192,6 +415,8 @@ def generate_executive_summary(db: Session) -> Dict[str, Any]:
             "hosts_in_maintenance": sum(1 for h in hosts if h["maintenance"]),
             "hosts_disconnected": sum(1 for h in hosts if h["state"] != "connected"),
         },
+        "recommendations": recommendations,
+        "data_quality": data_quality,
         "hosts_detail": hosts,
     }
 
@@ -613,16 +838,18 @@ def generate_lifecycle_report(db: Session) -> Dict[str, Any]:
 
 def generate_anomaly_report(db: Session) -> Dict[str, Any]:
     events = _get_active_events(db, days=14)
+    virt_events = _get_virt_platform_events(db, days=14)
+    metric_anomalies = _detect_host_metric_anomalies(db)
 
     # Sunucu başına olay yoğunluğu
     server_agg: Dict[str, Dict] = {}
-    for e in events:
+    for e in events + virt_events:
         key = e.get("server") or "Bilinmiyor"
         if key not in server_agg:
             server_agg[key] = {"server": key, "critical": 0, "warning": 0, "total": 0, "types": set()}
         server_agg[key]["total"] += 1
         server_agg[key]["types"].add(e.get("type", ""))
-        if e["severity"] in ("critical", "error"):
+        if e["severity"] in ("critical", "error", "emergency"):
             server_agg[key]["critical"] += 1
         elif e["severity"] == "warning":
             server_agg[key]["warning"] += 1
@@ -636,7 +863,7 @@ def generate_anomaly_report(db: Session) -> Dict[str, Any]:
 
     # Tekrarlayan event tipleri
     type_counts: Dict[str, int] = {}
-    for e in events:
+    for e in events + virt_events:
         t = e.get("type", "unknown")
         type_counts[t] = type_counts.get(t, 0) + 1
     top_types = sorted(type_counts.items(), key=lambda x: -x[1])[:10]
@@ -644,11 +871,19 @@ def generate_anomaly_report(db: Session) -> Dict[str, Any]:
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "period_days": 14,
-        "total_events": len(events),
-        "critical_count": sum(1 for e in events if e["severity"] in ("critical", "error")),
-        "warning_count": sum(1 for e in events if e["severity"] == "warning"),
+        "total_events": len(events) + len(virt_events),
+        "critical_count": sum(
+            1 for e in events + virt_events if e["severity"] in ("critical", "error", "emergency")
+        ),
+        "warning_count": sum(1 for e in events + virt_events if e["severity"] == "warning"),
         "top_anomaly_servers": anomalies,
         "top_event_types": [{"type": t, "count": c} for t, c in top_types],
+        "host_metric_anomalies": metric_anomalies,
+        "virt_platform_events": len(virt_events),
+        "analysis_note": (
+            "Olay anomalileri system_events + sanallaştırma platform loglarından; "
+            "host metrik anomalileri son 24 saat vs 7 gün ortalamasından türetilir."
+        ),
     }
 
 
@@ -829,7 +1064,7 @@ def generate_riskiest_assets(db: Session) -> Dict[str, Any]:
 
 
 def generate_operations_report(db: Session) -> Dict[str, Any]:
-    """Son 30 günün operasyonel aktivitesi (mevcut event verisiyle)."""
+    """Son 30 günün operasyonel aktivitesi (system_events + sanallaştırma platform logları)."""
     since = datetime.utcnow() - timedelta(days=30)
     rows = db.execute(text("""
         SELECT
@@ -844,6 +1079,22 @@ def generate_operations_report(db: Session) -> Dict[str, Any]:
         LIMIT 30
     """), {"since": since}).all()
 
+    virt_rows = db.execute(text("""
+        SELECT
+            event_type,
+            severity,
+            COUNT(*) as cnt
+        FROM system_events
+        WHERE created_at >= :since
+          AND (
+            source IN ('virt_collector', 'virt_resource', 'vcenter_event', 'vcenter_alarm', 'vcenter_task')
+            OR event_type IN ('virt_log', 'virt_resource', 'vcenter_event', 'vcenter_alarm', 'vcenter_task')
+          )
+        GROUP BY event_type, severity
+        ORDER BY cnt DESC
+        LIMIT 20
+    """), {"since": since}).all()
+
     # Günlük trend
     daily = db.execute(text("""
         SELECT DATE_TRUNC('day', created_at)::date as day,
@@ -855,13 +1106,31 @@ def generate_operations_report(db: Session) -> Dict[str, Any]:
         LIMIT 30
     """), {"since": since}).all()
 
+    virt_platform = _get_virt_platform_events(db, days=30)
+    recent_platform_logs = [
+        {
+            "title": e.get("title"),
+            "severity": e.get("severity"),
+            "action": e.get("action"),
+            "actor": e.get("actor"),
+            "host": e.get("server"),
+            "created_at": e.get("created_at"),
+        }
+        for e in virt_platform[:25]
+    ]
+
     breakdown = [
         {"type": r.event_type, "severity": r.severity,
          "count": r.cnt, "unique_servers": r.unique_servers}
         for r in rows
     ]
+    virt_breakdown = [
+        {"type": r.event_type, "severity": r.severity, "count": r.cnt}
+        for r in virt_rows
+    ]
     total_events = sum(b["count"] for b in breakdown)
     unique_srv = max((b["unique_servers"] for b in breakdown), default=0)
+    virt_total = sum(b["count"] for b in virt_breakdown)
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -869,11 +1138,19 @@ def generate_operations_report(db: Session) -> Dict[str, Any]:
         "total_events": total_events,
         "unique_servers": unique_srv,
         "event_breakdown": breakdown,
+        "virt_platform": {
+            "total_events": virt_total,
+            "breakdown": virt_breakdown,
+            "recent_logs": recent_platform_logs,
+        },
         "daily_trend": [
             {"day": str(d.day), "total": d.total, "critical": d.critical}
             for d in daily
         ],
-        "note": "VM oluşturma/silme/migration geçmişi için hypervisor audit log entegrasyonu gereklidir.",
+        "note": (
+            "Sanallaştırma platform logları (virt_log / virt_resource) operasyon aktivitesine dahil edildi. "
+            "VM oluşturma/silme audit detayları hypervisor API entegrasyonu ile genişletilebilir."
+        ),
     }
 
 
@@ -1057,6 +1334,9 @@ def generate_report(db: Session, report_type: str, save: bool = True) -> Dict[st
     data = fn(db)
     title = REPORT_TITLES.get(report_type, report_type)
 
+    if "data_quality" not in data:
+        data["data_quality"] = _report_data_quality(db)
+
     if save:
         from app.models.infrastructure_report import InfrastructureReport
         report_obj = InfrastructureReport(
@@ -1137,6 +1417,9 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
                 [[h["host"], f"%{h.get('cpu_pct',0)}", f"%{h.get('mem_pct',0)}", f"%{h.get('ds_pct',0)}", f"{h.get('vms_running',0)}/{h.get('vms_total',0)}"]
                  for h in hosts]
             )
+        recs = data.get("recommendations", [])
+        if recs:
+            lines += ["", "## Önerilen Aksiyonlar"] + [f"- {r}" for r in recs]
 
     # ── Kapasite ─────────────────────────────────────────────────────────────
     elif report_type == "capacity":
@@ -1329,6 +1612,13 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
             ["Tip", "Adet"],
             [[t["type"], t["count"]] for t in data.get("top_event_types", [])]
         )
+        metric_anomalies = data.get("host_metric_anomalies", [])
+        if metric_anomalies:
+            lines += ["", "## Host Metrik Anomalileri"] + tbl(
+                ["Host", "Bulgular", "Peak CPU%", "Peak RAM%"],
+                [[a["host"], "; ".join(a.get("issues", [])), a.get("peak_cpu_pct", "-"), a.get("peak_mem_pct", "-")]
+                 for a in metric_anomalies[:15]]
+            )
 
     # ── Kapasite Tahmin (Forecast) ────────────────────────────────────────────
     elif report_type == "forecast":
@@ -1386,6 +1676,12 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
             ["Tarih", "Toplam", "Kritik"],
             [[d["day"], d["total"], d["critical"]] for d in data.get("daily_trend", [])[:10]]
         )
+        virt = data.get("virt_platform", {})
+        if virt.get("breakdown"):
+            lines += ["", "## Sanallaştırma Platform Olayları"] + tbl(
+                ["Tip", "Önem", "Adet"],
+                [[b["type"], b["severity"], b["count"]] for b in virt["breakdown"][:15]]
+            )
         note = data.get("note")
         if note:
             lines += ["", f"*Not: {note}*"]

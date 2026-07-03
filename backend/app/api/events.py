@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.models.event import SystemEvent
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
+from app.services.platform_scope import apply_platform_filter, VALID_PLATFORMS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,6 +34,9 @@ class BulkActionRequest(BaseModel):
 
 
 def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
+    if not server_name and not e.server_id:
+        raw = e.raw_data or {}
+        server_name = raw.get("host_name") or raw.get("platform_label")
     return {
         "id": e.id,
         "server_id": e.server_id,
@@ -51,16 +55,20 @@ def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
 
 
 @router.get("/stats")
-async def event_stats(db: Session = Depends(get_db)):
+async def event_stats(
+    platform: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     """Event istatistikleri"""
-    total = db.query(SystemEvent).count()
-    unresolved = db.query(SystemEvent).filter(SystemEvent.resolved == False).count()
-    critical = db.query(SystemEvent).filter(SystemEvent.severity == "critical", SystemEvent.resolved == False).count()
-    warning = db.query(SystemEvent).filter(SystemEvent.severity == "warning", SystemEvent.resolved == False).count()
-    emergency = db.query(SystemEvent).filter(SystemEvent.severity == "emergency", SystemEvent.resolved == False).count()
-    acknowledged = db.query(SystemEvent).filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()
-    from sqlalchemy import and_
-    known = db.query(SystemEvent).filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()
+    q = db.query(SystemEvent)
+    q = apply_platform_filter(q, platform, db)
+    total = q.count()
+    unresolved = q.filter(SystemEvent.resolved == False).count()
+    critical = q.filter(SystemEvent.severity == "critical", SystemEvent.resolved == False).count()
+    warning = q.filter(SystemEvent.severity == "warning", SystemEvent.resolved == False).count()
+    emergency = q.filter(SystemEvent.severity == "emergency", SystemEvent.resolved == False).count()
+    acknowledged = q.filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()
+    known = q.filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()
     return {
         "total": total,
         "unresolved": unresolved,
@@ -89,12 +97,14 @@ async def list_events(
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
     online_only: Optional[bool] = None,
+    platform: Optional[str] = None,
     limit: int = Query(default=50, le=500),
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
     """Event'leri listele (filtreleme destekli)"""
     q = db.query(SystemEvent)
+    q = apply_platform_filter(q, platform, db)
     if severity:
         q = q.filter(SystemEvent.severity == severity)
     if event_type:
@@ -355,6 +365,7 @@ async def list_events_grouped(
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
     exclude_known: bool = Query(default=True),  # Bilinen eventleri varsayılan olarak gizle
+    platform: Optional[str] = None,
     limit: int = Query(default=50, le=100),
     offset: int = 0,
     sort_by: str = Query(default="latest_created_at"),
@@ -364,6 +375,7 @@ async def list_events_grouped(
     """Event'leri normalize baslik + (event_type, severity, server_id) ile grupla.
     last_seen alanini 'Son Olusum' icin kullanir. Tum gruplara gore server-side sort."""
     q = db.query(SystemEvent)
+    q = apply_platform_filter(q, platform, db)
     if severity:
         q = q.filter(SystemEvent.severity == severity)
     if event_type:
@@ -398,7 +410,10 @@ async def list_events_grouped(
                 "title": clean_title,
                 "severity": e.severity,
                 "server_id": e.server_id,
-                "server_name": server_map.get(e.server_id) if e.server_id else None,
+                "server_name": (
+                    server_map.get(e.server_id) if e.server_id
+                    else (e.raw_data or {}).get("host_name") or (e.raw_data or {}).get("platform_label")
+                ),
                 "event_ids": [],
                 "latest_created_at": last_seen_val.isoformat() if last_seen_val else None,
                 "resolved": e.resolved,
@@ -458,27 +473,32 @@ async def list_event_occurrences(
 @router.post("/scan")
 async def scan_all_servers(
     only_ai_ready: bool = False,
+    platform: Optional[str] = Query(default="linux"),
     db: Session = Depends(get_db),
 ):
-    """Tüm ONLINE sunucuları SSH ile tara, yeni log event'leri kaydet.
-    only_ai_ready=true ise sadece AI-Ready sunucular taranır."""
+    """Platforma göre log taraması — linux: SSH, windows: WinRM, virt: hypervisor sync."""
     import asyncio as _aio
-    from app.services.log_collector import collect_all_servers_logs
+
+    plat = (platform or "linux").lower()
+    if plat not in VALID_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Geçersiz platform: {platform}")
 
     try:
-        result = await _aio.get_event_loop().run_in_executor(
-            None, lambda: collect_all_servers_logs(db, only_ai_ready=only_ai_ready)
-        )
-        return {
-            "success": True,
-            "total_servers": result["total_servers"],
-            "servers_with_logs": result["servers_with_logs"],
-            "total_saved": result["total_saved"],
-            "details": result["details"],
-        }
+        if plat == "windows":
+            from app.services.windows_log_collector import collect_all_windows_logs
+            fn = lambda: collect_all_windows_logs(db)
+        elif plat == "virt":
+            from app.services.virt_log_collector import sync_virt_logs_to_db
+            fn = lambda: sync_virt_logs_to_db(db)
+        else:
+            from app.services.log_collector import collect_all_servers_logs
+            fn = lambda: collect_all_servers_logs(db, only_ai_ready=only_ai_ready)
+
+        result = await _aio.get_event_loop().run_in_executor(None, fn)
+        return {"success": True, "platform": plat, **result}
     except Exception as e:
-        logger.error(f"Manual scan error: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        logger.error(f"Manual scan error ({plat}): {e}", exc_info=True)
+        return {"success": False, "platform": plat, "error": str(e)}
 
 
 # ── Log AI Analizi ───────────────────────────────────────────────────────────

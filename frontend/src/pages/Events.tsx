@@ -7,6 +7,8 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
   SearchInput, Select, ActionMenu, Section, EmptyState, Modal, Pagination, MenuItem,
 } from '../components/aiops/ui'
+import type { PlatformAiopsProps } from '../utils/platformApi'
+import { appendPlatform } from '../utils/platformApi'
 
 interface SystemEvent {
   id: number; server_id: number | null; server_name: string | null
@@ -41,7 +43,7 @@ function StatusPill({ e }: { e: { resolved: boolean; is_known: boolean; is_ackno
   return <span className="text-[11px] font-medium" style={{ color: NEON.red }}>Yeni</span>
 }
 
-const Events: React.FC = () => {
+const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
@@ -94,11 +96,12 @@ const Events: React.FC = () => {
     if (typeFilter) p.set('event_type', typeFilter)
     if (resolvedFilter !== '') p.set('resolved', resolvedFilter)
     if (search) p.set('search', search)
+    appendPlatform(p, platform)
     return p
   }
 
   const { data: eventsData, isLoading } = useQuery<{ total: number; events: SystemEvent[] }>({
-    queryKey: ['events', 'list', severityFilter, typeFilter, resolvedFilter, search, page],
+    queryKey: ['events', 'list', platform, severityFilter, typeFilter, resolvedFilter, search, page],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
@@ -110,7 +113,7 @@ const Events: React.FC = () => {
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
-    queryKey: ['events', 'grouped', severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown],
+    queryKey: ['events', 'grouped', platform, severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
@@ -135,9 +138,10 @@ const Events: React.FC = () => {
   })
 
   const { data: stats } = useQuery<EventStats>({
-    queryKey: ['eventStats'],
+    queryKey: ['eventStats', platform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/events/stats`)
+      const params = appendPlatform(new URLSearchParams(), platform)
+      const res = await fetch(`${API_BASE_URL}/events/stats?${params}`)
       if (!res.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return res.json()
     },
@@ -161,7 +165,7 @@ const Events: React.FC = () => {
   const handleScan = async () => {
     setScanning(true); setScanResult(null)
     try {
-      const res = await fetch(`${API_BASE_URL}/events/scan?only_ai_ready=false`, { method: 'POST' })
+      const res = await fetch(`${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`, { method: 'POST' })
       setScanResult(await res.json()); invalidate()
     } catch { setScanResult(null) } finally { setScanning(false) }
   }

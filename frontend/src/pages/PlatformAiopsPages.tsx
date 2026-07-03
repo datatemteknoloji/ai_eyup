@@ -8,55 +8,52 @@ import Incidents from './Incidents'
 import AnomalyDetection from './AnomalyDetection'
 import RootCauseAnalysis from './RootCauseAnalysis'
 import BaselineManager from './BaselineManager'
+import type { PlatformAiopsProps } from '../utils/platformApi'
 
-type ScopeProps = { platform: PlatformKey }
-
-function PlatformBanner({ platform }: ScopeProps) {
+function PlatformBanner({ platform }: { platform: PlatformKey }) {
   return (
     <div className="mb-4 px-4 py-2 rounded-xl bg-slate-800/80 border border-slate-700/60 text-sm text-slate-300">
       <span className="text-slate-500">Platform:</span>{' '}
       <span className="font-medium text-white">{PLATFORM_AIOPS_LABEL[platform]}</span>
+      <span className="text-slate-500 ml-2">— kendi log kaynaklarından analiz</span>
     </div>
   )
 }
 
-function withPlatform<P extends object>(
-  platform: PlatformKey,
-  Page: React.ComponentType<P>,
-): React.FC<P> {
-  return (props) => (
+function withPlatformPage(platform: PlatformKey, Page: React.ComponentType<PlatformAiopsProps>) {
+  return () => (
     <>
       <PlatformBanner platform={platform} />
-      <Page {...props} />
+      <Page platform={platform} />
     </>
   )
 }
 
-export const LinuxOpsPage = () => <OpsCenter />
+export const LinuxOpsPage = () => <OpsCenter platform="linux" />
 export const VirtOpsPage = () => <VirtOpsCenter />
 export const WindowsOpsPage = () => (
   <>
     <PlatformBanner platform="windows" />
-    <OpsCenter />
+    <OpsCenter platform="windows" />
   </>
 )
 
-export const LinuxEventsPage = withPlatform('linux', Events)
-export const VirtEventsPage = withPlatform('virt', Events)
-export const WindowsEventsPage = withPlatform('windows', Events)
+export const LinuxEventsPage = withPlatformPage('linux', Events)
+export const VirtEventsPage = withPlatformPage('virt', Events)
+export const WindowsEventsPage = withPlatformPage('windows', Events)
 
-export const LinuxIncidentsPage = withPlatform('linux', Incidents)
-export const VirtIncidentsPage = withPlatform('virt', Incidents)
-export const WindowsIncidentsPage = withPlatform('windows', Incidents)
+export const LinuxIncidentsPage = withPlatformPage('linux', Incidents)
+export const VirtIncidentsPage = withPlatformPage('virt', Incidents)
+export const WindowsIncidentsPage = withPlatformPage('windows', Incidents)
 
-export const LinuxAnomaliesPage = withPlatform('linux', AnomalyDetection)
-export const VirtAnomaliesPage = withPlatform('virt', AnomalyDetection)
-export const WindowsAnomaliesPage = withPlatform('windows', AnomalyDetection)
+export const LinuxAnomaliesPage = withPlatformPage('linux', AnomalyDetection)
+export const VirtAnomaliesPage = withPlatformPage('virt', AnomalyDetection)
+export const WindowsAnomaliesPage = withPlatformPage('windows', AnomalyDetection)
 
-export const LinuxRcaPage = withPlatform('linux', RootCauseAnalysis)
-export const VirtRcaPage = withPlatform('virt', RootCauseAnalysis)
-export const WindowsRcaPage = withPlatform('windows', RootCauseAnalysis)
+export const LinuxRcaPage = withPlatformPage('linux', RootCauseAnalysis)
+export const VirtRcaPage = withPlatformPage('virt', RootCauseAnalysis)
+export const WindowsRcaPage = withPlatformPage('windows', RootCauseAnalysis)
 
-export const LinuxBaselinePage = withPlatform('linux', BaselineManager)
-export const VirtBaselinePage = withPlatform('virt', BaselineManager)
-export const WindowsBaselinePage = withPlatform('windows', BaselineManager)
+export const LinuxBaselinePage = withPlatformPage('linux', BaselineManager)
+export const VirtBaselinePage = withPlatformPage('virt', BaselineManager)
+export const WindowsBaselinePage = withPlatformPage('windows', BaselineManager)

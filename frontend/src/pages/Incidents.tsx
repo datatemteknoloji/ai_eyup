@@ -7,6 +7,8 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge, StatusBadge,
   SearchInput, Select, ActionMenu, Section, EmptyState, sevColor,
 } from '../components/aiops/ui'
+import type { PlatformAiopsProps } from '../utils/platformApi'
+import { appendPlatform } from '../utils/platformApi'
 
 interface Server { id: number; name: string; ip: string; status?: string }
 interface RelatedEvent {
@@ -27,7 +29,7 @@ function fmt(d: string | null, short = true) {
   return new Date(d).toLocaleString('tr-TR', short ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' } : undefined)
 }
 
-const Incidents: React.FC = () => {
+const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [statusFilter, setStatusFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -40,9 +42,9 @@ const Incidents: React.FC = () => {
   const queryClient = useQueryClient()
 
   const { data: incidentsData, isLoading } = useQuery<{ total: number; incidents: Incident[] }>({
-    queryKey: ['incidents', statusFilter, severityFilter, search],
+    queryKey: ['incidents', platform, statusFilter, severityFilter, search],
     queryFn: async () => {
-      const params = new URLSearchParams()
+      const params = appendPlatform(new URLSearchParams(), platform)
       if (statusFilter) params.set('status', statusFilter)
       if (severityFilter) params.set('severity', severityFilter)
       if (search) params.set('search', search)
@@ -54,9 +56,10 @@ const Incidents: React.FC = () => {
   })
 
   const { data: stats } = useQuery<IncidentStats>({
-    queryKey: ['incidentStats'],
+    queryKey: ['incidentStats', platform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/incidents/stats`)
+      const params = appendPlatform(new URLSearchParams(), platform)
+      const res = await fetch(`${API_BASE_URL}/incidents/stats?${params}`)
       if (!res.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
       return res.json()
     },
