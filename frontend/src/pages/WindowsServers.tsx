@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { useLocation, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Shield, Cpu, MemoryStick, Download, Play, Square, RotateCcw,
@@ -71,6 +71,176 @@ const levelColor = (level: string) => {
   if (l?.includes('critical') || l?.includes('error')) return 'text-red-400'
   if (l?.includes('warning')) return 'text-yellow-400'
   return 'text-slate-400'
+}
+
+// ── Event Log Panel (reused by modal and dedicated /windows/events view) ───────
+
+const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
+  const [logChannel, setLogChannel] = useState('System')
+  const [logLevel, setLogLevel] = useState(4) // 1=Kritik 2=Hata 3=Uyarı 4=Tümü (Information dahil)
+
+  const eventsQ = useQuery({
+    queryKey: ['win-events', server.id, logChannel, logLevel],
+    queryFn: async () => {
+      const r = await fetch(`${WIN_API}/servers/${server.id}/event-logs?log_name=${logChannel}&count=50&min_level=${logLevel}`)
+      return r.json() as Promise<EventLogEntry[]>
+    },
+    enabled: server.winrm_configured,
+  })
+
+  if (!server.winrm_configured) {
+    return (
+      <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
+        Bu sunucu için WinRM kimlik bilgisi tanımlanmamış. Sunucu listesinden "WinRM Ayarla" butonuna basın.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-2">
+          {['System', 'Application', 'Security'].map(ch => (
+            <button key={ch} onClick={() => setLogChannel(ch)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${logChannel === ch ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}>
+              {ch}
+            </button>
+          ))}
+        </div>
+        <select
+          value={logLevel}
+          onChange={e => setLogLevel(Number(e.target.value))}
+          className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          title="Önem seviyesi filtresi"
+        >
+          <option value={4}>Tümü (Bilgi dahil)</option>
+          <option value={3}>Uyarı ve üzeri</option>
+          <option value={2}>Hata ve üzeri</option>
+          <option value={1}>Sadece Kritik</option>
+        </select>
+      </div>
+      {eventsQ.isPending && <p className="text-slate-400 text-sm">Event log yükleniyor...</p>}
+      <div className="space-y-1.5 max-h-[480px] overflow-y-auto">
+        {(eventsQ.data || []).map((ev, i) => (
+          <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2 text-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`text-xs font-semibold ${levelColor(ev.LevelDisplayName)}`}>
+                {ev.LevelDisplayName}
+              </span>
+              <span className="text-slate-500 text-xs">ID:{ev.Id}</span>
+              <span className="text-slate-500 text-xs ml-auto">{ev.TimeCreated?.slice(0, 16)}</span>
+            </div>
+            <div className="text-slate-300 text-xs">{ev.ProviderName}</div>
+            <div className="text-slate-400 text-xs mt-0.5 line-clamp-2">{ev.Message}</div>
+          </div>
+        ))}
+        {!eventsQ.isPending && eventsQ.data?.length === 0 && (
+          <p className="text-slate-500 text-sm text-center py-6">
+            Bu kanalda/seviyede kayıt yok. Seçili filtre: <span className="text-slate-400">{logChannel}</span>,{' '}
+            <span className="text-slate-400">{logLevel === 4 ? 'Tümü' : logLevel === 3 ? 'Uyarı+' : logLevel === 2 ? 'Hata+' : 'Kritik'}</span>.
+            Farklı bir kanal veya "Tümü" seviyesini deneyin.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Updates Panel (reused by modal and dedicated /windows/updates view) ────────
+
+const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
+  const queryClient = useQueryClient()
+
+  const updatesQ = useQuery({
+    queryKey: ['win-updates', server.id],
+    queryFn: async () => {
+      const r = await fetch(`${WIN_API}/servers/${server.id}/updates`)
+      return r.json()
+    },
+    enabled: server.winrm_configured,
+  })
+
+  const installAllUpdates = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${WIN_API}/servers/${server.id}/updates/install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_reboot: false }),
+      })
+      return r.json()
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['win-updates', server.id] }),
+  })
+
+  if (!server.winrm_configured) {
+    return (
+      <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
+        Bu sunucu için WinRM kimlik bilgisi tanımlanmamış. Sunucu listesinden "WinRM Ayarla" butonuna basın.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {updatesQ.isPending && <p className="text-slate-400 text-sm">Güncellemeler kontrol ediliyor...</p>}
+      {updatesQ.data && (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-white font-medium">{updatesQ.data.pending?.length || 0}</span>
+              <span className="text-slate-400 text-sm ml-2">bekleyen güncelleme</span>
+            </div>
+            {updatesQ.data.pending?.length > 0 && (
+              <button onClick={() => installAllUpdates.mutate()}
+                disabled={installAllUpdates.isPending}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors">
+                <Download size={13} />
+                {installAllUpdates.isPending ? 'Kuruluyor...' : 'Tümünü Kur'}
+              </button>
+            )}
+          </div>
+          {installAllUpdates.data && (
+            <div className={`p-3 rounded-lg text-sm ${installAllUpdates.data.status === 'success' ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+              {installAllUpdates.data.message}
+            </div>
+          )}
+          <div className="space-y-1.5 max-h-72 overflow-y-auto">
+            {(updatesQ.data.pending || []).map((u: UpdateItem, i: number) => (
+              <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0 ${
+                    u.Severity === 'Critical' ? 'bg-red-500/20 text-red-400' :
+                    u.Severity === 'Important' ? 'bg-orange-500/20 text-orange-400' :
+                    'bg-slate-600 text-slate-400'
+                  }`}>{u.Severity || 'Normal'}</span>
+                  <div>
+                    <div className="text-sm text-white">{u.Title}</div>
+                    {u.KB && <div className="text-xs text-slate-500">KB{u.KB}</div>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {updatesQ.data.installed?.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Son Kurulan Güncellemeler</h4>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {updatesQ.data.installed.map((u: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-700/30 rounded px-2 py-1">
+                    <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
+                    <span className="font-mono">{u.HotFixID}</span>
+                    <span className="flex-1 truncate">{u.Description}</span>
+                    <span className="text-slate-500 flex-shrink-0">{u.InstalledOn}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 // ── Credential Modal ──────────────────────────────────────────────────────────
@@ -178,8 +348,6 @@ const ServerDetail: React.FC<{
   initialTab?: 'info' | 'services' | 'events' | 'updates' | 'exporter'
 }> = ({ server, onClose, initialTab }) => {
   const [tab, setTab] = useState<'info' | 'services' | 'events' | 'updates' | 'exporter'>(initialTab || 'info')
-  const [logChannel, setLogChannel] = useState('System')
-  const [logLevel, setLogLevel] = useState(4) // 1=Kritik 2=Hata 3=Uyarı 4=Tümü (Information dahil)
   const [serviceSearch, setServiceSearch] = useState('')
   const queryClient = useQueryClient()
 
@@ -212,24 +380,6 @@ const ServerDetail: React.FC<{
     enabled: tab === 'services' && server.winrm_configured,
   })
 
-  const eventsQ = useQuery({
-    queryKey: ['win-events', server.id, logChannel, logLevel],
-    queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/${server.id}/event-logs?log_name=${logChannel}&count=50&min_level=${logLevel}`)
-      return r.json() as Promise<EventLogEntry[]>
-    },
-    enabled: tab === 'events' && server.winrm_configured,
-  })
-
-  const updatesQ = useQuery({
-    queryKey: ['win-updates', server.id],
-    queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/${server.id}/updates`)
-      return r.json()
-    },
-    enabled: tab === 'updates' && server.winrm_configured,
-  })
-
   const exporterQ = useQuery({
     queryKey: ['win-exporter', server.id],
     queryFn: async () => {
@@ -257,18 +407,6 @@ const ServerDetail: React.FC<{
       return r.json()
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['win-exporter', server.id] }),
-  })
-
-  const installAllUpdates = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/${server.id}/updates/install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auto_reboot: false }),
-      })
-      return r.json()
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['win-updates', server.id] }),
   })
 
   const filteredServices = (servicesQ.data || []).filter(s =>
@@ -448,117 +586,10 @@ const ServerDetail: React.FC<{
           )}
 
           {/* Event Log Tab */}
-          {tab === 'events' && server.winrm_configured && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex gap-2">
-                  {['System', 'Application', 'Security'].map(ch => (
-                    <button key={ch} onClick={() => setLogChannel(ch)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${logChannel === ch ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}>
-                      {ch}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  value={logLevel}
-                  onChange={e => setLogLevel(Number(e.target.value))}
-                  className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  title="Önem seviyesi filtresi"
-                >
-                  <option value={4}>Tümü (Bilgi dahil)</option>
-                  <option value={3}>Uyarı ve üzeri</option>
-                  <option value={2}>Hata ve üzeri</option>
-                  <option value={1}>Sadece Kritik</option>
-                </select>
-              </div>
-              {eventsQ.isPending && <p className="text-slate-400 text-sm">Event log yükleniyor...</p>}
-              <div className="space-y-1.5 max-h-[480px] overflow-y-auto">
-                {(eventsQ.data || []).map((ev, i) => (
-                  <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2 text-sm">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-xs font-semibold ${levelColor(ev.LevelDisplayName)}`}>
-                        {ev.LevelDisplayName}
-                      </span>
-                      <span className="text-slate-500 text-xs">ID:{ev.Id}</span>
-                      <span className="text-slate-500 text-xs ml-auto">{ev.TimeCreated?.slice(0, 16)}</span>
-                    </div>
-                    <div className="text-slate-300 text-xs">{ev.ProviderName}</div>
-                    <div className="text-slate-400 text-xs mt-0.5 line-clamp-2">{ev.Message}</div>
-                  </div>
-                ))}
-                {!eventsQ.isPending && eventsQ.data?.length === 0 && (
-                  <p className="text-slate-500 text-sm text-center py-6">
-                    Bu kanalda/seviyede kayıt yok. Seçili filtre: <span className="text-slate-400">{logChannel}</span>,{' '}
-                    <span className="text-slate-400">{logLevel === 4 ? 'Tümü' : logLevel === 3 ? 'Uyarı+' : logLevel === 2 ? 'Hata+' : 'Kritik'}</span>.
-                    Farklı bir kanal veya "Tümü" seviyesini deneyin.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+          {tab === 'events' && server.winrm_configured && <EventLogPanel server={server} />}
 
           {/* Updates Tab */}
-          {tab === 'updates' && server.winrm_configured && (
-            <div className="space-y-4">
-              {updatesQ.isPending && <p className="text-slate-400 text-sm">Güncellemeler kontrol ediliyor...</p>}
-              {updatesQ.data && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-white font-medium">{updatesQ.data.pending?.length || 0}</span>
-                      <span className="text-slate-400 text-sm ml-2">bekleyen güncelleme</span>
-                    </div>
-                    {updatesQ.data.pending?.length > 0 && (
-                      <button onClick={() => installAllUpdates.mutate()}
-                        disabled={installAllUpdates.isPending}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors">
-                        <Download size={13} />
-                        {installAllUpdates.isPending ? 'Kuruluyor...' : 'Tümünü Kur'}
-                      </button>
-                    )}
-                  </div>
-                  {installAllUpdates.data && (
-                    <div className={`p-3 rounded-lg text-sm ${installAllUpdates.data.status === 'success' ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
-                      {installAllUpdates.data.message}
-                    </div>
-                  )}
-                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                    {(updatesQ.data.pending || []).map((u: UpdateItem, i: number) => (
-                      <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2">
-                        <div className="flex items-start gap-2">
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0 ${
-                            u.Severity === 'Critical' ? 'bg-red-500/20 text-red-400' :
-                            u.Severity === 'Important' ? 'bg-orange-500/20 text-orange-400' :
-                            'bg-slate-600 text-slate-400'
-                          }`}>{u.Severity || 'Normal'}</span>
-                          <div>
-                            <div className="text-sm text-white">{u.Title}</div>
-                            {u.KB && <div className="text-xs text-slate-500">KB{u.KB}</div>}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {updatesQ.data.installed?.length > 0 && (
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Son Kurulan Güncellemeler</h4>
-                      <div className="space-y-1 max-h-40 overflow-y-auto">
-                        {updatesQ.data.installed.map((u: any, i: number) => (
-                          <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-700/30 rounded px-2 py-1">
-                            <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
-                            <span className="font-mono">{u.HotFixID}</span>
-                            <span className="flex-1 truncate">{u.Description}</span>
-                            <span className="text-slate-500 flex-shrink-0">{u.InstalledOn}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+          {tab === 'updates' && server.winrm_configured && <UpdatesPanel server={server} />}
 
           {/* Exporter Tab */}
           {tab === 'exporter' && server.winrm_configured && (
@@ -677,6 +708,83 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   )
 }
 
+// ── Dedicated Event Log / Windows Update view ───────────────────────────────────
+// "Event Log" ve "Windows Update" ana menüleri artık genel sunucu listesini
+// (istatistik kartları, arama, tablo) hiç göstermez — doğrudan bir sunucu
+// seçici + ilgili panel açılır. Böylece menüye tıklanınca "alakasız" bir
+// sunucu yönetim ekranı görünmez.
+const FocusedServerView: React.FC<{
+  tab: 'events' | 'updates'
+  servers: WindowsServer[]
+  isLoading: boolean
+}> = ({ tab, servers, isLoading }) => {
+  const configured = servers.filter(s => s.winrm_configured)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (configured.length === 0) return
+    if (selectedId === null || !configured.some(s => s.id === selectedId)) {
+      setSelectedId(configured[0].id)
+    }
+  }, [configured, selectedId])
+
+  const selected = configured.find(s => s.id === selectedId) || null
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-40 gap-3 text-slate-400">
+        <div className="w-5 h-5 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+        Yükleniyor...
+      </div>
+    )
+  }
+
+  if (configured.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-52 bg-slate-800 border border-slate-700 rounded-xl gap-3">
+        <Shield size={40} className="text-slate-600" />
+        <p className="text-slate-400 font-medium">WinRM ayarlı Windows sunucu bulunamadı</p>
+        <p className="text-slate-500 text-sm text-center max-w-sm">
+          {tab === 'events' ? 'Event Log' : 'Windows Update'} görüntülemek için önce{' '}
+          <Link to="/windows" className="text-blue-400 hover:underline">Windows Sunucular</Link> sayfasından
+          bir sunucuya WinRM kimlik bilgisi tanımlayın.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 bg-slate-800 border border-slate-700 rounded-xl p-3">
+        <span className="text-xs text-slate-400 font-medium flex-shrink-0">Sunucu:</span>
+        <select
+          value={selectedId ?? ''}
+          onChange={e => setSelectedId(Number(e.target.value))}
+          className="bg-slate-700 border border-slate-600 rounded-lg text-sm text-white px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          {configured.map(s => (
+            <option key={s.id} value={s.id}>{s.name} ({s.ip_address || s.hostname || '—'})</option>
+          ))}
+        </select>
+        {selected && statusBadge(selected.status)}
+        {selected && !selected.ai_ready && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
+            <XCircle size={9} /> AI Ready değil — bağlantı sorunlu olabilir
+          </span>
+        )}
+        <Link to="/windows" className="ml-auto text-xs text-blue-400 hover:underline flex-shrink-0">
+          Tüm Sunucular →
+        </Link>
+      </div>
+      {selected && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          {tab === 'events' ? <EventLogPanel server={selected} /> : <UpdatesPanel server={selected} />}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const WindowsServers: React.FC = () => {
@@ -690,7 +798,6 @@ const WindowsServers: React.FC = () => {
   const [search, setSearch] = useState('')
   const [showUnclassified, setShowUnclassified] = useState(false)
   const queryClient = useQueryClient()
-  const autoOpenedRef = useRef<string | null>(null)
 
   const { data: servers = [], isLoading, refetch } = useQuery<WindowsServer[]>({
     queryKey: ['windows-servers', showUnclassified],
@@ -701,18 +808,6 @@ const WindowsServers: React.FC = () => {
     },
     refetchInterval: 60_000,
   })
-
-  // "Event Log" / "Windows Update" menülerinden gelindiğinde, WinRM'i ayarlı
-  // ilk sunucunun ilgili sekmesini otomatik açar — aksi halde bu menüler
-  // ana sunucu listesiyle aynı görünüp "hiçbir şey açılmıyor" izlenimi verir.
-  useEffect(() => {
-    if (!routeTab || autoOpenedRef.current === routeTab || servers.length === 0) return
-    const candidate = servers.find(s => s.winrm_configured)
-    if (candidate) {
-      setSelected(candidate)
-      autoOpenedRef.current = routeTab
-    }
-  }, [routeTab, servers])
 
   const testConn = useMutation({
     mutationFn: async (id: number) => {
@@ -740,7 +835,7 @@ const WindowsServers: React.FC = () => {
         <CredentialModal server={credServer} onClose={() => setCredServer(null)} />
       )}
       {selected && (
-        <ServerDetail server={selected} onClose={() => setSelected(null)} initialTab={routeTab || undefined} />
+        <ServerDetail server={selected} onClose={() => setSelected(null)} />
       )}
 
       {/* Header */}
@@ -758,17 +853,19 @@ const WindowsServers: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Toggle unclassified VMs */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <div
-              onClick={() => setShowUnclassified(v => !v)}
-              className={`relative w-9 h-5 rounded-full transition-colors ${showUnclassified ? 'bg-blue-600' : 'bg-slate-600'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
-            </div>
-            <span className="text-xs text-slate-400">OS Belirsiz VM'ler</span>
-          </label>
-          <WinRmAiReadyButton onDone={refetch} />
+          {/* Toggle unclassified VMs — sadece genel liste görünümünde anlamlı */}
+          {!routeTab && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <div
+                onClick={() => setShowUnclassified(v => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors ${showUnclassified ? 'bg-blue-600' : 'bg-slate-600'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
+              </div>
+              <span className="text-xs text-slate-400">OS Belirsiz VM'ler</span>
+            </label>
+          )}
+          {!routeTab && <WinRmAiReadyButton onDone={refetch} />}
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
             <RefreshCw size={14} /> Yenile
@@ -776,6 +873,10 @@ const WindowsServers: React.FC = () => {
         </div>
       </div>
 
+      {routeTab ? (
+        <FocusedServerView tab={routeTab} servers={servers} isLoading={isLoading} />
+      ) : (
+      <>
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
@@ -926,6 +1027,8 @@ const WindowsServers: React.FC = () => {
             </tbody>
           </table>
         </div>
+      )}
+      </>
       )}
     </div>
   )
