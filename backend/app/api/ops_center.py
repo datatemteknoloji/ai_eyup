@@ -13,6 +13,11 @@ POST /ops/snooze
 
 GET /ops/health-score
   0-100 altyapı sağlık skoru + kategori breakdown.
+
+GET /ops/executive-summary
+  Yönetici Ekranı — Linux, Windows ve Sanallaştırma ortamlarını tek ekranda
+  birleştiren üst düzey KPI özeti (genel sağlık skoru, platform bazlı kritik/
+  uyarı sayıları, envanter ve en kritik olaylar).
 """
 from __future__ import annotations
 
@@ -31,9 +36,11 @@ from app.models.event import SystemEvent, Incident
 from app.models.server import Server
 from app.services.platform_scope import (
     apply_platform_filter,
-    get_linux_server_ids,
+    get_linux_module_server_ids,
     get_windows_server_ids,
+    get_exadata_server_ids,
 )
+from app.services.event_filters import apply_actionable_event_filters, apply_hide_routine_virt
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,30 +81,12 @@ def _server_map(db: Session) -> Dict[int, Dict[str, Any]]:
     }
 
 
-def _active_events(db: Session, since: datetime, platform: Optional[str] = None) -> List[SystemEvent]:
+def _active_events(db: Session, since: datetime, platform: Optional[str] = None, show_routine: bool = False) -> List[SystemEvent]:
     """Aktif, bilinmeyen, onaylanmamış, snooze'suz eventler."""
-    q = db.query(SystemEvent).filter(
-        SystemEvent.resolved == False,        # noqa: E712
-        SystemEvent.is_known == False,        # noqa: E712
-        SystemEvent.is_acknowledged == False, # noqa: E712
-        SystemEvent.last_seen >= since,
-        or_(
-            SystemEvent.event_type != "log_entry",
-            and_(
-                SystemEvent.event_type == "log_entry",
-                SystemEvent.severity == "critical",
-                SystemEvent.occurrence_count >= 3,
-            ),
-            and_(
-                SystemEvent.event_type == "log_entry",
-                SystemEvent.severity == "warning",
-                SystemEvent.occurrence_count >= 2,
-            ),
-        ),
-    )
-    # apply_platform_filter .filter() çağırır — SQLAlchemy, LIMIT/OFFSET
-    # uygulanmış bir Query üzerinde .filter() çağrılmasına izin vermiyor,
-    # bu yüzden platform filtresi order_by/limit'ten ÖNCE uygulanmalı.
+    q = db.query(SystemEvent).filter(SystemEvent.last_seen >= since)
+    q = apply_actionable_event_filters(q)
+    if platform == "virt" and not show_routine:
+        q = apply_hide_routine_virt(q, show_routine=False)
     q = apply_platform_filter(q, platform, db)
     rows: List[SystemEvent] = q.order_by(SystemEvent.last_seen.desc()).limit(3000).all()
     return [e for e in rows if not _is_snoozed(e.id)]
@@ -270,10 +259,13 @@ async def command_center(
         win_ids = set(get_windows_server_ids(db))
         smap = {k: v for k, v in smap.items() if k in win_ids}
     elif platform == "linux":
-        linux_ids = set(get_linux_server_ids(db))
+        linux_ids = set(get_linux_module_server_ids(db))
         smap = {k: v for k, v in smap.items() if k in linux_ids}
     elif platform == "virt":
         smap = {}
+    elif platform == "exadata":
+        exadata_ids = set(get_exadata_server_ids(db))
+        smap = {k: v for k, v in smap.items() if k in exadata_ids}
     total_servers = len(smap)
 
     events = _active_events(db, since, platform=platform)
@@ -343,7 +335,7 @@ async def command_center(
     for server_id, sevs in by_server.items():
         if platform == "virt" and server_id is not None:
             continue
-        if server_id and platform in ("linux", "windows") and server_id not in smap:
+        if server_id and platform in ("linux", "windows", "exadata") and server_id not in smap:
             continue
 
         if server_id:
@@ -399,35 +391,18 @@ async def ops_summary(
     platform: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Hafif özet — navbar badge."""
-    since = datetime.utcnow() - timedelta(hours=24)
-    crit_q = apply_platform_filter(
-        db.query(SystemEvent).filter(
-            SystemEvent.resolved == False,        # noqa: E712
-            SystemEvent.is_known == False,        # noqa: E712
-            SystemEvent.severity.in_(["critical", "emergency"]),
-            SystemEvent.last_seen >= since,
-        ),
-        platform,
-        db,
-    )
-    critical = crit_q.count()
-    warn_q = apply_platform_filter(
-        db.query(SystemEvent).filter(
-            SystemEvent.resolved == False,        # noqa: E712
-            SystemEvent.is_known == False,        # noqa: E712
-            SystemEvent.severity == "warning",
-            SystemEvent.last_seen >= since,
-        ),
-        platform,
-        db,
-    )
-    warning = warn_q.count()
-    open_incidents = (
+    """Hafif özet — navbar badge (Komuta Merkezi ile aynı actionable filtre)."""
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    events = _active_events(db, since, platform=platform)
+    critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
+    warning = sum(1 for e in events if e.severity == "warning")
+    from app.services.platform_scope import filter_incidents_for_platform
+    open_incidents_q = (
         db.query(Incident)
         .filter(Incident.status.in_(["open", "investigating"]))
-        .count()
+        .all()
     )
+    open_incidents = len(filter_incidents_for_platform(open_incidents_q, platform, db))
     return {"critical": critical, "warning": warning, "open_incidents": open_incidents, "action_needed": critical > 0}
 
 
@@ -466,3 +441,161 @@ async def health_score(db: Session = Depends(get_db)):
     smap = _server_map(db)
     events = _active_events(db, since)
     return _calc_health_score(events, len(smap))
+
+
+# ── Yönetici Ekranı (Executive Dashboard) ────────────────────────────────────
+
+def _grade_for_score(score: int) -> Dict[str, str]:
+    if score >= 90:
+        return {"grade": "A", "label": "Sağlıklı"}
+    if score >= 75:
+        return {"grade": "B", "label": "İyi"}
+    if score >= 55:
+        return {"grade": "C", "label": "Dikkat"}
+    if score >= 35:
+        return {"grade": "D", "label": "Sorunlu"}
+    return {"grade": "F", "label": "Kritik"}
+
+
+@router.get("/executive-summary")
+async def executive_summary(db: Session = Depends(get_db)):
+    """
+    Yönetici Ekranı özeti — Linux, Windows ve Sanallaştırma ortamlarını
+    tek yanıtta birleştirir: genel sağlık skoru, platform bazlı envanter/
+    kritik-uyarı sayıları ve en kritik 10 olay (platform etiketiyle).
+    """
+    from sqlalchemy import func as sa_func
+    from app.models.hypervisor import Hypervisor
+    from app.services.virt_ops_center import virt_ops_summary
+    from app.services.platform_scope import (
+        get_linux_module_server_ids, get_windows_server_ids, vm_filter_condition, infer_event_platform,
+    )
+
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+
+    linux_ids = set(get_linux_module_server_ids(db))
+    windows_ids = set(get_windows_server_ids(db))
+
+    linux_events = _active_events(db, since, platform="linux")
+    windows_events = _active_events(db, since, platform="windows")
+    virt_events = _active_events(db, since, platform="virt")
+
+    linux_health = _calc_health_score(linux_events, len(linux_ids))
+    windows_health = _calc_health_score(windows_events, len(windows_ids))
+
+    def _sev_counts(events: List[SystemEvent]) -> tuple:
+        crit = sum(1 for e in events if e.severity in ("critical", "emergency"))
+        warn = sum(1 for e in events if e.severity == "warning")
+        return crit, warn
+
+    linux_crit, linux_warn = _sev_counts(linux_events)
+    windows_crit, windows_warn = _sev_counts(windows_events)
+
+    linux_ai_ready = (
+        db.query(Server).filter(Server.id.in_(linux_ids), Server.ai_ready == True).count()  # noqa: E712
+        if linux_ids else 0
+    )
+    windows_ai_ready = (
+        db.query(Server).filter(Server.id.in_(windows_ids), Server.ai_ready == True).count()  # noqa: E712
+        if windows_ids else 0
+    )
+    node_exporter_running = (
+        db.query(Server).filter(Server.id.in_(linux_ids), Server.node_exporter_running == True).count()  # noqa: E712
+        if linux_ids else 0
+    )
+    windows_exporter_running = (
+        db.query(Server).filter(Server.id.in_(windows_ids), Server.windows_exporter_running == True).count()  # noqa: E712
+        if windows_ids else 0
+    )
+
+    try:
+        virt_summary = virt_ops_summary(db)
+    except Exception:
+        logger.exception("Yönetici özeti: virt_ops_summary alınamadı")
+        virt_summary = {"critical": 0, "warning": 0, "health_score": 100, "action_needed": False}
+
+    hypervisor_count = db.query(Hypervisor).count()
+    vm_q = db.query(Server).filter(vm_filter_condition())
+    vm_count = vm_q.count()
+    vm_running_count = vm_q.filter(sa_func.lower(Server.vm_power_state).in_(["poweredon", "up", "running"])).count()
+
+    open_incidents = db.query(Incident).filter(Incident.status.in_(["open", "investigating"])).count()
+
+    total_servers = len(linux_ids) + len(windows_ids)
+    total_critical = linux_crit + windows_crit + virt_summary.get("critical", 0)
+    total_warning = linux_warn + windows_warn + virt_summary.get("warning", 0)
+
+    weights = [
+        (linux_health["score"], max(len(linux_ids), 1)),
+        (windows_health["score"], max(len(windows_ids), 1)),
+        (virt_summary.get("health_score", 100), max(hypervisor_count, 1)),
+    ]
+    total_weight = sum(w for _, w in weights)
+    overall_score = round(sum(s * w for s, w in weights) / total_weight) if total_weight else 100
+
+    smap = _server_map(db)
+    all_active = linux_events + windows_events + virt_events
+    top_events = sorted(
+        all_active,
+        key=lambda e: (-SEV_RANK.get(e.severity, 0), -(e.last_seen.timestamp() if e.last_seen else 0)),
+    )[:10]
+
+    top_alerts = []
+    for ev in top_events:
+        platform = infer_event_platform(ev, linux_ids, windows_ids)
+        server_info = smap.get(ev.server_id) if ev.server_id else None
+        raw = ev.raw_data or {}
+        server_name = (
+            server_info["name"] if server_info
+            else (raw.get("host_name") or raw.get("platform_label") or "—")
+        )
+        top_alerts.append({
+            "event_id": ev.id,
+            "platform": "virtualization" if platform == "virt" else platform,
+            "server_name": server_name,
+            "severity": ev.severity,
+            "title": ev.title,
+            "last_seen": ev.last_seen.isoformat() if ev.last_seen else None,
+        })
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "overall": {
+            "health_score": overall_score,
+            **_grade_for_score(overall_score),
+            "critical_total": total_critical,
+            "warning_total": total_warning,
+            "open_incidents": open_incidents,
+            "total_servers": total_servers,
+        },
+        "platforms": {
+            "linux": {
+                "server_count": len(linux_ids),
+                "ai_ready_count": linux_ai_ready,
+                "node_exporter_running": node_exporter_running,
+                "critical": linux_crit,
+                "warning": linux_warn,
+                "health_score": linux_health["score"],
+                **_grade_for_score(linux_health["score"]),
+            },
+            "windows": {
+                "server_count": len(windows_ids),
+                "ai_ready_count": windows_ai_ready,
+                "windows_exporter_running": windows_exporter_running,
+                "critical": windows_crit,
+                "warning": windows_warn,
+                "health_score": windows_health["score"],
+                **_grade_for_score(windows_health["score"]),
+            },
+            "virtualization": {
+                "hypervisor_count": hypervisor_count,
+                "vm_count": vm_count,
+                "vm_running_count": vm_running_count,
+                "critical": virt_summary.get("critical", 0),
+                "warning": virt_summary.get("warning", 0),
+                "health_score": virt_summary.get("health_score", 100),
+                **_grade_for_score(virt_summary.get("health_score", 100)),
+            },
+        },
+        "top_alerts": top_alerts,
+    }

@@ -4,10 +4,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../auth/AuthContext'
 import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList,
-  MessageCircle, Bot, Zap, RefreshCw, Package, Database, Activity,
+  Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check, AlertTriangle,
+  KeyRound, X, Check, AlertTriangle, Crown,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import {
@@ -195,6 +195,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     enabled: hasModule('virtualization'),
   })
 
+  const { data: exadataOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+    queryKey: ['exadata-ops-summary'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/exadata/ops/summary`)
+      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      return r.json()
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+    enabled: hasModule('exadata'),
+  })
+
   const isActive = (path: string) =>
     location.pathname === path ||
     (path === '/dashboard' && location.pathname === '/')
@@ -210,10 +222,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const linuxAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('linux', opsSummary))
   const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary))
   const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary))
+  const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary))
 
   const menuItems: MenuItem[] = [
     // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
     { type: 'link', path: '/dashboard', name: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    // ── Üst düzey yönetici özeti — tüm ortamlar tek ekranda ───────────────
+    { type: 'link', path: '/executive', name: 'Yönetici Ekranı', icon: <Crown size={18} />, moduleId: 'executive' },
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
@@ -226,7 +241,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/system-update', name: 'Sistem Güncelle',  icon: <RefreshCw size={15} />, moduleId: 'linux' },
         { type: 'link', path: '/repositories',  name: 'Local Repo',       icon: <Database size={15} />, moduleId: 'linux' },
         { type: 'link', path: '/ansible',       name: 'Ansible/AWX',      icon: <Zap size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/chat',          name: 'AI Analiz',        icon: <MessageCircle size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/linux/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} />, moduleId: 'linux' },
         {
           type: 'subgroup', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={15} />,
           moduleIds: ['linux', 'aiops'],
@@ -241,9 +256,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       children: [
         { type: 'link', path: '/windows/dashboard', name: 'Dashboard',           icon: <LayoutDashboard size={15} /> },
         { type: 'link', path: '/windows',         name: 'Windows Sunucular', icon: <Monitor size={15} /> },
+        { type: 'link', path: '/windows/live-metrics', name: 'Canlı Metrikler', icon: <Activity size={15} /> },
         { type: 'link', path: '/windows/events',  name: 'Event Log',         icon: <ClipboardList size={15} /> },
         { type: 'link', path: '/windows/updates', name: 'Windows Update',    icon: <RefreshCw size={15} /> },
-        { type: 'link', path: '/windows/chat',    name: 'AI Analiz',         icon: <MessageCircle size={15} /> },
+        { type: 'link', path: '/windows/ansible', name: 'Ansible/AWX',       icon: <Zap size={15} /> },
+        { type: 'link', path: '/windows/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} /> },
         {
           type: 'subgroup', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={15} />,
           moduleId: 'windows',
@@ -256,8 +273,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
-        { type: 'link', path: '/hypervisors',   name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/infra-reports', name: 'Altyapı Analizi',    icon: <BarChart3 size={15} /> },
+        { type: 'link', path: '/hypervisors', name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/infra-reports', name: 'Altyapı Raporları',  icon: <BarChart3 size={15} /> },
         {
           type: 'subgroup', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={15} />,
           moduleId: 'virtualization',
@@ -266,20 +283,32 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
 
-    // ── AI & Automation ───────────────────────────────────────────────────
+    // ── Exadata ───────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'ai', name: 'AI & Otomasyon', icon: <Bot size={18} />, moduleId: 'ai_automation',
+      type: 'group', key: 'exadata', name: 'Exadata', icon: <Layers size={18} />, moduleId: 'exadata',
       children: [
-        { type: 'link', path: '/chat',  name: 'AI Chat',  icon: <MessageCircle size={15} /> },
-        { type: 'link', path: '/agent', name: 'AI Agent', icon: <Bot size={15} /> },
+        { type: 'link', path: '/exadata', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/exadata/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} /> },
+        {
+          type: 'subgroup', key: 'exadata-aiops', name: PLATFORM_AIOPS_LABEL.exadata, icon: <Brain size={15} />,
+          moduleId: 'exadata',
+          children: exadataAiopsLinks,
+        },
       ],
     },
+
+    // ── AI & Automation ───────────────────────────────────────────────────
+    { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={18} />, moduleId: 'ai_automation' },
 
     // ── Integrations ──────────────────────────────────────────────────────
     {
       type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
-        { type: 'link', path: '/ucmdb/import', name: 'UCMDB Import', icon: <FileUp size={15} /> },
+        { type: 'link', path: '/integrations', name: 'Envanter Merkezi', icon: <Database size={15} /> },
+        { type: 'link', path: '/integrations/ucmdb', name: 'UCMDB Import', icon: <FileUp size={15} /> },
+        { type: 'link', path: '/integrations/hypervisors', name: 'vCenter / OLVM', icon: <Cloud size={15} /> },
+        { type: 'link', path: '/integrations/physical-hosts', name: 'Fiziksel Hostlar', icon: <Server size={15} /> },
+        { type: 'link', path: '/integrations/exadata', name: 'Exadata Envanter', icon: <Layers size={15} /> },
       ],
     },
 

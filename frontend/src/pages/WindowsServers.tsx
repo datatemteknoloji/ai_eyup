@@ -27,6 +27,8 @@ interface WindowsServer {
   winrm_port: number | null
   confirmed_windows: boolean
   ai_ready: boolean
+  windows_exporter_installed: boolean
+  windows_exporter_running: boolean
 }
 
 interface ServiceItem {
@@ -785,6 +787,68 @@ const FocusedServerView: React.FC<{
   )
 }
 
+// ── Windows Exporter Toplu Kurulum Butonu ───────────────────────────────────────
+const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<{ installed_count: number; failed_count: number; tested: number } | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  const handleClick = async () => {
+    setConfirmOpen(false)
+    setLoading(true); setResult(null)
+    try {
+      const r = await fetch(`${WIN_API}/exporter/install-all`, { method: 'POST' })
+      if (r.ok) {
+        const d = await r.json()
+        setResult(d)
+        onDone()
+        setTimeout(() => setResult(null), 8000)
+      }
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <>
+      {confirmOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <p className="text-sm text-slate-200">
+              AI Ready olan ve henüz windows_exporter kurulu olmayan tüm sunuculara WinRM üzerinden
+              windows_exporter (Prometheus, port 9182) kurulacak. Sunucu başına ~30-60 sn sürebilir. Devam?
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>
+              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Devam</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <button
+        onClick={() => setConfirmOpen(true)}
+        disabled={loading}
+        className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+        title="Tüm AI Ready sunuculara windows_exporter kur (Prometheus canlı metrikler için)"
+      >
+        {loading ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            Kuruluyor...
+          </>
+        ) : result ? (
+          <>
+            <CheckCircle2 size={14} className="text-green-300" />
+            {result.installed_count} kuruldu · {result.failed_count} başarısız
+          </>
+        ) : (
+          <>
+            <Download size={14} /> windows_exporter Kur
+          </>
+        )}
+      </button>
+    </>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const WindowsServers: React.FC = () => {
@@ -828,6 +892,7 @@ const WindowsServers: React.FC = () => {
   const online = servers.filter(s => s.status === 'ONLINE').length
   const configured = servers.filter(s => s.winrm_configured).length
   const aiReadyCount = servers.filter(s => s.ai_ready).length
+  const exporterRunningCount = servers.filter(s => s.windows_exporter_running).length
 
   return (
     <div className="space-y-6">
@@ -866,6 +931,7 @@ const WindowsServers: React.FC = () => {
             </label>
           )}
           {!routeTab && <WinRmAiReadyButton onDone={refetch} />}
+          {!routeTab && <WindowsExporterInstallAllButton onDone={refetch} />}
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
             <RefreshCw size={14} /> Yenile
@@ -878,13 +944,14 @@ const WindowsServers: React.FC = () => {
       ) : (
       <>
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         {[
           { label: 'Windows Tespit', value: confirmedWindows.length, color: 'text-blue-400' },
           { label: 'OS Belirsiz', value: unclassified.length, color: 'text-amber-400' },
           { label: 'Aktif', value: online, color: 'text-green-400' },
           { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
           { label: 'AI Ready', value: aiReadyCount, color: 'text-emerald-400' },
+          { label: 'Exporter Çalışıyor', value: exporterRunningCount, color: 'text-purple-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -995,6 +1062,19 @@ const WindowsServers: React.FC = () => {
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] text-slate-600">
                             <XCircle size={9} /> AI Ready değil
+                          </span>
+                        )}
+                        {srv.windows_exporter_running ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-purple-400">
+                            <Activity size={9} /> Exporter çalışıyor
+                          </span>
+                        ) : srv.windows_exporter_installed ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-500">
+                            <Activity size={9} /> Exporter durdu
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-600">
+                            <Activity size={9} /> Exporter yok
                           </span>
                         )}
                       </div>

@@ -6,6 +6,7 @@ const ACCESS: Record<PlatformKey, (hasModule: (id: string) => boolean) => boolea
   linux: (hm) => hm('linux') || hm('aiops'),
   virt: (hm) => hm('virtualization'),
   windows: (hm) => hm('windows'),
+  exadata: (hm) => hm('exadata'),
 }
 
 export const RequirePlatformAiops: React.FC<{

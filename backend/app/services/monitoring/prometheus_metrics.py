@@ -111,6 +111,180 @@ def sync_node_exporter_running_from_prometheus(db) -> Dict[str, int]:
     }
 
 
+# ── Windows Exporter (node_exporter'ın Windows eşleniği, port 9182) ─────────
+
+WINDOWS_EXPORTER_PORT = 9182
+WINDOWS_EXPORTER_JOB = "windows-exporter"
+
+
+def get_windows_exporter_up_map() -> Dict[str, str]:
+    """Prometheus up{job=windows-exporter} sonuçlarını instance -> '0'|'1' map olarak döner."""
+    result_map: Dict[str, str] = {}
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                params={"query": f'up{{job="{WINDOWS_EXPORTER_JOB}"}}'},
+            )
+            if resp.status_code != 200:
+                return result_map
+            data = resp.json()
+            if data.get("status") != "success":
+                return result_map
+            for r in data.get("data", {}).get("result", []):
+                instance = (r.get("metric") or {}).get("instance", "")
+                value = r.get("value")
+                if instance and value and len(value) >= 2:
+                    result_map[instance] = str(value[1])
+    except Exception as e:
+        logger.debug(f"Prometheus windows-exporter up map hatası: {e}")
+    return result_map
+
+
+def windows_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str]) -> bool:
+    """Prometheus'tan bu sunucuda windows_exporter'ın up olup olmadığını kontrol et (sync)."""
+    if not server_ip and not hostname:
+        return False
+    up_map = get_windows_exporter_up_map()
+    if server_ip:
+        instance = f"{server_ip}:{WINDOWS_EXPORTER_PORT}"
+        if up_map.get(instance) == "1":
+            return True
+    if hostname:
+        for inst, val in up_map.items():
+            if val == "1" and (inst.startswith(hostname) or hostname in inst):
+                return True
+    return False
+
+
+def sync_windows_exporter_running_from_prometheus(db) -> Dict[str, int]:
+    """DB'deki windows_exporter_running bayrağını Prometheus up durumuna göre günceller."""
+    from app.models.server import Server
+
+    up_map = get_windows_exporter_up_map()
+    updated = cleared = promoted = 0
+
+    servers = db.query(Server).filter(
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+    ).all()
+
+    for server in servers:
+        instance = f"{server.ip_address.strip()}:{WINDOWS_EXPORTER_PORT}"
+        prom_up = up_map.get(instance) == "1"
+
+        if prom_up:
+            changed = False
+            if not server.windows_exporter_installed:
+                server.windows_exporter_installed = True
+                changed = True
+            if not server.windows_exporter_running:
+                server.windows_exporter_running = True
+                changed = True
+            if changed:
+                promoted += 1
+                updated += 1
+            continue
+
+        if server.windows_exporter_installed and server.windows_exporter_running:
+            server.windows_exporter_running = False
+            cleared += 1
+            updated += 1
+
+    if updated:
+        db.commit()
+
+    return {
+        "updated": updated,
+        "promoted": promoted,
+        "cleared": cleared,
+        "live": sum(1 for v in up_map.values() if v == "1"),
+        "targets": len(up_map),
+    }
+
+
+def sync_windows_exporter_targets_from_db(db, reload: bool = True) -> Dict[str, Any]:
+    """
+    DB'deki kurulu Windows sunuculardan windows_exporter Prometheus target dosyasını
+    yeniden oluşturur (node_exporter'daki sync_node_exporter_targets_from_db eşleniği).
+    """
+    from app.models.server import Server
+    from app.services.monitoring.prometheus_target_manager import PrometheusTargetManager
+
+    eligible = db.query(Server).filter(
+        Server.windows_exporter_installed == True,  # noqa: E712
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+    ).all()
+
+    by_instance: Dict[str, object] = {}
+    duplicate_names: List[str] = []
+
+    for server in eligible:
+        instance = f"{server.ip_address.strip()}:{WINDOWS_EXPORTER_PORT}"
+        if instance in by_instance:
+            prev = by_instance[instance]
+            winner = _pick_canonical_monitoring_server([prev, server])
+            loser = server if winner is prev else prev
+            duplicate_names.append(getattr(loser, "name", "?"))
+            by_instance[instance] = winner
+        else:
+            by_instance[instance] = server
+
+    new_targets = []
+    for instance, server in sorted(by_instance.items(), key=lambda x: (x[1].name or "").lower()):
+        new_targets.append({
+            "targets": [instance],
+            "labels": {
+                "server_id": str(server.id),
+                "server_name": server.name,
+                "job": WINDOWS_EXPORTER_JOB,
+            },
+        })
+
+    tm = PrometheusTargetManager(_windows_targets_file_path())
+    old_targets = tm.load_targets()
+    old_instances = {
+        t.get("targets", [])[0]
+        for t in old_targets
+        if t.get("targets")
+    }
+    new_instances = set(by_instance.keys())
+
+    tm.rebuild_targets(new_targets)
+
+    stats = {
+        "targets_before": len(old_targets),
+        "targets_after": len(new_targets),
+        "servers_eligible": len(eligible),
+        "unique_instances": len(new_targets),
+        "removed_orphans": len(old_instances - new_instances),
+        "added": len(new_instances - old_instances),
+        "duplicate_servers_skipped": duplicate_names,
+        "reloaded": False,
+    }
+
+    if reload:
+        stats["reloaded"] = tm.reload_prometheus_sync()
+
+    logger.info(
+        "Windows exporter target sync: %s -> %s hedef (%s yetim kaldırıldı)",
+        stats["targets_before"],
+        stats["targets_after"],
+        stats["removed_orphans"],
+    )
+    return stats
+
+
+def _windows_targets_file_path() -> str:
+    import os
+    if os.path.exists("/prometheus/targets"):
+        return "/prometheus/targets/windows_exporter_targets.json"
+    if os.path.exists("/etc/prometheus/targets"):
+        return "/etc/prometheus/targets/windows_exporter_targets.json"
+    return "/prometheus/targets/windows_exporter_targets.json"
+
+
 def _pick_canonical_monitoring_server(servers: list):
     """Aynı IP için tek kayıt: hypervisor bağlı olan, yoksa en yüksek id."""
     def score(s):

@@ -28,7 +28,7 @@ class VCenterClient:
         """vCenter'a giriş yap"""
         try:
             url = f"{self.base_url}/com/vmware/cis/session"
-            response = self.session.post(url, auth=(self.username, self.password))
+            response = self.session.post(url, auth=(self.username, self.password), timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 self.session_id = data.get("value")

@@ -703,11 +703,11 @@ function BulkToolbar({ selectedIds, onClear, onDone }: {
 }
 
 // ── Activity Timeline ─────────────────────────────────────────────────────────
-function ActivityTimeline() {
+function ActivityTimeline({ platform }: { platform: string }) {
   const { data } = useQuery<{ events: EventItem[]; total: number }>({
-    queryKey: ['ops-timeline'],
+    queryKey: ['ops-timeline', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=40&offset=0`)
+      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=40&offset=0&platform=${platform}`)
       if (!r.ok) throw new Error('events fetch failed')
       return r.json()
     },
@@ -770,7 +770,18 @@ function ActivityTimeline() {
 // ── Ana Sayfa ─────────────────────────────────────────────────────────────────
 export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const qc = useQueryClient()
-  const eventsPath = platform === 'linux' ? '/linux/events' : platform === 'windows' ? '/windows/aiops/events' : '/virt/events'
+  const eventsPath = platform === 'linux' ? '/linux/events'
+    : platform === 'windows' ? '/windows/aiops/events'
+    : platform === 'exadata' ? '/exadata/events'
+    : '/virt/events'
+  const incidentsPath = platform === 'linux' ? '/linux/incidents'
+    : platform === 'windows' ? '/windows/aiops/incidents'
+    : platform === 'exadata' ? '/exadata/incidents'
+    : '/virt/incidents'
+  const analysisPath = platform === 'linux' ? '/linux/analysis'
+    : platform === 'windows' ? '/windows/aiops/analysis'
+    : platform === 'exadata' ? '/exadata/analysis'
+    : '/virt/analysis'
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [tierFilter, setTierFilter] = useState<'all' | 'production' | 'staging' | 'development'>('all')
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning'>('all')
@@ -791,7 +802,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   function invalidate() {
     setSelectedIds(new Set())
     qc.invalidateQueries({ queryKey: ['ops-command-center'] })
-    qc.invalidateQueries({ queryKey: ['ops-timeline'] })
+    qc.invalidateQueries({ queryKey: ['ops-timeline', platform] })
   }
 
   function toggleSelect(ids: number[], checked: boolean) {
@@ -1050,9 +1061,9 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           <div className="grid grid-cols-4 gap-2 pt-4 border-t border-slate-800/60">
             {[
               { to: eventsPath, icon: <Activity size={13} />,    label: 'Events' },
-              { to: '/incidents', icon: <Siren size={13} />,       label: 'Incidents' },
-              { to: '/baseline',  icon: <BellOff size={13} />,     label: 'Baseline' },
-              { to: '/rca',       icon: <ScanSearch size={13} />,  label: 'Kök Neden' },
+              { to: incidentsPath, icon: <Siren size={13} />,       label: 'Incidents' },
+              { to: `${analysisPath}?tab=baseline`,  icon: <BellOff size={13} />,     label: 'Baseline' },
+              { to: `${analysisPath}?tab=rca`,       icon: <ScanSearch size={13} />,  label: 'Kök Neden' },
             ].map(({ to, icon, label }) => (
               <Link key={to} to={to}
                 className="flex items-center justify-center gap-1.5 text-xs py-2.5 rounded-xl border border-slate-800 text-slate-500 hover:bg-slate-800 hover:text-slate-300 hover:border-slate-700 transition-colors">
@@ -1064,7 +1075,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
 
         {/* Right: Activity Timeline */}
         <div className="w-72 flex-none border-l border-slate-800/60 overflow-hidden">
-          <ActivityTimeline />
+          <ActivityTimeline platform={platform} />
         </div>
       </div>
 

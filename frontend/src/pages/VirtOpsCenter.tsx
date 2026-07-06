@@ -345,7 +345,7 @@ export default function VirtOpsCenter() {
               <Layers size={12} /> Dashboard
             </Link>
             <Link to="/infra-reports" className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-1">
-              <Activity size={12} /> Altyapı Analizi
+              <Activity size={12} /> Altyapı Raporları
             </Link>
             <button
               onClick={async () => {

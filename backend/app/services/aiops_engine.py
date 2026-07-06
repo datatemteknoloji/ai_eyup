@@ -25,7 +25,7 @@ from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.baseline_engine import apply_baseline_filter
 from app.services.storm_detector import apply_tier_filter, check_and_handle_storm, auto_resolve_by_ttl
-from app.services.platform_scope import is_windows_server
+from app.services.platform_scope import platform_for_server
 
 logger = logging.getLogger(__name__)
 
@@ -52,24 +52,19 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
     updated = 0
     incidents_touched = set()
     now = datetime.utcnow()
-    window_start = now - timedelta(hours=ACTIVE_EVENT_WINDOW_HOURS)
 
     _platform_cache: Dict[int, str] = {}
+    from app.services.platform_scope import get_exadata_server_id_set
+    _exadata_ids = get_exadata_server_id_set(db)
 
     def _server_platform(sid: Optional[int]) -> Optional[str]:
-        """Metrik anomalisinin ait olduğu OS platformunu belirler (Ops Center filtreleri için).
-
-        Not: Prometheus/OS metrikleri her zaman guest OS seviyesindedir (windows_exporter /
-        node_exporter) — VM olsa dahi "virt" değil, OS'a göre "windows"/"linux" etiketlenir.
-        Sanallaştırmaya özgü olaylar (vCenter event/alarm) zaten ayrı bir source ile "virt"
-        etiketleniyor.
-        """
+        """Metrik anomalisinin ait olduğu platform (linux/windows/exadata)."""
         if not sid:
             return None
         if sid in _platform_cache:
             return _platform_cache[sid]
         srv = db.query(Server).filter(Server.id == sid).first()
-        platform = ("windows" if is_windows_server(srv) else "linux") if srv else None
+        platform = platform_for_server(db, srv, exadata_ids=_exadata_ids) if srv else None
         _platform_cache[sid] = platform
         return platform
 
@@ -88,7 +83,6 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                     SystemEvent.server_id == server_id,
                     SystemEvent.event_type == METRIC_ANOMALY_TYPE,
                     SystemEvent.resolved == False,  # noqa: E712
-                    SystemEvent.created_at >= window_start,
                 )
                 .order_by(SystemEvent.created_at.desc())
                 .all()

@@ -9,11 +9,12 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.inventory_guard import require_integrations_inventory
 from app.models.server import Server
 
 logger = logging.getLogger(__name__)
@@ -256,10 +257,11 @@ async def preview_upload(file: UploadFile = File(...)):
 
 
 @router.post("/import")
-def import_ucmdb(body: MappingConfirm, db: Session = Depends(get_db)):
+def import_ucmdb(body: MappingConfirm, request: Request, db: Session = Depends(get_db)):
     """
-    Import UCMDB data using the upload_id returned by /preview.
+    Import UCMDB data using the upload_id returned by /preview (yalnızca Entegrasyonlar).
     """
+    require_integrations_inventory(request)
     session = _upload_sessions.get(body.upload_id)
     if not session:
         raise HTTPException(status_code=400, detail="Geçersiz veya süresi dolmuş upload_id — önce /preview endpoint'ine dosya yükleyin")
@@ -314,14 +316,9 @@ def import_ucmdb(body: MappingConfirm, db: Session = Depends(get_db)):
         if body.dry_run:
             continue
 
-        # Find existing server by IP or hostname
-        existing: Optional[Server] = None
-        if ip:
-            existing = db.query(Server).filter(Server.ip_address == ip).first()
-        if not existing and host:
-            existing = db.query(Server).filter(Server.hostname == host).first()
-        if not existing and name:
-            existing = db.query(Server).filter(Server.name == name).first()
+        # Find existing server — merkezi tekilleştirme
+        from app.services.inventory_dedup import find_existing_server, tag_inventory_source
+        existing = find_existing_server(db, ip=ip or None, hostname=host or None, name=name or None)
 
         notes = data.pop("_notes", None)
         is_virtual = data.pop("_is_virtual", None)  # True/False/None
@@ -348,11 +345,13 @@ def import_ucmdb(body: MappingConfirm, db: Session = Depends(get_db)):
             cfg = dict(existing.connection_config or {})
             cfg.update(meta)
             existing.connection_config = cfg
+            tag_inventory_source(existing, "ucmdb", {"filename": session.get("filename")})
             updated += 1
         elif existing:
             skipped += 1
         else:
             cfg = meta.copy()
+            cfg["inventory_sources"] = [{"source": "ucmdb", "filename": session.get("filename")}]
             new_srv = Server(
                 name=name,
                 hostname=host or name,

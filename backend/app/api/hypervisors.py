@@ -2,13 +2,16 @@
 Hypervisors API endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
 from app.core.database import get_db
+from app.core.inventory_guard import require_integrations_inventory
 from app.models.hypervisor import Hypervisor, HypervisorType
+from app.models.server import Server
+from app.services.hypervisor_cleanup import delete_servers_cascade
 from app.schemas.hypervisor import HypervisorCreate, HypervisorUpdate, HypervisorResponse
 
 router = APIRouter()
@@ -49,8 +52,14 @@ async def test_connection(data: TestConnectionRequest):
     if htype == "vmware":
         try:
             from app.services.vmware.vcenter_client import VCenterClient
-            client = VCenterClient(host=host, username=username, password=password)
-            client.login()
+            client = VCenterClient(host=host, username=username, password=password, port=port or 443)
+            ok = client.login()
+            if not ok:
+                return {
+                    "success": False,
+                    "message": "vCenter bağlantı hatası",
+                    "details": "Giriş başarısız — host, port, kullanıcı adı veya şifreyi kontrol edin.",
+                }
             client.logout()
             return {"success": True, "message": "vCenter bağlantısı başarılı", "details": ""}
         except ImportError:
@@ -126,8 +135,9 @@ async def list_hypervisors(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error listing hypervisors: {str(e)}")
 
 @router.post("/", response_model=HypervisorResponse, status_code=201)
-async def create_hypervisor(hypervisor: HypervisorCreate, db: Session = Depends(get_db)):
-    """Yeni hypervisor ekle"""
+async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: Session = Depends(get_db)):
+    """Yeni hypervisor ekle (yalnızca Entegrasyonlar)"""
+    require_integrations_inventory(request)
     try:
         # Aynı isimde hypervisor var mı kontrol et
         existing = db.query(Hypervisor).filter(Hypervisor.name == hypervisor.name).first()
@@ -226,9 +236,26 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error updating hypervisor: {str(e)}")
 
+@router.post("/sync-all-vms")
+async def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db)):
+    """Tüm hypervisor'lardan VM'leri tek seferde senkronize et (manuel — Entegrasyonlar)."""
+    require_integrations_inventory(request)
+    try:
+        from app.services.inventory_sync_service import sync_all_hypervisors
+        result = sync_all_hypervisors(db)
+        from app.services import qa_cache
+        qa_cache.invalidate_all()
+        return result
+    except Exception as e:
+        db.rollback()
+        logger.exception("sync_all_hypervisor_vms failed")
+        raise HTTPException(status_code=500, detail=f"Senkronizasyon hatası: {str(e)}")
+
+
 @router.post("/{hypervisor_id}/sync-vms")
-async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db)):
-    """Hypervisor'dan VM'leri senkronize et"""
+async def sync_hypervisor_vms(hypervisor_id: int, request: Request, db: Session = Depends(get_db)):
+    """Hypervisor'dan VM'leri senkronize et (yalnızca Entegrasyonlar)"""
+    require_integrations_inventory(request)
     from app.models.server import Server
     try:
         hypervisor = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
@@ -249,9 +276,11 @@ async def sync_hypervisor_vms(hypervisor_id: int, db: Session = Depends(get_db))
                     username=hypervisor.username or hypervisor.connection_config.get("username", ""),
                     password=hypervisor.password or hypervisor.connection_config.get("password", "")
                 )
-                client.login()
-                vms = client.sync_vms_to_inventory()  # CPU/RAM için detaylı API
-                client.logout()
+                if not client.login():
+                    errors.append("vCenter bağlantı hatası: giriş başarısız (host/kullanıcı/şifre kontrol edin)")
+                else:
+                    vms = client.sync_vms_to_inventory()  # CPU/RAM için detaylı API
+                    client.logout()
             except ImportError:
                 errors.append("VMware client modülü bulunamadı")
             except Exception as e:
@@ -582,17 +611,23 @@ async def trigger_esx_metric_sync(hypervisor_id: int, db: Session = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{hypervisor_id}", status_code=204)
-async def delete_hypervisor(hypervisor_id: int, db: Session = Depends(get_db)):
-    """Hypervisor sil"""
+@router.delete("/{hypervisor_id}", status_code=200)
+async def delete_hypervisor(hypervisor_id: int, request: Request, db: Session = Depends(get_db)):
+    """Hypervisor sil (yalnızca Entegrasyonlar) — bu hypervisor'dan senkronize
+    edilmiş tüm VM'ler ve ilişkili veriler (metrik, olay, snapshot vb.) de
+    birlikte temizlenir; ortamda yetim VM kaydı bırakılmaz."""
+    require_integrations_inventory(request)
     try:
         db_hypervisor = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
         if not db_hypervisor:
             raise HTTPException(status_code=404, detail="Hypervisor not found")
-        
+
+        server_ids = [r[0] for r in db.query(Server.id).filter(Server.hypervisor_id == hypervisor_id).all()]
+        deleted_vms = delete_servers_cascade(db, server_ids)
+
         db.delete(db_hypervisor)
         db.commit()
-        return None
+        return {"deleted": True, "hypervisor_id": hypervisor_id, "deleted_vms": deleted_vms}
     except HTTPException:
         raise
     except Exception as e:

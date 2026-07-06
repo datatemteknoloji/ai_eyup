@@ -114,7 +114,7 @@ interface CorrelationResponse {
 
 const SEV_COLOR: Record<string, string> = { critical: '#ef4444', warning: '#fb923c', info: '#22d3ee', emergency: '#a855f7' }
 
-function CorrelationTab() {
+export function CorrelationTab() {
   const [search, setSearch] = useState('')
   const [markLoading, setMarkLoading] = useState<number | null>(null)
   const queryClient = useQueryClient()
@@ -270,6 +270,116 @@ function CorrelationTab() {
   )
 }
 
+export function LogHeatmapPanel({ platform = 'linux' }: PlatformAiopsProps) {
+  const [serverSearch, setServerSearch] = useState('')
+  const [backfillDays, setBackfillDays] = useState(7)
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const queryClient = useQueryClient()
+
+  const { data: heatmapData, isLoading: heatmapLoading, error: heatmapError } = useQuery<LogHeatmapResponse>({
+    queryKey: ['anomaly-log-heatmap-30d', platform],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/anomalies/logs/heatmap?days=30&platform=${platform}&actionable_only=true`)
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+    refetchInterval: 60000,
+  })
+
+  const backfillMutation = useMutation({
+    mutationFn: async (days: number) => {
+      const r = await fetch(`${API_BASE_URL}/anomalies/logs/backfill?days=${days}&platform=${platform}`, { method: 'POST' })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+    onSuccess: () => {
+      setMsg({ ok: true, text: 'Geçmiş veri yüklendi.' })
+      queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d', platform] })
+    },
+    onError: () => setMsg({ ok: false, text: 'Backfill sırasında hata oluştu.' }),
+  })
+
+  const filteredHeatmapRows = useMemo(() => {
+    const rows = heatmapData?.rows || []
+    const q = serverSearch.trim().toLowerCase()
+    const f = !q ? rows : rows.filter(r => r.server_name.toLowerCase().includes(q) || (r.ip_address || '').toLowerCase().includes(q))
+    return [...f].sort((a, b) => b.total_score - a.total_score)
+  }, [heatmapData, serverSearch])
+
+  if (platform === 'virt') {
+    return (
+      <EmptyState icon="☁" text="Sanallaştırma modülünde log ısı haritası vCenter olayları üzerinden Events sekmesinde görüntülenir." />
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {msg && (
+        <div className="px-4 py-2 rounded-xl text-sm" style={{ color: msg.ok ? NEON.green : NEON.red }}>{msg.text}</div>
+      )}
+      <div className="flex items-center gap-2 flex-wrap">
+        <SearchInput value={serverSearch} onChange={setServerSearch} placeholder="Sunucu ara..." width="w-52" />
+      </div>
+      <Section title="30 Günlük Log Anomali Isı Haritası" accent={NEON.orange}
+        right={
+          <div className="flex items-center gap-2">
+            <Select value={String(backfillDays)} onChange={v => setBackfillDays(Number(v))}>
+              {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
+            </Select>
+            <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending}>
+              {backfillMutation.isPending ? 'Yükleniyor...' : 'Geçmiş Veri'}
+            </GhostButton>
+          </div>
+        }>
+        <div className="px-5 py-2.5 flex flex-wrap items-center gap-3 text-xs" style={{ borderBottom: '1px solid rgba(99,130,194,0.08)' }}>
+          <span style={{ color: 'rgba(148,163,184,0.5)' }}>Skala:</span>
+          {[{ c: 'rgba(255,255,255,0.04)', l: 'Normal' }, { c: 'rgba(234,179,8,0.4)', l: 'Düşük' }, { c: 'rgba(245,200,11,0.6)', l: 'Orta' }, { c: 'rgba(245,158,11,0.8)', l: 'Yüksek' }, { c: 'rgba(239,68,68,0.85)', l: 'Kritik' }].map(s => (
+            <span key={s.l} className="inline-flex items-center gap-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
+              <span className="w-3 h-3 rounded" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
+            </span>
+          ))}
+        </div>
+        {heatmapLoading ? (
+          <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Harita yükleniyor...</div>
+        ) : heatmapError ? (
+          <div className="p-6 text-sm" style={{ color: NEON.red }}>Harita verisi alınamadı.</div>
+        ) : (
+          <div className="overflow-x-auto max-h-[560px]">
+            <table className="min-w-full text-xs">
+              <thead className="sticky top-0 z-20" style={{ background: 'var(--bg-deep)' }}>
+                <tr>
+                  <th className="sticky left-0 z-30 text-left px-3 py-2 min-w-[200px]" style={{ background: 'var(--bg-deep)', color: 'rgba(148,163,184,0.7)' }}>Sunucu</th>
+                  {(heatmapData?.dates || []).map(d => <th key={d} className="px-1 py-2 whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.5)' }}>{formatDayLabel(d)}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>Veri bulunamadı.</td></tr>}
+                {filteredHeatmapRows.map(row => (
+                  <tr key={row.server_id} style={{ borderTop: '1px solid rgba(30,41,59,0.6)' }}>
+                    <td className="sticky left-0 z-10 px-3 py-2 whitespace-nowrap" style={{ background: 'var(--bg-card)' }}>
+                      <div className="font-medium text-white">{row.server_name}</div>
+                      <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{row.ip_address || '-'}</div>
+                    </td>
+                    {row.cells.map(cell => (
+                      <td key={`${row.server_id}-${cell.date}`} className="px-1 py-1">
+                        <div title={cell.score > 0 ? `${row.server_name} | ${cell.date} | skor: ${cell.score}` : `${row.server_name} | ${cell.date} | normal`}
+                          className="w-6 h-6 rounded-md mx-auto transition-transform hover:scale-125 flex items-center justify-center"
+                          style={{ background: heatColor(cell.score, heatmapData?.max_cell_score || 0), border: '1px solid rgba(99,130,194,0.12)' }}>
+                          {cell.score === 0 && <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.3)' }}>·</span>}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+    </div>
+  )
+}
+
 const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [tab, setTab] = useState('metric')
   const [serverSearch, setServerSearch] = useState('')
@@ -289,12 +399,12 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
   })
   const { data, isLoading, isFetching, error, refetch } = useQuery<LogListResponse>({
     queryKey: ['anomaly-log-list-30d', platform],
-    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/list?days=30&platform=${platform}`); if (!r.ok) throw new Error(); return r.json() },
+    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/list?days=30&platform=${platform}&actionable_only=true`); if (!r.ok) throw new Error(); return r.json() },
     refetchInterval: 60000,
   })
   const { data: heatmapData, isLoading: heatmapLoading, error: heatmapError } = useQuery<LogHeatmapResponse>({
     queryKey: ['anomaly-log-heatmap-30d', platform],
-    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/heatmap?days=30&platform=${platform}`); if (!r.ok) throw new Error(); return r.json() },
+    queryFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/heatmap?days=30&platform=${platform}&actionable_only=true`); if (!r.ok) throw new Error(); return r.json() },
     refetchInterval: 60000,
   })
 
@@ -323,7 +433,7 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
     onError: () => setMsg({ ok: false, text: 'Incident oluşturulamadı.' }),
   })
   const backfillMutation = useMutation({
-    mutationFn: async (days: number) => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/backfill?days=${days}`, { method: 'POST' }); if (!r.ok) throw new Error(); return r.json() },
+    mutationFn: async (days: number) => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/backfill?days=${days}&platform=${platform}`, { method: 'POST' }); if (!r.ok) throw new Error(); return r.json() },
     onSuccess: (result) => {
       setMsg({ ok: true, text: `${result.backfill_days} gün backfill: ${result.total_saved ?? 0} yeni log (${result.servers_with_logs ?? 0} sunucu)` })
       queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d'] })

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { inventoryHeaders } from '../lib/inventoryApi'
 import {
   Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
   Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
@@ -433,12 +434,18 @@ const HypervisorManagement = ({
   hypervisors, 
   onAdd, 
   onDelete, 
-  onSync 
+  onSync,
+  onSyncAll,
+  syncingAll = false,
+  readOnly = false,
 }: { 
   hypervisors: Hypervisor[]
   onAdd: () => void
   onDelete: (id: number) => void
   onSync: (id: number) => void
+  onSyncAll?: () => void
+  syncingAll?: boolean
+  readOnly?: boolean
 }) => {
   const getTypeColor = (type: string) => {
     const colors: Record<string, string> = {
@@ -459,20 +466,44 @@ const HypervisorManagement = ({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-white">Hypervisor Bağlantıları</h3>
-        <button
-          onClick={onAdd}
-          className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
-        >
-          <Plus className="w-4 h-4" /> Ekle
-        </button>
+        <div>
+          <h3 className="text-sm font-medium text-white">Hypervisor Bağlantıları</h3>
+          {!readOnly && (
+            <p className="text-xs text-slate-500 mt-0.5">Envanter otomatik olarak her 5 dakikada bir senkronize edilir</p>
+          )}
+        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            {hypervisors.length > 0 && (
+              <button
+                onClick={onSyncAll}
+                disabled={syncingAll}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-400 text-sm rounded-lg hover:bg-blue-500/20 transition-all disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${syncingAll ? 'animate-spin' : ''}`} /> Tümünü Senkronize Et
+              </button>
+            )}
+            <button
+              onClick={onAdd}
+              className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
+            >
+              <Plus className="w-4 h-4" /> Ekle
+            </button>
+          </div>
+        )}
       </div>
 
       {hypervisors.length === 0 ? (
         <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
           <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <p className="text-slate-400 mb-4">Henüz hypervisor bağlantısı yok</p>
-          <button onClick={onAdd} className="text-blue-400 hover:text-blue-300 text-sm">+ Hypervisor Ekle</button>
+          {readOnly ? (
+            <Link to="/integrations/hypervisors" className="text-blue-400 hover:text-blue-300 text-sm">
+              Entegrasyonlar → vCenter / OLVM
+            </Link>
+          ) : (
+            <button onClick={onAdd} className="text-blue-400 hover:text-blue-300 text-sm">+ Hypervisor Ekle</button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -493,20 +524,22 @@ const HypervisorManagement = ({
                 <div className="flex"><span className="w-12 text-slate-500">IP:</span><span className="text-slate-300 font-mono">{hv.ip_address}:{hv.port}</span></div>
                 <div className="flex"><span className="w-12 text-slate-500">User:</span><span className="text-slate-300">{hv.username}</span></div>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => onSync(hv.id)}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/20 text-xs transition-colors"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Sync VMs
-                </button>
-                <button
-                  onClick={() => onDelete(hv.id)}
-                  className="px-3 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 text-xs transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              {!readOnly && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onSync(hv.id)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/20 text-xs transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Sync VMs
+                  </button>
+                  <button
+                    onClick={() => onDelete(hv.id)}
+                    className="px-3 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 text-xs transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -624,34 +657,36 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
 // ══════════════════════════════════════════════════════════════════════════════
 // ── Main Component ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-const Hypervisors: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>('dashboard')
+const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventoryEdit = false }) => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>(allowInventoryEdit ? 'hypervisors' : 'dashboard')
   const [showAddModal, setShowAddModal] = useState(false)
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const queryClient = useQueryClient()
 
-  // Hypervisors
+  // Hypervisors — dashboard'un güncel kalması için periyodik olarak yenilenir
+  // (backend'deki otomatik envanter senkronizasyonu her 5 dakikada bir çalışır)
   const { data: hypervisors = [], isLoading: hvLoading } = useQuery<Hypervisor[]>({
     queryKey: ['hypervisors'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/`)
       if (!r.ok) throw new Error('Hypervisor listesi alınamadı')
       return r.json()
-    }
+    },
+    refetchInterval: 60_000,
   })
 
-  // VMs (servers with hypervisor_id)
-  const { data: allServers = [] } = useQuery<VM[]>({
-    queryKey: ['servers'],
+  // VMs — backend ile aynı tanım: hypervisor_id dolu OLUŞTU ya da server_type=VIRTUAL
+  // (OLVM/UCMDB gibi kaynaklardan hypervisor bağlantısı olmadan gelen VM'ler de dahil)
+  const { data: vms = [] } = useQuery<VM[]>({
+    queryKey: ['servers', 'platform=virt'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/`)
+      const r = await fetch(`${API_BASE_URL}/servers/?platform=virt`)
       if (!r.ok) return []
       return r.json()
-    }
+    },
+    refetchInterval: 60_000,
   })
-
-  const vms = useMemo(() => allServers.filter(s => s.hypervisor_id), [allServers])
 
   // ESX Host Metrics
   const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
@@ -677,7 +712,11 @@ const Hypervisors: React.FC = () => {
   // Mutations
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      const r = await fetch(`${API_BASE_URL}/hypervisors/`, {
+        method: 'POST',
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(data),
+      })
       if (!r.ok) throw new Error((await r.json()).detail || 'Ekleme hatası')
       return r.json()
     },
@@ -686,15 +725,18 @@ const Hypervisors: React.FC = () => {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}`, { method: 'DELETE' })
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}`, { method: 'DELETE', headers: inventoryHeaders() })
       if (!r.ok) throw new Error('Silme hatası')
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+    }
   })
 
   const syncMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}/sync-vms`, { method: 'POST' })
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}/sync-vms`, { method: 'POST', headers: inventoryHeaders() })
       if (!r.ok) throw new Error((await r.json()).detail || 'Sync hatası')
       return r.json()
     },
@@ -702,6 +744,20 @@ const Hypervisors: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       alert(`${data.synced_count} yeni VM eklendi. Toplam: ${data.total_vms} VM`)
     }
+  })
+
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/sync-all-vms`, { method: 'POST', headers: inventoryHeaders() })
+      if (!r.ok) throw new Error((await r.json()).detail || 'Sync hatası')
+      return r.json()
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+      alert(`Tüm hypervisor'lar senkronize edildi. Toplam ${data.total_synced} yeni VM eklendi.`)
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Senkronizasyon hatası')
   })
 
   // Stats
@@ -729,37 +785,61 @@ const Hypervisors: React.FC = () => {
   return (
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
-      {showAddModal && <AddHypervisorModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
+      {allowInventoryEdit && showAddModal && <AddHypervisorModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
 
       <div className="space-y-6">
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
-          <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
-          <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.purple} />
-          <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
-          <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
-          <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
+        <div>
+          {allowInventoryEdit ? (
+            <>
+              <Link to="/integrations" className="text-xs text-slate-500 hover:text-white">← Envanter Merkezi</Link>
+              <h1 className="text-xl font-bold text-white mt-1">vCenter / OLVM — Hypervisor Yönetimi</h1>
+              <p className="text-sm text-slate-500">Hypervisor bağlantıları ve VM envanter senkronizasyonu</p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-xl font-bold text-white">Sanallaştırma Dashboard</h1>
+              <p className="text-sm text-slate-500">Hypervisor, host ve VM operasyon görünümü</p>
+              <Link to="/integrations/hypervisors" className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300">
+                Envanter yönetimi → Entegrasyonlar
+              </Link>
+            </>
+          )}
         </div>
+        {!allowInventoryEdit && (
+          <>
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
+              <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
+              <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.purple} />
+              <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
+              <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
+              <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
+            </div>
 
-        <div className="flex justify-end">
-          <Link
-            to="/infra-reports"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition-colors"
-          >
-            <BarChart3 className="w-4 h-4" />
-            Altyapı Raporları
-          </Link>
-        </div>
+            <div className="flex justify-end">
+              <Link
+                to="/infra-reports"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition-colors"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Altyapı Raporları
+              </Link>
+            </div>
+          </>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1 p-1 bg-cyber-card rounded-xl border border-white/[0.06] w-fit">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'vms', icon: Monitor, label: 'VM Listesi' },
-            { id: 'hosts', icon: Database, label: 'Host\'lar' },
-            { id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' },
-          ].map(tab => (
+          {(allowInventoryEdit
+            ? [{ id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' }]
+            : [
+                { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+                { id: 'vms', icon: Monitor, label: 'VM Listesi' },
+                { id: 'hosts', icon: Database, label: 'Host\'lar' },
+                { id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' },
+              ]
+          ).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
@@ -776,7 +856,7 @@ const Hypervisors: React.FC = () => {
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'dashboard' && (
+        {!allowInventoryEdit && activeTab === 'dashboard' && (
           <div className="space-y-6">
             {/* Resource Gauges */}
             {allHosts.length > 0 && (
@@ -821,9 +901,9 @@ const Hypervisors: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'vms' && <VMTable vms={vms} hypervisors={hypervisors} />}
+        {!allowInventoryEdit && activeTab === 'vms' && <VMTable vms={vms} hypervisors={hypervisors} />}
 
-        {activeTab === 'hosts' && (
+        {!allowInventoryEdit && activeTab === 'hosts' && (
           <div className="space-y-4">
             {hostsLoading ? (
               <div className="flex items-center justify-center py-12">
@@ -833,7 +913,9 @@ const Hypervisors: React.FC = () => {
               <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
                 <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
                 <p className="text-slate-400">Host verisi bulunamadı</p>
-                <p className="text-xs text-slate-500 mt-1">VMware hypervisor ekleyip sync yapın</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {allowInventoryEdit ? 'VMware hypervisor ekleyip sync yapın' : 'Entegrasyonlar üzerinden hypervisor tanımlayın'}
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -848,6 +930,7 @@ const Hypervisors: React.FC = () => {
         {activeTab === 'hypervisors' && (
           <HypervisorManagement
             hypervisors={hypervisors}
+            readOnly={!allowInventoryEdit}
             onAdd={() => setShowAddModal(true)}
             onDelete={async (id) => {
               if (await showConfirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
@@ -855,6 +938,8 @@ const Hypervisors: React.FC = () => {
               }
             }}
             onSync={(id) => syncMutation.mutate(id)}
+            onSyncAll={() => syncAllMutation.mutate()}
+            syncingAll={syncAllMutation.isPending}
           />
         )}
       </div>

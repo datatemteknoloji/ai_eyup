@@ -12,6 +12,7 @@ import {
   NEON, PageHeader, GhostButton, PrimaryButton, Section, EmptyState, Select,
 } from '../components/aiops/ui'
 import type { PlatformAiopsProps } from '../utils/platformApi'
+import { appendPlatform } from '../utils/platformApi'
 
 // ── Tipler ───────────────────────────────────────────────────────────────────
 
@@ -194,7 +195,7 @@ function SuppressModal({
 
 type Tab = 'recurrence' | 'rules'
 
-const BaselineManager: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
+const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState<Tab>('recurrence')
   const [selectedServer, setSelectedServer] = useState('')
@@ -202,19 +203,15 @@ const BaselineManager: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) =
 
   // Sunucu listesi
   const { data: serversData } = useQuery({
-    queryKey: ['servers-list'],
+    queryKey: ['servers-list', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?limit=100`)
+      const params = appendPlatform(new URLSearchParams({ limit: '100' }), platform)
+      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
       return r.json()
     },
   })
   const serversRaw: Server[] = serversData?.servers ?? serversData ?? []
-  const servers = serversRaw.filter(s => {
-    const os = (s.os_type || '').toLowerCase()
-    if (platform === 'windows') return os.includes('windows')
-    if (platform === 'virt') return false
-    return !os.includes('windows')
-  })
+  const servers = platform === 'virt' ? [] : serversRaw
 
   // Tekrarlayan metrikler
   const { data: recurrenceData, isLoading: recLoading } = useQuery({
@@ -253,10 +250,12 @@ const BaselineManager: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) =
 
   return (
     <div className="space-y-6">
+      {!hideHeader && (
       <PageHeader
         title="Baseline Yönetimi"
         subtitle="Sunucu başına normal davranış tanımla — tekrarlayan alarmları bastır veya önceliğini düşür"
       />
+      )}
 
       {/* Sunucu seçimi */}
       <Section>

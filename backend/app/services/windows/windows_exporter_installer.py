@@ -80,7 +80,7 @@ if ($null -ne $existing) {{
     Start-Sleep -Seconds 2
 }}
 New-Service -Name '{SERVICE_NAME}' `
-    -BinaryPathName '"{EXE_PATH}" --collectors.enabled {COLLECTORS} --telemetry.addr ":{DEFAULT_PORT}"' `
+    -BinaryPathName '"{EXE_PATH}" --collectors.enabled {COLLECTORS} --web.listen-address=":{DEFAULT_PORT}"' `
     -DisplayName 'Windows Exporter (Prometheus)' `
     -StartupType Automatic
 Write-Output 'SERVICE_CREATED'

@@ -2,6 +2,7 @@
 Ansible Service - Inventory oluşturma, ad-hoc komut, SSH check
 """
 import os
+import re
 import json
 import logging
 import tempfile
@@ -18,13 +19,26 @@ class AnsibleService:
     """Ansible ad-hoc komut + inventory yönetimi"""
 
     @staticmethod
-    def generate_inventory(servers: List[Server], db: Optional[Session] = None) -> str:
+    def _host_alias(server: Server) -> str:
+        """Ansible INI host alias'ı boşluk/özel karakter içeremez — içerirse o satırdan
+        itibaren TÜM inventory dosyası parse edilemez hale gelir ve sonraki sunucular
+        sessizce kaybolur (örn: "olvm manager" gibi boşluklu isimler). Bu yüzden isimden
+        güvenli bir alias türetilir; benzersizlik için sunucu id'si eklenir."""
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", (server.name or "").strip())
+        safe = safe.strip("_") or "host"
+        return f"{safe}_{server.id}"
+
+    @staticmethod
+    def generate_inventory(servers: List[Server], db: Optional[Session] = None) -> Tuple[str, Dict[str, str]]:
         """
         Sunuculardan Ansible inventory (INI) oluştur.
         Önce sunucunun kendi connection_config'ine bakar,
         yoksa Global Credential'dan alır.
+
+        Dönüş: (inventory_ini_içeriği, {host_alias: server_display_name})
         """
         lines = ["[all]"]
+        alias_map: Dict[str, str] = {}
         
         # Global Credential'ı al (yoksa None)
         global_cred = None
@@ -38,6 +52,8 @@ class AnsibleService:
                 continue
             
             host = s.ip_address.strip()
+            alias = AnsibleService._host_alias(s)
+            alias_map[alias] = s.name
             
             # Önce sunucunun kendi config'i, yoksa global credential
             cfg = s.connection_config or {}
@@ -64,20 +80,23 @@ class AnsibleService:
             port = port or 22
             
             # ansible_host, ansible_user, ansible_port, ansible_ssh_pass (veya key)
-            inv_line = f"{s.name} ansible_host={host} ansible_user={user} ansible_port={port}"
+            inv_line = f"{alias} ansible_host={host} ansible_user={user} ansible_port={port}"
             inv_line += " ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
             
             if password:
                 inv_line += f" ansible_ssh_pass={password}"
             if private_key:
-                # Private key dosyaya yazılmalı (geçici)
-                inv_line += f" ansible_ssh_private_key_file=/tmp/ansible_key_{s.id}"
+                key_path = os.path.join(tempfile.gettempdir(), f"ansible_key_{s.id}_{os.getpid()}")
+                with open(key_path, "w") as kf:
+                    kf.write(private_key if private_key.endswith("\n") else private_key + "\n")
+                os.chmod(key_path, 0o600)
+                inv_line += f" ansible_ssh_private_key_file={key_path}"
             if sudo_password:
                 inv_line += f" ansible_become_pass={sudo_password}"
             
             lines.append(inv_line)
         
-        return "\n".join(lines)
+        return "\n".join(lines), alias_map
 
     @staticmethod
     def ping_servers(servers: List[Server], db: Optional[Session] = None) -> Dict[str, bool]:
@@ -85,7 +104,7 @@ class AnsibleService:
         if not servers:
             return {}
         
-        inventory_content = AnsibleService.generate_inventory(servers, db)
+        inventory_content, alias_map = AnsibleService.generate_inventory(servers, db)
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
             inv_file.write(inventory_content)
@@ -105,9 +124,9 @@ class AnsibleService:
             for line in result.stdout.splitlines():
                 if " | " in line:
                     parts = line.split(" | ", 1)
-                    host_name = parts[0].strip()
+                    alias = parts[0].strip()
                     status = parts[1]
-                    reachable[host_name] = "SUCCESS" in status
+                    reachable[alias_map.get(alias, alias)] = "SUCCESS" in status
             
             return reachable
         except subprocess.TimeoutExpired:
@@ -142,14 +161,17 @@ class AnsibleService:
         if not servers:
             return {"success": False, "error": "Hiç sunucu seçilmedi", "results": {}, "failed": []}
         
-        inventory_content = AnsibleService.generate_inventory(servers, db)
+        inventory_content, alias_map = AnsibleService.generate_inventory(servers, db)
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
             inv_file.write(inventory_content)
             inv_path = inv_file.name
         
         try:
-            cmd = ["ansible", "all", "-i", inv_path, "-m", module, "-a", args, "-T", "30", "-f", "10"]
+            # "-o" (one-line): çok satırlı komut çıktısını (örn. uptime, df -h) tek satıra
+            # sıkıştırır — bu olmadan asıl çıktı " | " içermeyen ayrı satırlarda kalır ve
+            # aşağıdaki satır bazlı parse tarafından atlanır (sonuç: boş stdout görünür).
+            cmd = ["ansible", "all", "-i", inv_path, "-m", module, "-a", args, "-o", "-T", "30", "-f", "10"]
             if become:
                 cmd.append("--become")
             
@@ -173,7 +195,8 @@ class AnsibleService:
                 if len(parts) < 2:
                     continue
                     
-                host_name = parts[0].strip()
+                alias = parts[0].strip()
+                host_name = alias_map.get(alias, alias)
                 status_and_output = parts[1].strip()
                 
                 if "SUCCESS" in status_and_output or "CHANGED" in status_and_output:
@@ -194,7 +217,8 @@ class AnsibleService:
                 parts = line.split(" | ", 1)
                 if len(parts) < 2:
                     continue
-                host_name = parts[0].strip()
+                alias = parts[0].strip()
+                host_name = alias_map.get(alias, alias)
                 if host_name not in results:
                     results[host_name] = {"rc": 1, "stdout": "", "stderr": parts[1].strip()}
                     failed.append(host_name)
@@ -221,7 +245,7 @@ class AnsibleService:
         Playbook içeriği geçici dosyaya yazılır, ansible-playbook komutu çalıştırılır.
         """
         # Inventory oluştur
-        inventory_content = AnsibleService.generate_inventory(servers, db)
+        inventory_content, alias_map = AnsibleService.generate_inventory(servers, db)
         
         # Geçici dosyalar: inventory ve playbook
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
@@ -265,7 +289,8 @@ class AnsibleService:
                 if len(parts) < 2:
                     continue
                     
-                host_name = parts[0].strip()
+                alias = parts[0].strip()
+                host_name = alias_map.get(alias, alias)
                 status_and_output = parts[1].strip()
                 
                 if "ok=" in status_and_output or "changed=" in status_and_output:

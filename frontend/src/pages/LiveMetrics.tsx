@@ -70,7 +70,7 @@ type MetricServerOverview = {
 }
 
 const fetchMetricServersOverview = async (): Promise<MetricServerOverview> => {
-  const response = await fetch(`${API_BASE_URL}/monitoring/metrics/servers`)
+  const response = await fetch(`${API_BASE_URL}/monitoring/metrics/servers?platform=linux`)
   if (!response.ok) throw new Error('Metric sunucu özeti alınamadı')
   return response.json()
 }

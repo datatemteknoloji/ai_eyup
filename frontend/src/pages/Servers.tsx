@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import {
-  Plus, ChevronDown, Settings2, Activity, Wifi,
+  ChevronDown, Settings2, Activity, Wifi,
   Download, RefreshCw, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
@@ -439,7 +439,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
   const { data: eventsData, isLoading: eventsLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
     queryKey: ['server-events', server.id],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/events/grouped?server_id=${server.id}&resolved=false&limit=30&sort_by=latest_created_at&sort_dir=desc`)
+      const res = await fetch(`${API_BASE_URL}/events/grouped?server_id=${server.id}&resolved=false&limit=30&sort_by=latest_created_at&sort_dir=desc&platform=linux`)
       if (!res.ok) return { total: 0, groups: [] }
       return res.json()
     },
@@ -1123,7 +1123,6 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
 const Servers: React.FC = () => {
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
-  const [showAddModal, setShowAddModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
@@ -1168,19 +1167,6 @@ const Servers: React.FC = () => {
   }>>({})
   const [installSimulatedStep, setInstallSimulatedStep] = useState<Record<number, number>>({})
   const installAbortRef = React.useRef<AbortController | null>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    hostname: '',
-    ip_address: '',
-    status: 'OFFLINE',
-    server_type: 'VIRTUAL',
-    os_type: 'linux',
-    ssh_username: '',
-    ssh_password: '',
-    ssh_port: '22',
-    sudo_password: '',
-    private_key: ''
-  })
 
   const queryClient = useQueryClient()
 
@@ -1264,50 +1250,6 @@ const Servers: React.FC = () => {
     refetchInterval: 60000
   })
 
-  const createMutation = useMutation({
-    mutationFn: async (data: {
-      name: string
-      hostname: string
-      ip_address: string
-      status: string
-      server_type: string
-      os_type: string
-      connection_config: Record<string, any>
-    }) => {
-      const response = await fetch(`${API_BASE_URL}/servers/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      })
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to create server')
-      }
-      return response.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] })
-      setShowAddModal(false)
-      setFormData({
-        name: '',
-        hostname: '',
-        ip_address: '',
-        status: 'OFFLINE',
-        server_type: 'VIRTUAL',
-        os_type: 'linux',
-        ssh_username: '',
-        ssh_password: '',
-        ssh_port: '22',
-        sudo_password: '',
-        private_key: ''
-      })
-    },
-    onError: () => {
-      // DEV: console.error(...)
-    }
-  })
-
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const response = await fetch(`${API_BASE_URL}/servers/${id}`, { method: 'DELETE' })
@@ -1362,38 +1304,6 @@ const Servers: React.FC = () => {
       setInstallResultByServerId(prev => ({ ...prev, [serverId]: { success: false, error: message, steps: [] } }))
     }
   })
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    // DEV: console.log(...)
-    if (!formData.name || formData.name.trim() === '') {
-      alert('Sunucu adı gereklidir!')
-      return
-    }
-    if (!formData.ip_address || formData.ip_address.trim() === '') {
-      alert('IP adresi zorunludur! Lütfen sunucunun IP adresini girin.')
-      return
-    }
-    const connection_config = formData.ssh_username
-      ? {
-          username: formData.ssh_username,
-          password: formData.ssh_password || undefined,
-          port: Number(formData.ssh_port || 22),
-          sudo_password: formData.sudo_password || undefined,
-          private_key: formData.private_key || undefined
-        }
-      : {}
-
-    createMutation.mutate({
-      name: formData.name,
-      hostname: formData.hostname,
-      ip_address: formData.ip_address,
-      status: formData.status,
-      server_type: formData.server_type,
-      os_type: formData.os_type,
-      connection_config
-    })
-  }
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -1454,7 +1364,6 @@ const Servers: React.FC = () => {
 
     const osTypeLow = (server.os_type || '').toLowerCase()
     const matchesOs = osFilter === 'all' ||
-      (osFilter === 'windows' && osTypeLow.includes('windows')) ||
       (osFilter === 'linux' && !osTypeLow.includes('windows') && (osTypeLow.includes('linux') || osTypeLow.includes('rhel') || osTypeLow.includes('ol') || osTypeLow.includes('ubuntu') || osTypeLow.includes('centos') || osTypeLow.includes('rocky') || osTypeLow.includes('sles') || server.os_release_id)) ||
       (osFilter === 'other' && !osTypeLow.includes('windows') && !osTypeLow.includes('linux') && !osTypeLow.includes('rhel') && !osTypeLow.includes('ol') && !osTypeLow.includes('ubuntu') && !osTypeLow.includes('centos') && !osTypeLow.includes('rocky') && !osTypeLow.includes('sles') && !server.os_release_id)
 
@@ -1554,11 +1463,12 @@ const Servers: React.FC = () => {
     )
   }
 
-  // OS platform tabs
+  // OS platform tabs — bu sayfa Linux modülüne ait; API zaten ?platform=linux ile
+  // Windows sunucuları hariç tutuyor, dolayısıyla burada Windows sekmesi/filtresi
+  // gösterilmez (bkz. Windows Sunucular sayfası: /windows).
   const platformCounts = {
     all: servers.length,
     linux: servers.filter(s => !(s.os_type || '').toLowerCase().includes('windows')).length,
-    windows: servers.filter(s => (s.os_type || '').toLowerCase().includes('windows')).length,
   }
 
   return (
@@ -1570,7 +1480,6 @@ const Servers: React.FC = () => {
         {([
           { key: 'all', label: 'Tümü', count: platformCounts.all },
           { key: 'linux', label: 'Linux', count: platformCounts.linux },
-          { key: 'windows', label: 'Windows', count: platformCounts.windows },
         ] as const).map(tab => (
           <button key={tab.key}
             onClick={() => setOsFilter(tab.key === 'all' ? 'all' : tab.key)}
@@ -1681,7 +1590,6 @@ const Servers: React.FC = () => {
             >
               <option value="all">Tüm OS</option>
               <option value="linux">Linux</option>
-              <option value="windows">Windows</option>
               <option value="other">Diğer / Bilinmiyor</option>
             </select>
             {/* Node Exporter Filter */}
@@ -1699,14 +1607,6 @@ const Servers: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <ActionsDropdown servers={servers} refetch={() => { refetch(); queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] }) }} />
-            <div className="w-px h-6 bg-slate-700/60" />
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg shadow-blue-500/25 text-sm font-medium"
-            >
-              <Plus size={16} />
-              Yeni Sunucu
-            </button>
           </div>
         </div>
       </div>
@@ -1765,7 +1665,7 @@ const Servers: React.FC = () => {
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                     <p className="font-medium">Henüz sunucu yok</p>
-                    <p className="text-sm mt-1">Yeni sunucu eklemek için &quot;Yeni Sunucu&quot; butonunu kullanın veya backend/veritabanı bağlantısını kontrol edin.</p>
+                    <p className="text-sm mt-1">Sunucu eklemek için Entegrasyonlar modülünü kullanın (UCMDB import, hypervisor sync veya manuel host ekleme).</p>
                     <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
                   </td>
                 </tr>
@@ -2101,178 +2001,10 @@ const Servers: React.FC = () => {
           <div className="text-center py-12 text-slate-500">
             {searchTerm || ipFilter || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
               ? 'Filtreye uygun sunucu bulunamadı' 
-              : 'Henüz sunucu eklenmemiş'}
+              : 'Henüz sunucu yok — envanter Entegrasyonlar üzerinden eklenir'}
           </div>
         )}
       </div>
-
-      {/* Add Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-white">Yeni Sunucu Ekle</h2>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Sunucu Adı *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="örn: web-server-01"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Hostname</label>
-                <input
-                  type="text"
-                  value={formData.hostname}
-                  onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="örn: web-server-01.local"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  IP Adresi <span className="text-red-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.ip_address}
-                  onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
-                  className={`w-full bg-cyber-deep border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${!formData.ip_address ? 'border-red-500/50' : 'border-white/[0.06]'}`}
-                  placeholder="örn: 192.168.1.100"
-                />
-                {!formData.ip_address && (
-                  <p className="text-red-400 text-xs mt-1">IP adresi zorunludur</p>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Tip</label>
-                  <select
-                    value={formData.server_type}
-                    onChange={(e) => setFormData({ ...formData, server_type: e.target.value })}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="VIRTUAL">Virtual</option>
-                    <option value="PHYSICAL">Physical</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">İşletim Sistemi</label>
-                  <select
-                    value={formData.os_type}
-                    onChange={(e) => setFormData({ ...formData, os_type: e.target.value })}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="linux">Linux</option>
-                    <option value="windows">Windows</option>
-                  </select>
-                </div>
-              </div>
-              <div className="border-t border-white/[0.06] pt-4">
-                <h3 className="text-sm font-semibold text-slate-200 mb-3">SSH Bilgileri (Node Exporter kurulumu için)</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Kullanıcı Adı</label>
-                    <input
-                      type="text"
-                      value={formData.ssh_username}
-                      onChange={(e) => setFormData({ ...formData, ssh_username: e.target.value })}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="örn: root"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">SSH Port</label>
-                    <input
-                      type="number"
-                      value={formData.ssh_port}
-                      onChange={(e) => setFormData({ ...formData, ssh_port: e.target.value })}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="22"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mt-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Şifre</label>
-                    <input
-                      type="password"
-                      value={formData.ssh_password}
-                      onChange={(e) => setFormData({ ...formData, ssh_password: e.target.value })}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="SSH şifresi"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Sudo Şifresi</label>
-                    <input
-                      type="password"
-                      value={formData.sudo_password}
-                      onChange={(e) => setFormData({ ...formData, sudo_password: e.target.value })}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Opsiyonel"
-                    />
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Private Key (opsiyonel)</label>
-                  <textarea
-                    value={formData.private_key}
-                    onChange={(e) => setFormData({ ...formData, private_key: e.target.value })}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                    rows={3}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 transition-colors"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  disabled={createMutation.isPending}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all disabled:opacity-50"
-                >
-                  {createMutation.isPending ? 'Ekleniyor...' : 'Ekle'}
-                </button>
-              </div>
-              {createMutation.isError && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                  <p className="text-red-400 text-sm font-medium">Hata:</p>
-                  <p className="text-red-300 text-sm mt-1">
-                    {createMutation.error != null
-                      ? (createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error))
-                      : 'Bilinmeyen hata'}
-                  </p>
-                </div>
-              )}
-              {createMutation.isSuccess && (
-                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
-                  <p className="text-green-400 text-sm">✓ Sunucu başarıyla eklendi!</p>
-                </div>
-              )}
-            </form>
-          </div>
-        </div>
-      )}
 
     </div>
 

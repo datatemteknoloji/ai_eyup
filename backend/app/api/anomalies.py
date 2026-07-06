@@ -9,7 +9,13 @@ from app.core.database import get_db
 from app.models.server import Server
 from app.models.metric import MetricData
 from app.services.anomaly_detector import detect_all_anomalies, detect_anomalies_for_server
-from app.services.platform_scope import get_linux_server_ids, get_windows_server_ids, apply_platform_filter
+from app.services.platform_scope import (
+    get_linux_module_server_ids,
+    get_windows_server_ids,
+    get_exadata_server_ids,
+    apply_platform_filter,
+)
+from app.services.event_filters import LOG_ENTRY_ACTIONABLE, apply_hide_routine_virt
 from datetime import datetime, timedelta
 import statistics
 
@@ -31,11 +37,14 @@ async def get_anomalies(
     else:
         anomalies = detect_all_anomalies(db)
         if platform == "linux":
-            linux_ids = set(get_linux_server_ids(db))
+            linux_ids = set(get_linux_module_server_ids(db))
             anomalies = [a for a in anomalies if a.get("server_id") in linux_ids]
         elif platform == "windows":
             win_ids = set(get_windows_server_ids(db))
             anomalies = [a for a in anomalies if a.get("server_id") in win_ids]
+        elif platform == "exadata":
+            exa_ids = set(get_exadata_server_ids(db))
+            anomalies = [a for a in anomalies if a.get("server_id") in exa_ids]
         elif platform == "virt":
             anomalies = []
 
@@ -286,20 +295,27 @@ async def collect_logs_now(db: Session = Depends(get_db)):
 @router.post("/logs/backfill")
 async def backfill_logs(
     days: int = Query(default=7, ge=1, le=30),
+    platform: Optional[str] = Query(default=None),
     db: Session = Depends(get_db)
 ):
-    """Geçmiş N günlük log backfill - tüm sunuculara SSH yaparak geçmişi çeker.
-    Heatmap'i doldurmak için ilk kurulumda veya eksik veri durumunda kullanılır.
-    """
+    """Geçmiş N günlük log backfill — platform=linux SSH, platform=windows WinRM Event Log."""
     import asyncio
-    from app.services.log_collector import collect_all_servers_logs
     since_hours = days * 24
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, lambda: collect_all_servers_logs(db, since_hours=since_hours)
-    )
+
+    if platform == "windows":
+        from app.services.windows_log_collector import collect_all_windows_logs
+        result = await loop.run_in_executor(
+            None, lambda: collect_all_windows_logs(db, since_hours=since_hours)
+        )
+    else:
+        from app.services.log_collector import collect_all_servers_logs
+        result = await loop.run_in_executor(
+            None, lambda: collect_all_servers_logs(db, since_hours=since_hours)
+        )
     result["backfill_days"] = days
     result["since_hours"] = since_hours
+    result["platform"] = platform or "linux"
     return result
 
 
@@ -311,6 +327,8 @@ async def backfill_logs(
 async def get_log_anomaly_list(
     days: int = Query(30, ge=7, le=90),
     platform: Optional[str] = Query(None),
+    actionable_only: bool = Query(default=True),
+    show_routine: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     """Isı haritası ile aynı veri kaynağından (log_entry) son N gün detay listesi."""
@@ -331,7 +349,11 @@ async def get_log_anomaly_list(
         SystemEvent.created_at >= since,
         func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
     )
+    if actionable_only:
+        q = q.filter(LOG_ENTRY_ACTIONABLE)
     q = apply_platform_filter(q, platform, db)
+    if platform == "virt" and not show_routine:
+        q = apply_hide_routine_virt(q, show_routine=False)
     events = q.order_by(SystemEvent.created_at.desc()).limit(2000).all()
 
     sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
@@ -366,6 +388,8 @@ async def get_log_anomaly_list(
 async def get_log_anomaly_heatmap(
     days: int = Query(30, ge=7, le=90),
     platform: Optional[str] = Query(None),
+    actionable_only: bool = Query(default=True),
+    show_routine: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     """Son N gun loglarindan sunucu-gun bazli anomali isi haritasi dondurur."""
@@ -381,10 +405,13 @@ async def get_log_anomaly_heatmap(
     # Sadece AI Ready sunucular AIOps ısı haritasında gösterilir.
     servers_q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
     if platform == "linux":
-        ids = set(get_linux_server_ids(db))
+        ids = set(get_linux_module_server_ids(db))
         servers_q = servers_q.filter(Server.id.in_(ids)) if ids else servers_q.filter(False)
     elif platform == "windows":
         ids = set(get_windows_server_ids(db))
+        servers_q = servers_q.filter(Server.id.in_(ids)) if ids else servers_q.filter(False)
+    elif platform == "exadata":
+        ids = set(get_exadata_server_ids(db))
         servers_q = servers_q.filter(Server.id.in_(ids)) if ids else servers_q.filter(False)
     servers = servers_q.order_by(Server.name.asc()).all()
     server_ids = [s.id for s in servers]
@@ -403,7 +430,11 @@ async def get_log_anomaly_heatmap(
             SystemEvent.created_at >= since,
             func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
         )
+        if actionable_only:
+            q = q.filter(LOG_ENTRY_ACTIONABLE)
         q = apply_platform_filter(q, platform, db)
+        if platform == "virt" and not show_routine:
+            q = apply_hide_routine_virt(q, show_routine=False)
         events = q.all()
 
         sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}

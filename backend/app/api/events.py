@@ -13,6 +13,7 @@ from app.models.event import SystemEvent
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.platform_scope import apply_platform_filter, VALID_PLATFORMS
+from app.services.event_filters import apply_actionable_event_filters, apply_hide_routine_virt
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,18 +58,37 @@ def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
 @router.get("/stats")
 async def event_stats(
     platform: Optional[str] = None,
+    show_routine: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
-    """Event istatistikleri"""
+    """Event istatistikleri — kritik/uyarı/acil sayaçları Komuta Merkezi ile tutarlı."""
+    from datetime import timedelta
+    since = datetime.utcnow() - timedelta(hours=24)
+
     q = db.query(SystemEvent)
     q = apply_platform_filter(q, platform, db)
+    if platform == "virt" and not show_routine:
+        q = apply_hide_routine_virt(q, show_routine=False)
+
     total = q.count()
-    unresolved = q.filter(SystemEvent.resolved == False).count()
-    critical = q.filter(SystemEvent.severity == "critical", SystemEvent.resolved == False).count()
-    warning = q.filter(SystemEvent.severity == "warning", SystemEvent.resolved == False).count()
-    emergency = q.filter(SystemEvent.severity == "emergency", SystemEvent.resolved == False).count()
-    acknowledged = q.filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()
-    known = q.filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()
+    unresolved = q.filter(SystemEvent.resolved == False).count()  # noqa: E712
+    acknowledged = q.filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()  # noqa: E712
+    known = q.filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()  # noqa: E712
+
+    actionable = apply_platform_filter(
+        apply_actionable_event_filters(
+            db.query(SystemEvent).filter(SystemEvent.last_seen >= since)
+        ),
+        platform,
+        db,
+    )
+    if platform == "virt" and not show_routine:
+        actionable = apply_hide_routine_virt(actionable, show_routine=False)
+
+    critical = actionable.filter(SystemEvent.severity == "critical").count()
+    warning = actionable.filter(SystemEvent.severity == "warning").count()
+    emergency = actionable.filter(SystemEvent.severity == "emergency").count()
+
     return {
         "total": total,
         "unresolved": unresolved,
@@ -98,6 +118,7 @@ async def list_events(
     acknowledged: Optional[bool] = None,
     online_only: Optional[bool] = None,
     platform: Optional[str] = None,
+    show_routine: bool = Query(default=False),
     limit: int = Query(default=50, le=500),
     offset: int = 0,
     db: Session = Depends(get_db)
@@ -105,6 +126,8 @@ async def list_events(
     """Event'leri listele (filtreleme destekli)"""
     q = db.query(SystemEvent)
     q = apply_platform_filter(q, platform, db)
+    if platform == "virt" and not show_routine:
+        q = apply_hide_routine_virt(q, show_routine=False)
     if severity:
         q = q.filter(SystemEvent.severity == severity)
     if event_type:
@@ -366,6 +389,7 @@ async def list_events_grouped(
     acknowledged: Optional[bool] = None,
     exclude_known: bool = Query(default=True),  # Bilinen eventleri varsayılan olarak gizle
     platform: Optional[str] = None,
+    show_routine: bool = Query(default=False),
     limit: int = Query(default=50, le=100),
     offset: int = 0,
     sort_by: str = Query(default="latest_created_at"),
@@ -376,6 +400,8 @@ async def list_events_grouped(
     last_seen alanini 'Son Olusum' icin kullanir. Tum gruplara gore server-side sort."""
     q = db.query(SystemEvent)
     q = apply_platform_filter(q, platform, db)
+    if platform == "virt" and not show_routine:
+        q = apply_hide_routine_virt(q, show_routine=False)
     if severity:
         q = q.filter(SystemEvent.severity == severity)
     if event_type:
@@ -490,6 +516,9 @@ async def scan_all_servers(
         elif plat == "virt":
             from app.services.virt_log_collector import sync_virt_logs_to_db
             fn = lambda: sync_virt_logs_to_db(db)
+        elif plat == "exadata":
+            from app.services.log_collector import collect_exadata_servers_logs
+            fn = lambda: collect_exadata_servers_logs(db, only_ai_ready=only_ai_ready)
         else:
             from app.services.log_collector import collect_all_servers_logs
             fn = lambda: collect_all_servers_logs(db, only_ai_ready=only_ai_ready)

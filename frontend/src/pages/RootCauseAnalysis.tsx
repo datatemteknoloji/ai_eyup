@@ -189,7 +189,7 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
 
 // ── Compare Windows paneli ────────────────────────────────────────────────────
 
-function ComparePanel() {
+function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }) {
   const now = new Date()
   const fmt = (d: Date) => d.toISOString().slice(0, 16)
   const h = (n: number) => { const d = new Date(now); d.setHours(d.getHours() - n); return fmt(d) }
@@ -211,9 +211,10 @@ function ComparePanel() {
   const [searchB, setSearchB] = useState('')
 
   const { data: serversData } = useQuery({
-    queryKey: ['servers-list-compare'],
+    queryKey: ['servers-list-compare', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?limit=300`)
+      const params = appendPlatform(new URLSearchParams({ limit: '300' }), platform)
+      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
       return r.json()
     },
   })
@@ -691,7 +692,7 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
 
 type Tab = 'log' | 'compare' | 'awr'
 
-const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
+const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
   const [activeTab, setActiveTab] = useState<Tab>('log')
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
@@ -703,9 +704,10 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' })
 
   // Online sunucu listesi (dropdown için)
   const { data: serversListData } = useQuery({
-    queryKey: ['rca-servers-online'],
+    queryKey: ['rca-servers-online', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?limit=300`)
+      const params = appendPlatform(new URLSearchParams({ limit: '300' }), platform)
+      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
       if (!r.ok) return { servers: [] }
       return r.json()
     },
@@ -767,6 +769,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' })
 
   return (
     <div className="space-y-6">
+      {!hideHeader && (
       <PageHeader
         title="Kök Neden Analizi"
         subtitle="Log analizi, zaman penceresi karşılaştırması ve AWR performans analizi"
@@ -778,6 +781,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' })
           ) : undefined
         }
       />
+      )}
 
       {/* Tab bar */}
       <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -918,7 +922,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps> = ({ platform = 'linux' })
       )}
 
       {/* Karşılaştırma tab */}
-      {activeTab === 'compare' && <ComparePanel />}
+      {activeTab === 'compare' && <ComparePanel platform={platform} />}
 
       {/* AWR tab */}
       {activeTab === 'awr' && <AWRPanel />}

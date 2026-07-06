@@ -49,6 +49,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load windows_chat router: {e}", exc_info=True)
 
+# Chat (Unified — Linux + Windows + Sanallaştırma)
+try:
+    from app.api import unified_chat
+    api_router.include_router(unified_chat.router, prefix="/unified-chat", tags=["unified-chat"])
+except Exception as e:
+    logger.error(f"Could not load unified_chat router: {e}", exc_info=True)
+
 # Alerts
 try:
     from app.api import alerts
@@ -209,3 +216,24 @@ try:
     api_router.include_router(modules.router, prefix="/modules", tags=["modules"])
 except Exception as e:
     logger.error(f"Could not load modules router: {e}", exc_info=True)
+
+# Entegrasyonlar — envanter merkezi
+try:
+    from app.api import integrations
+    api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
+except Exception as e:
+    logger.error(f"Could not load integrations router: {e}", exc_info=True)
+
+# Exadata (Oracle DB Machine envanter)
+try:
+    from app.api import exadata
+    api_router.include_router(exadata.router, prefix="/exadata", tags=["exadata"])
+except Exception as e:
+    logger.error(f"Could not load exadata router: {e}", exc_info=True)
+
+# Modül bazlı altyapı raporları (Linux / Windows / Exadata)
+try:
+    from app.api import platform_reports
+    api_router.include_router(platform_reports.router, prefix="/platform-reports", tags=["platform-reports"])
+except Exception as e:
+    logger.error(f"Could not load platform_reports router: {e}", exc_info=True)

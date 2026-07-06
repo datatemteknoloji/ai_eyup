@@ -34,7 +34,12 @@ class PrometheusTargetManager:
         
         self.targets_file = Path(targets_file)
         self.targets_file.parent.mkdir(parents=True, exist_ok=True)
-        self.reload_url = "http://prometheus:9090/-/reload"
+        try:
+            from app.core.config import settings
+            base_url = settings.PROMETHEUS_URL or "http://prometheus:9090"
+        except Exception:
+            base_url = "http://prometheus:9090"
+        self.reload_url = f"{base_url.rstrip('/')}/-/reload"
     
     def load_targets(self) -> List[Dict[str, Any]]:
         """Target dosyasını yükle"""

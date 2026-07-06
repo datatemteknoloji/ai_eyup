@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { useAuth } from '../auth/AuthContext'
 
 interface Credential {
   id: number
@@ -249,9 +250,195 @@ const RagTab: React.FC = () => {
   )
 }
 
+interface WipeCategory {
+  id: string
+  label: string
+  tables: Record<string, number>
+  total_rows: number
+}
+
+interface WipePreview {
+  categories: WipeCategory[]
+  total_rows: number
+  preserved: string[]
+}
+
+const WIPE_CONFIRM_PHRASE = 'TÜM VERİLERİ SİL'
+
+const DangerZoneTab: React.FC = () => {
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirmText, setConfirmText] = useState('')
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+  const queryClient = useQueryClient()
+
+  const { data: preview, isLoading, refetch } = useQuery<WipePreview>({
+    queryKey: ['wipe-all-data-preview'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/wipe-all-data/preview`)
+      if (!r.ok) throw new Error('Önizleme alınamadı')
+      return r.json()
+    }
+  })
+
+  const categories = preview?.categories || []
+  const nonEmptyCategories = categories.filter(c => c.total_rows > 0)
+
+  const toggleCategory = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    if (selected.size === nonEmptyCategories.length) setSelected(new Set())
+    else setSelected(new Set(nonEmptyCategories.map(c => c.id)))
+  }
+
+  const selectedTotal = categories
+    .filter(c => selected.has(c.id))
+    .reduce((sum, c) => sum + c.total_rows, 0)
+
+  const wipeMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/wipe-all-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: confirmText, categories: Array.from(selected) }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.detail || 'Silme başarısız')
+      return d
+    },
+    onSuccess: (d) => {
+      setResult({ success: true, message: `${d.message} Sayfa yenileniyor...` })
+      setConfirmText('')
+      setSelected(new Set())
+      refetch()
+      queryClient.invalidateQueries()
+      // Uygulama genelindeki tüm sayaçların (Dashboard, sidebar, vb.) anlık
+      // olarak güncel görünmesini garanti etmek için tam sayfa yenileme yapılır —
+      // invalidateQueries sadece o an mount olan sorguları tazeler.
+      setTimeout(() => window.location.reload(), 1200)
+    },
+    onError: (e) => setResult({ success: false, message: e instanceof Error ? e.message : 'Hata' }),
+  })
+
+  const canConfirm = confirmText.trim() === WIPE_CONFIRM_PHRASE && selected.size > 0
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-white mb-2">Tehlikeli Bölge</h2>
+      <p className="text-slate-400 text-sm mb-6">
+        Bu bölümdeki işlemler geri alınamaz. Silmek istediğiniz veri kategorilerini işaretleyin.
+      </p>
+
+      <div className="bg-red-500/5 border-2 border-red-500/30 rounded-xl p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
+            <span className="text-red-400 text-lg">⚠</span>
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-white">Veri Sil</h3>
+            <p className="text-slate-400 text-sm mt-1">
+              Kategori bazında seçim yapabilirsiniz — sadece işaretlediğiniz veriler silinir, diğerlerine dokunulmaz.
+            </p>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <p className="text-slate-500 text-sm py-4">Yükleniyor...</p>
+        ) : nonEmptyCategories.length === 0 ? (
+          <p className="text-slate-500 text-sm py-4">Silinecek veri bulunmuyor — ortam zaten temiz.</p>
+        ) : (
+          <>
+            <div className="mb-4 rounded-lg border border-white/[0.06] overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-cyber-deep/70 border-b border-white/[0.06]">
+                <label className="flex items-center gap-2.5 cursor-pointer text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={selected.size === nonEmptyCategories.length && nonEmptyCategories.length > 0}
+                    onChange={toggleAll}
+                    className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded"
+                  />
+                  Tümünü Seç
+                </label>
+                <span className="text-xs text-slate-500">{nonEmptyCategories.length} kategori</span>
+              </div>
+              <div className="divide-y divide-white/[0.04] max-h-80 overflow-y-auto">
+                {nonEmptyCategories.map(cat => (
+                  <label
+                    key={cat.id}
+                    className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${selected.has(cat.id) ? 'bg-red-500/10' : 'hover:bg-white/[0.03]'}`}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(cat.id)}
+                        onChange={() => toggleCategory(cat.id)}
+                        className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded"
+                      />
+                      <span className="text-sm text-white">{cat.label}</span>
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">{cat.total_rows} kayıt</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+              <p className="text-xs text-blue-300">
+                <strong>Her durumda korunacaklar:</strong> Kullanıcı hesapları, modül/rol yetkileri, global credential'lar (SSH/WinRM) ve sistem ayarları (AI modeli, saklama süresi vb.)
+              </p>
+            </div>
+
+            <div className="border-t border-red-500/20 pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm text-slate-300">
+                  Devam etmek için <code className="bg-cyber-deep px-1.5 py-0.5 rounded text-red-400 font-mono">{WIPE_CONFIRM_PHRASE}</code> yazın
+                </label>
+                <span className="text-sm font-semibold text-red-400">{selectedTotal} kayıt silinecek</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={e => setConfirmText(e.target.value)}
+                  placeholder={WIPE_CONFIRM_PHRASE}
+                  className="flex-1 bg-cyber-deep border border-red-500/30 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-sm"
+                />
+                <button
+                  onClick={() => wipeMutation.mutate()}
+                  disabled={!canConfirm || wipeMutation.isPending}
+                  className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-500 hover:to-red-600 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm whitespace-nowrap"
+                >
+                  {wipeMutation.isPending ? 'Siliniyor...' : `Seçilenleri Sil (${selected.size})`}
+                </button>
+              </div>
+              {selected.size === 0 && (
+                <p className="text-xs text-slate-500 mt-2">Silmek için en az bir kategori seçin.</p>
+              )}
+            </div>
+
+            {result && (
+              <div className={`mt-4 p-3 rounded-lg text-sm ${result.success ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'}`}>
+                {result.message}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
 const Settings: React.FC = () => {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [activeTab, setActiveTab] = useState('credentials')
   const [showForm, setShowForm] = useState(false)
   const [editingCred, setEditingCred] = useState<Credential | null>(null)
@@ -497,6 +684,7 @@ const Settings: React.FC = () => {
     { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
     { id: 'monitoring', name: 'Monitoring' },
     { id: 'about', name: 'Hakkında' },
+    ...(isAdmin ? [{ id: 'danger', name: 'Tehlikeli Bölge' }] : []),
   ]
 
   return (
@@ -510,7 +698,9 @@ const Settings: React.FC = () => {
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`w-full flex items-center px-4 py-2.5 rounded-lg text-left transition-all text-sm ${
-                activeTab === tab.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-400 hover:text-white hover:bg-white/[0.06]/50'
+                activeTab === tab.id
+                  ? (tab.id === 'danger' ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-blue-600/20 text-blue-400 border border-blue-500/30')
+                  : (tab.id === 'danger' ? 'text-red-400/70 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-white hover:bg-white/[0.06]/50')
               }`}>
               <span className="font-medium">{tab.name}</span>
             </button>
@@ -1006,6 +1196,11 @@ const Settings: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ═══ Tehlikeli Bölge ═══ */}
+          {activeTab === 'danger' && isAdmin && (
+            <DangerZoneTab />
           )}
         </div>
       </div>

@@ -156,6 +156,8 @@ def list_windows_servers(
             "winrm_port": effective_port,
             "confirmed_windows": is_confirmed_windows,
             "ai_ready": bool(s.ai_ready),
+            "windows_exporter_installed": bool(s.windows_exporter_installed),
+            "windows_exporter_running": bool(s.windows_exporter_running),
         })
 
     # Sort: confirmed first, then by name
@@ -373,11 +375,85 @@ def get_system_info(server_id: int, db: Session = Depends(get_db)):
 
 @router.get("/servers/{server_id}/performance")
 def get_performance(server_id: int, db: Session = Depends(get_db)):
-    """Real-time CPU/RAM utilisation."""
+    """Real-time CPU/RAM/Disk utilisation."""
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
     collector = WindowsInfoCollector(client)
     return collector.get_performance()
+
+
+@router.get("/live-metrics")
+def get_live_metrics(db: Session = Depends(get_db)):
+    """
+    Tüm AI Ready Windows sunucularından WinRM üzerinden CPU/RAM/Disk
+    kullanımını paralel olarak toplar (node_exporter/Prometheus gerektirmez).
+    AI Ready olmayan sunucular WinRM sorgusuna girmeden 'offline' olarak döner.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.services.platform_scope import is_windows_server
+
+    servers = [s for s in db.query(Server).all() if is_windows_server(s)]
+    gcred = _get_global_winrm(db)
+
+    ready = [s for s in servers if s.ai_ready]
+    not_ready = [s for s in servers if not s.ai_ready]
+
+    def _fetch_one(server: Server):
+        try:
+            client = _build_client(server, db)
+        except HTTPException:
+            return server.id, {"error": "WinRM kimlik bilgisi yok"}
+        collector = WindowsInfoCollector(client)
+        return server.id, collector.get_performance()
+
+    perf_by_id: Dict[int, Dict[str, Any]] = {}
+    if ready:
+        with ThreadPoolExecutor(max_workers=20, thread_name_prefix="winrm-live-metrics") as pool:
+            futures = {pool.submit(_fetch_one, s): s for s in ready}
+            for fut in as_completed(futures):
+                sid, perf = fut.result()
+                perf_by_id[sid] = perf
+
+    results = []
+    for s in ready:
+        perf = perf_by_id.get(s.id, {})
+        results.append({
+            "id": s.id,
+            "name": s.name or s.hostname or f"#{s.id}",
+            "ip_address": s.ip_address,
+            "status": s.status,
+            "ai_ready": True,
+            "cpu_pct": perf.get("cpu_pct"),
+            "mem_used_pct": perf.get("mem_used_pct"),
+            "mem_total_gb": perf.get("mem_total_gb"),
+            "mem_free_gb": perf.get("mem_free_gb"),
+            "disks": perf.get("disks") or [],
+            "uptime_days": perf.get("uptime_days"),
+            "last_boot": perf.get("last_boot"),
+            "error": perf.get("error"),
+        })
+    for s in not_ready:
+        results.append({
+            "id": s.id,
+            "name": s.name or s.hostname or f"#{s.id}",
+            "ip_address": s.ip_address,
+            "status": s.status,
+            "ai_ready": False,
+            "cpu_pct": None, "mem_used_pct": None, "mem_total_gb": None, "mem_free_gb": None,
+            "disks": [], "uptime_days": None, "last_boot": None,
+            "error": "AI Ready değil — WinRM bağlantısı kurulamadı",
+        })
+
+    results.sort(key=lambda r: (0 if r["ai_ready"] else 1, r["name"] or ""))
+    successful = [r for r in results if r["ai_ready"] and r["cpu_pct"] is not None]
+    return {
+        "servers": results,
+        "total": len(results),
+        "online": len(successful),
+        "avg_cpu_pct": round(sum(r["cpu_pct"] for r in successful) / len(successful), 1) if successful else None,
+        "avg_mem_pct": round(sum(r["mem_used_pct"] for r in successful) / len(successful), 1) if successful else None,
+    }
 
 
 @router.get("/servers/{server_id}/services")
@@ -470,23 +546,37 @@ def schedule_reboot(
 
 @router.get("/servers/{server_id}/exporter/status")
 def exporter_status(server_id: int, db: Session = Depends(get_db)):
-    """Check windows_exporter installation status."""
+    """Check windows_exporter installation status (WinRM canlı kontrol + DB flag senkronu)."""
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
     installer = WindowsExporterInstaller(client)
-    return installer.check_status()
+    result = installer.check_status()
+
+    from datetime import datetime, timezone
+    server.windows_exporter_installed = bool(result.get("installed"))
+    server.windows_exporter_running = bool(result.get("running"))
+    server.windows_exporter_last_check = datetime.now(timezone.utc)
+    db.commit()
+    return result
 
 
 @router.post("/servers/{server_id}/exporter/install")
 def install_exporter(server_id: int, db: Session = Depends(get_db)):
     """Download and install windows_exporter as a Windows service."""
+    from app.services.monitoring.prometheus_metrics import sync_windows_exporter_targets_from_db
+
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
     installer = WindowsExporterInstaller(client)
     result = installer.install()
     if result.get("success"):
-        # Add to Prometheus windows_exporter targets
-        _add_prometheus_target(server)
+        server.windows_exporter_installed = True
+        server.windows_exporter_running = True
+        db.commit()
+        try:
+            sync_windows_exporter_targets_from_db(db)
+        except Exception as exc:
+            logger.warning("windows_exporter target sync başarısız: %s", exc)
     return result
 
 
@@ -494,14 +584,108 @@ def install_exporter(server_id: int, db: Session = Depends(get_db)):
 def start_exporter(server_id: int, db: Session = Depends(get_db)):
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
-    return WindowsExporterInstaller(client).start()
+    result = WindowsExporterInstaller(client).start()
+    if result.get("success"):
+        server.windows_exporter_running = True
+        db.commit()
+    return result
 
 
 @router.post("/servers/{server_id}/exporter/uninstall")
 def uninstall_exporter(server_id: int, db: Session = Depends(get_db)):
+    from app.services.monitoring.prometheus_metrics import sync_windows_exporter_targets_from_db
+
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
-    return WindowsExporterInstaller(client).uninstall()
+    result = WindowsExporterInstaller(client).uninstall()
+    if result.get("success"):
+        server.windows_exporter_installed = False
+        server.windows_exporter_running = False
+        db.commit()
+        try:
+            sync_windows_exporter_targets_from_db(db)
+        except Exception as exc:
+            logger.warning("windows_exporter target sync başarısız: %s", exc)
+    return result
+
+
+@router.post("/exporter/install-all")
+def install_exporter_all(body: dict = None, db: Session = Depends(get_db)):
+    """
+    Tüm AI Ready Windows sunucularına windows_exporter'ı paralel olarak kurar
+    (henüz kurulu olmayanlara). Node Exporter'ın Linux'taki bulk-install akışının
+    Windows eşleniği — kurulum WinRM üzerinden PowerShell ile yapılır.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.services.platform_scope import is_windows_server
+    from app.services.monitoring.prometheus_metrics import sync_windows_exporter_targets_from_db
+
+    server_ids = (body or {}).get("server_ids")
+    q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
+    if server_ids:
+        q = q.filter(Server.id.in_(server_ids))
+    candidates = [
+        s for s in q.all()
+        if is_windows_server(s) and not s.windows_exporter_installed
+    ]
+
+    if not candidates:
+        return {"tested": 0, "installed_count": 0, "failed_count": 0, "results": [],
+                "message": "Kurulacak (AI Ready, henüz windows_exporter'sız) sunucu bulunamadı."}
+
+    # Global credential'ı thread'ler başlamadan önce ana thread'de tek seferlik oku —
+    # SQLAlchemy session thread-safe olmadığı için worker thread'lerde db.query() yapılmaz.
+    gcred = _get_global_winrm(db)
+
+    def _install_one(server: Server):
+        try:
+            client = WinRMClient.from_server(server)
+            if not client:
+                if not gcred:
+                    raise ValueError("WinRM kimlik bilgisi bulunamadı (sunucuya özel veya global tanımlı değil)")
+                host = server.ip_address or server.hostname
+                if not host:
+                    raise ValueError("Sunucunun IP adresi veya hostname'i yok")
+                client = WinRMClient(
+                    host=host,
+                    username=gcred["username"],
+                    password=gcred["password"],
+                    port=gcred.get("port", 5985),
+                    use_https=gcred.get("use_https", False),
+                )
+            result = WindowsExporterInstaller(client).install()
+            return server.id, server.name, bool(result.get("success")), result.get("error") or ""
+        except Exception as exc:
+            return server.id, server.name, False, str(exc)
+
+    results = []
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix="winexp-install") as pool:
+        futures = {pool.submit(_install_one, s): s for s in candidates}
+        for fut in as_completed(futures):
+            sid, name, ok, err = fut.result()
+            results.append({"id": sid, "name": name, "success": ok, "error": err})
+
+    for r in results:
+        if r["success"]:
+            row = db.query(Server).filter_by(id=r["id"]).first()
+            if row:
+                row.windows_exporter_installed = True
+                row.windows_exporter_running = True
+    db.commit()
+
+    try:
+        sync_windows_exporter_targets_from_db(db)
+    except Exception as exc:
+        logger.warning("windows_exporter target sync başarısız: %s", exc)
+
+    installed = sum(1 for r in results if r["success"])
+    return {
+        "tested": len(results),
+        "installed_count": installed,
+        "failed_count": len(results) - installed,
+        "results": sorted(results, key=lambda r: r["name"] or ""),
+    }
 
 
 # ── PS execution (power-user) ─────────────────────────────────────────────────
@@ -516,6 +700,79 @@ def run_powershell(server_id: int, body: PSRequest, db: Session = Depends(get_db
     server = _get_server_or_404(server_id, db)
     client = _build_client(server, db)
     return client.run_ps(body.script)
+
+
+class WindowsAdHocRequest(BaseModel):
+    server_ids: List[int]
+    script: str
+
+
+@router.post("/adhoc")
+def run_windows_adhoc(req: WindowsAdHocRequest, db: Session = Depends(get_db)):
+    """
+    Seçili Windows sunucularında paralel PowerShell komutu çalıştırır
+    (WinRM üzerinden) — Linux tarafındaki Ansible ad-hoc akışının Windows eşleniği.
+    SADECE Windows olarak sınıflandırılmış, IP'si olan sunucularda çalışır.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.services.platform_scope import is_windows_server
+
+    servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
+    servers = [s for s in servers if is_windows_server(s)]
+    servers_with_ip = [s for s in servers if s.ip_address and s.ip_address.strip()]
+    servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())]
+
+    if not servers_with_ip:
+        raise HTTPException(
+            status_code=400,
+            detail="Seçili Windows sunucularının hiçbirinde IP adresi yok.",
+        )
+
+    # Global credential'ı thread'ler başlamadan önce tek seferlik oku (thread-safety)
+    gcred = _get_global_winrm(db)
+
+    def _run_one(server: Server):
+        try:
+            client = WinRMClient.from_server(server)
+            if not client:
+                if not gcred:
+                    return server.name, {"success": False, "stdout": "", "stderr": "WinRM kimlik bilgisi yok (sunucuya özel veya global tanımlı değil)", "exit_code": -1}
+                host = server.ip_address or server.hostname
+                client = WinRMClient(
+                    host=host,
+                    username=gcred["username"],
+                    password=gcred["password"],
+                    port=gcred.get("port", 5985),
+                    use_https=gcred.get("use_https", False),
+                )
+            return server.name, client.run_ps(req.script)
+        except Exception as exc:
+            return server.name, {"success": False, "stdout": "", "stderr": str(exc), "exit_code": -1}
+
+    results: Dict[str, Any] = {}
+    failed: List[str] = []
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix="win-adhoc") as pool:
+        futures = {pool.submit(_run_one, s): s for s in servers_with_ip}
+        for fut in as_completed(futures):
+            name, res = fut.result()
+            ok = bool(res.get("success"))
+            results[name] = {"rc": 0 if ok else 1, "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            if not ok:
+                failed.append(name)
+
+    msg = f"{len(servers_with_ip)} Windows sunucuda PowerShell çalıştırıldı"
+    if servers_without_ip:
+        msg += f". ATLANMIŞ ({len(servers_without_ip)}): {', '.join(s.name for s in servers_without_ip[:5])}"
+        if len(servers_without_ip) > 5:
+            msg += f" ve {len(servers_without_ip) - 5} diğer"
+
+    return {
+        "success": True,
+        "message": msg,
+        "results": results,
+        "failed": failed,
+        "skipped": [s.name for s in servers_without_ip],
+    }
 
 
 # ── Global WinRM Credential ───────────────────────────────────────────────────
@@ -619,28 +876,3 @@ def test_global_winrm_credential(body: GlobalWinRMRequest):
     }
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _add_prometheus_target(server: Server) -> None:
-    """Add server to windows_exporter Prometheus targets file."""
-    try:
-        import json, os
-        path = "/etc/prometheus/targets/windows_exporter_targets.json"
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        existing: list = []
-        if os.path.exists(path):
-            with open(path) as f:
-                existing = json.load(f)
-        target_str = f"{server.ip_address}:9182"
-        # Update or add
-        for group in existing:
-            if target_str in group.get("targets", []):
-                return  # already there
-        existing.append({
-            "targets": [target_str],
-            "labels": {"job": "windows-exporter", "instance": server.name or server.ip_address},
-        })
-        with open(path, "w") as f:
-            json.dump(existing, f, indent=2)
-    except Exception as exc:
-        logger.warning("Could not update windows exporter targets: %s", exc)

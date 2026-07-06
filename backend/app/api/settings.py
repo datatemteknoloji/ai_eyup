@@ -9,9 +9,11 @@ from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
 from app.core.database import get_db
+from app.core.auth import get_current_user, require_role
 from app.models.credential import GlobalCredential
 from app.models.server import Server
 from app.models.app_settings import AppSettings
+from app.models.user import User
 from app.core.encryption import encrypt_secret, decrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -518,3 +520,183 @@ async def set_ai_provider_key(data: AIProviderRequest):
     os.environ[env_key] = data.api_key
     setattr(settings, attr, data.api_key)
     return {"success": True, "provider": data.provider, "message": f"{data.provider} API anahtarı güncellendi"}
+
+
+# ── Tehlikeli Bölge: Veri Silme ─────────────────────────────────────────────
+# Kullanıcı hesapları, modül/rol atamaları ve global credential/ayarlar her
+# durumda korunur. Silinebilecek veriler kategorilere ayrılmıştır — kullanıcı
+# hangi kategorileri sileceğini seçebilir.
+WIPE_CATEGORIES: dict[str, dict] = {
+    "servers": {
+        "label": "Sunucular / VM'ler",
+        "tables": ["servers", "vm_snapshots", "business_service_map", "agent_actions"],
+    },
+    "hypervisors": {
+        "label": "Hypervisor Bağlantıları",
+        "tables": ["hypervisors", "hypervisor_host_inventory", "hypervisor_host_metrics"],
+    },
+    "exadata": {
+        "label": "Exadata Envanteri",
+        "tables": ["exadata_racks", "exadata_nodes"],
+    },
+    "events": {
+        "label": "Olaylar / Incident / Alert",
+        "tables": ["system_events", "alerts", "incidents", "anomaly_suppressions", "baseline_metrics", "runbook_executions"],
+    },
+    "metrics": {
+        "label": "Metrikler",
+        "tables": ["metric_data", "metric_aggregations", "metric_thresholds"],
+    },
+    "chat": {
+        "label": "Chat / AI Geçmişi",
+        "tables": ["chat_sessions", "chat_messages", "chat_qa_cache", "triage_cache", "knowledge_items"],
+    },
+    "reports": {
+        "label": "Altyapı Raporları / Workflow",
+        "tables": ["infrastructure_reports", "workflow_runs"],
+    },
+    "packages": {
+        "label": "Paket & Repo Yönetimi",
+        "tables": ["package_files", "package_jobs", "repo_packages", "repo_sources", "repo_sync_jobs"],
+    },
+    "system_updates": {
+        "label": "Sistem Güncelleme İşleri",
+        "tables": ["system_update_jobs", "system_update_plans"],
+    },
+    "audit": {
+        "label": "Audit Logları",
+        "tables": ["audit_logs"],
+    },
+}
+
+WIPE_CONFIRM_PHRASE = "TÜM VERİLERİ SİL"
+
+
+class WipeDataRequest(BaseModel):
+    confirm: str
+    categories: Optional[List[str]] = None  # None/boş = hepsi
+
+
+def _resolve_wipe_tables(categories: Optional[List[str]]) -> List[str]:
+    ids = categories if categories else list(WIPE_CATEGORIES.keys())
+    unknown = [c for c in ids if c not in WIPE_CATEGORIES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Bilinmeyen kategori: {', '.join(unknown)}")
+    tables: List[str] = []
+    for cat_id in ids:
+        tables.extend(WIPE_CATEGORIES[cat_id]["tables"])
+    return tables
+
+
+def _execute_wipe(db: Session, tables: List[str]) -> None:
+    """Seçilen tabloları FK kısıtlamalarını bozmadan siler.
+
+    Kategoriler bağımsız seçilebildiği için TRUNCATE ... CASCADE kullanılmaz
+    (seçilmeyen tablolara sızabilir); bunun yerine her FK'nın kendi ondelete
+    davranışına (CASCADE / SET NULL) güvenen sıralı DELETE kullanılır. Sadece
+    ondelete tanımsız (RESTRICT) iki ilişki elle ele alınır:
+      - business_service_map.server_id -> servers
+      - infrastructure_reports.hypervisor_id -> hypervisors
+    """
+    table_set = set(tables)
+
+    if "hypervisors" in table_set and "infrastructure_reports" not in table_set:
+        db.execute(text('UPDATE infrastructure_reports SET hypervisor_id = NULL WHERE hypervisor_id IS NOT NULL'))
+
+    def _sort_key(t: str) -> int:
+        if t == "business_service_map":
+            return 0
+        if t == "servers":
+            return 2
+        return 1
+
+    for table in sorted(tables, key=_sort_key):
+        db.execute(text(f'DELETE FROM "{table}"'))
+        try:
+            db.execute(text(f'ALTER SEQUENCE IF EXISTS "{table}_id_seq" RESTART WITH 1'))
+        except Exception:
+            pass
+
+
+@router.get("/wipe-all-data/preview")
+async def preview_wipe_all_data(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin")),
+):
+    """Kategori bazında silinecek satır sayılarını döner — onay ekranı için."""
+    categories = []
+    for cat_id, cat in WIPE_CATEGORIES.items():
+        total = 0
+        table_counts = {}
+        for table in cat["tables"]:
+            try:
+                count = db.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar() or 0
+            except Exception:
+                count = 0
+            if count:
+                table_counts[table] = count
+            total += count
+        categories.append({
+            "id": cat_id,
+            "label": cat["label"],
+            "tables": table_counts,
+            "total_rows": total,
+        })
+    return {
+        "categories": categories,
+        "total_rows": sum(c["total_rows"] for c in categories),
+        "preserved": ["users", "modules", "user_modules", "global_credentials", "app_settings", "cost_config"],
+    }
+
+
+@router.post("/wipe-all-data")
+async def wipe_all_data(
+    data: WipeDataRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("admin")),
+):
+    """Seçilen kategorilerdeki verileri siler (kategori verilmezse tümü).
+
+    Kullanıcı hesapları, modül/rol atamaları, global credential'lar ve
+    sistem ayarları (Ollama modeli, retention süresi, WinRM cred vb.)
+    her durumda korunur. Geri alınamaz — sadece admin, aynen yazılan onay
+    metniyle çalışır.
+    """
+    if (data.confirm or "").strip() != WIPE_CONFIRM_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Onay metni hatalı. Devam etmek için tam olarak "{WIPE_CONFIRM_PHRASE}" yazmalısınız.',
+        )
+
+    tables = _resolve_wipe_tables(data.categories)
+    if not tables:
+        raise HTTPException(status_code=400, detail="Silinecek kategori seçilmedi")
+
+    try:
+        _execute_wipe(db, tables)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("wipe_all_data failed")
+        raise HTTPException(status_code=500, detail=f"Veri silme hatası: {str(e)}")
+
+    selected_labels = (
+        [WIPE_CATEGORIES[c]["label"] for c in data.categories]
+        if data.categories else ["Tüm kategoriler"]
+    )
+
+    from app.services.audit import record_audit
+    record_audit(
+        db,
+        category="admin",
+        action="admin.wipe_all_data",
+        status="success",
+        actor=user,
+        summary=f"{user.username} veri sildi: {', '.join(selected_labels)}",
+        detail={"categories": data.categories or list(WIPE_CATEGORIES.keys()), "tables": tables},
+    )
+
+    return {
+        "success": True,
+        "message": f"Seçilen veriler silindi ({', '.join(selected_labels)}). Kullanıcılar, modül yetkileri ve sistem ayarları korundu.",
+    }

@@ -161,8 +161,10 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
                 password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
             )
-            client.login()
-            vms = client.sync_vms_to_inventory()
+            if not client.login():
+                errors.append("vCenter bağlantı hatası: giriş başarısız (host/kullanıcı/şifre kontrol edin)")
+            else:
+                vms = client.sync_vms_to_inventory()
         except ImportError:
             errors.append("VMware client modülü bulunamadı")
         except Exception as e:

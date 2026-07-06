@@ -50,7 +50,27 @@ class Server(Base):
     node_exporter_installed = Column(Boolean, default=False)
     node_exporter_running = Column(Boolean, default=False)
     node_exporter_last_check = Column(DateTime(timezone=True), nullable=True)
-    
+
+    # Windows Exporter durum cache (node_exporter'ın Windows eşleniği — background task senkronlar)
+    windows_exporter_installed = Column(Boolean, default=False)
+    windows_exporter_running = Column(Boolean, default=False)
+    windows_exporter_last_check = Column(DateTime(timezone=True), nullable=True)
+
+    # Windows Update / Defender durum cache — auto-onboarding periyodik WinRM ile toplar
+    # (raporların hızlı/senkron çalışması için canlı WinRM sorgusu YAPILMAZ, bu cache okunur)
+    win_updates_pending = Column(Integer, nullable=True)
+    win_updates_critical = Column(Integer, nullable=True)
+    win_updates_last_checked = Column(DateTime(timezone=True), nullable=True)
+    win_reboot_pending = Column(Boolean, default=False)
+    win_defender_enabled = Column(Boolean, nullable=True)
+    win_defender_up_to_date = Column(Boolean, nullable=True)
+
+    # Linux güvenlik denetim cache — auto-onboarding periyodik SSH ile toplar
+    linux_firewall_active = Column(Boolean, nullable=True)
+    linux_selinux_status = Column(String(20), nullable=True)   # Enforcing | Permissive | Disabled | N/A
+    linux_failed_logins_24h = Column(Integer, nullable=True)
+    linux_security_last_check = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

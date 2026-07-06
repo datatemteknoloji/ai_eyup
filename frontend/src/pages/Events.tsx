@@ -43,7 +43,7 @@ function StatusPill({ e }: { e: { resolved: boolean; is_known: boolean; is_ackno
   return <span className="text-[11px] font-medium" style={{ color: NEON.red }}>Yeni</span>
 }
 
-const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
+const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
@@ -55,6 +55,7 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const [newEvent, setNewEvent] = useState({ title: '', event_type: 'custom', severity: 'info', description: '' })
   const [groupedView, setGroupedView] = useState(true)
   const [excludeKnown, setExcludeKnown] = useState(true)
+  const [showRoutine, setShowRoutine] = useState(false)
   const [sortBy, setSortBy] = useState<keyof EventGroup>('latest_created_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [detailGroupIds, setDetailGroupIds] = useState<number[] | null>(null)
@@ -97,11 +98,12 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     if (resolvedFilter !== '') p.set('resolved', resolvedFilter)
     if (search) p.set('search', search)
     appendPlatform(p, platform)
+    if (platform === 'virt') p.set('show_routine', String(showRoutine))
     return p
   }
 
   const { data: eventsData, isLoading } = useQuery<{ total: number; events: SystemEvent[] }>({
-    queryKey: ['events', 'list', platform, severityFilter, typeFilter, resolvedFilter, search, page],
+    queryKey: ['events', 'list', platform, severityFilter, typeFilter, resolvedFilter, search, page, showRoutine],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
@@ -113,7 +115,7 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
-    queryKey: ['events', 'grouped', platform, severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown],
+    queryKey: ['events', 'grouped', platform, severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown, showRoutine],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
@@ -138,9 +140,10 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   })
 
   const { data: stats } = useQuery<EventStats>({
-    queryKey: ['eventStats', platform],
+    queryKey: ['eventStats', platform, showRoutine],
     queryFn: async () => {
       const params = appendPlatform(new URLSearchParams(), platform)
+      if (platform === 'virt') params.set('show_routine', String(showRoutine))
       const res = await fetch(`${API_BASE_URL}/events/stats?${params}`)
       if (!res.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return res.json()
@@ -332,6 +335,7 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {!hideHeader && (
       <PageHeader
         title="Events"
         subtitle="Sistem olaylarını izleyin, gruplayın ve yönetin"
@@ -344,6 +348,14 @@ const Events: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
           </PrimaryButton>
         </>}
       />
+      )}
+
+      {platform === 'virt' && (
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+          <input type="checkbox" checked={showRoutine} onChange={e => { setShowRoutine(e.target.checked); setPage(0) }} className="rounded border-slate-600" />
+          Rutin olayları göster (vCenter task, login/logout)
+        </label>
+      )}
 
       {/* KPI row — tıklayınca filtreler */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">

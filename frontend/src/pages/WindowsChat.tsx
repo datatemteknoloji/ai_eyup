@@ -143,7 +143,11 @@ const ConfirmDialog: React.FC<{
   )
 }
 
-const WindowsChat: React.FC = () => {
+const WindowsChat: React.FC<{
+  embedded?: boolean
+  initialQuestion?: string | null
+  onInitialQuestionUsed?: () => void
+}> = ({ embedded, initialQuestion = null, onInitialQuestionUsed }) => {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -168,6 +172,7 @@ const WindowsChat: React.FC = () => {
   const [serverMenuRect, setServerMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)
+  const initialHandled = useRef(false)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -226,7 +231,7 @@ const WindowsChat: React.FC = () => {
           { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' }
         ]
 
-  const { data: sessions = [], refetch: refetchSessions } = useQuery<ChatSession[]>({
+  const { data: sessions = [], refetch: refetchSessions, isFetched: sessionsFetched } = useQuery<ChatSession[]>({
     queryKey: ['windows-chat-sessions'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/windows-chat/sessions`)
@@ -300,12 +305,16 @@ const WindowsChat: React.FC = () => {
     }
   }, [sessions, selectedSessionId])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
+  // İlk kullanım: hiç chat session'ı yoksa kullanıcıyı "seçim ekranında" bırakmak yerine
+  // otomatik olarak yeni bir sohbet başlat ki doğrudan yazmaya başlayabilsin.
+  useEffect(() => {
+    if (sessionsFetched && sessions.length === 0 && selectedSessionId === null && !createSessionMutation.isPending) {
+      createSessionMutation.mutate()
+    }
+  }, [sessionsFetched, sessions.length, selectedSessionId])
 
-    const messageText = input
-    setInput('')
+  const sendMessage = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return
     const WINRM_KEYWORDS = ['cpu','ram','memory','bellek','disk','servis','service','log','event log',
       'olay günlüğü','update','güncelleme','yama','patch','network','ağ','os','işletim sistemi',
       'donanım','hardware','performans','performance','kullanım','usage']
@@ -398,6 +407,23 @@ const WindowsChat: React.FC = () => {
     }
   }
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!input.trim() || isLoading) return
+    const messageText = input
+    setInput('')
+    sendMessage(messageText)
+  }
+
+  useEffect(() => {
+    if (initialQuestion && !initialHandled.current) {
+      initialHandled.current = true
+      sendMessage(initialQuestion)
+      onInitialQuestionUsed?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion])
+
   const handleAbort = () => {
     abortRef.current?.abort()
     setIsLoading(false)
@@ -434,11 +460,11 @@ const WindowsChat: React.FC = () => {
 
   return (
     <>
-    <div className="flex flex-col h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : 'h-screen'}`}>
       {/* Üst bar */}
       <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="px-3 py-1 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 text-xs font-semibold">Windows AI Analiz</div>
+          <div className="px-3 py-1 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 text-xs font-semibold">Windows Altyapı Analizi</div>
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-slate-400 text-sm font-medium">RAG:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-sky-600' : 'bg-white/[0.1]'}`}

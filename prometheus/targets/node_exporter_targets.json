@@ -4,7 +4,7 @@
       "192.168.1.46:9100"
     ],
     "labels": {
-      "server_id": "257",
+      "server_id": "27",
       "server_name": "ahmet-test2",
       "job": "node-exporter"
     }
@@ -14,38 +14,18 @@
       "192.168.1.45:9100"
     ],
     "labels": {
-      "server_id": "271",
+      "server_id": "24",
       "server_name": "datatem-wiki",
       "job": "node-exporter"
     }
   },
   {
     "targets": [
-      "192.168.1.112:9100"
+      "192.168.1.61:9100"
     ],
     "labels": {
-      "server_id": "260",
-      "server_name": "dtkvm01",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.129:9100"
-    ],
-    "labels": {
-      "server_id": "276",
-      "server_name": "dttadvance",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.222:9100"
-    ],
-    "labels": {
-      "server_id": "261",
-      "server_name": "dttai",
+      "server_id": "11",
+      "server_name": "enes97",
       "job": "node-exporter"
     }
   },
@@ -54,7 +34,7 @@
       "192.168.1.67:9100"
     ],
     "labels": {
-      "server_id": "256",
+      "server_id": "26",
       "server_name": "enesapp",
       "job": "node-exporter"
     }
@@ -64,18 +44,18 @@
       "192.168.1.62:9100"
     ],
     "labels": {
-      "server_id": "133",
-      "server_name": "enesapp-clone",
+      "server_id": "1",
+      "server_name": "enesappeski",
       "job": "node-exporter"
     }
   },
   {
     "targets": [
-      "192.168.1.190:9100"
+      "192.168.1.201:9100"
     ],
     "labels": {
-      "server_id": "264",
-      "server_name": "gorkem2",
+      "server_id": "19",
+      "server_name": "minio1",
       "job": "node-exporter"
     }
   },
@@ -84,7 +64,7 @@
       "192.168.1.202:9100"
     ],
     "labels": {
-      "server_id": "246",
+      "server_id": "20",
       "server_name": "minio2",
       "job": "node-exporter"
     }
@@ -94,7 +74,7 @@
       "192.168.1.204:9100"
     ],
     "labels": {
-      "server_id": "238",
+      "server_id": "15",
       "server_name": "minio4",
       "job": "node-exporter"
     }
@@ -104,18 +84,18 @@
       "192.168.1.180:9100"
     ],
     "labels": {
-      "server_id": "265",
+      "server_id": "6",
       "server_name": "olvm manager",
       "job": "node-exporter"
     }
   },
   {
     "targets": [
-      "192.168.1.240:9100"
+      "192.168.1.107:9100"
     ],
     "labels": {
-      "server_id": "280",
-      "server_name": "opnshftBastion",
+      "server_id": "4",
+      "server_name": "rhel94-test",
       "job": "node-exporter"
     }
   },
@@ -124,7 +104,7 @@
       "192.168.1.230:9100"
     ],
     "labels": {
-      "server_id": "239",
+      "server_id": "9",
       "server_name": "rhelcluster01",
       "job": "node-exporter"
     }
@@ -134,18 +114,8 @@
       "192.168.1.231:9100"
     ],
     "labels": {
-      "server_id": "240",
+      "server_id": "10",
       "server_name": "rhelcluster02",
-      "job": "node-exporter"
-    }
-  },
-  {
-    "targets": [
-      "192.168.1.47:9100"
-    ],
-    "labels": {
-      "server_id": "289",
-      "server_name": "veridata",
       "job": "node-exporter"
     }
   }

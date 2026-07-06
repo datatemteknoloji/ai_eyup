@@ -122,6 +122,20 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_datastore VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_hardware_version VARCHAR(50)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_last_sync TIMESTAMPTZ",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS windows_exporter_installed BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS windows_exporter_running BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS windows_exporter_last_check TIMESTAMPTZ",
+                # Windows Update / Defender + Linux güvenlik denetim cache (rapor genişletme)
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_updates_pending INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_updates_critical INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_updates_last_checked TIMESTAMPTZ",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_reboot_pending BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_defender_enabled BOOLEAN",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS win_defender_up_to_date BOOLEAN",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_firewall_active BOOLEAN",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_selinux_status VARCHAR(20)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_failed_logins_24h INTEGER",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_security_last_check TIMESTAMPTZ",
             ]:
                 _conn.execute(_sa_text(_col_sql))
             _conn.execute(_sa_text(

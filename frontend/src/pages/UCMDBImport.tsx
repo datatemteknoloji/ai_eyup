@@ -5,6 +5,7 @@ import {
   ChevronRight, RefreshCw, Table2, Download,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { inventoryHeaders } from '../lib/inventoryApi'
 
 const UCMDB_API = `${API_BASE_URL}/ucmdb`
 
@@ -161,7 +162,7 @@ const UCMDBImport: React.FC = () => {
     mutationFn: async () => {
       const r = await fetch(`${UCMDB_API}/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ upload_id: uploadId, mapping, update_existing: updateExisting, dry_run: true }),
       })
       return r.json() as Promise<ImportResult>
@@ -174,7 +175,7 @@ const UCMDBImport: React.FC = () => {
     mutationFn: async () => {
       const r = await fetch(`${UCMDB_API}/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ upload_id: uploadId, mapping, update_existing: updateExisting, dry_run: false }),
       })
       return r.json() as Promise<ImportResult>

@@ -1081,7 +1081,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const aiopsPlatform = isLinuxScope ? 'linux' : isWindowsScope ? 'windows' : undefined
   const eventsPath = isLinuxScope ? '/linux/events' : isWindowsScope ? '/windows/aiops/events' : '/linux/events'
   const incidentsPath = isLinuxScope ? '/linux/incidents' : isWindowsScope ? '/windows/aiops/incidents' : '/linux/incidents'
-  const anomaliesPath = isLinuxScope ? '/linux/anomalies' : isWindowsScope ? '/windows/aiops/anomalies' : '/linux/anomalies'
+  const anomaliesPath = isLinuxScope ? '/linux/events?tab=heatmap' : isWindowsScope ? '/windows/aiops/events?tab=heatmap' : '/virt/events?tab=heatmap'
   const heroTitle = isLinuxScope ? 'Linux Yönetimi' : isWindowsScope ? 'Windows Yönetimi' : 'Altyapı Komuta Merkezi'
 
   const hasAnyModule = showLinux || showVirt || showAiops || showAiAutomation || showWindowsPanel
@@ -1098,7 +1098,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const { data: serversRaw = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
     queryKey: ['servers'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/`)
+      const r = await fetch(`${API_BASE_URL}/servers/?platform=linux`)
       if (!r.ok) throw new Error('Failed to fetch servers')
       return r.json()
     },
@@ -1130,6 +1130,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showVirt,
+    refetchInterval: 60_000,
   })
 
   const { data: eventStats } = useQuery<EventStats>({

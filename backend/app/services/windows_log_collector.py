@@ -75,7 +75,7 @@ def _map_severity(level: str) -> str:
     return LEVEL_TO_SEV.get((level or "").lower(), "warning")
 
 
-def collect_windows_server_logs(server: Server, db: Session, count: int = 40) -> List[Dict[str, Any]]:
+def collect_windows_server_logs(server: Server, db: Session, count: int = 60) -> List[Dict[str, Any]]:
     client = _build_client(server, db)
     if not client:
         return []
@@ -83,7 +83,7 @@ def collect_windows_server_logs(server: Server, db: Session, count: int = 40) ->
     entries: List[Dict[str, Any]] = []
     for log_name in ("System", "Application"):
         try:
-            rows = collector.get_event_logs(log_name=log_name, count=count, min_level=3)
+            rows = collector.get_event_logs(log_name=log_name, count=count, min_level=3, hours=26)
             for row in rows:
                 provider = row.get("ProviderName") or log_name
                 eid = row.get("Id") or 0

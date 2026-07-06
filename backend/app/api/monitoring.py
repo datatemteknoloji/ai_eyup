@@ -17,7 +17,10 @@ router = APIRouter()
 
 
 @router.get("/metrics/servers")
-async def list_metric_servers(db: Session = Depends(get_db)):
+async def list_metric_servers(
+    platform: str | None = None,
+    db: Session = Depends(get_db),
+):
     """
     Metrik kurulu sunucuların özeti — DB + Prometheus senkron.
     Canlı Metrikler ekranı bu listeyi kullanır.
@@ -27,14 +30,18 @@ async def list_metric_servers(db: Session = Depends(get_db)):
         sync_node_exporter_running_from_prometheus,
     )
 
+    from app.services.platform_scope import apply_server_platform_filter
+
     sync_stats = sync_node_exporter_running_from_prometheus(db)
     up_map = get_node_exporter_up_map()
 
-    servers = db.query(Server).filter(
+    query = db.query(Server).filter(
         Server.ip_address.isnot(None),
         Server.ip_address != "",
         Server.node_exporter_installed == True,  # noqa: E712
-    ).order_by(Server.name).all()
+    )
+    query = apply_server_platform_filter(query, platform or "linux", db)
+    servers = query.order_by(Server.name).all()
 
     rows = []
     scrape_error_count = 0
@@ -81,15 +88,19 @@ async def bulk_install_node_exporter(
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
 
+    from app.services.platform_scope import is_windows_server
+
     if server_ids:
         servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
     else:
-        # node exporter çalışmayan, ONLINE, AI-Ready sunucular
+        # node exporter çalışmayan, ONLINE, AI-Ready sunucular (Windows hariç —
+        # onlar windows_exporter/WinRM ile /windows/exporter/install-all üzerinden kurulur)
         servers = db.query(Server).filter(
             Server.status == "ONLINE",
             Server.ai_ready == True,
             Server.node_exporter_running == False,
         ).all()
+        servers = [s for s in servers if not is_windows_server(s)]
 
     if not servers:
         return {"queued": 0, "message": "Uygun sunucu bulunamadı"}
@@ -97,13 +108,12 @@ async def bulk_install_node_exporter(
     results = {}
 
     def _install_one(srv):
+        # NOT: Bu fonksiyon thread pool içinde çalışır — SQLAlchemy session'ı
+        # thread-safe olmadığından burada DB'ye dokunulmaz (sadece SSH/paramiko).
+        # DB güncellemesi tüm thread'ler bittikten sonra ana thread'de yapılır.
         try:
-            installer = NodeExporterInstaller(srv, db)
+            installer = NodeExporterInstaller(srv)
             res = installer.install()
-            # DB'yi güncelle
-            srv.node_exporter_installed = res.get("success", False)
-            srv.node_exporter_running   = res.get("success", False)
-            db.commit()
             return srv.id, {"success": res.get("success", False), "message": res.get("message", "")}
         except Exception as e:
             return srv.id, {"success": False, "message": str(e)}
@@ -114,6 +124,12 @@ async def bulk_install_node_exporter(
         for f in as_completed(futures):
             srv_id, result = f.result()
             results[str(srv_id)] = result
+
+    for srv in servers:
+        result = results.get(str(srv.id), {})
+        srv.node_exporter_installed = result.get("success", False)
+        srv.node_exporter_running   = result.get("success", False)
+    db.commit()
 
     success = sum(1 for r in results.values() if r["success"])
     failed  = len(results) - success

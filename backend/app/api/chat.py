@@ -19,8 +19,14 @@ from app.models.hypervisor import Hypervisor
 from app.models.chat_session import ChatSession, ChatMessage
 from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
 from app.models.credential import GlobalCredential
+from app.services.platform_scope import is_windows_server
 
 logger = logging.getLogger(__name__)
+
+
+def _linux_ai_ready_servers(db: Session):
+    """AI Ready sunucular — Windows sunucular hariç (Linux AI asistanı yalnızca Linux'ta çalışır)."""
+    return [s for s in db.query(Server).filter(Server.ai_ready == True).all() if not is_windows_server(s)]
 
 def _detect_provider(model: str) -> str:
     """Model adından sağlayıcıyı tespit et."""
@@ -351,11 +357,11 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 .all()
             )
         
-        # Eğer sunucu seçilmemişse tüm AI Ready sunucuları al
+        # Eğer sunucu seçilmemişse tüm AI Ready sunucuları al (Windows hariç)
         if not selected_servers:
-            selected_servers = db.query(Server).filter(Server.ai_ready == True).all()
+            selected_servers = _linux_ai_ready_servers(db)
         
-        ai_ready_servers = db.query(Server).filter(Server.ai_ready == True).all()
+        ai_ready_servers = _linux_ai_ready_servers(db)
 
         mentioned = _servers_mentioned_in_message(db, message)
         if mentioned:
@@ -430,7 +436,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
         # Kullanıcı sunucu seçmemişse yalnızca sunucu/altyapı niyeti varsa tüm AI-ready sunucuları ekle.
         if not selected_servers and needs_ssh_ctx:
-            selected_servers = db.query(Server).filter(Server.ai_ready == True).all()
+            selected_servers = _linux_ai_ready_servers(db)
 
         # Genel sorularda (sunucu niyeti yok + sunucu seçilmedi) otomatik sunucu bağlamı ekleme.
         server_context = ""
@@ -1094,7 +1100,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 _needs_analysis = any(k in message.lower() for k in _ANALYZE_KEYWORDS)
 
                 # Sunucuları belirle: önce UI'dan seçilen, sonra mesaj içinden, son çare hepsi
-                _all_ai_srv = db.query(Server).filter(Server.ai_ready == True).all()
+                _all_ai_srv = _linux_ai_ready_servers(db)
                 if request.server_ids:
                     _target_servers = [s for s in _all_ai_srv if s.id in request.server_ids]
                 elif request.server_id:
@@ -1264,7 +1270,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # Kullanıcı "ahmet-test2 sunucusundan..." veya "192.168.1.46'dan..."
             # dediğinde o sunucuyu otomatik seç
             if not selected_servers:
-                all_ai_servers = db.query(Server).filter(Server.ai_ready == True).all()
+                all_ai_servers = _linux_ai_ready_servers(db)
                 msg_lower_srv = message.lower()
                 detected_servers = []
                 for s in all_ai_servers:
@@ -1344,7 +1350,11 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             SERVER_TRIGGER = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
             needs_ssh = any(k in ml for k in SERVER_TRIGGER) and not request.skip_server_context
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
-            context_timeout = 40.0 if is_deep else 20.0
+            # Çok sayıda AI-ready sunucuya paralel SSH atılırken (ör. "tüm sunucular")
+            # sabit 20sn çoğu sunucuyu "Veri yok" bırakıyordu — sunucu sayısına göre hafifçe ölçekle
+            # (çok yükseltmek toplam yanıt süresini kullanılamaz hale getiriyor).
+            base_timeout    = 40.0 if is_deep else 20.0
+            context_timeout = min(35.0, max(base_timeout, 12.0 + 1.5 * len(selected_servers)))
 
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
 

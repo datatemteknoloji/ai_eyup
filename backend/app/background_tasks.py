@@ -38,10 +38,12 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
         self.tasks.append(asyncio.create_task(self._periodic_node_exporter_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_windows_exporter_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
 
-        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, sysupdate-recovery:5m, vm-sync:2h)")
+        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, we-sync:10m, sysupdate-recovery:5m, vm-sync:2h, auto-onboarding:10m)")
 
     async def stop(self):
         if not self.running:
@@ -285,12 +287,12 @@ class BackgroundTaskManager:
                 await asyncio.sleep(600)
 
     async def _periodic_inventory_sync(self):
-        """Ayarlardan okunan aralikta (min 15dk) hypervisor lardan VM leri DB ye ceker.
+        """Ayarlardan okunan aralikta (min 5dk) hypervisor lardan VM leri DB ye ceker.
         vCenter API cagrilan blocking -> thread pool da calistir."""
         from app.models.app_settings import AppSettings
-        DEFAULT_MINUTES = 60
-        logger.info("Inventory sync task started (interval from settings, default 60min)")
-        await asyncio.sleep(180)
+        DEFAULT_MINUTES = 5
+        logger.info("Inventory sync task started (interval from settings, default 5min)")
+        await asyncio.sleep(60)
 
         while self.running:
             try:
@@ -300,7 +302,7 @@ class BackgroundTaskManager:
                         AppSettings.key == "inventory_sync_interval_minutes"
                     ).first()
                     interval_min = int(row.value) if row and row.value else DEFAULT_MINUTES
-                    interval_sec = max(900, interval_min * 60)
+                    interval_sec = max(300, interval_min * 60)
                 except Exception:
                     interval_sec = DEFAULT_MINUTES * 60
                 finally:
@@ -525,6 +527,50 @@ class BackgroundTaskManager:
                 logger.error(f"Node exporter sync task error: {e}")
                 await asyncio.sleep(600)
 
+    async def _periodic_windows_exporter_sync(self):
+        """Her 10 dakikada Prometheus up durumuna göre windows_exporter_running bayrağını senkronlar
+        (node_exporter sync'in Windows eşleniği)."""
+        logger.info("Windows exporter sync task started (600s interval, first run in 150s)")
+        await asyncio.sleep(150)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.monitoring.prometheus_metrics import (
+                        sync_windows_exporter_running_from_prometheus,
+                        sync_windows_exporter_targets_from_db,
+                    )
+                    loop = asyncio.get_event_loop()
+                    target_stats = await loop.run_in_executor(
+                        None, sync_windows_exporter_targets_from_db, db
+                    )
+                    stats = await loop.run_in_executor(
+                        None, sync_windows_exporter_running_from_prometheus, db
+                    )
+                    if target_stats.get("removed_orphans") or target_stats.get("targets_before") != target_stats.get("targets_after"):
+                        logger.info(
+                            f"Windows exporter targets: {target_stats.get('targets_before')} -> "
+                            f"{target_stats.get('targets_after')} "
+                            f"({target_stats.get('removed_orphans', 0)} yetim kaldırıldı)"
+                        )
+                    if stats.get("updated"):
+                        logger.info(
+                            f"Windows exporter sync: {stats.get('live', 0)} canlı, "
+                            f"{stats.get('cleared', 0)} temizlendi, {stats.get('promoted', 0)} eklendi"
+                        )
+                except Exception as e:
+                    logger.error(f"Windows exporter sync error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(600)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Windows exporter sync task error: {e}")
+                await asyncio.sleep(600)
 
     async def _periodic_vm_sync(self):
         """
@@ -557,6 +603,76 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"VM auto-sync task error: {e}")
                 await asyncio.sleep(7200)
+
+
+    async def _periodic_auto_onboarding(self):
+        """Entegrasyonlar'dan gelen yeni sunucuları otomatik olarak Canlı Metrikler'e
+        düşürür: önce SSH/WinRM ile AI Ready testi, sonra AI Ready olanlara
+        Node Exporter / Windows Exporter kurulumu. Manuel müdahale gerektirmez.
+        İlk çalışma: 150sn, sonra her 10 dakikada bir."""
+        logger.info("Auto-onboarding task started (600s interval, first run in 150s)")
+        await asyncio.sleep(150)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    loop = asyncio.get_event_loop()
+
+                    from app.api.servers import update_ai_ready
+                    from app.api.windows import update_windows_ai_ready, install_exporter_all
+                    from app.services.auto_onboarding import (
+                        auto_install_node_exporter,
+                        collect_os_release_info,
+                        collect_windows_update_status,
+                        collect_linux_security_audit,
+                    )
+
+                    ai_stats = await loop.run_in_executor(None, update_ai_ready, None, db)
+                    if ai_stats.get("ai_ready"):
+                        logger.info(f"Auto-onboarding: {ai_stats['ai_ready']} Linux sunucu AI Ready oldu")
+
+                    win_ai_stats = await loop.run_in_executor(None, update_windows_ai_ready, None, db)
+                    if win_ai_stats.get("ai_ready_count"):
+                        logger.info(f"Auto-onboarding: {win_ai_stats['ai_ready_count']} Windows sunucu AI Ready oldu")
+
+                    os_stats = await loop.run_in_executor(None, collect_os_release_info, db)
+                    if os_stats.get("updated"):
+                        logger.info(f"Auto-onboarding: {os_stats['updated']} sunucunun OS/kernel bilgisi toplandı")
+
+                    ne_stats = await loop.run_in_executor(None, auto_install_node_exporter, db)
+                    if ne_stats.get("success"):
+                        logger.info(f"Auto-onboarding: {ne_stats['success']} sunucuya Node Exporter kuruldu")
+
+                    we_stats = await loop.run_in_executor(None, install_exporter_all, None, db)
+                    if we_stats.get("installed_count"):
+                        logger.info(f"Auto-onboarding: {we_stats['installed_count']} Windows sunucuya exporter kuruldu")
+
+                    # Yama/güvenlik raporları için cache — ağır işlemler olduğundan
+                    # (COM update search, SSH turu) 6 saatten eski kontrolü olanlar için çalışır.
+                    winupd_stats = await loop.run_in_executor(None, collect_windows_update_status, db)
+                    if winupd_stats.get("updated"):
+                        logger.info(f"Auto-onboarding: {winupd_stats['updated']} Windows sunucunun update/Defender durumu toplandı")
+
+                    secaudit_stats = await loop.run_in_executor(None, collect_linux_security_audit, db)
+                    if secaudit_stats.get("updated"):
+                        logger.info(f"Auto-onboarding: {secaudit_stats['updated']} Linux sunucunun güvenlik denetimi toplandı")
+
+                    from app.services import qa_cache
+                    qa_cache.invalidate_all()
+                except Exception as e:
+                    logger.error(f"Auto-onboarding error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(600)
+
+            except asyncio.CancelledError:
+                logger.info("Auto-onboarding task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Auto-onboarding task error: {e}")
+                await asyncio.sleep(600)
 
 
 def _run_vm_sync_batch(db) -> None:

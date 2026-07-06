@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
+import type { PlatformKey } from '../config/platformAiops'
 import * as XLSX from 'xlsx'
 
 function _cleanCell(raw: string): string {
@@ -143,7 +144,12 @@ const ConfirmDialog: React.FC<{
   )
 }
 
-const Chat: React.FC = () => {
+const Chat: React.FC<{
+  embedded?: boolean
+  inventoryPlatform?: PlatformKey
+  initialQuestion?: string | null
+  onInitialQuestionUsed?: () => void
+}> = ({ embedded, inventoryPlatform = 'linux', initialQuestion = null, onInitialQuestionUsed }) => {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -175,6 +181,7 @@ const Chat: React.FC = () => {
   const [hypervisorMenuRect, setHypervisorMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)  // hangi session için stream çalışıyor
+  const initialHandled = useRef(false)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -220,9 +227,9 @@ const Chat: React.FC = () => {
   const queryClient = useQueryClient()
 
   const { data: servers = [] } = useQuery<Server[]>({
-    queryKey: ['ai-ready-servers'],
+    queryKey: ['ai-ready-servers', inventoryPlatform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
+      const res = await fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=${inventoryPlatform}`)
       if (!res.ok) throw new Error('Failed')
       return res.json()
     }
@@ -264,7 +271,7 @@ const Chat: React.FC = () => {
           { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' }
         ]
 
-  const { data: sessions = [], refetch: refetchSessions } = useQuery<ChatSession[]>({
+  const { data: sessions = [], refetch: refetchSessions, isFetched: sessionsFetched } = useQuery<ChatSession[]>({
     queryKey: ['chat-sessions'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/chat/sessions`)
@@ -338,12 +345,16 @@ const Chat: React.FC = () => {
     }
   }, [sessions, selectedSessionId])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
+  // İlk kullanım: hiç chat session'ı yoksa kullanıcıyı "seçim ekranında" bırakmak yerine
+  // otomatik olarak yeni bir sohbet başlat ki doğrudan yazmaya başlayabilsin.
+  useEffect(() => {
+    if (sessionsFetched && sessions.length === 0 && selectedSessionId === null && !createSessionMutation.isPending) {
+      createSessionMutation.mutate()
+    }
+  }, [sessionsFetched, sessions.length, selectedSessionId])
 
-    const messageText = input
-    setInput('')  // Gönderilince anında temizle
+  const sendMessage = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return
     // SSH: log/process/config + OS/kernel/sistem bilgisi sorularında tetiklenir
     const SSH_ONLY_KEYWORDS = ['log','journal','proses','process','config','konfigür',
       '/etc/','/var/','systemctl','servis restart','service restart','kurulu','paket','version',
@@ -445,6 +456,23 @@ const Chat: React.FC = () => {
     }
   }
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!input.trim() || isLoading) return
+    const messageText = input
+    setInput('')  // Gönderilince anında temizle
+    sendMessage(messageText)
+  }
+
+  useEffect(() => {
+    if (initialQuestion && !initialHandled.current) {
+      initialHandled.current = true
+      sendMessage(initialQuestion)
+      onInitialQuestionUsed?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion])
+
   const handleAbort = () => {
     abortRef.current?.abort()
     setIsLoading(false)
@@ -487,7 +515,7 @@ const Chat: React.FC = () => {
 
   return (
     <>
-    <div className="flex flex-col h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : 'h-screen'}`}>
       {/* Üst bar */}
       <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">

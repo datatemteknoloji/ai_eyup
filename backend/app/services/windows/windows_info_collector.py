@@ -62,13 +62,21 @@ ConvertTo-Json -Compress
         log_name: str = "System",
         count: int = 50,
         min_level: int = 3,  # 1=Critical 2=Error 3=Warning 4=Information
+        hours: int = 26,
     ) -> List[Dict]:
-        """Fetch Windows Event Log entries."""
+        """Fetch Windows Event Log entries.
+
+        FilterHashtable ile Level+StartTime doğrudan ETW katmanında filtrelenir —
+        bu sayede yoğun Information trafiği olan sunucularda eski ama önemli
+        Warning/Error kayıtları, son N ham event içinde kaybolmaz (eski MaxEvents+
+        client-side filtre yaklaşımının sorunu buydu).
+        """
+        levels = ",".join(str(l) for l in range(1, min_level + 1))
         script = f"""
 try {{
-    Get-WinEvent -LogName '{log_name}' -MaxEvents {count * 3} -ErrorAction SilentlyContinue |
-    Where-Object {{$_.Level -le {min_level}}} |
-    Select-Object -First {count} @{{N='TimeCreated';E={{$_.TimeCreated.ToString('o')}}}},
+    $start = (Get-Date).AddHours(-{hours})
+    Get-WinEvent -FilterHashtable @{{LogName='{log_name}'; Level={levels}; StartTime=$start}} -MaxEvents {count} -ErrorAction Stop |
+    Select-Object @{{N='TimeCreated';E={{$_.TimeCreated.ToString('o')}}}},
         LevelDisplayName, Id, ProviderName,
         @{{N='Message';E={{$_.Message.Substring(0,[Math]::Min(300,$_.Message.Length))}}}} |
     ConvertTo-Json -Compress
@@ -112,25 +120,34 @@ try {
         return data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
 
     def get_performance(self) -> Dict[str, Any]:
-        """Current CPU / RAM utilisation."""
+        """Current CPU / RAM / Disk utilisation + uptime — tek WinRM çağrısında canlı metrikler."""
         script = """
 $cpu = (Get-WmiObject Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
 $os  = Get-CimInstance Win32_OperatingSystem
 $memTotal = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
 $memFree  = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
 $memUsedPct = [math]::Round(($memTotal - $memFree) / $memTotal * 100, 1)
+$disks = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { $_.Used -ne $null } |
+    Select-Object Name,
+        @{N='UsedGB';  E={[math]::Round($_.Used  /1GB, 2)}},
+        @{N='FreeGB';  E={[math]::Round($_.Free  /1GB, 2)}},
+        @{N='TotalGB'; E={[math]::Round(($_.Used+$_.Free)/1GB, 2)}}
+$uptimeSpan = (Get-Date) - $os.LastBootUpTime
 @{
-    cpu_pct     = [math]::Round($cpu, 1)
+    cpu_pct      = [math]::Round($cpu, 1)
     mem_total_gb = $memTotal
     mem_free_gb  = $memFree
     mem_used_pct = $memUsedPct
-} | ConvertTo-Json -Compress
+    disks        = @($disks)
+    uptime_days  = [math]::Round($uptimeSpan.TotalDays, 1)
+    last_boot    = $os.LastBootUpTime.ToString('o')
+} | ConvertTo-Json -Compress -Depth 4
 """
         r = self.client.run_ps(script)
         if r["success"]:
             data = _parse_json(r["stdout"])
             return data if isinstance(data, dict) else {}
-        return {}
+        return {"error": r.get("stderr") or "WinRM sorgusu başarısız"}
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

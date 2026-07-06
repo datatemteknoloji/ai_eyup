@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.models.server import Server
 from app.services.ansible_service import AnsibleService
 from app.services.awx_client import AWXClient
+from app.services.platform_scope import is_windows_server
 import os
 
 logger = logging.getLogger(__name__)
@@ -52,15 +53,19 @@ async def run_adhoc_command(req: AdHocCommandRequest, db: Session = Depends(get_
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     if not servers:
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
-    
+
+    # Windows sunucular hariç — onlar /windows/adhoc üzerinden WinRM ile çalıştırılır
+    windows_servers = [s for s in servers if is_windows_server(s)]
+    servers = [s for s in servers if not is_windows_server(s)]
+
     # IP adresi olmayan sunucuları filtrele
     servers_with_ip = [s for s in servers if s.ip_address and s.ip_address.strip()]
-    servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())]
+    servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())] + windows_servers
     
     if not servers_with_ip:
         raise HTTPException(
             status_code=400, 
-            detail=f"Seçili sunucuların hiçbirinde IP adresi yok. IP adresi ekleyin: {', '.join(s.name for s in servers_without_ip[:5])}"
+            detail=f"Seçili sunucuların hiçbirinde IP adresi yok (veya hepsi Windows). IP adresi ekleyin ya da Windows sunucular için Windows modülündeki Ansible/AWX sayfasını kullanın: {', '.join(s.name for s in servers_without_ip[:5])}"
         )
     
     result = AnsibleService.run_ad_hoc_command(
@@ -95,7 +100,8 @@ async def ansible_ping_servers(server_ids: List[int], db: Session = Depends(get_
     servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
     if not servers:
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
-    
+
+    servers = [s for s in servers if not is_windows_server(s)]
     reachable = AnsibleService.ping_servers(servers, db)
     
     return {
@@ -115,15 +121,19 @@ async def run_playbook(req: PlaybookRequest, db: Session = Depends(get_db)):
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     if not servers:
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
-    
+
+    # Windows sunucular hariç — Ansible playbook yalnızca Linux/SSH hedefleri için
+    windows_servers = [s for s in servers if is_windows_server(s)]
+    servers = [s for s in servers if not is_windows_server(s)]
+
     # IP adresi olmayan sunucuları filtrele
     servers_with_ip = [s for s in servers if s.ip_address and s.ip_address.strip()]
-    servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())]
+    servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())] + windows_servers
     
     if not servers_with_ip:
         raise HTTPException(
             status_code=400, 
-            detail=f"Seçili sunucuların hiçbirinde IP adresi yok. IP adresi ekleyin: {', '.join(s.name for s in servers_without_ip[:5])}"
+            detail=f"Seçili sunucuların hiçbirinde IP adresi yok (veya hepsi Windows). IP adresi ekleyin: {', '.join(s.name for s in servers_without_ip[:5])}"
         )
     
     result = AnsibleService.run_playbook(
@@ -199,9 +209,12 @@ async def launch_awx_job(req: AWXJobLaunchRequest, db: Session = Depends(get_db)
     limit = None
     if req.server_ids:
         servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
+        # Windows sunucular hariç — bu uç nokta Linux Ansible/AWX modülüne aittir
+        windows_servers = [s for s in servers if is_windows_server(s)]
+        servers = [s for s in servers if not is_windows_server(s)]
         # Limit her zaman IP ile yapılır; isim sadece görüntü için kullanılır
         servers_with_ip = [s for s in servers if s.ip_address and s.ip_address.strip()]
-        servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())]
+        servers_without_ip = [s for s in servers if not (s.ip_address and s.ip_address.strip())] + windows_servers
         if not servers_with_ip:
             raise HTTPException(status_code=400, detail="Seçili sunucuların hiçbirinde IP adresi yok (AWX limit için IP gerekiyor)")
         limit = ",".join(s.ip_address.strip() for s in servers_with_ip)

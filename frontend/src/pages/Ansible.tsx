@@ -9,7 +9,12 @@ interface Server {
   ip_address: string
   status: string
   ai_ready: boolean
+  os_type?: string
 }
+
+// Windows sunucular bu sayfada gösterilmez — SSH/Ansible yerine WinRM kullanırlar.
+// Bkz. /windows/ansible (Windows modülündeki Ansible/AWX sayfası).
+const isWindowsServer = (s: Server) => (s.os_type || '').toLowerCase().includes('windows')
 
 interface AWXTemplate {
   id: number
@@ -89,7 +94,7 @@ const Ansible: React.FC = () => {
   })
 
   const sshServers = allServers.filter(
-    s => s.ai_ready && s.status === 'ONLINE' && s.ip_address?.trim()
+    s => s.ai_ready && s.status === 'ONLINE' && s.ip_address?.trim() && !isWindowsServer(s)
   )
 
   const filtered = search
@@ -194,7 +199,10 @@ const Ansible: React.FC = () => {
       {/* Page header */}
       <div>
         <h1 className="text-xl font-semibold text-[#e8edf5]">Ansible & AWX</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Toplu komut çalıştırma ve playbook yönetimi</p>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Toplu komut çalıştırma ve playbook yönetimi (yalnızca Linux/SSH sunucular — Windows sunucular için
+          Windows modülündeki Ansible/AWX sayfasını kullanın)
+        </p>
       </div>
 
       {/* Two-column layout */}

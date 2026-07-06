@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.server import Server
 from app.models.event import SystemEvent
 from app.services.incident_auto import auto_create_or_link_incident
-from app.services.platform_scope import is_linux_server
+from app.services.platform_scope import platform_for_server, get_linux_module_server_id_set, get_exadata_server_id_set
 from app.models.credential import GlobalCredential
 from app.services.ssh_manager import SSHManager
 
@@ -308,7 +308,7 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
             title=clean_title,
             description=raw_line,
             raw_data={
-                "platform": "linux",
+                "platform": platform_for_server(db, server),
                 "category": log["category"],
                 "collected_at": now.isoformat(),
                 "min_occurrences_critical": LOG_MIN_OCCURRENCES_CRITICAL,
@@ -349,7 +349,8 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
     if not global_cred:
         global_cred = db.query(GlobalCredential).first()
     servers = q.all()
-    servers = [s for s in servers if is_linux_server(s)]
+    linux_ids = get_linux_module_server_id_set(db)
+    servers = [s for s in servers if s.id in linux_ids]
 
     total_saved = 0
     server_results = []
@@ -377,6 +378,45 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
                     })
         except Exception as e:
             logger.error(f"Log collection failed {srv.name}: {e}")
+
+    return {
+        "total_servers": len(servers),
+        "servers_with_logs": len(server_results),
+        "total_saved": total_saved,
+        "details": server_results,
+    }
+
+
+def collect_exadata_servers_logs(db: Session, only_ai_ready: bool = False, since_hours: int = 2) -> Dict[str, Any]:
+    """Exadata node'larına bağlı sunuculardan log topla — Linux modülünden ayrı."""
+    exadata_ids = get_exadata_server_id_set(db)
+    if not exadata_ids:
+        return {"total_servers": 0, "servers_with_logs": 0, "total_saved": 0, "details": []}
+
+    q = db.query(Server).filter(
+        Server.id.in_(list(exadata_ids)),
+        Server.status.in_(["ONLINE", "WARNING"]),
+    )
+    if only_ai_ready:
+        q = q.filter(Server.ai_ready == True)
+    global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+    if not global_cred:
+        global_cred = db.query(GlobalCredential).first()
+
+    servers = q.all()
+    total_saved = 0
+    server_results = []
+
+    for srv in servers:
+        try:
+            logs = collect_server_logs(srv, global_cred, since_hours=since_hours)
+            if logs:
+                saved = save_logs_to_db(db, srv, logs, since_hours=since_hours)
+                total_saved += saved
+                if saved > 0:
+                    server_results.append({"server": srv.name, "saved": saved})
+        except Exception as e:
+            logger.error(f"Exadata log collection failed {srv.name}: {e}")
 
     return {
         "total_servers": len(servers),

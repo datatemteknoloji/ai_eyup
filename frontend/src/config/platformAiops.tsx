@@ -1,15 +1,15 @@
 import React from 'react'
 import {
-  Zap, ClipboardList, AlertTriangle, ScanSearch, Microscope, Sliders,
+  Zap, ClipboardList, AlertTriangle, Wrench,
 } from 'lucide-react'
 
-export type PlatformKey = 'linux' | 'virt' | 'windows'
+export type PlatformKey = 'linux' | 'virt' | 'windows' | 'exadata'
 
 export const PLATFORM_AIOPS_PREFIX: Record<PlatformKey, string> = {
   linux: '/linux',
   virt: '/virt',
-  // Windows Yönetimi /windows/events = Event Log; AIOps ayrı prefix
   windows: '/windows/aiops',
+  exadata: '/exadata',
 }
 
 export type AiopsSummary = { critical: number; warning: number; action_needed?: boolean }
@@ -59,9 +59,7 @@ export function buildPlatformAiopsChildren(
       badge: () => warnBadge(summary?.warning ?? 0),
     },
     { path: `${base}/incidents`, name: 'Incidents', icon: React.createElement(AlertTriangle, { size: 15 }) },
-    { path: `${base}/anomalies`, name: 'Anomaly Detection', icon: React.createElement(ScanSearch, { size: 15 }) },
-    { path: `${base}/rca`, name: 'Kök Neden Analizi', icon: React.createElement(Microscope, { size: 15 }) },
-    { path: `${base}/baseline`, name: 'Baseline Yönetimi', icon: React.createElement(Sliders, { size: 15 }) },
+    { path: `${base}/analysis`, name: 'Analiz Araçları', icon: React.createElement(Wrench, { size: 15 }) },
   ]
 }
 
@@ -69,4 +67,5 @@ export const PLATFORM_AIOPS_LABEL: Record<PlatformKey, string> = {
   linux: 'Linux AIOps',
   virt: 'Sanallaştırma AIOps',
   windows: 'Windows AIOps',
+  exadata: 'Exadata AIOps',
 }

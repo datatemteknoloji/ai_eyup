@@ -2,10 +2,12 @@
 Servers API endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
+from app.core.inventory_guard import require_integrations_inventory
+from app.services.inventory_dedup import tag_inventory_source
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.schemas.server import ServerCreate, ServerUpdate, ServerResponse
@@ -207,20 +209,14 @@ async def list_servers(
 
     `platform` verilmezse (varsayılan) tüm sunucular döner — Ansible, Paket
     Yöneticisi, Sistem Güncelleme gibi platform-bağımsız araçlar bunu kullanır.
-    `platform=linux` verilirse yalnızca Linux (Windows olmayan) sunucular
-    döner — Linux modülünün "Sunucular" sayfası bunu kullanır.
+    `platform=linux` — yalnızca Linux modül envanteri (VM, Windows, Exadata hariç).
+    `platform=exadata` — Exadata node'larına bağlı sunucular.
     """
     try:
         query = db.query(Server)
-        if platform in ("linux", "windows", "virt"):
-            from app.services.platform_scope import is_linux_server, is_windows_server, vm_filter_condition
-            if platform == "virt":
-                query = query.filter(vm_filter_condition())
-                servers = query.all()
-            elif platform == "windows":
-                servers = [s for s in query.all() if is_windows_server(s)]
-            else:
-                servers = [s for s in query.all() if is_linux_server(s)]
+        if platform in ("linux", "windows", "virt", "exadata"):
+            from app.services.platform_scope import apply_server_platform_filter
+            servers = apply_server_platform_filter(query, platform, db).all()
         else:
             servers = query.all()
         result = []
@@ -293,10 +289,16 @@ async def list_servers(
         raise HTTPException(status_code=500, detail=f"Error listing servers: {str(e)}")
 
 @router.get("/ai-ready/list")
-async def list_ai_ready_servers(db: Session = Depends(get_db)):
-    """AI ready sunucuları listele"""
+async def list_ai_ready_servers(
+    platform: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """AI ready sunucuları listele — isteğe bağlı modül filtresi."""
     try:
-        servers = db.query(Server).filter(Server.ai_ready == True).all()
+        from app.services.platform_scope import apply_server_platform_filter
+        query = db.query(Server).filter(Server.ai_ready == True)
+        query = apply_server_platform_filter(query, platform, db)
+        servers = query.all()
         return [{
             "id": s.id,
             "name": s.name,
@@ -317,8 +319,9 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error listing AI ready servers: {str(e)}")
 
 @router.post("/", response_model=ServerResponse, status_code=201)
-async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
-    """Yeni sunucu ekle"""
+async def create_server(server: ServerCreate, request: Request, db: Session = Depends(get_db)):
+    """Yeni sunucu ekle (yalnızca Entegrasyonlar)"""
+    require_integrations_inventory(request)
     try:
         # Aynı isimde sunucu var mı kontrol et
         existing = db.query(Server).filter(Server.name == server.name).first()
@@ -359,7 +362,7 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
         db.add(db_server)
         db.commit()
         db.refresh(db_server)
-        
+
         # Global credential uygula (sunucunun kendi config'i yoksa)
         if not db_server.connection_config.get("username"):
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
@@ -401,6 +404,7 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
                     # Kernel
                     _, kernel_out, _ = ssh.execute_command("uname -r")
                     if kernel_out.strip():
+                        db_server.kernel_version = kernel_out.strip()
                         db_server.os_type = db_server.os_type or "linux"
                     # CPU & RAM
                     _, cpu_out, _ = ssh.execute_command("nproc")
@@ -422,7 +426,13 @@ async def create_server(server: ServerCreate, db: Session = Depends(get_db)):
                 logger.warning(f"SSH connect failed for new server {db_server.name}: {ssh_err}")
                 db.commit()
                 db.refresh(db_server)
-        
+
+        tag_inventory_source(db_server, "manual", {"server_type": server_type})
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(db_server, "connection_config")
+        db.commit()
+        db.refresh(db_server)
+
         return {
             "id": db_server.id,
             "name": db_server.name,
