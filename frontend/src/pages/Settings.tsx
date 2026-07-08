@@ -794,6 +794,7 @@ const Settings: React.FC = () => {
     { id: 'credentials', name: 'Linux (SSH)' },
     { id: 'winrm', name: 'Windows (WinRM)' },
     { id: 'ai', name: 'AI Ayarları' },
+    { id: 'branding', name: 'Kurumsal Kimlik' },
     { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
     { id: 'monitoring', name: 'Monitoring' },
     { id: 'about', name: 'Hakkında' },
@@ -1085,72 +1086,77 @@ const Settings: React.FC = () => {
                     <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
-                  <h3 className="text-lg font-medium text-white mb-1">Kurumsal Kimlik</h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Giriş ekranında, sol menüde ve uygulama sekmesinde görünen isim ve logoyu özelleştirin.
-                  </p>
-                  <div className="space-y-5">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2">Uygulama / Şirket Adı</label>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          value={brandingName}
-                          onChange={e => setBrandingName(e.target.value)}
-                          maxLength={64}
-                          placeholder="datatem AI"
-                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-none focus:border-blue-500"
-                        />
-                        <button
-                          onClick={saveBrandingName}
-                          disabled={brandingNameSaving || !brandingName.trim()}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
-                          {brandingNameSaving ? 'Kaydediliyor...' : 'Kaydet'}
-                        </button>
-                      </div>
-                      {brandingNameSaved && <p className="text-green-400 text-sm mt-2">Kaydedildi</p>}
+          {/* ═══ Kurumsal Kimlik ═══ */}
+          {activeTab === 'branding' && (
+            <div>
+              <h2 className="text-xl font-semibold text-white mb-1">Kurumsal Kimlik</h2>
+              <p className="text-slate-400 text-sm mb-6">
+                Giriş ekranında, sol menüde ve uygulama sekmesinde görünen isim ve logoyu özelleştirin.
+              </p>
+              <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 max-w-2xl">
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-2">Uygulama / Şirket Adı</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="text"
+                        value={brandingName}
+                        onChange={e => setBrandingName(e.target.value)}
+                        maxLength={64}
+                        placeholder="datatem AI"
+                        className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        onClick={saveBrandingName}
+                        disabled={brandingNameSaving || !brandingName.trim()}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
+                        {brandingNameSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                      </button>
                     </div>
+                    {brandingNameSaved && <p className="text-green-400 text-sm mt-2">Kaydedildi</p>}
+                  </div>
 
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2">Şirket Logosu</label>
-                      <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden flex-shrink-0">
-                          {logoUrl ? (
-                            <img src={logoUrl} alt={appName} className="w-full h-full object-contain" />
-                          ) : (
-                            <span className="text-slate-500 text-xs">Logo yok</span>
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-2">Şirket Logosu</label>
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {logoUrl ? (
+                          <img src={logoUrl} alt={appName} className="w-full h-full object-contain" />
+                        ) : (
+                          <span className="text-slate-500 text-xs">Logo yok</span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-2">
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                          onChange={e => setLogoFile(e.target.files?.[0] || null)}
+                          className="block w-full text-sm text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-700 file:text-slate-200 file:text-sm hover:file:bg-slate-600"
+                        />
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={uploadLogo}
+                            disabled={!logoFile || logoUploading}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                            {logoUploading ? 'Yükleniyor...' : 'Yükle'}
+                          </button>
+                          {logoUrl && (
+                            <button
+                              onClick={removeLogo}
+                              className="px-4 py-2 bg-white/[0.07] hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors">
+                              Kaldır
+                            </button>
                           )}
                         </div>
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                            onChange={e => setLogoFile(e.target.files?.[0] || null)}
-                            className="block w-full text-sm text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-700 file:text-slate-200 file:text-sm hover:file:bg-slate-600"
-                          />
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={uploadLogo}
-                              disabled={!logoFile || logoUploading}
-                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-                              {logoUploading ? 'Yükleniyor...' : 'Yükle'}
-                            </button>
-                            {logoUrl && (
-                              <button
-                                onClick={removeLogo}
-                                className="px-4 py-2 bg-white/[0.07] hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors">
-                                Kaldır
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-500">PNG, JPG, SVG veya WEBP — en fazla 2MB.</p>
-                        </div>
+                        <p className="text-xs text-slate-500">PNG, JPG, SVG veya WEBP — en fazla 2MB.</p>
                       </div>
                     </div>
-                    {brandingError && <p className="text-red-400 text-sm">{brandingError}</p>}
                   </div>
+                  {brandingError && <p className="text-red-400 text-sm">{brandingError}</p>}
                 </div>
               </div>
             </div>
