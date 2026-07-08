@@ -121,7 +121,7 @@ async def awr_analyze(
     """
     from app.services.awr_parser import parse_awr
     import requests as req_lib
-    from app.core.config import settings
+    from app.services import llm_gateway
 
     if not req.content or len(req.content) < 100:
         raise HTTPException(status_code=400, detail="AWR içeriği çok kısa veya boş")
@@ -144,14 +144,10 @@ async def awr_analyze(
 
     llm_analysis = {}
     try:
-        resp = req_lib.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=180,
-        )
-        if resp.status_code == 200:
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        if not data.get("error"):
             import json
-            raw = resp.json().get("response", "").strip()
+            raw = (data.get("response") or "").strip()
             start = raw.find("{")
             end = raw.rfind("}") + 1
             if start >= 0 and end > start:
@@ -162,11 +158,11 @@ async def awr_analyze(
             else:
                 llm_analysis = {"summary": raw[:800], "confidence": "low"}
         else:
-            llm_analysis = {"summary": f"AI HTTP {resp.status_code}", "confidence": "low"}
+            llm_analysis = {"summary": f"AI hatası: {data['error']}", "confidence": "low"}
     except req_lib.exceptions.ConnectionError:
-        llm_analysis = {"summary": "Ollama bağlantı hatası", "confidence": "low"}
+        llm_analysis = {"summary": "LLM bağlantı hatası", "confidence": "low"}
     except req_lib.exceptions.Timeout:
-        llm_analysis = {"summary": "Ollama zaman aşımı", "confidence": "low"}
+        llm_analysis = {"summary": "LLM zaman aşımı", "confidence": "low"}
     except Exception as e:
         llm_analysis = {"summary": f"Hata: {str(e)[:200]}", "confidence": "low"}
 
@@ -218,9 +214,8 @@ async def awr_analyze_upload(
             compare_filename = baseline_file.filename or compare_filename
 
     from app.services.awr_parser import parse_awr
-    import requests as req_lib
     import json as json_lib
-    from app.core.config import settings
+    from app.services import llm_gateway
 
     report = parse_awr(content, file.filename or "upload.html")
     summary_text = report.to_llm_summary()
@@ -237,13 +232,9 @@ async def awr_analyze_upload(
 
     llm_analysis = {}
     try:
-        resp = req_lib.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=180,
-        )
-        if resp.status_code == 200:
-            raw = resp.json().get("response", "").strip()
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        if not data.get("error"):
+            raw = (data.get("response") or "").strip()
             start = raw.find("{")
             end = raw.rfind("}") + 1
             if start >= 0 and end > start:
@@ -254,7 +245,7 @@ async def awr_analyze_upload(
             else:
                 llm_analysis = {"summary": raw[:800], "confidence": "low"}
         else:
-            llm_analysis = {"summary": f"AI HTTP {resp.status_code}", "confidence": "low"}
+            llm_analysis = {"summary": f"AI hatası: {data['error']}", "confidence": "low"}
     except Exception as e:
         llm_analysis = {"summary": f"Hata: {str(e)[:200]}", "confidence": "low"}
 
@@ -446,16 +437,12 @@ Yalnızca şu JSON formatında yanıt ver:
 }}"""
 
     import requests as req_lib
-    from app.core.config import settings
+    from app.services import llm_gateway
     active_model = req.model or get_active_model(db)
     try:
-        resp = req_lib.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=60,
-        )
-        if resp.status_code == 200:
-            raw_text = resp.json().get("response", "").strip()
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=60)
+        if not data.get("error"):
+            raw_text = (data.get("response") or "").strip()
             start = raw_text.find("{")
             end = raw_text.rfind("}") + 1
             if start >= 0 and end > start:
@@ -466,9 +453,9 @@ Yalnızca şu JSON formatında yanıt ver:
             else:
                 analysis = {"root_cause": raw_text[:600], "confidence": "low"}
         else:
-            analysis = {"root_cause": f"AI yanıt vermedi (HTTP {resp.status_code})", "confidence": "low"}
+            analysis = {"root_cause": f"AI yanıt vermedi: {data['error']}", "confidence": "low"}
     except req_lib.exceptions.ConnectionError:
-        analysis = {"root_cause": "Ollama bağlantı hatası — AI servisi çalışmıyor olabilir", "confidence": "low"}
+        analysis = {"root_cause": "LLM bağlantı hatası — AI servisi çalışmıyor olabilir", "confidence": "low"}
     except req_lib.exceptions.Timeout:
         analysis = {"root_cause": "AI yanıt süresi aşıldı (60s)", "confidence": "low"}
 

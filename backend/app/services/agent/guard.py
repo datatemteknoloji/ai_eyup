@@ -22,6 +22,7 @@ from typing import Any, Dict
 import requests
 
 from app.core.config import settings, get_guard_model
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -105,17 +106,13 @@ def guard_command(db, command: str, server_name: str) -> Dict[str, Any]:
     )
 
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL.rstrip('/')}/api/chat",
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": policy},
-                    {"role": "user", "content": user_content},
-                ],
-                "stream": False,
-                "options": {"temperature": 0.0},
-            },
+        resp = llm_gateway.chat_sync(
+            model=model,
+            messages=[
+                {"role": "system", "content": policy},
+                {"role": "user", "content": user_content},
+            ],
+            options={"temperature": 0.0},
             timeout=90,
         )
         if resp.status_code != 200:

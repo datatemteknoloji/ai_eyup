@@ -2,7 +2,8 @@
 Settings API - Global Credentials CRUD + Apply to Servers
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import text
@@ -342,6 +343,11 @@ async def get_settings(db: Session = Depends(get_db)):
     detected_ip = _get_management_ip()
     management_server_ip = mgmt_ip_row.value if mgmt_ip_row and mgmt_ip_row.value else detected_ip
 
+    def _mask_key(k: str) -> str:
+        if not k:
+            return ""
+        return (k[:6] + "…" + k[-4:]) if len(k) > 12 else "•" * len(k)
+
     return {
         "ollama_url": settings.OLLAMA_URL,
         "ollama_model": active_model,
@@ -349,7 +355,14 @@ async def get_settings(db: Session = Depends(get_db)):
         "metric_retention_days": metric_retention_days,
         "management_server_ip": management_server_ip,
         "detected_management_ip": detected_ip,
-        "default_credential": _cred_to_response(default_cred) if default_cred else None
+        "default_credential": _cred_to_response(default_cred) if default_cred else None,
+        "remote_llm": {
+            "enabled": settings.REMOTE_LLM_ENABLED,
+            "url": settings.REMOTE_LLM_URL,
+            "model": settings.REMOTE_LLM_MODEL,
+            "api_key_set": bool(settings.REMOTE_LLM_API_KEY),
+            "api_key_masked": _mask_key(settings.REMOTE_LLM_API_KEY),
+        },
     }
 
 
@@ -386,6 +399,54 @@ async def set_ollama_model(payload: dict, db: Session = Depends(get_db)):
     db.commit()
     logger.info(f"Aktif Ollama modeli guncellendi: {model}")
     return {"success": True, "model": model}
+
+
+@router.put("/remote-llm")
+async def set_remote_llm(
+    payload: dict,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin")),
+):
+    """
+    Uzak, OpenAI-uyumlu AI gateway (örn. Bifrost) ayarlarını kaydet.
+    enabled=true olduğunda TÜM chat/agent/analiz çağrıları bu gateway'e gider.
+    Body: {enabled, url, api_key?, model}  — api_key gönderilmezse mevcut değer korunur.
+    """
+    from app.core.config import settings
+
+    def _save(key: str, value: str):
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(AppSettings(key=key, value=value))
+
+    enabled = bool(payload.get("enabled", False))
+    url = (payload.get("url") or "").strip().rstrip("/")
+    model = (payload.get("model") or "").strip()
+    api_key_raw = payload.get("api_key")
+
+    if enabled and (not url or not model):
+        raise HTTPException(status_code=400, detail="Uzak AI aktif edilecekse URL ve Model adı zorunludur")
+
+    _save("remote_llm_enabled", "true" if enabled else "false")
+    _save("remote_llm_url", url)
+    _save("remote_llm_model", model)
+
+    if api_key_raw:  # boş/None gönderilirse mevcut key korunur
+        _save("remote_llm_api_key", encrypt_secret(api_key_raw))
+
+    db.commit()
+
+    # Runtime'a hemen yansıt (restart beklemeden) — management_server_ip ile aynı desen.
+    settings.REMOTE_LLM_ENABLED = enabled
+    settings.REMOTE_LLM_URL = url
+    settings.REMOTE_LLM_MODEL = model
+    if api_key_raw:
+        settings.REMOTE_LLM_API_KEY = api_key_raw
+
+    logger.info(f"Uzak AI gateway güncellendi: enabled={enabled} url={url} model={model}")
+    return {"success": True, "enabled": enabled, "url": url, "model": model}
 
 
 @router.put("/metric-retention")
@@ -520,6 +581,113 @@ async def set_ai_provider_key(data: AIProviderRequest):
     os.environ[env_key] = data.api_key
     setattr(settings, attr, data.api_key)
     return {"success": True, "provider": data.provider, "message": f"{data.provider} API anahtarı güncellendi"}
+
+
+# ── Kurumsal Kimlik (Marka Adı + Logo) ──────────────────────────────────────
+# Okuma tarafı açık uçlardan yapılır (bkz. app/api/public.py) çünkü login
+# sayfası henüz bir JWT'ye sahip değildir. Yazma tarafı sadece admin.
+BRANDING_LOGO_DIR = "/app/uploads/branding"
+BRANDING_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".svg", ".webp"}
+BRANDING_MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+class BrandingRequest(BaseModel):
+    app_name: str
+
+
+@router.put("/branding")
+async def set_branding(
+    data: BrandingRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Uygulama/kurum adını güncelle."""
+    app_name = (data.app_name or "").strip()
+    if not app_name:
+        raise HTTPException(status_code=400, detail="Uygulama adı boş olamaz")
+    if len(app_name) > 64:
+        raise HTTPException(status_code=400, detail="Uygulama adı en fazla 64 karakter olabilir")
+
+    row = db.query(AppSettings).filter(AppSettings.key == "branding_app_name").first()
+    if row:
+        row.value = app_name
+    else:
+        db.add(AppSettings(key="branding_app_name", value=app_name))
+    db.commit()
+    logger.info(f"Kurumsal uygulama adı güncellendi: {app_name}")
+    return {"success": True, "app_name": app_name}
+
+
+def _existing_branding_logo_filename(db: Session) -> Optional[str]:
+    row = db.query(AppSettings).filter(AppSettings.key == "branding_logo_filename").first()
+    return row.value if row and row.value else None
+
+
+@router.post("/branding/logo")
+async def upload_branding_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Kurum logosunu yükle (png/jpg/jpeg/svg/webp, max 2MB)."""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in BRANDING_ALLOWED_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Desteklenmeyen dosya türü: {ext or 'bilinmiyor'} (izin verilenler: png, jpg, jpeg, svg, webp)",
+        )
+
+    content = await file.read()
+    if len(content) > BRANDING_MAX_LOGO_BYTES:
+        raise HTTPException(status_code=400, detail="Logo dosyası en fazla 2MB olabilir")
+    if not content:
+        raise HTTPException(status_code=400, detail="Boş dosya")
+
+    os.makedirs(BRANDING_LOGO_DIR, exist_ok=True)
+
+    # Önceki logoyu (farklı uzantılı olabilir) temizle
+    old_filename = _existing_branding_logo_filename(db)
+    if old_filename:
+        old_path = os.path.join(BRANDING_LOGO_DIR, old_filename)
+        if os.path.isfile(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+
+    new_filename = f"logo{ext}"
+    with open(os.path.join(BRANDING_LOGO_DIR, new_filename), "wb") as f:
+        f.write(content)
+
+    row = db.query(AppSettings).filter(AppSettings.key == "branding_logo_filename").first()
+    if row:
+        row.value = new_filename
+    else:
+        db.add(AppSettings(key="branding_logo_filename", value=new_filename))
+    db.commit()
+
+    logger.info(f"Kurum logosu güncellendi: {new_filename}")
+    return {"success": True}
+
+
+@router.delete("/branding/logo")
+async def delete_branding_logo(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Kurum logosunu kaldır — varsayılan (marka baş harfleri) gösterime döner."""
+    old_filename = _existing_branding_logo_filename(db)
+    if old_filename:
+        old_path = os.path.join(BRANDING_LOGO_DIR, old_filename)
+        if os.path.isfile(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+        db.query(AppSettings).filter(AppSettings.key == "branding_logo_filename").delete()
+        db.commit()
+    logger.info("Kurum logosu kaldırıldı")
+    return {"success": True}
 
 
 # ── Tehlikeli Bölge: Veri Silme ─────────────────────────────────────────────

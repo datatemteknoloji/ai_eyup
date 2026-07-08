@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
+import { useBranding } from '../branding/BrandingContext'
 
 interface Credential {
   id: number
@@ -55,6 +56,14 @@ interface RunbookDocument {
   chunk_ids?: string[]
 }
 
+interface RemoteLlmSettings {
+  enabled: boolean
+  url: string
+  model: string
+  api_key_set: boolean
+  api_key_masked: string
+}
+
 interface GeneralSettings {
   ollama_url: string
   ollama_model: string
@@ -62,6 +71,7 @@ interface GeneralSettings {
   metric_retention_days?: number
   management_server_ip?: string
   detected_management_ip?: string
+  remote_llm?: RemoteLlmSettings
 }
 
 const RagTab: React.FC = () => {
@@ -500,6 +510,109 @@ const Settings: React.FC = () => {
     }
   }, [generalSettings?.metric_retention_days])
 
+  // Uzak AI (OpenAI-uyumlu gateway, örn. Bifrost) ayarları
+  const [remoteLlmForm, setRemoteLlmForm] = useState({ enabled: false, url: '', model: '', api_key: '' })
+  const [remoteLlmSaved, setRemoteLlmSaved] = useState(false)
+  const [remoteLlmError, setRemoteLlmError] = useState('')
+  const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
+  React.useEffect(() => {
+    if (generalSettings?.remote_llm) {
+      const r = generalSettings.remote_llm
+      setRemoteLlmForm(f => ({ ...f, enabled: r.enabled, url: r.url || '', model: r.model || '' }))
+    }
+  }, [generalSettings?.remote_llm])
+  const saveRemoteLlm = async () => {
+    setRemoteLlmError('')
+    setRemoteLlmSaving(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/remote-llm`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: remoteLlmForm.enabled,
+          url: remoteLlmForm.url.trim(),
+          model: remoteLlmForm.model.trim(),
+          api_key: remoteLlmForm.api_key.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Kaydedilemedi')
+      setRemoteLlmForm(f => ({ ...f, api_key: '' }))
+      setRemoteLlmSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['general-settings'] })
+      queryClient.invalidateQueries({ queryKey: ['ai-models'] })
+      setTimeout(() => setRemoteLlmSaved(false), 3000)
+    } catch (e: any) {
+      setRemoteLlmError(e.message || 'Kaydedilemedi')
+    } finally {
+      setRemoteLlmSaving(false)
+    }
+  }
+
+  // Kurumsal Kimlik (marka adı + logo)
+  const { appName, logoUrl, refreshBranding } = useBranding()
+  const [brandingName, setBrandingName] = useState('')
+  const [brandingNameSaving, setBrandingNameSaving] = useState(false)
+  const [brandingNameSaved, setBrandingNameSaved] = useState(false)
+  const [brandingError, setBrandingError] = useState('')
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoUploading, setLogoUploading] = useState(false)
+  React.useEffect(() => { setBrandingName(appName) }, [appName])
+
+  const saveBrandingName = async () => {
+    setBrandingError('')
+    setBrandingNameSaving(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/branding`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_name: brandingName.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Kaydedilemedi')
+      await refreshBranding()
+      setBrandingNameSaved(true)
+      setTimeout(() => setBrandingNameSaved(false), 3000)
+    } catch (e: any) {
+      setBrandingError(e.message || 'Kaydedilemedi')
+    } finally {
+      setBrandingNameSaving(false)
+    }
+  }
+
+  const uploadLogo = async () => {
+    if (!logoFile) return
+    setBrandingError('')
+    setLogoUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', logoFile)
+      const res = await fetch(`${API_BASE_URL}/settings/branding/logo`, { method: 'POST', body: form })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Logo yüklenemedi')
+      setLogoFile(null)
+      await refreshBranding()
+    } catch (e: any) {
+      setBrandingError(e.message || 'Logo yüklenemedi')
+    } finally {
+      setLogoUploading(false)
+    }
+  }
+
+  const removeLogo = async () => {
+    setBrandingError('')
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/branding/logo`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || 'Logo kaldırılamadı')
+      }
+      await refreshBranding()
+    } catch (e: any) {
+      setBrandingError(e.message || 'Logo kaldırılamadı')
+    }
+  }
+
   // Queries
   const { data: credentials = [], isLoading: credsLoading } = useQuery<Credential[]>({
     queryKey: ['credentials'],
@@ -897,9 +1010,147 @@ const Settings: React.FC = () => {
 
 
                 </div>
-                <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center space-x-3">
-                  <span className="text-sm font-semibold text-green-400">OK</span>
-                  <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
+
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-medium text-white">Uzak AI Sağlayıcı (OpenAI-uyumlu Gateway)</h3>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={remoteLlmForm.enabled}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, enabled: e.target.checked }))}
+                      />
+                      <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Aktif edilirse tüm chat/agent/analiz çağrıları (Linux, Windows, Unified AI, AI Agent, RCA vb.)
+                    yerel Ollama yerine buradaki OpenAI-uyumlu <code>/v1/chat/completions</code> endpoint'ine gider (örn. Bifrost).
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">Gateway URL</label>
+                      <input
+                        type="text"
+                        value={remoteLlmForm.url}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, url: e.target.value }))}
+                        placeholder="https://llm-gateway.ornek-sirket.com"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Kök URL — sonuna otomatik <code>/v1/chat/completions</code> eklenir.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">Model</label>
+                      <input
+                        type="text"
+                        value={remoteLlmForm.model}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, model: e.target.value }))}
+                        placeholder="vllm-gpt-oss/openai/gpt-oss-120b"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">API Key</label>
+                      <input
+                        type="password"
+                        value={remoteLlmForm.api_key}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder={generalSettings?.remote_llm?.api_key_set ? `Kayıtlı: ${generalSettings.remote_llm.api_key_masked} (değiştirmek için yeni değer girin)` : 'sk-bf-...'}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Authorization header'ına doğrudan (Bearer öneki olmadan) konur.</p>
+                    </div>
+                    <div className="flex items-center gap-3 mt-4">
+                      <button
+                        onClick={saveRemoteLlm}
+                        disabled={remoteLlmSaving}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                        {remoteLlmSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                      </button>
+                      {remoteLlmSaved && <span className="text-green-400 text-sm">Kaydedildi</span>}
+                      {remoteLlmError && <span className="text-red-400 text-sm">{remoteLlmError}</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {generalSettings?.remote_llm?.enabled ? (
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 flex items-center space-x-3">
+                    <span className="text-sm font-semibold text-blue-400">OK</span>
+                    <div><p className="text-blue-400 font-medium">AI Servisi Aktif — Uzak Gateway</p><p className="text-blue-400/70 text-sm">Tüm AI çağrıları {generalSettings.remote_llm.model} modeli üzerinden uzak sağlayıcıya gidiyor</p></div>
+                  </div>
+                ) : (
+                  <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center space-x-3">
+                    <span className="text-sm font-semibold text-green-400">OK</span>
+                    <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
+                  </div>
+                )}
+
+                <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
+                  <h3 className="text-lg font-medium text-white mb-1">Kurumsal Kimlik</h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Giriş ekranında, sol menüde ve uygulama sekmesinde görünen isim ve logoyu özelleştirin.
+                  </p>
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">Uygulama / Şirket Adı</label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="text"
+                          value={brandingName}
+                          onChange={e => setBrandingName(e.target.value)}
+                          maxLength={64}
+                          placeholder="datatem AI"
+                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          onClick={saveBrandingName}
+                          disabled={brandingNameSaving || !brandingName.trim()}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
+                          {brandingNameSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                        </button>
+                      </div>
+                      {brandingNameSaved && <p className="text-green-400 text-sm mt-2">Kaydedildi</p>}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">Şirket Logosu</label>
+                      <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {logoUrl ? (
+                            <img src={logoUrl} alt={appName} className="w-full h-full object-contain" />
+                          ) : (
+                            <span className="text-slate-500 text-xs">Logo yok</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            onChange={e => setLogoFile(e.target.files?.[0] || null)}
+                            className="block w-full text-sm text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-700 file:text-slate-200 file:text-sm hover:file:bg-slate-600"
+                          />
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={uploadLogo}
+                              disabled={!logoFile || logoUploading}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                              {logoUploading ? 'Yükleniyor...' : 'Yükle'}
+                            </button>
+                            {logoUrl && (
+                              <button
+                                onClick={removeLogo}
+                                className="px-4 py-2 bg-white/[0.07] hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors">
+                                Kaldır
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500">PNG, JPG, SVG veya WEBP — en fazla 2MB.</p>
+                        </div>
+                      </div>
+                    </div>
+                    {brandingError && <p className="text-red-400 text-sm">{brandingError}</p>}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1183,10 +1434,14 @@ const Settings: React.FC = () => {
               <h2 className="text-xl font-semibold text-white mb-6">Hakkında</h2>
               <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                 <div className="flex items-center space-x-4 mb-6">
-                  <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-                    <span className="text-white font-bold text-2xl">SM</span>
-                  </div>
-                  <div><h3 className="text-2xl font-bold text-white">datatem AI</h3><p className="text-slate-400">v1.0.0 - AI Infrastructure Management</p></div>
+                  {logoUrl ? (
+                    <img src={logoUrl} alt={appName} className="w-16 h-16 rounded-2xl object-contain shadow-lg bg-cyber-card border border-white/[0.06]" />
+                  ) : (
+                    <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
+                      <span className="text-white font-bold text-2xl">SM</span>
+                    </div>
+                  )}
+                  <div><h3 className="text-2xl font-bold text-white">{appName}</h3><p className="text-slate-400">v1.0.0 - AI Infrastructure Management</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4">
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Backend</p><p className="text-white font-medium">FastAPI + Python</p></div>

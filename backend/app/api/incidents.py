@@ -16,6 +16,7 @@ from app.models.event import Incident, SystemEvent
 from app.models.server import Server
 from app.models.user import User
 from app.services.platform_scope import filter_incidents_for_platform
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -286,12 +287,9 @@ Lütfen şu formatta analiz yap:
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{settings.OLLAMA_URL}/api/generate",
-                json={"model": get_active_model(db), "prompt": prompt, "stream": False}
-            )
-            if response.status_code == 200:
-                rca_text = response.json().get("response", "Analiz yapılamadı")
+            data = await llm_gateway.generate_async(client, model=get_active_model(db), prompt=prompt)
+            if not data.get("error"):
+                rca_text = data.get("response", "Analiz yapılamadı")
                 inc.rca_result = {
                     "analysis": rca_text,
                     "model": get_active_model(db),

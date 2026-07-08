@@ -13,13 +13,14 @@ import unicodedata
 import httpx
 
 from app.core.database import get_db
-from app.core.config import settings, get_active_model
+from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
 from app.models.hypervisor import Hypervisor
 from app.models.chat_session import ChatSession, ChatMessage
 from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
 from app.models.credential import GlobalCredential
 from app.services.platform_scope import is_windows_server
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,15 @@ router = APIRouter()
 
 @router.get("/models")
 async def list_available_models(db: Session = Depends(get_db)):
-    """Ollama'da mevcut modelleri listele"""
+    """Ollama'da (veya uzak gateway aktifse uzak sağlayıcıda) mevcut modelleri listele"""
+    if remote_llm_enabled():
+        model = llm_gateway.active_model_label()
+        return {
+            "success": True,
+            "models": [{"name": model, "size": None, "parameter_size": None, "family": "remote"}],
+            "default": model,
+            "remote": True,
+        }
     try:
         ollama_url = settings.OLLAMA_URL
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -525,7 +534,6 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         ssh_results = []
 
         try:
-            ollama_url = settings.OLLAMA_URL
             # Kullanıcının seçtiği model veya default model
             model = request.model or get_active_model(db)
             # Basit ve net prompt oluştur
@@ -581,17 +589,9 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             )
 
             async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{ollama_url}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                    },
-                )
+                data = await llm_gateway.generate_async(client, model=model, prompt=prompt)
 
-                if response.status_code == 200:
-                    data = response.json()
+                if not data.get("error"):
                     ai_response = data.get("response", "Yanıt alınamadı")
 
                     assistant_msg = ChatMessage(
@@ -612,30 +612,22 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                         session_id=session_id,
                     )
                 else:
-                    logger.error(f"Ollama error: {response.status_code} - {response.text}")
-                    # Ollama'dan gelen hata metnini oku (model bulunamadı, bellek vb.)
-                    ollama_error_detail = ""
-                    try:
-                        body = response.json()
-                        if isinstance(body, dict):
-                            ollama_error_detail = body.get("error", "") or body.get("message", "") or ""
-                    except Exception:
-                        if response.text and len(response.text) < 300:
-                            ollama_error_detail = response.text
-                    extra = f"**Ollama hatası:** {ollama_error_detail}" if ollama_error_detail else ""
-                    error_response = (
-                        "AI servisi yanıt veremedi (Ollama HTTP %d).\n\n"
-                        "**Kontrol edin:**\n"
-                        "• Ollama çalışıyor mu? `curl %s/api/tags`\n"
-                        "• Model yüklü mü? `ollama list` ve `ollama run %s`\n"
-                        "• Sunucuda bellek yeterli mi?"
-                    ) % (
-                        response.status_code,
-                        settings.OLLAMA_URL.rstrip("/"),
-                        (request.model or get_active_model(db)).split(":")[0],
-                    )
-                    if extra:
-                        error_response += "\n\n" + extra
+                    logger.error(f"LLM error: {data.get('error')}")
+                    if remote_llm_enabled():
+                        error_response = f"AI servisi yanıt veremedi.\n\n**Hata:** {data.get('error')}"
+                    else:
+                        error_response = (
+                            "AI servisi yanıt veremedi (Ollama hatası).\n\n"
+                            "**Kontrol edin:**\n"
+                            "• Ollama çalışıyor mu? `curl %s/api/tags`\n"
+                            "• Model yüklü mü? `ollama list` ve `ollama run %s`\n"
+                            "• Sunucuda bellek yeterli mi?\n\n"
+                            "**Hata:** %s"
+                        ) % (
+                            settings.OLLAMA_URL.rstrip("/"),
+                            (request.model or get_active_model(db)).split(":")[0],
+                            data.get("error"),
+                        )
                     err_msg = ChatMessage(
                         session_id=session_id,
                         role="assistant",
@@ -1205,29 +1197,21 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         + "\n\nYANIT (Türkçe, Markdown):"
                     )
 
-                    # Ollama streaming
+                    # LLM streaming (yerel Ollama veya uzak gateway — llm_gateway üzerinden)
                     _model = request.model or get_active_model(db)
-                    _ollama_url = settings.OLLAMA_URL.rstrip("/") + "/api/generate"
                     analysis_text = ""
                     try:
                         async with httpx.AsyncClient(timeout=120) as _hc:
-                            async with _hc.stream("POST", _ollama_url, json={
-                                "model": _model, "prompt": analysis_prompt,
-                                "stream": True, "options": {"temperature": 0.3, "num_predict": 1500}
-                            }) as _resp:
-                                async for _chunk in _resp.aiter_lines():
-                                    if not _chunk:
-                                        continue
-                                    try:
-                                        _d = __import__("json").loads(_chunk)
-                                        tok = _d.get("response", "")
-                                        if tok:
-                                            analysis_text += tok
-                                            yield _sse({"token": tok})
-                                        if _d.get("done"):
-                                            break
-                                    except Exception:
-                                        pass
+                            async for _d in llm_gateway.stream_generate(
+                                _hc, model=_model, prompt=analysis_prompt,
+                                options={"temperature": 0.3, "num_predict": 1500},
+                            ):
+                                tok = _d.get("response", "")
+                                if tok:
+                                    analysis_text += tok
+                                    yield _sse({"token": tok})
+                                if _d.get("done"):
+                                    break
                     except Exception as ae:
                         err_msg = f"\n*Analiz hatası: {ae}*"
                         analysis_text = err_msg
@@ -1500,29 +1484,17 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         yield _sse({"token": token})
 
                 else:
-                    # Ollama (varsayılan)
-                    async with client.stream(
-                        "POST",
-                        f"{settings.OLLAMA_URL}/api/generate",
-                        json={"model": model, "prompt": prompt, "stream": True},
-                    ) as resp:
-                        if resp.status_code != 200:
-                            yield _sse({"error": f"Ollama HTTP {resp.status_code}"})
+                    # Ollama (varsayılan) veya REMOTE_LLM_ENABLED ise uzak gateway
+                    async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
+                        if chunk.get("error"):
+                            yield _sse({"error": chunk["error"]})
                             return
-                        async for line in resp.aiter_lines():
-                            if not line.strip():
-                                continue
-                            try:
-                                chunk = _json.loads(line)
-                            except Exception:
-                                continue
-                            token = chunk.get("response", "")
-                            done_flag = chunk.get("done", False)
-                            if token:
-                                full_response += token
-                                yield _sse({"token": token})
-                            if done_flag:
-                                break
+                        token = chunk.get("response", "")
+                        if token:
+                            full_response += token
+                            yield _sse({"token": token})
+                        if chunk.get("done"):
+                            break
 
             # ── 7. Kaydet + Cache ─────────────────────────────────────────
             db.add(ChatMessage(

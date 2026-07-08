@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -199,16 +200,12 @@ def analyze_event_logs(
     prompt = _build_prompt(event, log_lines)
 
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            logger.warning(f"[LogAnalyst] Ollama HTTP {resp.status_code} (event #{event_id})")
-            return {"error": f"AI servisi yanıt vermedi (HTTP {resp.status_code})"}
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+        if data.get("error"):
+            logger.warning(f"[LogAnalyst] LLM hatası (event #{event_id}): {data['error']}")
+            return {"error": f"AI servisi yanıt vermedi: {data['error']}"}
 
-        raw_text = resp.json().get("response", "").strip()
+        raw_text = (data.get("response") or "").strip()
         if not raw_text:
             return {"error": "AI servisi boş yanıt döndürdü"}
 

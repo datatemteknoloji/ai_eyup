@@ -16,11 +16,12 @@ import logging
 import httpx
 
 from app.core.database import get_db
-from app.core.config import settings, get_active_model
+from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
 from app.models.chat_session import ChatSession, ChatMessage
 from app.models.event import SystemEvent
 from app.services.platform_scope import is_windows_server
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,14 @@ def _session_to_dict(session: ChatSession, message_count: int = 0) -> dict:
 
 @router.get("/models")
 async def list_available_models(db: Session = Depends(get_db)):
+    if remote_llm_enabled():
+        model = llm_gateway.active_model_label()
+        return {
+            "success": True,
+            "models": [{"name": model, "size": None, "parameter_size": None, "family": "remote"}],
+            "default": model,
+            "remote": True,
+        }
     try:
         ollama_url = settings.OLLAMA_URL
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -420,16 +429,15 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     )
 
     try:
-        ollama_url = settings.OLLAMA_URL
         model = request.model or get_active_model(db)
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(f"{ollama_url}/api/generate", json={"model": model, "prompt": prompt, "stream": False})
-            if response.status_code == 200:
-                ai_response = response.json().get("response", "Yanıt alınamadı")
+            data = await llm_gateway.generate_async(client, model=model, prompt=prompt)
+            if not data.get("error"):
+                ai_response = data.get("response", "Yanıt alınamadı")
             else:
-                ai_response = f"AI servisi yanıt veremedi (Ollama HTTP {response.status_code})."
+                ai_response = f"AI servisi yanıt veremedi: {data.get('error')}"
     except Exception as e:
-        logger.error(f"Ollama error: {e}")
+        logger.error(f"LLM error: {e}")
         ai_response = f"AI servisi hatası: {str(e)}"
 
     db.add(ChatMessage(session_id=session_id, role="assistant", content=ai_response))
@@ -596,26 +604,16 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                         full_response += token
                         yield _sse({"token": token})
                 else:
-                    async with client.stream(
-                        "POST", f"{settings.OLLAMA_URL}/api/generate",
-                        json={"model": model, "prompt": prompt, "stream": True},
-                    ) as resp:
-                        if resp.status_code != 200:
-                            yield _sse({"error": f"Ollama HTTP {resp.status_code}"})
+                    async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
+                        if chunk.get("error"):
+                            yield _sse({"error": chunk["error"]})
                             return
-                        async for line in resp.aiter_lines():
-                            if not line.strip():
-                                continue
-                            try:
-                                chunk = _json.loads(line)
-                            except Exception:
-                                continue
-                            token = chunk.get("response", "")
-                            if token:
-                                full_response += token
-                                yield _sse({"token": token})
-                            if chunk.get("done"):
-                                break
+                        token = chunk.get("response", "")
+                        if token:
+                            full_response += token
+                            yield _sse({"token": token})
+                        if chunk.get("done"):
+                            break
 
             db.add(ChatMessage(session_id=session_id, role="assistant", content=full_response or "(yanıt alınamadı)"))
             s = db.query(ChatSession).filter(ChatSession.id == session_id).first()

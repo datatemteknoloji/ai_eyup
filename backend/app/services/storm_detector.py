@@ -258,11 +258,13 @@ def auto_resolve_by_ttl(db: Session) -> int:
 
 # ── Günlük Özet ───────────────────────────────────────────────────────────────
 
-def generate_daily_digest(db: Session, date: Optional[datetime] = None) -> Dict[str, Any]:
+def generate_daily_digest(db: Session, date: Optional[datetime] = None, platform: Optional[str] = None) -> Dict[str, Any]:
     """
     Belirtilen gün (varsayılan: bugün) için alarm özeti üretir.
 
-    Dashboard kartı ve sabah bildirimi için kullanılır.
+    Dashboard kartı ve sabah bildirimi için kullanılır. `platform` verilirse
+    (linux/windows/virt/exadata) özet sadece o platforma ait event/incident'lerle
+    sınırlanır — aksi halde tüm platformları kapsayan genel özet döner.
     """
     if date is None:
         date = datetime.utcnow()
@@ -270,23 +272,19 @@ def generate_daily_digest(db: Session, date: Optional[datetime] = None) -> Dict[
     day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
 
-    events = (
-        db.query(SystemEvent)
-        .filter(
-            SystemEvent.created_at >= day_start,
-            SystemEvent.created_at < day_end,
-        )
-        .all()
-    )
+    from app.services.platform_scope import apply_platform_filter, filter_incidents_for_platform
 
-    incidents = (
-        db.query(Incident)
-        .filter(
-            Incident.created_at >= day_start,
-            Incident.created_at < day_end,
-        )
-        .all()
+    events_q = db.query(SystemEvent).filter(
+        SystemEvent.created_at >= day_start,
+        SystemEvent.created_at < day_end,
     )
+    events = apply_platform_filter(events_q, platform, db).all()
+
+    incidents_q = db.query(Incident).filter(
+        Incident.created_at >= day_start,
+        Incident.created_at < day_end,
+    )
+    incidents = filter_incidents_for_platform(incidents_q.all(), platform, db)
 
     # Metrik bazında sayım
     metric_counts: Dict[str, int] = defaultdict(int)

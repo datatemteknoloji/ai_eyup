@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../auth/AuthContext'
+import { useBranding } from '../branding/BrandingContext'
 import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList,
   Bot, Zap, RefreshCw, Package, Database, Activity,
@@ -127,7 +128,7 @@ type SubgroupChild = {
 }
 type GroupChild = LinkChild | SubgroupChild
 type MenuItem =
-  | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string }
+  | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string; moduleIds?: string[] }
   | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: GroupChild[]; moduleId?: string; moduleIds?: string[] }
   | { type: 'section'; label: string }
 
@@ -151,13 +152,14 @@ function childVisible(child: GroupChild, hasModule: (id: string) => boolean): bo
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
   const { user, logout, hasModule } = useAuth()
+  const { appName, logoUrl } = useBranding()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
   // All platform groups default closed
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
-  const canLinuxAiops = hasModule('linux') || hasModule('aiops')
+  const canLinuxAiops = hasModule('linux')
 
   const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
     queryKey: ['ops-summary-nav'],
@@ -232,7 +234,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleIds: ['linux', 'aiops'],
+      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleId: 'linux',
       children: [
         { type: 'link', path: '/linux/dashboard', name: 'Dashboard',          icon: <LayoutDashboard size={15} />, moduleId: 'linux' },
         { type: 'link', path: '/servers',       name: 'Linux Sunucular',  icon: <Monitor size={15} />, moduleId: 'linux' },
@@ -244,7 +246,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/linux/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} />, moduleId: 'linux' },
         {
           type: 'subgroup', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={15} />,
-          moduleIds: ['linux', 'aiops'],
+          moduleId: 'linux',
           children: linuxAiopsLinks,
         },
       ],
@@ -298,7 +300,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
 
     // ── AI & Automation ───────────────────────────────────────────────────
-    { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={18} />, moduleId: 'ai_automation' },
+    { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={18} />, moduleIds: ['ai_automation', 'executive'] },
 
     // ── Integrations ──────────────────────────────────────────────────────
     {
@@ -470,10 +472,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="h-14 flex items-center justify-between px-3 border-b border-slate-700 flex-shrink-0">
           {sidebarOpen && (
             <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-xs">DT</span>
-              </div>
-              <span className="text-white font-semibold text-sm">datatem AI</span>
+              {logoUrl ? (
+                <img src={logoUrl} alt={appName} className="w-7 h-7 rounded-lg object-contain" />
+              ) : (
+                <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white font-bold text-xs">DT</span>
+                </div>
+              )}
+              <span className="text-white font-semibold text-sm">{appName}</span>
             </div>
           )}
           <button
@@ -500,8 +506,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               if (item.type === 'link') {
                 // Kullanıcı Yönetimi ve Ayarlar sadece admin
-                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings') && user?.role !== 'admin') return null
-                if (item.moduleId && !hasModule(item.moduleId)) return null
+                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings' || item.path === '/audit') && user?.role !== 'admin') return null
+                {
+                  const ids = item.moduleIds ?? (item.moduleId ? [item.moduleId] : undefined)
+                  if (ids && !ids.some(id => hasModule(id))) return null
+                }
                 const active = isActive(item.path)
                 return (
                   <li key={item.path}>
@@ -536,7 +545,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="p-3 border-t border-slate-700 flex-shrink-0">
           {sidebarOpen && (
             <div className="text-xs text-slate-500">
-              <p>datatem AI v2.0</p>
+              <p>{appName} v2.0</p>
             </div>
           )}
         </div>

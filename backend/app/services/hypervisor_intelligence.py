@@ -33,6 +33,7 @@ from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
 from app.models.infrastructure_report import BusinessServiceMap
 from app.models.server import Server
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -1458,15 +1459,11 @@ Tabloları doğrudan kopyalama, anlamlı yorum ekle. Cevabı markdown formatınd
     answer = md_preview  # fallback
     error = None
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        if resp.status_code == 200:
-            answer = resp.json().get("response", "").strip() or md_preview
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+        if not data.get("error"):
+            answer = (data.get("response") or "").strip() or md_preview
         else:
-            error = f"LLM HTTP {resp.status_code}"
+            error = data["error"]
     except Exception as e:
         error = str(e)
 
@@ -1601,21 +1598,17 @@ Lütfen yanıtını ver:"""
     error = None
 
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        if resp.status_code == 200:
-            answer = resp.json().get("response", "").strip()
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+        if not data.get("error"):
+            answer = (data.get("response") or "").strip()
         else:
-            error = f"Ollama HTTP {resp.status_code}"
+            error = data["error"]
             answer = error
     except requests.exceptions.ConnectionError:
-        error = "Ollama bağlantı hatası"
+        error = "LLM bağlantı hatası"
         answer = error
     except requests.exceptions.Timeout:
-        error = "Ollama yanıt süresi aşıldı (120s)"
+        error = "LLM yanıt süresi aşıldı (120s)"
         answer = error
 
     latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)

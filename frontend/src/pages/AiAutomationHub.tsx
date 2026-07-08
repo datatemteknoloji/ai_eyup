@@ -15,8 +15,8 @@ const PLATFORM_TABS: {
   icon: React.ReactNode
   moduleIds: string[]
 }[] = [
-  { id: 'all', label: 'Tüm Altyapı', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'aiops'] },
-  { id: 'linux', label: 'Linux', icon: <Server size={14} />, moduleIds: ['linux', 'aiops'] },
+  { id: 'all', label: 'Tüm Altyapı', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'executive'] },
+  { id: 'linux', label: 'Linux', icon: <Server size={14} />, moduleIds: ['linux'] },
   { id: 'windows', label: 'Windows', icon: <Shield size={14} />, moduleIds: ['windows'] },
   { id: 'virt', label: 'Sanallaştırma', icon: <Cloud size={14} />, moduleIds: ['virtualization'] },
   { id: 'exadata', label: 'Exadata', icon: <Layers size={14} />, moduleIds: ['exadata'] },

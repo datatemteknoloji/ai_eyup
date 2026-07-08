@@ -26,6 +26,15 @@ class Settings:
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_AUTO_MODEL_ENABLED: bool = os.getenv("OLLAMA_AUTO_MODEL_ENABLED", "true").lower() == "true"
 
+    # Uzak AI Gateway (OpenAI-uyumlu, örn. Bifrost) — ayarlıysa ve aktifse tüm chat/agent
+    # çağrıları yerel Ollama yerine buraya gider. URL kökü olmalı (örn. .../v1/chat/completions
+    # olmadan), API key aynen curl örneğindeki gibi Authorization header'ına konur.
+    REMOTE_LLM_ENABLED: bool = os.getenv("REMOTE_LLM_ENABLED", "false").lower() == "true"
+    REMOTE_LLM_URL: str = os.getenv("REMOTE_LLM_URL", "")
+    REMOTE_LLM_API_KEY: str = os.getenv("REMOTE_LLM_API_KEY", "")
+    REMOTE_LLM_MODEL: str = os.getenv("REMOTE_LLM_MODEL", "")
+    REMOTE_LLM_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_LLM_TIMEOUT_SECONDS", "120"))
+
     # Agentic AI — ana agent (tool-calling) ve guard (safety classifier) modelleri
     AGENT_MODEL: str = os.getenv("AGENT_MODEL", "qwen3.5:35b")
     AGENT_GUARD_ENABLED: bool = os.getenv("AGENT_GUARD_ENABLED", "true").lower() == "true"
@@ -117,3 +126,8 @@ def get_agent_model(db) -> str:
 def get_guard_model(db) -> str:
     """Guard (safety classifier) modeli — app_settings override, yoksa config."""
     return _get_setting(db, "agent_guard_model", settings.AGENT_GUARD_MODEL)
+
+
+def remote_llm_enabled() -> bool:
+    """Uzak (OpenAI-uyumlu) LLM gateway aktif mi — URL + API key ayarlı olmalı."""
+    return bool(settings.REMOTE_LLM_ENABLED and settings.REMOTE_LLM_URL and settings.REMOTE_LLM_API_KEY)

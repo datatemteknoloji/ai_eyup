@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -241,20 +242,16 @@ def compare_windows(
     prompt = _build_compare_prompt(window_a, window_b, delta, label_a, label_b, context)
 
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=180,
-        )
-        if resp.status_code != 200:
-            llm_analysis = {"summary": f"AI servisi HTTP {resp.status_code}", "confidence": "low"}
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        if data.get("error"):
+            llm_analysis = {"summary": f"AI servisi hatası: {data['error']}", "confidence": "low"}
         else:
-            raw = resp.json().get("response", "").strip()
+            raw = (data.get("response") or "").strip()
             llm_analysis = _parse_llm_response(raw)
     except requests.exceptions.ConnectionError:
-        llm_analysis = {"summary": "Ollama bağlantı hatası", "confidence": "low"}
+        llm_analysis = {"summary": "LLM bağlantı hatası", "confidence": "low"}
     except requests.exceptions.Timeout:
-        llm_analysis = {"summary": "Ollama zaman aşımı (180s)", "confidence": "low"}
+        llm_analysis = {"summary": "LLM zaman aşımı (180s)", "confidence": "low"}
     except Exception as e:
         llm_analysis = {"summary": f"Hata: {str(e)[:200]}", "confidence": "low"}
 

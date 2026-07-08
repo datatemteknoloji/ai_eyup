@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from app.core.config import settings
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,14 @@ def _strip_thinking(text: str) -> str:
     return _THINK_RE.sub("", text or "").strip()
 
 
-def _ollama_chat(payload: Dict[str, Any], timeout: int) -> requests.Response:
-    return requests.post(
-        f"{settings.OLLAMA_URL.rstrip('/')}/api/chat",
-        json=payload,
+def _ollama_chat(payload: Dict[str, Any], timeout: int):
+    """Ollama /api/chat çağrısı — REMOTE_LLM_ENABLED ise şeffafça uzak OpenAI-uyumlu
+    gateway'e (örn. Bifrost) yönlendirilir (llm_gateway üzerinden)."""
+    return llm_gateway.chat_sync(
+        model=payload["model"],
+        messages=payload["messages"],
+        tools=payload.get("tools"),
+        options=payload.get("options"),
         timeout=timeout,
     )
 

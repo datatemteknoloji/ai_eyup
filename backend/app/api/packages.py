@@ -27,6 +27,7 @@ from app.core.auth import require_role
 from app.models.package_job import PackageFile, PackageJob
 from app.models.server import Server
 from app.models.app_settings import AppSettings
+from app.services import llm_gateway
 from app.services.package_service import run_package_job, UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
@@ -371,13 +372,9 @@ Kısa, pratik ve uygulanabilir ol. Komutları kod bloğu içinde ver."""
 
     try:
         active_model = _get_active_model(db)
-        r = http_requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=90,
-        )
-        analysis = r.json().get("response", "AI yanıt vermedi") if r.status_code == 200 \
-                   else f"AI servisine ulaşılamadı (HTTP {r.status_code})"
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=90)
+        analysis = data.get("response", "AI yanıt vermedi") if not data.get("error") \
+                   else f"AI servisine ulaşılamadı: {data['error']}"
     except Exception as exc:
         analysis = f"AI analizi yapılamadı: {exc}"
 

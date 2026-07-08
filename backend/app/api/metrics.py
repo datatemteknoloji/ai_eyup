@@ -157,29 +157,44 @@ async def get_aggregated_metrics(
 
 
 @router.get("/dashboard")
-async def get_dashboard_metrics(db: Session = Depends(get_db)):
-    """Get aggregated metrics for dashboard"""
-    # Get all AI-ready servers
-    servers = db.query(Server).filter(Server.ai_ready == True).all()
-    
+async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = Depends(get_db)):
+    """Get aggregated metrics for dashboard.
+
+    platform="linux"/"windows" verilirse yalnızca o platformun sunucuları döner —
+    aksi halde tüm AI-ready sunucular (platform bağımsız) döner.
+    Not: metric_name'ler metric_sync.py'nin yazdığı gerçek isimlerle (cpu_usage_percent
+    vb.) eşleşir — hem Linux (node_exporter) hem Windows (windows_exporter) için aynı
+    şemaya senkronlanır, bu yüzden aynı sorgu her iki platformda da çalışır.
+    """
+    query = db.query(Server).filter(Server.ai_ready == True)
+    if platform == "linux":
+        from app.services.platform_scope import get_linux_module_server_id_set
+        linux_ids = get_linux_module_server_id_set(db)
+        query = query.filter(Server.id.in_(linux_ids)) if linux_ids else query.filter(False)
+    elif platform == "windows":
+        from app.services.platform_scope import get_windows_server_ids
+        windows_ids = get_windows_server_ids(db)
+        query = query.filter(Server.id.in_(windows_ids)) if windows_ids else query.filter(False)
+    servers = query.all()
+
     dashboard_data = []
     for server in servers:
         # Get latest metrics
         cpu = db.query(MetricData).filter(
             MetricData.server_id == server.id,
-            MetricData.metric_name == "cpu_usage"
+            MetricData.metric_name == "cpu_usage_percent"
         ).order_by(desc(MetricData.timestamp)).first()
-        
+
         memory = db.query(MetricData).filter(
             MetricData.server_id == server.id,
-            MetricData.metric_name == "memory_usage"
+            MetricData.metric_name == "memory_usage_percent"
         ).order_by(desc(MetricData.timestamp)).first()
-        
+
         disk = db.query(MetricData).filter(
             MetricData.server_id == server.id,
-            MetricData.metric_name == "disk_usage"
+            MetricData.metric_name == "disk_root_usage_percent"
         ).order_by(desc(MetricData.timestamp)).first()
-        
+
         dashboard_data.append({
             "server_id": server.id,
             "hostname": server.hostname,

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.auth import get_current_user, require_role
 from app.models.user import User
-from app.models.module import Module, UserModule, DEFAULT_MODULES
+from app.models.module import Module, UserModule, DEFAULT_MODULES, REMOVED_MODULE_IDS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,6 +68,36 @@ def _ensure_modules_seeded(db: Session):
         if not existing:
             db.add(Module(**m))
     db.commit()
+    _cleanup_removed_modules(db)
+
+
+def _cleanup_removed_modules(db: Session):
+    """Kaldırılan modülleri (ör. 'aiops') veritabanından temizle.
+
+    Etkilenen kullanıcılara, kapsadığı içeriği zaten sağlayan yerine geçen
+    modülü ('linux') ata, sonra Module satırını sil — UserModule kayıtları
+    FK CASCADE ile otomatik silinir.
+    """
+    if not REMOVED_MODULE_IDS:
+        return
+    existing_removed = db.query(Module).filter(Module.id.in_(REMOVED_MODULE_IDS)).all()
+    if not existing_removed:
+        return
+    affected_user_ids = {
+        r.user_id for r in db.query(UserModule).filter(UserModule.module_id.in_(REMOVED_MODULE_IDS)).all()
+    }
+    for uid in affected_user_ids:
+        has_linux = db.query(UserModule).filter(
+            UserModule.user_id == uid, UserModule.module_id == "linux"
+        ).first()
+        if not has_linux:
+            db.add(UserModule(user_id=uid, module_id="linux"))
+    for mod in existing_removed:
+        db.delete(mod)
+    db.commit()
+    if affected_user_ids:
+        logger.info("Kaldırılan modüller temizlendi (%s); %s kullanıcıya 'linux' atandı",
+                     REMOVED_MODULE_IDS, len(affected_user_ids))
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -152,6 +182,8 @@ def set_user_modules(
     if invalid:
         raise HTTPException(status_code=400, detail=f"Geçersiz modül ID'leri: {invalid}")
 
+    previous = _get_user_modules(user_id, db)
+
     # Mevcut atamaları sil
     db.query(UserModule).filter(UserModule.user_id == user_id).delete()
 
@@ -161,6 +193,20 @@ def set_user_modules(
 
     db.commit()
     logger.info("Modules updated for user %s by admin %s: %s", user.username, current_user.username, body.module_ids)
+
+    from app.services.audit import record_audit
+    record_audit(
+        db,
+        category="auth",
+        action="auth.update_user_modules",
+        status="success",
+        actor=current_user,
+        target_type="user",
+        target_id=user_id,
+        summary=f"{current_user.username}, {user.username} kullanıcısının modüllerini güncelledi: {', '.join(body.module_ids) or '—'}",
+        detail={"before": previous, "after": body.module_ids},
+    )
+
     return {"user_id": user_id, "modules": body.module_ids}
 
 
@@ -178,4 +224,5 @@ def seed_modules(db: Session = Depends(get_db)):
             db.add(Module(**m))
             created += 1
     db.commit()
+    _cleanup_removed_modules(db)
     return {"created": created, "updated": updated, "total": len(DEFAULT_MODULES)}

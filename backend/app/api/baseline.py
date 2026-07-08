@@ -378,11 +378,13 @@ async def correlation_view(
 @router.get("/digest")
 async def daily_digest(
     date: Optional[str] = None,  # ISO tarih: 2026-06-09
+    platform: Optional[str] = None,  # linux | windows | virt | exadata
     db: Session = Depends(get_db),
 ):
     """
     Günlük alarm özeti.
     date belirtilmezse bugün kullanılır.
+    platform belirtilirse özet sadece o platforma sınırlanır.
     """
     from app.services.storm_detector import generate_daily_digest
     import datetime as dt
@@ -394,7 +396,7 @@ async def daily_digest(
         except ValueError:
             raise HTTPException(status_code=400, detail="Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
 
-    return generate_daily_digest(db, target)
+    return generate_daily_digest(db, target, platform)
 
 
 class TierUpdate(BaseModel):

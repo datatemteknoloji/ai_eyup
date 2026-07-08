@@ -3,7 +3,7 @@ import { useAuth } from '../auth/AuthContext'
 import type { PlatformKey } from '../config/platformAiops'
 
 const ACCESS: Record<PlatformKey, (hasModule: (id: string) => boolean) => boolean> = {
-  linux: (hm) => hm('linux') || hm('aiops'),
+  linux: (hm) => hm('linux'),
   virt: (hm) => hm('virtualization'),
   windows: (hm) => hm('windows'),
   exadata: (hm) => hm('exadata'),

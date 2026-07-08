@@ -20,10 +20,10 @@ import httpx
 from app.core.database import get_db
 from app.core.config import settings, get_active_model
 from app.models.server import Server
-from app.models.hypervisor import Hypervisor
 from app.models.chat_session import ChatSession, ChatMessage
 from app.models.credential import GlobalCredential
-from app.services.platform_scope import is_windows_server, is_vm
+from app.services.platform_scope import is_windows_server
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -90,37 +90,8 @@ def _windows_ai_ready_servers(db: Session) -> List[Server]:
 
 def _infra_overview(db: Session) -> str:
     """Ucuz DB sorgularıyla tüm platformların özetini çıkar (her sorguda güvenle kullanılabilir)."""
-    all_servers = db.query(Server).all()
-    linux_all = [s for s in all_servers if not is_windows_server(s)]
-    windows_all = [s for s in all_servers if is_windows_server(s)]
-    linux_ai = [s for s in linux_all if s.ai_ready]
-    windows_ai = [s for s in windows_all if s.ai_ready]
-    vms = [s for s in all_servers if is_vm(s)]
-    physical = [s for s in all_servers if not is_vm(s)]
-    hypervisors = db.query(Hypervisor).all()
-
-    lines = [
-        "GENEL ENVANTER OZETI:",
-        f"- Linux/Unix sunucu: {len(linux_all)} adet ({len(linux_ai)} AI Ready)",
-        f"- Windows sunucu: {len(windows_all)} adet ({len(windows_ai)} AI Ready)",
-        f"- Sanal makine (VM) toplam: {len(vms)} adet, fiziksel host: {len(physical)} adet",
-        f"- Hypervisor/entegrasyon: {len(hypervisors)} adet"
-        + (f" ({', '.join(sorted(set(h.hypervisor_type.value for h in hypervisors if h.hypervisor_type)))})" if hypervisors else ""),
-    ]
-    if linux_ai:
-        lines.append("\nAI Ready Linux sunucular:")
-        for s in linux_ai:
-            lines.append(f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}, Durum={s.status}")
-    if windows_ai:
-        lines.append("\nAI Ready Windows sunucular:")
-        for s in windows_ai:
-            lines.append(f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Windows'}, Durum={s.status}")
-    if hypervisors:
-        lines.append("\nHypervisorlar:")
-        for h in hypervisors:
-            vm_count = sum(1 for s in vms if s.hypervisor_id == h.id)
-            lines.append(f"- {h.name} ({h.type or '-'}): host={h.hostname or '-'}, durum={h.status or '-'}, VM sayisi={vm_count}")
-    return "\n".join(lines)
+    from app.services.infra_summary import build_infra_overview_text
+    return build_infra_overview_text(db)
 
 
 # ── İstek/yanıt modelleri ─────────────────────────────────────────────────────
@@ -451,27 +422,16 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                         full_response += token
                         yield _sse({"token": token})
                 else:
-                    async with client.stream(
-                        "POST", f"{settings.OLLAMA_URL}/api/generate",
-                        json={"model": model, "prompt": prompt, "stream": True},
-                    ) as resp:
-                        if resp.status_code != 200:
-                            yield _sse({"error": f"Ollama HTTP {resp.status_code}"})
+                    async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
+                        if chunk.get("error"):
+                            yield _sse({"error": chunk["error"]})
                             return
-                        async for line in resp.aiter_lines():
-                            if not line.strip():
-                                continue
-                            try:
-                                chunk = _json.loads(line)
-                            except Exception:
-                                continue
-                            token = chunk.get("response", "")
-                            done_flag = chunk.get("done", False)
-                            if token:
-                                full_response += token
-                                yield _sse({"token": token})
-                            if done_flag:
-                                break
+                        token = chunk.get("response", "")
+                        if token:
+                            full_response += token
+                            yield _sse({"token": token})
+                        if chunk.get("done"):
+                            break
 
             db.add(ChatMessage(session_id=session_id, role="assistant", content=full_response or "(yanıt alınamadı)"))
             s = db.query(ChatSession).filter(ChatSession.id == session_id).first()

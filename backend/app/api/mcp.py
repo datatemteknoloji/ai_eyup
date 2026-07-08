@@ -185,24 +185,21 @@ async def analyze_results(payload: AnalyzeRequest, db: Session = Depends(get_db)
     )
 
     model = payload.model or get_active_model(db)
-    ollama_url = f"{settings.OLLAMA_URL.rstrip('/')}/api/generate"
 
     async def _stream():
         import httpx
+        import json
+        from app.services import llm_gateway
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream(
-                    "POST", ollama_url,
-                    json={"model": model, "prompt": prompt, "stream": True},
-                ) as resp:
-                    if resp.status_code != 200:
-                        yield f"data: {{\"error\":\"Ollama HTTP {resp.status_code}\"}}\n\n"
+                async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
+                    if chunk.get("error"):
+                        yield f"data: {json.dumps({'error': chunk['error']})}\n\n"
                         return
-                    async for line in resp.aiter_lines():
-                        if line:
-                            yield f"data: {line}\n\n"
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    if chunk.get("done"):
+                        return
         except Exception as exc:
-            import json
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream",

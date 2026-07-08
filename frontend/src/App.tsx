@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import { BrandingProvider } from './branding/BrandingContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import Login from './pages/Login'
 import AuditLog from './pages/AuditLog'
@@ -104,19 +105,30 @@ const HomeRedirect: React.FC = () => {
     )
   }
   if (user?.role === 'admin') return <Navigate to="/dashboard" replace />
+  if (hasModule('executive')) return <Navigate to="/executive" replace />
   if (hasModule('linux')) return <Navigate to="/linux/dashboard" replace />
   if (hasModule('virtualization')) return <Navigate to="/hypervisors" replace />
   if (hasModule('windows')) return <Navigate to="/windows/dashboard" replace />
-  if (hasModule('aiops')) return <Navigate to="/linux/ops" replace />
+  if (hasModule('exadata')) return <Navigate to="/exadata" replace />
   if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
   if (hasModule('level1')) return <Navigate to="/level1" replace />
   if (hasModule('integrations')) return <Navigate to="/integrations" replace />
-  return <Navigate to="/audit" replace />
+  // Audit Log artık sadece admin — hiç modülü olmayan kullanıcı için döngüsel
+  // yönlendirme yerine bilgilendirici bir boş durum göster.
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center text-center px-6">
+      <div className="max-w-sm">
+        <p className="text-slate-300 font-medium mb-1">Henüz bir modül atanmamış</p>
+        <p className="text-sm text-slate-500">Erişim için lütfen sistem yöneticinizle iletişime geçin.</p>
+      </div>
+    </div>
+  )
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <BrandingProvider>
       <BrowserRouter>
         <AuthProvider>
           <Routes>
@@ -209,7 +221,7 @@ function App() {
                       <Route path="/level1/:category" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
                       <Route path="/modules" element={<Navigate to="/users" replace />} />
                       <Route path="/users" element={<RequireAdmin><ErrorBoundary><UserManager /></ErrorBoundary></RequireAdmin>} />
-                      <Route path="/chat" element={<RequireModule moduleId="ai_automation"><ErrorBoundary><AiAutomationHub /></ErrorBoundary></RequireModule>} />
+                      <Route path="/chat" element={<RequireAnyModule moduleIds={['ai_automation', 'executive']}><ErrorBoundary><AiAutomationHub /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/agent" element={<RequireModule moduleId="ai_automation"><ErrorBoundary><Agent /></ErrorBoundary></RequireModule>} />
                       <Route path="/metrics" element={<RequireModule moduleId="linux"><ErrorBoundary><LiveMetrics /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisor-chat" element={<Navigate to="/infra-reports" replace />} />
@@ -218,7 +230,7 @@ function App() {
                       <Route path="/packages" element={<RequireModule moduleId="linux"><ErrorBoundary><PackageManager /></ErrorBoundary></RequireModule>} />
                       <Route path="/repositories" element={<RequireModule moduleId="linux"><ErrorBoundary><Repositories /></ErrorBoundary></RequireModule>} />
                       <Route path="/system-update" element={<RequireModule moduleId="linux"><ErrorBoundary><SystemUpdate /></ErrorBoundary></RequireModule>} />
-                      <Route path="/audit" element={<ErrorBoundary><AuditLog /></ErrorBoundary>} />
+                      <Route path="/audit" element={<RequireAdmin><ErrorBoundary><AuditLog /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>
                   </ErrorBoundary>
@@ -228,6 +240,7 @@ function App() {
           </Routes>
         </AuthProvider>
       </BrowserRouter>
+      </BrandingProvider>
     </QueryClientProvider>
   )
 }

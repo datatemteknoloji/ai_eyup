@@ -28,6 +28,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load monitoring router: {e}", exc_info=True)
 
+# Metrics (dashboard kaynak kullanım özeti — Linux + Windows)
+try:
+    from app.api import metrics
+    api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
+except Exception as e:
+    logger.error(f"Could not load metrics router: {e}", exc_info=True)
+
 # Servers
 try:
     from app.api import servers
@@ -237,3 +244,10 @@ try:
     api_router.include_router(platform_reports.router, prefix="/platform-reports", tags=["platform-reports"])
 except Exception as e:
     logger.error(f"Could not load platform_reports router: {e}", exc_info=True)
+
+# Public (kimlik doğrulama gerektirmeyen — marka adı/logo)
+try:
+    from app.api import public
+    api_router.include_router(public.router, prefix="/public", tags=["public"])
+except Exception as e:
+    logger.error(f"Could not load public router: {e}", exc_info=True)

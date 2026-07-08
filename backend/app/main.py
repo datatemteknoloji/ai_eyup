@@ -27,9 +27,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global kimlik doğrulama: /auth/* dışındaki tüm /api/v1 endpoint'leri token ister.
-# WebSocket (terminal) ve auth uçları muaf tutulur.
-_AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/",)
+# Global kimlik doğrulama: /auth/* ve /public/* dışındaki tüm /api/v1 endpoint'leri token ister.
+# WebSocket (terminal) ve auth/public uçları muaf tutulur.
+_AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/", "/api/v1/public/")
 # Terminal WS kendi JWT doğrulamasını query param üzerinden yapıyor
 
 
@@ -232,6 +232,16 @@ async def startup_tasks():
                 _s.MANAGEMENT_SERVER_IP = _rows["management_server_ip"]
             if _rows.get("ollama_active_model"):
                 _s.OLLAMA_DEFAULT_MODEL = _rows["ollama_active_model"]
+            # Uzak AI gateway (örn. Bifrost) — DB'de ayarlıysa .env default'unun üzerine yazar
+            if _rows.get("remote_llm_enabled") is not None:
+                _s.REMOTE_LLM_ENABLED = _rows["remote_llm_enabled"].lower() == "true"
+            if _rows.get("remote_llm_url"):
+                _s.REMOTE_LLM_URL = _rows["remote_llm_url"]
+            if _rows.get("remote_llm_model"):
+                _s.REMOTE_LLM_MODEL = _rows["remote_llm_model"]
+            if _rows.get("remote_llm_api_key"):
+                from app.core.encryption import decrypt_secret as _dec
+                _s.REMOTE_LLM_API_KEY = _dec(_rows["remote_llm_api_key"])
         finally:
             _db.close()
     except Exception as _e:

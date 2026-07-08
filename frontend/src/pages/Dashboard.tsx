@@ -1000,6 +1000,89 @@ function RecentServers({
   )
 }
 
+// ── Recent Windows Servers ─────────────────────────────────────────────────
+// RecentServers ile aynı görsel dili kullanır — dashboard'lar arası tutarlılık için.
+function RecentWindowsServers({
+  servers
+}: { servers: { id: number; name: string; hostname: string; ip_address: string; status: string; ai_ready?: boolean; cpu_cores?: number; memory_gb?: number }[] }) {
+  const statusConfig: Record<string, { color: string; label: string }> = {
+    ONLINE:   { color: NEON.green,  label: 'ONLINE' },
+    OFFLINE:  { color: '#64748b',   label: 'OFFLINE' },
+    WARNING:  { color: NEON.orange, label: 'UYARI' },
+    CRITICAL: { color: NEON.red,    label: 'KRİTİK' },
+  }
+
+  return (
+    <div className="cyber-card animate-fade-in">
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.green }} />
+          <h2 className="text-sm font-semibold text-white">Çevrimiçi Sunucular</h2>
+        </div>
+        <Link to="/windows" className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Tümünü Gör →</Link>
+      </div>
+      <div>
+        {servers.length > 0 ? servers.slice(0, 6).map((server, i) => {
+          const sc = statusConfig[server.status] || statusConfig.OFFLINE
+          return (
+            <Link
+              key={server.id}
+              to="/windows"
+              className="flex items-center gap-3 px-5 py-3 transition-all"
+              style={{ borderBottom: i < Math.min(servers.length, 6) - 1 ? '1px solid rgba(30,41,59,0.6)' : 'none' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.03)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <div className="relative flex-shrink-0">
+                <div className="w-2 h-2 rounded-full" style={{ background: sc.color, boxShadow: `0 0 6px ${sc.color}` }} />
+                {server.status === 'ONLINE' && (
+                  <div className="absolute inset-0 w-2 h-2 rounded-full animate-ping" style={{ background: sc.color, opacity: 0.4 }} />
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-white truncate">{server.name}</p>
+                  {server.ai_ready && server.status === 'ONLINE' && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0"
+                      style={{ background: 'rgba(56,189,248,0.10)', color: NEON.cyan, border: '1px solid rgba(56,189,248,0.22)' }}>
+                      WinRM
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs truncate" style={{ color: 'rgba(148,163,184,0.5)' }}>{server.ip_address || server.hostname}</p>
+              </div>
+
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {(server.cpu_cores ?? 0) > 0 && (
+                  <span className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>{server.cpu_cores}C</span>
+                )}
+                {(server.memory_gb ?? 0) > 0 && (
+                  <span className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>{server.memory_gb}G</span>
+                )}
+                <span
+                  className="px-2 py-0.5 rounded text-[10px] font-medium"
+                  style={{
+                    background: `rgba(${hexToRgb(sc.color)}, 0.12)`,
+                    color: sc.color,
+                    border: `1px solid rgba(${hexToRgb(sc.color)}, 0.25)`,
+                  }}
+                >
+                  {sc.label}
+                </span>
+              </div>
+            </Link>
+          )
+        }) : (
+          <div className="px-5 py-8 text-center text-sm" style={{ color: 'rgba(148,163,184,0.35)' }}>
+            Çevrimiçi sunucu bulunamadı
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Hypervisor Cards ───────────────────────────────────────────────────────
 function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
   if (hypervisors.length === 0) return null
@@ -1072,10 +1155,10 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const showVirt = isAdminScope && hasModule('virtualization')
   const showWindowsPanel = isWindowsScope || (isAdminScope && hasModule('windows'))
   const showAiops = isLinuxScope
-    ? (hasModule('linux') || hasModule('aiops'))
+    ? hasModule('linux')
     : isWindowsScope
       ? hasModule('windows')
-      : (isAdminScope && hasModule('aiops'))
+      : (isAdminScope && hasModule('linux'))
   const showAiAutomation = isAdminScope && hasModule('ai_automation')
 
   const aiopsPlatform = isLinuxScope ? 'linux' : isWindowsScope ? 'windows' : undefined
@@ -1107,9 +1190,25 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   })
   const servers = serversRaw.filter(s => !isWindowsOs(s))
 
+  // Admin (genel) dashboard TÜM envanteri (Linux + Windows + VM) baz alır —
+  // böylece "Toplam Sunucu" ve fleet grafikleri Linux dashboard'dan gerçekten
+  // farklı, altyapının tamamını yansıtan sayılar gösterir.
+  const { data: allServersRaw = [], isLoading: allServersLoading } = useQuery<DashboardServer[]>({
+    queryKey: ['servers-all'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/servers/`)
+      if (!r.ok) throw new Error('Failed to fetch servers')
+      return r.json()
+    },
+    enabled: isAdminScope,
+    refetchInterval: 30_000,
+  })
+
   interface WindowsDashboardServer {
     id: number; name: string; hostname: string; ip_address: string; status: string
     winrm_configured?: boolean; cpu_cores?: number; memory_gb?: number
+    os_type?: string; ai_ready?: boolean
+    windows_exporter_installed?: boolean; windows_exporter_running?: boolean
   }
   const { data: windowsServers = [], isLoading: windowsLoading } = useQuery<WindowsDashboardServer[]>({
     queryKey: ['windows-dashboard-servers'],
@@ -1158,13 +1257,13 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   })
 
   const { data: metricDashboard } = useQuery<MetricDashboard>({
-    queryKey: ['metrics-dashboard'],
+    queryKey: ['metrics-dashboard', isWindowsScope ? 'windows' : 'linux'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/metrics/dashboard`)
+      const r = await fetch(`${API_BASE_URL}/metrics/dashboard?platform=${isWindowsScope ? 'windows' : 'linux'}`)
       if (!r.ok) return { total_servers: 0, servers: [] }
       return r.json()
     },
-    enabled: showLinux,
+    enabled: showLinux || isWindowsScope,
     refetchInterval: 60_000,
   })
 
@@ -1202,9 +1301,10 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     top_metrics: { metric: string; count: number }[]
     action_required: boolean; noise_ratio: number
   }>({
-    queryKey: ['daily-digest'],
+    queryKey: ['daily-digest', aiopsPlatform ?? 'all'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/baseline/digest`)
+      const q = aiopsPlatform ? `?platform=${aiopsPlatform}` : ''
+      const r = await fetch(`${API_BASE_URL}/baseline/digest${q}`)
       if (!r.ok) return null
       return r.json()
     },
@@ -1212,7 +1312,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     refetchInterval: 300_000,  // 5 dk
   })
 
-  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading) || (isWindowsScope && windowsLoading)) {
+  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading) || (isWindowsScope && windowsLoading)
+      || (isAdminScope && allServersLoading)) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
         <div className="relative w-16 h-16">
@@ -1224,7 +1325,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     )
   }
 
-  const fleetServers = isWindowsScope ? windowsServers : servers
+  // Admin scope: TÜM envanter (Linux+Windows+VM). Linux scope: sadece Linux. Windows scope: sadece Windows.
+  const fleetServers = isWindowsScope ? windowsServers : isAdminScope ? allServersRaw : servers
   const totalServers    = fleetServers.length
   const onlineServers   = fleetServers.filter(s => s.status === 'ONLINE').length
   const offlineServers  = fleetServers.filter(s => s.status === 'OFFLINE').length
@@ -1232,16 +1334,23 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const criticalServers = fleetServers.filter(s => s.status === 'CRITICAL').length
   const aiReadyServers  = isWindowsScope
     ? fleetServers.filter(s => s.status === 'ONLINE').length
-    : servers.filter(s => s.ai_ready && s.status === 'ONLINE').length
+    : (fleetServers as DashboardServer[]).filter(s => s.ai_ready && s.status === 'ONLINE').length
   const totalCpu        = fleetServers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
   const totalRam        = fleetServers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+  // metricsOverview backend'de her zaman Linux node-exporter kurulumlarını sayar —
+  // admin (tüm envanter) kapsamında Windows sunucuları da içerecek şekilde
+  // doğrudan fleetServers üzerinden hesaplanır.
   const monitoredInstalled = isWindowsScope
     ? onlineServers
-    : (metricsOverview?.total_online_installed
-      ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length)
+    : isAdminScope
+      ? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length
+      : (metricsOverview?.total_online_installed
+        ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length)
   const monitoredLive = isWindowsScope
     ? onlineServers
-    : (metricsOverview?.total_live
+    : isAdminScope
+      ? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.running && s.status === 'ONLINE').length
+      : (metricsOverview?.total_live
       ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length)
 
   const onlinePct   = totalServers > 0 ? (onlineServers / totalServers) * 100 : 100
@@ -1254,13 +1363,14 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
 
   const secondaryStats = [
     ...(showVirt ? [{ label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 }] : []),
-    ...(showLinux ? [
+    ...(showLinux || isWindowsScope ? [
       { label: 'Toplam CPU', value: totalCpu, sub: 'çekirdek', accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
       { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
-      { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
     ] : []),
     ...(isWindowsScope ? [
       { label: 'WinRM Hazır', value: windowsServers.filter(s => s.winrm_configured).length, sub: `${totalServers} sunucu`, accent: NEON.cyan, pct: totalServers > 0 ? (windowsServers.filter(s => s.winrm_configured).length / totalServers) * 100 : 0 },
+    ] : []),
+    ...(showLinux || isWindowsScope ? [
       { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
     ] : []),
   ]
@@ -1316,14 +1426,14 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           </div>
         )}
 
-        {(showLinux || showAiops) && (
+        {(showLinux || isWindowsScope || showAiops) && (
           <div className={`grid grid-cols-1 gap-4 ${(showLinux || isWindowsScope) && showAiops ? 'xl:grid-cols-3' : ''}`}>
-            {showLinux && (
+            {(showLinux || isWindowsScope) && (
               <div className={showAiops ? 'xl:col-span-2' : ''}>
                 <ResourceUsageChart metrics={metricDashboard} />
               </div>
             )}
-            {showAiops && (
+            {showAiops && !isWindowsScope && (
               <AiOpsOverview
                 eventStats={eventStats}
                 incidentStats={incidentStats}
@@ -1345,11 +1455,11 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           />
         )}
 
-        {showLinux && (
+        {(showLinux || isWindowsScope) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
             <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-            <OsDistChart servers={servers} />
+            <OsDistChart servers={isWindowsScope ? (windowsServers as unknown as DashboardServer[]) : (isAdminScope ? allServersRaw : servers)} />
           </div>
         )}
 
@@ -1372,33 +1482,9 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
 
         {(showLinux || showVirt || isWindowsScope) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {showLinux && <RecentServers servers={servers.filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />}
+            {showLinux && <RecentServers servers={(isAdminScope ? allServersRaw : servers).filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />}
             {isWindowsScope && (
-              <div className="cyber-card animate-fade-in">
-                <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.blue }} />
-                    <h2 className="text-sm font-semibold text-white">Windows Sunucular</h2>
-                  </div>
-                  <Link to="/windows" className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Tümünü Gör →</Link>
-                </div>
-                <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
-                  {windowsServers.slice(0, 8).map(s => (
-                    <Link key={s.id} to="/windows"
-                      className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-800/60 transition-colors"
-                      style={{ border: '1px solid var(--border)' }}>
-                      <div>
-                        <p className="text-sm font-medium text-white">{s.name}</p>
-                        <p className="text-xs text-slate-500">{s.ip_address}</p>
-                      </div>
-                      <span className={`text-[10px] font-semibold ${s.status === 'ONLINE' ? 'text-green-400' : 'text-slate-500'}`}>{s.status}</span>
-                    </Link>
-                  ))}
-                  {windowsServers.length === 0 && (
-                    <p className="text-sm text-slate-500 text-center py-6">Windows sunucu bulunamadı</p>
-                  )}
-                </div>
-              </div>
+              <RecentWindowsServers servers={windowsServers.filter(s => s.status === 'ONLINE')} />
             )}
             {showVirt && <HypervisorCards hypervisors={hypervisors} />}
           </div>

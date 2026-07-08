@@ -26,6 +26,7 @@ from app.services.incident_auto import auto_create_or_link_incident
 from app.services.baseline_engine import apply_baseline_filter
 from app.services.storm_detector import apply_tier_filter, check_and_handle_storm, auto_resolve_by_ttl
 from app.services.platform_scope import platform_for_server
+from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -299,15 +300,11 @@ Lütfen şu formatta analiz yap:
 
     model = get_active_model(db)
     try:
-        resp = requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=180,
-        )
-        if resp.status_code != 200:
-            logger.warning(f"[AIOps] RCA HTTP {resp.status_code} (incident #{incident.id})")
+        data = llm_gateway.generate_sync(model=model, prompt=prompt, timeout=180)
+        if data.get("error"):
+            logger.warning(f"[AIOps] RCA hatası (incident #{incident.id}): {data['error']}")
             return False
-        rca_text = resp.json().get("response", "").strip()
+        rca_text = (data.get("response") or "").strip()
         if not rca_text:
             return False
         incident.rca_result = {

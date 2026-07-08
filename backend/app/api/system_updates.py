@@ -298,20 +298,16 @@ def suggest_repo_for_servers(req: SuggestRepoRequest, db: Session = Depends(get_
     ai_comment = None
     if suggestions:
         try:
-            from app.core.config import settings
+            from app.services import llm_gateway
             summary_lines = [f"- {v['server_name']}: {v['os']} → {v['repo_display']} ({v['confidence']} güven)"
                              for v in suggestions.values()]
             prompt = f"""Linux sistem yöneticisi olarak aşağıdaki sunucu-repo eşleştirmelerini kısaca değerlendir (Türkçe, 3-4 cümle):
 {chr(10).join(summary_lines)}
 Eşleşmeyenler: {len(unmatched)} sunucu
 Güncelleme öncesi dikkat edilmesi gerekenleri belirt."""
-            r = http_requests.post(
-                f"{settings.OLLAMA_URL}/api/generate",
-                json={"model": _get_active_model(db), "prompt": prompt, "stream": False},
-                timeout=60,
-            )
-            if r.status_code == 200:
-                ai_comment = r.json().get("response", "")
+            data = llm_gateway.generate_sync(model=_get_active_model(db), prompt=prompt, timeout=60)
+            if not data.get("error"):
+                ai_comment = data.get("response", "")
         except Exception:
             pass
 
@@ -432,14 +428,10 @@ Türkçe, madde madde analiz yap:
 5. Tahmini süre"""
 
     try:
-        from app.core.config import settings
-        r = http_requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": _get_active_model(db), "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        analysis = r.json().get("response", "AI yanıt vermedi") if r.status_code == 200 \
-                   else f"AI servisine ulaşılamadı (HTTP {r.status_code})"
+        from app.services import llm_gateway
+        data = llm_gateway.generate_sync(model=_get_active_model(db), prompt=prompt, timeout=120)
+        analysis = data.get("response", "AI yanıt vermedi") if not data.get("error") \
+                   else f"AI servisine ulaşılamadı: {data['error']}"
     except Exception as e:
         analysis = f"AI analizi yapılamadı: {e}"
 
@@ -985,14 +977,11 @@ Lütfen şunları açıkla:
 Kısa ve pratik ol."""
 
     try:
+        from app.services import llm_gateway
         active_model = _get_active_model(db)
-        r = http_requests.post(
-            f"{settings.OLLAMA_URL}/api/generate",
-            json={"model": active_model, "prompt": prompt, "stream": False},
-            timeout=90,
-        )
-        analysis = r.json().get("response", "AI yanıt vermedi") if r.status_code == 200 \
-                   else f"AI servisine ulaşılamadı (HTTP {r.status_code})"
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=90)
+        analysis = data.get("response", "AI yanıt vermedi") if not data.get("error") \
+                   else f"AI servisine ulaşılamadı: {data['error']}"
     except Exception as e:
         analysis = f"AI analizi yapılamadı: {e}"
 

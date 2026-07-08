@@ -60,8 +60,14 @@ class Tool:
     build_command: Callable[[Dict[str, Any]], str]
     timeout: int = 30
     allow_sudo: bool = False
+    # Belirli bir sunucuya SSH ile bağlanmadan çalışan araçlar için (ör. DB'den
+    # toplu envanter özeti). Set edilirse preview/execute SSH akışını atlar.
+    direct_handler: Optional[Callable[[Session, Dict[str, Any], Dict[str, Any]], Dict[str, Any]]] = None
+    direct_label: str = ""
 
     def preview(self, db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+        if self.direct_handler:
+            return self.direct_label or self.name
         server = resolve_server(db, args, ctx)
         sname = server.name if server else "(sunucu bulunamadı)"
         try:
@@ -71,6 +77,8 @@ class Tool:
         return f"{sname}: {cmd}"
 
     def execute(self, db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+        if self.direct_handler:
+            return self.direct_handler(db, args, ctx)
         server = resolve_server(db, args, ctx)
         if not server:
             return {"ok": False, "error": "Hedef sunucu bulunamadı (ai_ready olmalı)."}
@@ -190,6 +198,14 @@ def _free_disks_cmd(args: Dict[str, Any]) -> str:
     )
 
 
+def _infra_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    from app.services.infra_summary import build_infra_overview_text
+    try:
+        return {"ok": True, "summary": build_infra_overview_text(db)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _update_packages_cmd(args: Dict[str, Any]) -> str:
     mgr = (args.get("manager") or "dnf").strip().lower()
     packages = args.get("packages") or []
@@ -208,6 +224,22 @@ def _update_packages_cmd(args: Dict[str, Any]) -> str:
 
 # ── Tool tanımları ──────────────────────────────────────────────────────────
 TOOLS: Dict[str, Tool] = {
+    "infra_overview": Tool(
+        name="infra_overview",
+        description=(
+            "TÜM ALTYAPININ genel envanter özetini döndürür: toplam sunucu sayısı, "
+            "Linux/Windows dağılımı, AI Ready sunucu sayısı, sanal makine (VM) sayısı, "
+            "fiziksel host sayısı ve hypervisor listesi. 'Kaç sunucumuz/VM'imiz var', "
+            "'altyapıda kaç makine var' gibi TEK BİR sunucuyla ilgili OLMAYAN, genel/toplam "
+            "sayı sorularında bu aracı kullan — sunucu sunucu run_diagnostic/df ÇALIŞTIRMA, "
+            "tek çağrı yeterlidir ve parametre gerektirmez."
+        ),
+        parameters={"type": "object", "properties": {}},
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_infra_overview_handler,
+        direct_label="Altyapı genel envanter özeti",
+    ),
     "run_diagnostic": Tool(
         name="run_diagnostic",
         description=(

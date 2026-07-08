@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user, require_role
+from app.core.auth import require_role
 from app.core.database import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
@@ -38,7 +38,7 @@ def _row(a: AuditLog) -> dict:
 @router.get("/")
 def list_audit(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role("admin")),
     actor: Optional[str] = None,
     category: Optional[str] = None,
     action: Optional[str] = None,
@@ -75,7 +75,7 @@ def list_audit(
 
 @router.get("/stats")
 def audit_stats(db: Session = Depends(get_db),
-                _user: User = Depends(get_current_user),
+                _user: User = Depends(require_role("admin")),
                 days: int = 7):
     since = datetime.now(timezone.utc) - timedelta(days=days)
     base = db.query(AuditLog).filter(AuditLog.created_at >= since)
@@ -107,6 +107,6 @@ def audit_stats(db: Session = Depends(get_db),
 
 @router.get("/categories")
 def audit_categories(db: Session = Depends(get_db),
-                     _user: User = Depends(get_current_user)):
+                     _user: User = Depends(require_role("admin"))):
     cats = [c[0] for c in db.query(AuditLog.category).distinct().all()]
     return {"categories": sorted(cats)}

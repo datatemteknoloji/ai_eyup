@@ -866,12 +866,12 @@ Toplam güncellenen paket: {total_pkgs} | Reboot gereken: {reboot_count}"""
     try:
         from app.core.config import settings
         from app.models.app_settings import AppSettings as _AS
+        from app.services import llm_gateway
         model_row = db.query(_AS).filter_by(key="ollama_active_model").first()
         active_model = (model_row.value if model_row and model_row.value else None) or settings.OLLAMA_DEFAULT_MODEL
-        r = requests.post(f"{settings.OLLAMA_URL}/api/generate",
-                          json={"model": active_model, "prompt": prompt, "stream": False}, timeout=60)
-        if r.status_code == 200:
-            plan.ai_summary = r.json().get("response", "")
+        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=60)
+        if not data.get("error"):
+            plan.ai_summary = data.get("response", "")
             db.commit()
     except Exception:
         pass

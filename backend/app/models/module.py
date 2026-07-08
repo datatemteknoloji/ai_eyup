@@ -48,12 +48,14 @@ DEFAULT_MODULES = [
      "icon": "Cloud",    "color": "indigo",  "sort_order": 3},
     {"id": "exadata",        "name": "Exadata",          "description": "Oracle Exadata DB Machine — rack/kabinet, compute node ve storage cell envanteri",
      "icon": "Database", "color": "orange",  "sort_order": 4},
-    {"id": "aiops",          "name": "AIOps",            "description": "Komuta Merkezi, Events, Incidents, Anomaly Detection, RCA, Baseline",
-     "icon": "Brain",    "color": "purple",  "sort_order": 5},
     {"id": "ai_automation",  "name": "AI & Otomasyon",   "description": "AI Chat, AI Agent (çoklu platform otomasyonu)",
-     "icon": "Bot",      "color": "cyan",    "sort_order": 6},
+     "icon": "Bot",      "color": "cyan",    "sort_order": 5},
     {"id": "integrations",   "name": "Entegrasyonlar",   "description": "UCMDB statik import ve dış kaynak entegrasyonları",
-     "icon": "FileUp",   "color": "orange",  "sort_order": 7},
+     "icon": "FileUp",   "color": "orange",  "sort_order": 6},
     {"id": "level1",         "name": "İşletim Level 1",  "description": "Disk, ASM, LVM, servis, kullanıcı runbook'ları",
-     "icon": "Wrench",   "color": "teal",    "sort_order": 8},
+     "icon": "Wrench",   "color": "teal",    "sort_order": 7},
 ]
+
+# 'aiops' modülü kaldırıldı (2026-07) — Komuta Merkezi/Events/Incidents/Anomaly/RCA/Baseline
+# özellikleri zaten 'linux' modülü kapsamında sunuluyordu, ayrı bir rol gereksizdi.
+REMOVED_MODULE_IDS = ["aiops"]
