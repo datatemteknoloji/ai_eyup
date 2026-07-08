@@ -1,5 +1,10 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+# --platform=$BUILDPLATFORM: bu adım sadece platform-bağımsız statik dosyalar
+# (JS/CSS/HTML) üretir, hedef mimariye (ör. amd64) ihtiyaç duymaz. Native build
+# platformunda (ör. arm64 geliştirme makinesi) çalıştırmak, esbuild'in Go
+# runtime'ının QEMU emülasyonu altında zaman zaman çökmesini (lfstack.push
+# hatası) önler ve cross-build'i hem hızlandırır hem güvenilir hale getirir.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 
 WORKDIR /app
 
