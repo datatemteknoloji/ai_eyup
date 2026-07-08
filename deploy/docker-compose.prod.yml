@@ -1,0 +1,143 @@
+# ─────────────────────────────────────────────────────────────────────────
+# PRODUCTION / MÜŞTERİ DAĞITIM STACK'İ
+# ─────────────────────────────────────────────────────────────────────────
+# docker-compose.yml (geliştirme) yerine bunu kullanın:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Farklar:
+#  - Backend kaynak kodu host'tan mount edilmez, imaja gömülüdür (immutable).
+#  - Üçüncü parti imajlar sabit versiyona pinlenmiştir (":latest" yok).
+#  - RHEL/SELinux uyumluluğu için bind mount'larda :Z etiketi kullanılır.
+#  - Frontend HTTPS (443) sunar, self-signed sertifika install-rhel.sh ile üretilir.
+#  - DB/Redis portları sadece localhost'a bind edilir (backend host network
+#    üzerinden zaten localhost ile erişiyor, dışarıya açık olmasına gerek yok).
+#  - Tüm kalıcı veri kökü ${DATA_DIR:-/var/lib/server_management} altındadır.
+# ─────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: timescale/timescaledb:2.17.2-pg15
+    container_name: server_management_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env dosyasinda tanimli olmali}
+      POSTGRES_DB: server_management
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ${DATA_DIR:-/var/lib/server_management}/postgres:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: server_management_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ${DATA_DIR:-/var/lib/server_management}/redis:/data:Z
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${BACKEND_IMAGE:-ainew-backend:latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: server_management_backend
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/server_management
+      - REDIS_URL=redis://localhost:6379/0
+      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-60}
+      - PROMETHEUS_URL=http://localhost:9090
+      - PUSHGATEWAY_URL=http://localhost:9091
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY .env dosyasinda tanimli olmali}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD .env dosyasinda tanimli olmali}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./backend/static:/app/static:Z
+      - ./prometheus/targets:/prometheus/targets:Z
+      - ./prometheus/targets:/etc/prometheus/targets:Z
+      - ${DATA_DIR:-/var/lib/server_management}/chroma:/var/lib/server_management/chroma:Z
+      - ${DATA_DIR:-/var/lib/server_management}/repos:/app/repos:Z
+      - ${DATA_DIR:-/var/lib/server_management}/uploads:/app/uploads:Z
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ainew-frontend:latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: server_management_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:Z,ro
+      - ${DATA_DIR:-/var/lib/server_management}/certs:/etc/nginx/certs:Z,ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: server_management_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:Z,ro
+      - ./prometheus/targets:/etc/prometheus/targets:Z
+      - ${DATA_DIR:-/var/lib/server_management}/prometheus:/prometheus:Z
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.0
+    container_name: server_management_pushgateway
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Ollama (opsiyonel) — müşteride yerel LLM istenirse: docker compose --profile ollama -f docker-compose.prod.yml up -d
+  ollama:
+    image: ollama/ollama:latest
+    container_name: server_management_ollama
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    ports:
+      - "11434:11434"
+    volumes:
+      - ${DATA_DIR:-/var/lib/server_management}/ollama:/root/.ollama:Z
+    profiles:
+      - ollama

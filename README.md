@@ -29,6 +29,10 @@
 
 ## Quick start
 
+There are two install paths depending on what you're doing:
+
+### Development (this repo, live-reloading source)
+
 ```bash
 # 1. Clone and configure
 git clone <repo-url> ainew && cd ainew
@@ -38,8 +42,27 @@ cp .env.example .env          # edit SECRET_KEY, POSTGRES_PASSWORD, OLLAMA_URL
 docker compose up -d
 
 # 3. Open the UI
-open http://localhost:3000     # default login: admin / admin123
+open http://localhost:3000     # default login: admin / admin123 — CHANGE THIS IMMEDIATELY, dev only
 ```
+
+⚠️ This path uses the root `docker-compose.yml`, live-mounts backend source, and ships with a well-known
+default admin password. **Do not use it for a customer or production install.**
+
+### Customer / production install
+
+```bash
+# 1. Build a reproducible release bundle from tracked source
+./scripts/build-distribution.sh
+
+# 2. Copy dist/ainew-<version>-linux-amd64/ to the target host, then run the installer
+cd dist/ainew-<version>-linux-amd64
+sudo ./install-rhel.sh
+```
+
+`install-rhel.sh` pins image versions, binds Postgres/Redis to `localhost` only, generates a random
+`SECRET_KEY` / `POSTGRES_PASSWORD` / admin password (printed once at the end — save it), and configures
+TLS. See [deploy/README.md](deploy/README.md) for details, and [docs/deployment.md](docs/deployment.md)
+for the full production checklist including offline Ollama model transfer for air-gapped hosts.
 
 Full setup guide: [docs/getting-started.md](docs/getting-started.md)
 

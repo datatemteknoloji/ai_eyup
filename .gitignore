@@ -50,6 +50,11 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Prometheus target files are regenerated at runtime from the DB
+# (sync_node_exporter_targets_from_db / sync_windows_exporter_targets_from_db) —
+# don't ship this deployment's real server inventory via git.
+prometheus/targets/*.json
+
 # Logs
 logs/
 *.log

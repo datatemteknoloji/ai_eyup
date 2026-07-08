@@ -7,12 +7,65 @@ from sqlalchemy import func, desc
 from typing import List, Optional
 from datetime import datetime, timedelta
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.metric import MetricData, MetricAggregation, MetricThreshold
 from app.models.server import Server
 from app.services.metric_collector import MetricCollector
 import os
+import httpx
 
 router = APIRouter()
+
+
+# ── Prometheus proxy ────────────────────────────────────────────────────────
+# Frontend, Prometheus'a doğrudan tarayıcıdan değil bu proxy üzerinden erişir —
+# böylece Prometheus host'u/portu sadece backend'de (PROMETHEUS_URL) bilinir,
+# müşteri kurulumlarında hardcoded adres kalmaz ve CORS gerekmez.
+@router.get("/prometheus/query")
+async def prometheus_query(query: str = Query(...)):
+    """PromQL anlık sorgu — /api/v1/query proxy."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                params={"query": query},
+            )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Prometheus sorgu hatası: {e}")
+
+
+@router.get("/prometheus/query_range")
+async def prometheus_query_range(
+    query: str = Query(...),
+    start: int = Query(...),
+    end: int = Query(...),
+    step: int = Query(...),
+):
+    """PromQL zaman aralığı sorgusu — /api/v1/query_range proxy."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{settings.PROMETHEUS_URL}/api/v1/query_range",
+                params={"query": query, "start": start, "end": end, "step": step},
+            )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Prometheus sorgu hatası: {e}")
+
+
+@router.get("/prometheus/labels/{label_name}")
+async def prometheus_label_values(label_name: str):
+    """Bir label'ın alabileceği değerler — /api/v1/label/{name}/values proxy."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{settings.PROMETHEUS_URL}/api/v1/label/{label_name}/values")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Prometheus sorgu hatası: {e}")
 
 
 @router.post("/collect")

@@ -18,6 +18,9 @@ Create a `.env` file in the project root. All variables have defaults except `SE
 | `PUSHGATEWAY_URL` | `http://localhost:9091` | Prometheus Pushgateway URL |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed frontend origins |
 | `ADMIN_DEFAULT_PASSWORD` | `admin123` | Initial admin password (only used if no users exist) |
+| `AGENT_MODEL` | `llama3.2:3b` | Model used by the tool-calling AI Agent. Must already be pulled in Ollama |
+| `AGENT_GUARD_ENABLED` | `false` | Whether a separate safety-classifier model screens Agent tool calls |
+| `AGENT_GUARD_MODEL` | `llama3.2:3b` | Guard/safety-classifier model (only used if `AGENT_GUARD_ENABLED=true`) |
 
 ### Example `.env`
 
@@ -142,6 +145,38 @@ tar czf chroma-backup.tar.gz /var/lib/server_management/chroma
 
 # Backup repos
 tar czf repos-backup.tar.gz /var/lib/server_management/repos
+```
+
+---
+
+## Production / customer install
+
+The steps above describe the root `docker-compose.yml` — a **development** stack (live-mounted
+backend source, HTTP only, no pinned image versions). For a customer or production install, use
+the dedicated production path instead:
+
+```bash
+./scripts/build-distribution.sh          # assembles dist/ainew-<version>-linux-amd64/
+cd dist/ainew-<version>-linux-amd64
+sudo ./install-rhel.sh                   # RHEL/Rocky/AlmaLinux 9
+```
+
+This uses [`deploy/docker-compose.prod.yml`](../deploy/docker-compose.prod.yml) (pinned image
+versions, immutable backend image, HTTPS, `localhost`-only DB/Redis) and
+[`deploy/install-rhel.sh`](../deploy/install-rhel.sh) (Docker install, random secret generation,
+self-signed TLS, firewalld rules). Full walkthrough: [INSTALL_RHEL.md](INSTALL_RHEL.md).
+
+### Air-gapped / offline Ollama models
+
+Don't bake LLM weights into the application image — they're multi-GB and already live in a
+separate volume. Instead, pull models once on a connected machine and transfer the Ollama volume:
+
+```bash
+# On a machine with internet + models already pulled
+./scripts/export-ollama-models.sh                # -> ollama-models.tar.gz
+
+# On the air-gapped target, before starting the ollama service
+./scripts/import-ollama-models.sh ollama-models.tar.gz
 ```
 
 ---

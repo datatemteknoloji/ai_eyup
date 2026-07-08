@@ -20,7 +20,7 @@ class Settings:
     MANAGEMENT_SERVER_IP: str = os.getenv("MANAGEMENT_SERVER_IP", "")
 
     # Ollama AI - Docker container'dan host'a erişim için
-    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://192.168.1.222:11434")
+    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
     OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
     OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "gpt-oss:20b")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")

@@ -12,8 +12,6 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-const PROMETHEUS_URL = 'http://192.168.1.222:9090'
-
 /** Zaman aralığı seçenekleri: real-time (15dk) ile 8 saate kadar */
 const TIME_RANGES = [
   { label: 'Son 15 dk', value: 900, step: 30 },
@@ -34,7 +32,7 @@ type PromRangeResult = {
 }
 
 const fetchPrometheus = async (query: string): Promise<PromResult[]> => {
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=${encodeURIComponent(query)}`)
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent(query)}`)
   if (!response.ok) throw new Error('Failed to query Prometheus')
   const data = await response.json()
   return data?.data?.result || []
@@ -47,7 +45,7 @@ const fetchPrometheusRange = async (
 ): Promise<PromRangeResult[]> => {
   const end = Math.floor(Date.now() / 1000)
   const start = end - rangeSeconds
-  const url = `${PROMETHEUS_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${stepSeconds}`
+  const url = `${API_BASE_URL}/metrics/prometheus/query_range?query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${stepSeconds}`
   const response = await fetch(url)
   if (!response.ok) throw new Error('Failed to query Prometheus range')
   const data = await response.json()
@@ -77,7 +75,7 @@ const fetchMetricServersOverview = async (): Promise<MetricServerOverview> => {
 
 // instance'in up durumunu tutan map
 const fetchInstanceUpStatus = async (): Promise<Record<string, boolean>> => {
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=up{job="node-exporter"}`)
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent('up{job="node-exporter"}')}`)
   if (!response.ok) return {}
   const data = await response.json()
   const results = data?.data?.result || []
@@ -90,7 +88,7 @@ const fetchInstanceUpStatus = async (): Promise<Record<string, boolean>> => {
 }
 
 const fetchInstanceLabels = async (): Promise<Record<string, string>> => {
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/query?query=up{job="node-exporter"}`)
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent('up{job="node-exporter"}')}`)
   if (!response.ok) throw new Error('Failed to fetch instance labels')
   const data = await response.json()
   const results: PromResult[] = data?.data?.result || []
@@ -106,7 +104,7 @@ const fetchInstanceLabels = async (): Promise<Record<string, string>> => {
 }
 
 const fetchNodeExporterMetricNames = async (): Promise<string[]> => {
-  const response = await fetch(`${PROMETHEUS_URL}/api/v1/label/__name__/values`)
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/labels/__name__`)
   if (!response.ok) return []
   const data = await response.json()
   const names: string[] = data?.data || []
