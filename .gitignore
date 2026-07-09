@@ -7,6 +7,13 @@ __pycache__/
 build/
 develop-eggs/
 downloads/
+
+# build-distribution.sh çıktısı olan tek-dosya paket (dist/<isim>.tar.gz + .sha256) —
+# scp/USB ile doğrudan taşımak isteyenler için üretilir, git'e dahil değil (GitHub'ın
+# 100MB LFS'siz sınırını aşıyor). Git üzerinden dağıtım için dist/<isim>/ (açılmış
+# paket, parçalanmış imajlarla) izlenir — bkz. deploy/README.md.
+dist/*.tar.gz
+dist/*.tar.gz.sha256
 eggs/
 .eggs/
 lib/

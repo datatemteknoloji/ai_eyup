@@ -19,9 +19,10 @@ ama zorunlu değildir; CPU ile de (daha yavaş) çalışır.
 
 ## 2. Paketin sunucuya taşınması
 
-İki dağıtım yöntemi desteklenir:
+Üç dağıtım yöntemi desteklenir — hepsi de **tamamen air-gapped (internetsiz) sunucularda**
+çalışır, çünkü önceden derlenmiş Docker imajları (`images/*.tar.gz`) her üç yöntemde de dahildir:
 
-### A) Offline paket (internet erişimi olmayan / air-gapped sunucular)
+### A) Offline tek-dosya paket (USB / SCP / dahili dosya paylaşımı)
 
 Geliştirme ortamında üretilen `.tar.gz` dosyasını (bkz. `scripts/build-distribution.sh`)
 USB, SCP veya dahili dosya paylaşımıyla sunucuya kopyalayın:
@@ -33,19 +34,23 @@ tar xzf ainew-<versiyon>-linux-amd64.tar.gz
 cd ainew-<versiyon>-linux-amd64
 ```
 
-Bu paket, önceden derlenmiş tüm Docker imajlarını (`images/*.tar.gz`) içerir —
-kurulum sırasında internet/registry erişimi **gerekmez**.
-
-### B) GitHub üzerinden (internet erişimi olan sunucular)
+### B) `git clone` (GitHub'a erişimi olan ama başka registry/internet erişimi olmayan sunucular)
 
 ```bash
 git clone <repo-url> ainew
-cd ainew
+cd ainew/dist/ainew-<versiyon>-linux-amd64
 ```
 
-Bu yolda `images/` dizini bulunmaz; `install-rhel.sh` otomatik olarak kaynak koddan
-derler (Docker Hub'a erişim gerekir: Python/Node/Nginx/TimescaleDB/Redis/Prometheus
-imajları çekilir).
+### C) GitHub "Download ZIP" (tarayıcıdan indirip elle taşıma)
+
+GitHub reposunun "Code → Download ZIP" bağlantısından indirip, ZIP'i air-gapped sunucuya
+elle (USB/SCP/dahili paylaşım) taşıyıp açın, sonra `dist/ainew-<versiyon>-linux-amd64/`
+klasörüne girin.
+
+> **Not:** `images/*.tar.gz` dosyalarından 90MB'ı aşanlar (GitHub'ın Git LFS'siz 100MB
+> sınırı nedeniyle) `.part01`, `.part02`, ... şeklinde parçalara bölünmüş olarak depoda
+> tutulur. `install-rhel.sh` bunları kurulumdan önce otomatik olarak birleştirir — elle bir
+> işlem yapmanıza gerek yoktur. B ve C yöntemleri Git LFS **gerektirmez**.
 
 ## 3. Kurulum
 

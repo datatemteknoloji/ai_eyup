@@ -135,6 +135,23 @@ fi
 
 # ── 6. İmaj yükleme veya kaynaktan derleme ───────────────────────────────────
 step "İmajlar hazırlanıyor"
+
+# GitHub'ın LFS'siz 100MB dosya sınırı nedeniyle büyük imaj arşivleri
+# (ör. ainew-backend.tar.gz.part01, .part02, ...) parçalara bölünmüş olarak
+# depoda tutulur (bkz. scripts/build-distribution.sh). Kurulumdan önce, henüz
+# birleştirilmemiş her parça grubunu tek dosyaya geri birleştir.
+if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
+  c_yellow "Parçalanmış imaj arşivleri birleştiriliyor..."
+  for part1 in "${IMAGES_DIR}"/*.tar.gz.part01; do
+    [[ -e "$part1" ]] || continue
+    target="${part1%.part01}"
+    if [[ ! -e "$target" ]]; then
+      cat "${target}".part* > "$target"
+      c_green "  ✓ $(basename "$target")"
+    fi
+  done
+fi
+
 if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
   for f in "$IMAGES_DIR"/*.tar.gz; do
     [[ -e "$f" ]] || continue
