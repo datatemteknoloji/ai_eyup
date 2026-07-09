@@ -362,6 +362,8 @@ async def get_settings(db: Session = Depends(get_db)):
             "model": settings.REMOTE_LLM_MODEL,
             "api_key_set": bool(settings.REMOTE_LLM_API_KEY),
             "api_key_masked": _mask_key(settings.REMOTE_LLM_API_KEY),
+            "verify_ssl": settings.REMOTE_LLM_VERIFY_SSL,
+            "ca_bundle": settings.REMOTE_LLM_CA_BUNDLE,
         },
     }
 
@@ -425,13 +427,24 @@ async def set_remote_llm(
     url = (payload.get("url") or "").strip().rstrip("/")
     model = (payload.get("model") or "").strip()
     api_key_raw = payload.get("api_key")
+    # Sertifika doğrulaması: varsayılan True (güvenli); gönderilmezse mevcut değeri koru.
+    verify_ssl = bool(payload.get("verify_ssl", settings.REMOTE_LLM_VERIFY_SSL))
+    ca_bundle = (payload.get("ca_bundle") or "").strip()
 
     if enabled and (not url or not model):
         raise HTTPException(status_code=400, detail="Uzak AI aktif edilecekse URL ve Model adı zorunludur")
+    if ca_bundle and not os.path.isfile(ca_bundle):
+        raise HTTPException(
+            status_code=400,
+            detail=f"CA bundle dosyası container içinde bulunamadı: {ca_bundle} "
+                   "(önce dosyayı ${DATA_DIR}/certs/ altına koyup backend'i yeniden başlatın)",
+        )
 
     _save("remote_llm_enabled", "true" if enabled else "false")
     _save("remote_llm_url", url)
     _save("remote_llm_model", model)
+    _save("remote_llm_verify_ssl", "true" if verify_ssl else "false")
+    _save("remote_llm_ca_bundle", ca_bundle)
 
     if api_key_raw:  # boş/None gönderilirse mevcut key korunur
         _save("remote_llm_api_key", encrypt_secret(api_key_raw))
@@ -442,11 +455,16 @@ async def set_remote_llm(
     settings.REMOTE_LLM_ENABLED = enabled
     settings.REMOTE_LLM_URL = url
     settings.REMOTE_LLM_MODEL = model
+    settings.REMOTE_LLM_VERIFY_SSL = verify_ssl
+    settings.REMOTE_LLM_CA_BUNDLE = ca_bundle
     if api_key_raw:
         settings.REMOTE_LLM_API_KEY = api_key_raw
 
-    logger.info(f"Uzak AI gateway güncellendi: enabled={enabled} url={url} model={model}")
-    return {"success": True, "enabled": enabled, "url": url, "model": model}
+    logger.info(
+        f"Uzak AI gateway güncellendi: enabled={enabled} url={url} model={model} "
+        f"verify_ssl={verify_ssl} ca_bundle={'set' if ca_bundle else 'unset'}"
+    )
+    return {"success": True, "enabled": enabled, "url": url, "model": model, "verify_ssl": verify_ssl, "ca_bundle": ca_bundle}
 
 
 @router.put("/metric-retention")

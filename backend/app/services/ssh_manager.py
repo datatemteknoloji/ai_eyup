@@ -6,6 +6,8 @@ import logging
 from typing import Optional, Dict, Tuple
 from io import StringIO
 
+from app.services.ssh_connect import connect_ssh
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,36 +44,17 @@ class SSHManager:
                     except Exception as e:
                         logger.warning(f"Private key parse failed: {e}")
             
-            # Bağlan (Önce key ile dene, başarısız olursa password ile dene)
-            connected = False
-            
-            if pkey:
-                try:
-                    self.client.connect(
-                        self.host,
-                        port=self.port,
-                        username=self.username,
-                        pkey=pkey,
-                        timeout=5,
-                        allow_agent=False,
-                        look_for_keys=False
-                    )
-                    connected = True
-                except Exception as key_err:
-                    logger.warning(f"Key auth failed for {self.host}, trying password... ({key_err})")
-                    
-            if not connected and self.password:
-                self.client.connect(
-                    self.host,
-                    port=self.port,
-                    username=self.username,
-                    password=self.password,
-                    timeout=5,
-                    allow_agent=False,
-                    look_for_keys=False
-                )
-                connected = True
-                
+            # Bağlan (önce key, olmazsa password — keyboard-interactive fallback dahil)
+            connected = connect_ssh(
+                self.client,
+                hostname=self.host,
+                username=self.username,
+                port=self.port,
+                password=self.password,
+                pkey=pkey,
+                timeout=5,
+            )
+
             if not connected:
                 raise Exception("Hem key hem de password ile bağlantı başarısız.")
             

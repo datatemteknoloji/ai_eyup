@@ -296,7 +296,11 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             linux_targets = linux_mentioned or linux_servers
             windows_targets = windows_mentioned or windows_servers
 
-            context_timeout = min(30.0, max(15.0, 10.0 + 1.2 * (len(linux_targets) + len(windows_targets))))
+            # Üst sınır 45s'ye çıkarıldı: büyük filolarda (15+ sunucu) eski 30s tavanı,
+            # her sunucunun ThreadPoolExecutor'da sırayla değil gerçekten paralel
+            # çalıştığını varsayıyordu; yoğun anlarda (ör. AIOps arka plan taraması ile
+            # çakışma) bu yetersiz kalıp geniş filolarda toplu "veri toplanamadı"ya yol açtı.
+            context_timeout = min(45.0, max(15.0, 10.0 + 1.2 * (len(linux_targets) + len(windows_targets))))
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
 
             async def _collect_linux():
@@ -363,16 +367,33 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 except Exception:
                     return {}
 
-            try:
-                results = await _asyncio.wait_for(
-                    _asyncio.gather(_collect_linux(), _collect_windows(), _collect_rag(), return_exceptions=True),
-                    timeout=context_timeout + 3.0,
-                )
-                linux_ctx = results[0] if isinstance(results[0], str) else ""
-                windows_ctx = results[1] if isinstance(results[1], str) else ""
-                rag_ctx = results[2] if isinstance(results[2], dict) else {}
-            except _asyncio.TimeoutError:
-                linux_ctx, windows_ctx, rag_ctx = "", "", {}
+            # NOT: wait_for(gather(...)) kullanmıyoruz çünkü tek bir yavaş görev (ör. büyük
+            # Linux filosu) zaman aşımına uğradığında TÜM sonuçları (zaten tamamlanmış
+            # Windows/RAG dahil) iptal edip atardı. asyncio.wait ile her görevin sonucu
+            # kendi tamamlanma durumuna göre bağımsız olarak korunur.
+            linux_task = _asyncio.ensure_future(_collect_linux())
+            windows_task = _asyncio.ensure_future(_collect_windows())
+            rag_task = _asyncio.ensure_future(_collect_rag())
+            done, pending = await _asyncio.wait(
+                [linux_task, windows_task, rag_task], timeout=context_timeout + 3.0
+            )
+            for t in pending:
+                t.cancel()
+
+            def _safe_result(task, default):
+                if task in done:
+                    try:
+                        return task.result()
+                    except Exception:
+                        return default
+                return default
+
+            linux_ctx = _safe_result(linux_task, "")
+            windows_ctx = _safe_result(windows_task, "")
+            rag_ctx = _safe_result(rag_task, {})
+            linux_ctx = linux_ctx if isinstance(linux_ctx, str) else ""
+            windows_ctx = windows_ctx if isinstance(windows_ctx, str) else ""
+            rag_ctx = rag_ctx if isinstance(rag_ctx, dict) else {}
 
             context_parts = [_infra_overview(db)]
             if linux_ctx:

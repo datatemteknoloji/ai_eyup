@@ -70,6 +70,21 @@ step "Veri dizinleri oluşturuluyor: $DATA_DIR"
 mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,prometheus,certs,ollama}
 # SELinux etiketleme docker-compose.prod.yml içindeki :Z bayrağı ile container
 # başlatılırken otomatik yapılır; burada sadece dizinlerin var olması yeterli.
+
+# postgres/redis hariç: bu dizinler kendi resmi imajlarının entrypoint'i
+# tarafından (root olarak başlayıp doğru kullanıcıya chown edip düşen) otomatik
+# düzeltiliyor. Ama backend (appuser, non-root) ve prometheus (nobody, non-root)
+# imajları böyle bir self-heal yapmıyor — mkdir ile root:root oluşan bu
+# dizinlere yazamayıp "Permission denied" ile çöküyorlar (chroma, repos,
+# uploads, prometheus TSDB verisi). Ollama da genelde non-root çalışır.
+# Bu host tek-amaçlı bir uygulama sunucusu olduğu için 777 kabul edilebilir.
+chmod -R 777 "$DATA_DIR"/{chroma,repos,uploads,prometheus,ollama}
+
+# prometheus/targets/*.json: backend (appuser) yazıyor, prometheus (nobody)
+# okuyor — ikisi de farklı non-root kullanıcı, ikisinin de erişebilmesi için
+# aynı sebeple 777.
+chmod -R 777 "$SCRIPT_DIR/prometheus/targets" 2>/dev/null || true
+
 c_green "Tamam."
 
 # ── 3. .env dosyası ─────────────────────────────────────────────────────────

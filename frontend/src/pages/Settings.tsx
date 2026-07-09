@@ -62,6 +62,8 @@ interface RemoteLlmSettings {
   model: string
   api_key_set: boolean
   api_key_masked: string
+  verify_ssl: boolean
+  ca_bundle: string
 }
 
 interface GeneralSettings {
@@ -511,14 +513,21 @@ const Settings: React.FC = () => {
   }, [generalSettings?.metric_retention_days])
 
   // Uzak AI (OpenAI-uyumlu gateway, örn. Bifrost) ayarları
-  const [remoteLlmForm, setRemoteLlmForm] = useState({ enabled: false, url: '', model: '', api_key: '' })
+  const [remoteLlmForm, setRemoteLlmForm] = useState({ enabled: false, url: '', model: '', api_key: '', verify_ssl: true, ca_bundle: '' })
   const [remoteLlmSaved, setRemoteLlmSaved] = useState(false)
   const [remoteLlmError, setRemoteLlmError] = useState('')
   const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
   React.useEffect(() => {
     if (generalSettings?.remote_llm) {
       const r = generalSettings.remote_llm
-      setRemoteLlmForm(f => ({ ...f, enabled: r.enabled, url: r.url || '', model: r.model || '' }))
+      setRemoteLlmForm(f => ({
+        ...f,
+        enabled: r.enabled,
+        url: r.url || '',
+        model: r.model || '',
+        verify_ssl: r.verify_ssl ?? true,
+        ca_bundle: r.ca_bundle || '',
+      }))
     }
   }, [generalSettings?.remote_llm])
   const saveRemoteLlm = async () => {
@@ -533,6 +542,8 @@ const Settings: React.FC = () => {
           url: remoteLlmForm.url.trim(),
           model: remoteLlmForm.model.trim(),
           api_key: remoteLlmForm.api_key.trim() || undefined,
+          verify_ssl: remoteLlmForm.verify_ssl,
+          ca_bundle: remoteLlmForm.ca_bundle.trim(),
         }),
       })
       const data = await res.json()
@@ -1062,6 +1073,41 @@ const Settings: React.FC = () => {
                       />
                       <p className="text-xs text-slate-500 mt-1">Authorization header'ına doğrudan (Bearer öneki olmadan) konur.</p>
                     </div>
+
+                    <div className="border-t border-white/[0.06] pt-4">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm text-slate-300">SSL Sertifika Doğrulaması</label>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={remoteLlmForm.verify_ssl}
+                            onChange={e => setRemoteLlmForm(f => ({ ...f, verify_ssl: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+                        </label>
+                      </div>
+                      <p className="text-xs text-slate-500 mb-3">
+                        Kapatırsanız gateway'in sertifikası (self-signed dahil) hiç doğrulanmaz — sadece güvendiğiniz
+                        bir iç ağ/gateway için kabul edilebilir. <code>[SSL: CERTIFICATE_VERIFY_FAILED]</code> hatası
+                        alıyorsanız, kapatmak yerine aşağıya CA sertifikası yolu vermeniz daha güvenlidir.
+                      </p>
+                      <label className="block text-sm text-slate-300 mb-2">CA Sertifikası Yolu (opsiyonel)</label>
+                      <input
+                        type="text"
+                        value={remoteLlmForm.ca_bundle}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, ca_bundle: e.target.value }))}
+                        placeholder="/app/certs/remote-llm-ca.pem"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Gateway'in self-signed sertifikasını (veya onu imzalayan kurumsal CA'yı) PEM olarak
+                        sunucudaki <code>/var/lib/server_management/certs/</code> dizinine koyup buraya container
+                        içi yolunu (<code>/app/certs/&lt;dosya&gt;.pem</code>) yazın — doğrulama açık kalır, sadece
+                        bu ek sertifikaya da güvenilir. Doluysa yukarıdaki doğrulama anahtarından önceliklidir.
+                      </p>
+                    </div>
+
                     <div className="flex items-center gap-3 mt-4">
                       <button
                         onClick={saveRemoteLlm}

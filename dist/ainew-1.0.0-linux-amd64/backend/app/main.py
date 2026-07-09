@@ -242,6 +242,10 @@ async def startup_tasks():
             if _rows.get("remote_llm_api_key"):
                 from app.core.encryption import decrypt_secret as _dec
                 _s.REMOTE_LLM_API_KEY = _dec(_rows["remote_llm_api_key"])
+            if _rows.get("remote_llm_verify_ssl") is not None:
+                _s.REMOTE_LLM_VERIFY_SSL = _rows["remote_llm_verify_ssl"].lower() == "true"
+            if _rows.get("remote_llm_ca_bundle") is not None:
+                _s.REMOTE_LLM_CA_BUNDLE = _rows["remote_llm_ca_bundle"]
         finally:
             _db.close()
     except Exception as _e:

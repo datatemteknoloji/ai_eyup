@@ -11,6 +11,7 @@ from app.core.database import ThreadSessionLocal as SessionLocal
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.core.encryption import decrypt_secret
+from app.services.ssh_connect import connect_ssh
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,19 +46,11 @@ def _make_ssh(creds: dict) -> paramiko.SSHClient:
             except Exception:
                 pass
 
-    connected = False
-    if pkey:
-        try:
-            client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                           pkey=pkey, timeout=10, allow_agent=False, look_for_keys=False)
-            connected = True
-        except Exception:
-            pass
-
-    if not connected and creds["password"]:
-        client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                       password=creds["password"], timeout=10, allow_agent=False, look_for_keys=False)
-        connected = True
+    connected = connect_ssh(
+        client,
+        hostname=creds["host"], username=creds["username"], port=creds["port"],
+        password=creds["password"], pkey=pkey, timeout=10,
+    )
 
     if not connected:
         raise ConnectionError("SSH kimlik bilgileriyle bağlantı kurulamadı")

@@ -55,6 +55,13 @@ services:
     container_name: server_management_backend
     restart: unless-stopped
     network_mode: "host"
+    # .env dosyasındaki TÜM değişkenleri (AGENT_MODEL, AGENT_GUARD_*, REMOTE_LLM_* dahil)
+    # container'a geçirir. Aşağıdaki `environment:` listesi sadece ${VAR} interpolasyonu
+    # gerektiren veya zorunlu olan (SECRET_KEY, ADMIN_DEFAULT_PASSWORD) değerler için var —
+    # aynı anahtar her ikisinde de varsa `environment:` kazanır, env_file sadece eksikleri
+    # tamamlar. Yeni bir .env ayarı eklediğinizde artık burayı güncellemeniz gerekmez.
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/server_management
       - REDIS_URL=redis://localhost:6379/0
@@ -72,6 +79,10 @@ services:
       - ${DATA_DIR:-/var/lib/server_management}/chroma:/var/lib/server_management/chroma:Z
       - ${DATA_DIR:-/var/lib/server_management}/repos:/app/repos:Z
       - ${DATA_DIR:-/var/lib/server_management}/uploads:/app/uploads:Z
+      # Opsiyonel: REMOTE_LLM_CA_BUNDLE için — self-signed/kurumsal CA PEM dosyanızı
+      # ${DATA_DIR}/certs/ altına koyup .env'de REMOTE_LLM_CA_BUNDLE=/app/certs/<dosya>.pem
+      # olarak belirtin (aynı dizin, install-rhel.sh'in ürettiği TLS sertifikasını da tutar).
+      - ${DATA_DIR:-/var/lib/server_management}/certs:/app/certs:Z,ro
     depends_on:
       db:
         condition: service_healthy

@@ -38,6 +38,11 @@ services:
       dockerfile: Dockerfile
     container_name: server_management_backend
     network_mode: "host"
+    # .env dosyasındaki TÜM değişkenleri (AGENT_MODEL, AGENT_GUARD_*, REMOTE_LLM_* dahil)
+    # container'a geçirir — aksi halde bu ayarlar sadece compose YAML interpolasyonunda
+    # kullanılır, container'ın kendi process ortamına hiç ulaşmaz.
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@localhost:5432/server_management
       - REDIS_URL=redis://localhost:6379/0

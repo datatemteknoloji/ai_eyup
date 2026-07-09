@@ -5,6 +5,7 @@ import io, time, logging, paramiko
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from app.core.encryption import decrypt_secret
+from app.services.ssh_connect import connect_ssh
 
 logger = logging.getLogger(__name__)
 
@@ -76,17 +77,11 @@ def _make_client(creds: dict) -> paramiko.SSHClient:
                 pkey = cls.from_private_key(io.StringIO(creds["private_key"])); break
             except Exception:
                 pass
-    connected = False
-    if pkey:
-        try:
-            client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                           pkey=pkey, timeout=10, allow_agent=False, look_for_keys=False)
-            connected = True
-        except Exception:
-            pass
-    if not connected and creds.get("password"):
-        client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                       password=creds["password"], timeout=10, allow_agent=False, look_for_keys=False)
+    connect_ssh(
+        client,
+        hostname=creds["host"], username=creds["username"], port=creds["port"],
+        password=creds.get("password"), pkey=pkey, timeout=10,
+    )
     return client
 
 

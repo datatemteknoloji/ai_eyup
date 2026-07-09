@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.core.encryption import decrypt_secret
+from app.services.ssh_connect import connect_ssh
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -628,13 +629,11 @@ def _run_ssh(creds: dict, commands: List[str]) -> Dict[str, Any]:
                 pass
 
     try:
-        if pkey:
-            client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                           pkey=pkey, timeout=15, allow_agent=False, look_for_keys=False)
-        else:
-            client.connect(creds["host"], port=creds["port"], username=creds["username"],
-                           password=creds.get("password"), timeout=15,
-                           allow_agent=False, look_for_keys=False)
+        connect_ssh(
+            client,
+            hostname=creds["host"], username=creds["username"], port=creds["port"],
+            password=creds.get("password"), pkey=pkey, timeout=15,
+        )
     except Exception as e:
         return {"success": False, "output": f"SSH bağlantı hatası: {e}", "exit_code": -1}
 

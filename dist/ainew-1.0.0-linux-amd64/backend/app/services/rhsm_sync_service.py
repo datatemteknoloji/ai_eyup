@@ -18,6 +18,8 @@ import paramiko
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.services.ssh_connect import connect_ssh
+
 logger = logging.getLogger(__name__)
 
 # repo_sync_service'teki aynı iptal setini import et
@@ -40,18 +42,11 @@ def _connect(host: str, port: int, username: str,
             except Exception:
                 pass
 
-    connected = False
-    if pkey:
-        try:
-            client.connect(host, port=port, username=username, pkey=pkey,
-                           timeout=15, allow_agent=False, look_for_keys=False)
-            connected = True
-        except Exception:
-            pass
-
-    if not connected and password:
-        client.connect(host, port=port, username=username, password=password,
-                       timeout=15, allow_agent=False, look_for_keys=False)
+    connect_ssh(
+        client,
+        hostname=host, username=username, port=port,
+        password=password, pkey=pkey, timeout=15,
+    )
 
     return client
 

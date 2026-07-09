@@ -18,7 +18,10 @@
 #     ├── docker-compose.prod.yml, install-rhel.sh   (deploy/ içinden kopyalanır)
 #     ├── frontend/nginx.prod.conf                    (deploy/ içinden kopyalanır)
 #     ├── (tüm kaynak kod: backend/, frontend/, prometheus/, docs/, ...)
-#     └── images/*.tar.gz   (docker load ile yüklenecek önceden derlenmiş imajlar)
+#     └── images/*.tar.gz   (docker load ile yüklenecek önceden derlenmiş imajlar;
+#                             90MB üstü olanlar .part01/.part02/... şeklinde
+#                             parçalanır — GitHub'ın LFS'siz 100MB sınırı için;
+#                             install-rhel.sh kurulumdan önce otomatik birleştirir)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -173,6 +176,24 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
 BACKEND_IMAGE=ainew-backend:${VERSION}
 FRONTEND_IMAGE=ainew-frontend:${VERSION}
 EOF
+
+  # GitHub'ın LFS'siz push'larda uyguladığı 100MB/dosya sert sınırı nedeniyle,
+  # bu paket git'e commit edilecekse (ör. tamamen air-gapped hedeflere "git clone /
+  # Download ZIP" ile taşınacaksa) 90MB'ı aşan imaj arşivleri parçalara bölünür.
+  # install-rhel.sh, kurulumdan önce bu parçaları otomatik olarak geri birleştirir
+  # (bkz. "Parçalanmış imaj arşivleri birleştiriliyor" adımı). scp/USB ile doğrudan
+  # taşıyanlar için bu bölme gereksizdir ama zararsızdır (install-rhel.sh her durumda
+  # doğru çalışır).
+  echo "▶ 90MB üstü imaj arşivleri git-uyumlu parçalara bölünüyor..."
+  for f in "$IMAGES_DIR"/*.tar.gz; do
+    [[ -e "$f" ]] || continue
+    size="$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")"
+    if (( size > 94371840 )); then
+      split -b 90m -d --numeric-suffixes=01 "$f" "${f}.part"
+      rm -f "$f"
+      echo "  ✂ $(basename "$f") -> $(basename "$f").part01, .part02, ..."
+    fi
+  done
 else
   echo "▶ --no-images verildi, imaj derleme/kaydetme atlandı (kaynak koddan derlenecek)."
 fi

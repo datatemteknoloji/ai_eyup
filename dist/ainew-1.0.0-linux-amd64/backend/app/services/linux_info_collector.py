@@ -867,6 +867,14 @@ def detect_needed_groups(message: str) -> List[str]:
     elif focused_groups and is_resource_query:
         # Karma sorgu: hem odaklı hem kaynak (ör. "cpu ve gateway")
         groups = _MINIMAL_BASE | focused_groups | perf_groups | {"services"}
+    elif is_resource_query and not is_explicit_general and not focused_groups and len(perf_groups) <= 2:
+        # Dar kaynak sorgusu (ör. sadece "disk" veya "cpu ve disk"): tüm STANDARD_GROUPS'u
+        # (kernel+os+cpu+memory+disk+uptime+load+services+security → ~9 komut grubu)
+        # değil, sadece istenen kaynak grup(lar)ını + minimal temeli getir. Çok sunuculu
+        # filolarda (ör. 10+ sunucu eşzamanlı) tek bir "disk" sorusu için gereksiz
+        # cpu/memory/security/services taraması, toplam SSH süresini şişirip context
+        # timeout'unu aşmasına ve "veri toplanamadı" sonucuna yol açabiliyordu.
+        groups = _MINIMAL_BASE | perf_groups
     else:
         # Genel mod: tüm standard gruplar + ekstralar
         groups = set(STANDARD_GROUPS) | extra_groups

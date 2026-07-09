@@ -5,6 +5,8 @@ import logging
 import paramiko
 from typing import Dict, Optional, Any
 
+from app.services.ssh_connect import connect_ssh
+
 logger = logging.getLogger(__name__)
 
 class ServerConnector:
@@ -40,48 +42,31 @@ class ServerConnector:
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         
         try:
-            connected = False
-            
             # Private key varsa kullan
+            pkey = None
             if self.private_key:
                 import io
                 key_file = io.StringIO(self.private_key)
                 try:
                     pkey = paramiko.RSAKey.from_private_key(key_file)
-                except Exception as e:
+                except Exception:
                     key_file.seek(0)
                     try:
                         pkey = paramiko.Ed25519Key.from_private_key(key_file)
-                    except Exception as e:
+                    except Exception:
                         key_file.seek(0)
                         pkey = paramiko.ECDSAKey.from_private_key(key_file)
-                
-                try:
-                    ssh.connect(
-                        hostname=self.ip_address,
-                        port=self.port,
-                        username=self._username,
-                        pkey=pkey,
-                        timeout=10,
-                        look_for_keys=False,
-                        allow_agent=False
-                    )
-                    connected = True
-                except Exception as key_err:
-                    logger.warning(f"Key auth failed for {self.ip_address}, trying password... ({key_err})")
 
-            # Eğer hala bağlanamadıysa ve password varsa dene
-            if not connected and self._password:
-                ssh.connect(
-                    hostname=self.ip_address,
-                    port=self.port,
-                    username=self._username,
-                    password=self._password,
-                    timeout=10,
-                    look_for_keys=False,
-                    allow_agent=False
-                )
-                connected = True
+            # Önce key, olmazsa password (keyboard-interactive fallback dahil)
+            connected = connect_ssh(
+                ssh,
+                hostname=self.ip_address,
+                username=self._username,
+                port=self.port,
+                password=self._password,
+                pkey=pkey,
+                timeout=10,
+            )
                 
             if not connected:
                 raise Exception("Hem key hem de password ile bağlantı başarısız.")

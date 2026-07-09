@@ -1,9 +1,12 @@
 """
 Application configuration
 """
+import logging
 import os
 import sys
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 class Settings:
     """Application settings"""
@@ -34,6 +37,16 @@ class Settings:
     REMOTE_LLM_API_KEY: str = os.getenv("REMOTE_LLM_API_KEY", "")
     REMOTE_LLM_MODEL: str = os.getenv("REMOTE_LLM_MODEL", "")
     REMOTE_LLM_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_LLM_TIMEOUT_SECONDS", "120"))
+    # Kurumsal REMOTE_LLM_URL çoğu zaman şirket içi, self-signed sertifikalı bir gateway'e
+    # (ör. Bifrost) işaret eder. Varsayılan olarak sertifika doğrulaması AÇIKTIR (güvenli);
+    # sadece bilinen/güvenilir bir self-signed sertifika kullanıldığında ve alternatif yoksa
+    # false yapın (CERTIFICATE_VERIFY_FAILED hatasını gidermek için).
+    REMOTE_LLM_VERIFY_SSL: bool = os.getenv("REMOTE_LLM_VERIFY_SSL", "true").lower() == "true"
+    # Daha güvenli alternatif: doğrulamayı tamamen KAPATMAK yerine, gateway'in self-signed
+    # sertifikasının (veya onu imzalayan kurumsal CA'nın) PEM dosyasının container içindeki
+    # yolunu verin — doğrulama açık kalır, sadece bu ek CA'ya da güvenilir. Ayarlıysa
+    # REMOTE_LLM_VERIFY_SSL'den önceliklidir.
+    REMOTE_LLM_CA_BUNDLE: str = os.getenv("REMOTE_LLM_CA_BUNDLE", "")
 
     # Agentic AI — ana agent (tool-calling) ve guard (safety classifier) modelleri
     AGENT_MODEL: str = os.getenv("AGENT_MODEL", "qwen3.5:35b")
@@ -131,3 +144,17 @@ def get_guard_model(db) -> str:
 def remote_llm_enabled() -> bool:
     """Uzak (OpenAI-uyumlu) LLM gateway aktif mi — URL + API key ayarlı olmalı."""
     return bool(settings.REMOTE_LLM_ENABLED and settings.REMOTE_LLM_URL and settings.REMOTE_LLM_API_KEY)
+
+
+def remote_llm_ssl_verify():
+    """httpx/requests `verify=` parametresine geçilecek değer.
+
+    Öncelik: REMOTE_LLM_CA_BUNDLE (dosya var ve okunabilirse) -> o PEM yolu (doğrulama
+    AÇIK, ek olarak bu CA'ya da güvenilir) -> yoksa REMOTE_LLM_VERIFY_SSL booleanı.
+    """
+    bundle = (settings.REMOTE_LLM_CA_BUNDLE or "").strip()
+    if bundle and os.path.isfile(bundle):
+        return bundle
+    if bundle:
+        logger.warning(f"REMOTE_LLM_CA_BUNDLE ayarlı ama dosya bulunamadı, yok sayılıyor: {bundle}")
+    return settings.REMOTE_LLM_VERIFY_SSL

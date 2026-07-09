@@ -21,6 +21,15 @@ Create a `.env` file in the project root. All variables have defaults except `SE
 | `AGENT_MODEL` | `llama3.2:3b` | Model used by the tool-calling AI Agent. Must already be pulled in Ollama |
 | `AGENT_GUARD_ENABLED` | `false` | Whether a separate safety-classifier model screens Agent tool calls |
 | `AGENT_GUARD_MODEL` | `llama3.2:3b` | Guard/safety-classifier model (only used if `AGENT_GUARD_ENABLED=true`) |
+| `REMOTE_LLM_ENABLED` | `false` | Route all chat/agent calls to an OpenAI-compatible gateway (e.g. Bifrost) instead of local Ollama |
+| `REMOTE_LLM_URL` | _(empty)_ | Gateway base URL (no `/v1/chat/completions` suffix) |
+| `REMOTE_LLM_API_KEY` | _(empty)_ | Sent as-is in the `Authorization` header (no `Bearer ` prefix) |
+| `REMOTE_LLM_MODEL` | _(empty)_ | Fixed model name to send to the gateway; falls back to the caller's requested model if empty |
+| `REMOTE_LLM_VERIFY_SSL` | `true` | Set `false` only if the gateway uses a self-signed cert you trust and you have no CA bundle to give it |
+| `REMOTE_LLM_CA_BUNDLE` | _(empty)_ | Path (inside the backend container) to a PEM file for the gateway's self-signed/internal CA cert — keeps verification **on** while trusting that one extra cert. Takes precedence over `REMOTE_LLM_VERIFY_SSL`. Drop the PEM in `${DATA_DIR}/certs/` on the host (already bind-mounted to `/app/certs` in `docker-compose.prod.yml`) and point this at e.g. `/app/certs/remote-llm-ca.pem` |
+
+> `docker-compose.prod.yml` and `docker-compose.yml` load the backend's environment via `env_file: .env` —
+> any variable in `.env` reaches the container automatically, so new settings never require a compose file change.
 
 ### Example `.env`
 

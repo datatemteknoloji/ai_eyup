@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 import requests
 
-from app.core.config import settings, remote_llm_enabled
+from app.core.config import settings, remote_llm_enabled, remote_llm_ssl_verify
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,10 @@ def chat_sync(
         if temp is not None:
             payload["temperature"] = temp
         try:
-            resp = requests.post(_remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout)
+            resp = requests.post(
+                _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout,
+                verify=remote_llm_ssl_verify(),
+            )
         except Exception as e:
             logger.error(f"[LLMGateway] uzak sohbet hatası: {e}")
             return _SyncChatResult(599, str(e))
@@ -132,7 +135,11 @@ async def generate_async(
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
-        resp = await client.post(_remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout)
+        # Not: burada CALLER'ın (yerel Ollama için oluşturulmuş, verify=True) client'ı değil,
+        # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz — kurumsal
+        # self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
+        async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
+            resp = await remote_client.post(_remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout)
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
@@ -169,7 +176,10 @@ def generate_sync(
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
-        resp = requests.post(_remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout)
+        resp = requests.post(
+            _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout,
+            verify=remote_llm_ssl_verify(),
+        )
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
@@ -215,26 +225,30 @@ async def stream_generate(
         if temp is not None:
             payload["temperature"] = temp
         try:
-            async with client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}
-                    return
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:].strip()
-                    if data == "[DONE]":
-                        yield {"response": "", "done": True}
+            # Not: CALLER'ın client'ı (yerel Ollama için verify=True ile oluşturulmuş) yerine
+            # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz —
+            # kurumsal self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
+            async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
+                async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout) as resp:
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}
                         return
-                    try:
-                        chunk = json.loads(data)
-                        token = chunk["choices"][0]["delta"].get("content", "")
-                    except Exception:
-                        continue
-                    if token:
-                        yield {"response": token, "done": False}
-                yield {"response": "", "done": True}
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            yield {"response": "", "done": True}
+                            return
+                        try:
+                            chunk = json.loads(data)
+                            token = chunk["choices"][0]["delta"].get("content", "")
+                        except Exception:
+                            continue
+                        if token:
+                            yield {"response": token, "done": False}
+                    yield {"response": "", "done": True}
         except Exception as e:
             logger.error(f"[LLMGateway] uzak stream hatası: {e}")
             yield {"response": "", "done": True, "error": str(e)}
