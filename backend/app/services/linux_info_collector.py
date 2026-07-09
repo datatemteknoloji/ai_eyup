@@ -5,6 +5,7 @@ AI Chat icin zengin context olusturur.
 import logging
 from typing import Dict, Any, List
 from app.services.ssh_manager import SSHManager
+from app.core.encryption import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -885,10 +886,18 @@ def detect_needed_groups(message: str) -> List[str]:
 def collect_server_info(server, groups: List[str], global_cred=None) -> Dict[str, Any]:
     conn = server.connection_config or {}
     username = conn.get("username") or (global_cred.username if global_cred else None)
-    password = conn.get("password") or (global_cred.password if global_cred else None)
-    private_key = conn.get("private_key") or (global_cred.private_key if global_cred else None)
+    # DB'de şifre/anahtar alanları Fernet ile şifreli tutuluyor (bkz. app.core.encryption) —
+    # hem per-server connection_config hem de global credential için burada deşifre
+    # edilmeden paramiko'ya verilirse auth sessizce başarısız olur (level1.py/terminal.py/
+    # package_service.py bu adımı zaten yapıyordu, burada eksikti). decrypt_secret()
+    # eski/plaintext satırlar için de güvenli (fallback ile aynı değeri döner).
+    raw_password = conn.get("password") or (global_cred.password if global_cred else None)
+    raw_private_key = conn.get("private_key") or (global_cred.private_key if global_cred else None)
+    raw_sudo_password = conn.get("sudo_password") or (global_cred.sudo_password if global_cred else None)
+    password = decrypt_secret(raw_password) if raw_password else None
+    private_key = decrypt_secret(raw_private_key) if raw_private_key else None
     port = conn.get("port", 22) or (global_cred.port if global_cred else 22)
-    sudo_password = conn.get("sudo_password") or password
+    sudo_password = decrypt_secret(raw_sudo_password) if raw_sudo_password else password
 
     if not username:
         return {"error": "SSH credential yok"}

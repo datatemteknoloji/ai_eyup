@@ -289,19 +289,37 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             linux_servers = _linux_ai_ready_servers(db)
             windows_servers = _windows_ai_ready_servers(db)
 
-            # Mesajda açıkça belirtilen sunucu varsa sadece onu hedefle (daha hızlı ve odaklı)
-            msg_lower_srv = ml
-            linux_mentioned = [s for s in linux_servers if (s.name and s.name.lower() in msg_lower_srv) or (s.ip_address and s.ip_address in message)]
-            windows_mentioned = [s for s in windows_servers if (s.name and s.name.lower() in msg_lower_srv) or (s.ip_address and s.ip_address in message)]
+            # Mesajda açıkça belirtilen sunucu varsa sadece onu hedefle (daha hızlı ve odaklı).
+            # chat.py'deki _servers_mentioned_in_message'ı kullanıyoruz: sadece `name` +
+            # `ip_address` substring eşleşmesi (eski kod) `hostname`'i hiç kontrol etmiyordu ve
+            # kelime sınırı olmadan substring eşleştiği için hem yanlış eşleşme hem de
+            # (hostname farklıysa) HİÇ eşleşmeme riski vardı — bu durumda linux_targets sessizce
+            # TÜM filoya düşüp (bkz. aşağıdaki `or`) geniş filolarda zaman aşımına yol açıyordu.
+            from app.api.chat import _servers_mentioned_in_message
+            mentioned_ids = {s.id for s in _servers_mentioned_in_message(db, message)}
+            linux_mentioned = [s for s in linux_servers if s.id in mentioned_ids]
+            windows_mentioned = [s for s in windows_servers if s.id in mentioned_ids]
             linux_targets = linux_mentioned or linux_servers
             windows_targets = windows_mentioned or windows_servers
 
-            # Üst sınır 45s'ye çıkarıldı: büyük filolarda (15+ sunucu) eski 30s tavanı,
-            # her sunucunun ThreadPoolExecutor'da sırayla değil gerçekten paralel
-            # çalıştığını varsayıyordu; yoğun anlarda (ör. AIOps arka plan taraması ile
-            # çakışma) bu yetersiz kalıp geniş filolarda toplu "veri toplanamadı"ya yol açtı.
-            context_timeout = min(45.0, max(15.0, 10.0 + 1.2 * (len(linux_targets) + len(windows_targets))))
+            # Alt sınır 15s -> 30s'ye çıkarıldı: "OS config" gibi genel/geniş sorgular
+            # detect_needed_groups'tan ~9 grup (services/security/disk/os/cpu/kernel/load/
+            # uptime/memory) döner ve bunların HER BİRİ o sunucuya ayrı bir SSH komutu olarak
+            # gidiyor — tek bir SSH oturumu üzerinden sıralı çalıştıkları için ölçümlerde tek
+            # sunucu için bile 20-27s sürebiliyor (bkz. enes97/minio1 karşılaştırma vakası).
+            # Eski 15s tabanı, sadece 1-2 sunuculuk (küçük filo formülü düşük çıkan) ama GENİŞ
+            # kapsamlı sorgularda süre dolmadan bitmeyip sessizce zaman aşımına uğruyor ve
+            # "veri toplanamadı"ya yol açıyordu. Üst sınır da 45s -> 60s'ye çıkarıldı ki büyük
+            # filolarda + geniş sorguda taban değil ölçeklenen kısım devreye girsin.
+            context_timeout = min(60.0, max(30.0, 10.0 + 2.0 * (len(linux_targets) + len(windows_targets))))
+            # Varsayılan (is_default=True) işaretli bir credential yoksa da (chat.py ile aynı
+            # davranış) ilk tanımlı global credential'a düş — sadece tek bir global credential
+            # tanımlıyken "varsayılan" olarak işaretlenmemiş olması yaygın bir kurulum hatasıydı
+            # ve bu durumda global_cred=None kalıp per-server ayarı olmayan sunucular
+            # "SSH credential yok" hatası alıyordu.
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+            if not global_cred:
+                global_cred = db.query(GlobalCredential).first()
 
             async def _collect_linux():
                 if not (wants_linux and linux_targets):
