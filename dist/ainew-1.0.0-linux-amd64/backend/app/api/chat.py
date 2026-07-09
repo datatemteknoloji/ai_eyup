@@ -1104,7 +1104,10 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         _target_servers = _all_ai_srv
 
                 from app.services.ssh_manager import SSHManager
+                from app.core.encryption import decrypt_secret as _dec_secret
                 _cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+                if not _cred:
+                    _cred = db.query(GlobalCredential).first()
 
                 # Her komut için timeout belirle
                 def _get_timeout(cmd):
@@ -1118,8 +1121,20 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         def _do():
                             results = {}
                             try:
-                                ssh = SSHManager(host=srv.ip_address, username=_cred.username,
-                                                 password=_cred.password, port=_cred.port or 22)
+                                # Per-server connection_config varsa onu, yoksa global credential'ı
+                                # kullan (diğer tüm SSH noktalarıyla aynı öncelik). Şifre/anahtar DB'de
+                                # Fernet ile şifreli tutulduğu için decrypt_secret() ile açılmadan
+                                # paramiko'ya verilirse auth sessizce başarısız olur.
+                                cfg = srv.connection_config or {}
+                                username = cfg.get("username") or (_cred.username if _cred else None)
+                                raw_pw = cfg.get("password") or (_cred.password if _cred else None)
+                                port = cfg.get("port") or (_cred.port if _cred else 22) or 22
+                                if not username:
+                                    for cmd in direct_cmds:
+                                        results[cmd] = (None, "SSH credential yok")
+                                    return srv.name, results
+                                ssh = SSHManager(host=srv.ip_address, username=username,
+                                                 password=_dec_secret(raw_pw) if raw_pw else None, port=port)
                                 if not ssh.connect():
                                     for cmd in direct_cmds:
                                         results[cmd] = (None, "SSH bağlantısı kurulamadı")
@@ -1334,13 +1349,21 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             SERVER_TRIGGER = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
             needs_ssh = any(k in ml for k in SERVER_TRIGGER) and not request.skip_server_context
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
-            # Çok sayıda AI-ready sunucuya paralel SSH atılırken (ör. "tüm sunucular")
-            # sabit 20sn çoğu sunucuyu "Veri yok" bırakıyordu — sunucu sayısına göre hafifçe ölçekle
-            # (çok yükseltmek toplam yanıt süresini kullanılamaz hale getiriyor).
-            base_timeout    = 40.0 if is_deep else 20.0
-            context_timeout = min(35.0, max(base_timeout, 12.0 + 1.5 * len(selected_servers)))
+            # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
+            # düşen sorgular (STANDARD_GROUPS'un tamamı, ~9 grup/60+ komut) tek sunucuda bile
+            # ölçümlerde 20-27s sürebiliyor — eski 20s taban bunu sığdırmadan zaman aşımına
+            # uğrayıp "SSH verisi alınamadı" yanıtına yol açıyordu (bkz. "selinux durumu"
+            # sorgusunun "durum" kelimesi yüzünden genel moda düşmesi — artık ayrıca
+            # linux_info_collector.detect_needed_groups bu durumu da hafifletiyor).
+            base_timeout    = 40.0 if is_deep else 30.0
+            context_timeout = min(60.0, max(base_timeout, 12.0 + 1.5 * len(selected_servers)))
 
+            # Varsayılan (is_default=True) işaretli bir credential yoksa da ilk tanımlı global
+            # credential'a düş (unified_chat.py ile aynı davranış) — tek bir global credential
+            # tanımlıyken "varsayılan" işaretlenmemiş olması yaygın bir kurulum hatasıydı.
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+            if not global_cred:
+                global_cred = db.query(GlobalCredential).first()
 
             # ── 4. Paralel context toplama ────────────────────────────────
             async def _collect_prometheus():
@@ -1389,19 +1412,36 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 except Exception:
                     return {}
 
-            try:
-                results = await _asyncio.wait_for(
-                    _asyncio.gather(
-                        _collect_prometheus(), _collect_ssh(), _collect_rag(),
-                        return_exceptions=True,
-                    ),
-                    timeout=context_timeout + 2.0,
-                )
-                prom_ctx = results[0] if isinstance(results[0], str) else ""
-                ssh_ctx  = results[1] if isinstance(results[1], str) else ""
-                rag_ctx  = results[2] if isinstance(results[2], dict) else {}
-            except _asyncio.TimeoutError:
-                prom_ctx, ssh_ctx, rag_ctx = "", "", {}
+            # NOT: wait_for(gather(...)) KULLANMIYORUZ — _collect_ssh() zaten kendi içinde
+            # context_timeout ile sınırlı (bkz. yukarıdaki asyncio.wait). Dıştan ayrıca
+            # wait_for(..., timeout=context_timeout+2.0) sarmak, sadece _collect_prometheus()
+            # veya _collect_rag() biraz uzun sürdüğünde ZATEN TOPLANMIŞ ssh_ctx'i de (gather
+            # tek bir birim olduğu için) tamamen atıp "SSH verisi alınamadı"ya yol açıyordu —
+            # unified_chat.py'deki aynı düzeltmeyle uyumlu: her kaynağın sonucu kendi tamamlanma
+            # durumuna göre bağımsız korunur.
+            prom_task = _asyncio.ensure_future(_collect_prometheus())
+            ssh_task = _asyncio.ensure_future(_collect_ssh())
+            rag_task = _asyncio.ensure_future(_collect_rag())
+            done, pending = await _asyncio.wait(
+                [prom_task, ssh_task, rag_task], timeout=context_timeout + 2.0
+            )
+            for t in pending:
+                t.cancel()
+
+            def _safe_result(task, default):
+                if task in done:
+                    try:
+                        return task.result()
+                    except Exception:
+                        return default
+                return default
+
+            prom_ctx = _safe_result(prom_task, "")
+            ssh_ctx = _safe_result(ssh_task, "")
+            rag_ctx = _safe_result(rag_task, {})
+            prom_ctx = prom_ctx if isinstance(prom_ctx, str) else ""
+            ssh_ctx = ssh_ctx if isinstance(ssh_ctx, str) else ""
+            rag_ctx = rag_ctx if isinstance(rag_ctx, dict) else {}
 
             # ── 5. Prompt ─────────────────────────────────────────────────
             context_parts = []

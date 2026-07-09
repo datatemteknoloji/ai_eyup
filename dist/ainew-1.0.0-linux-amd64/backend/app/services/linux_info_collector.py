@@ -806,11 +806,17 @@ EXTRA_GROUPS_KEYWORDS = {
 
 
 # Sadece bu gruplardan biri istendiğinde STANDARD_GROUPS'u küçült
+# "security" de dahil: STANDARD_GROUPS'ta olsa da tek başına ("selinux durumu" gibi) istendiğinde
+# cpu/memory/disk/uptime/services'i beraberinde sürüklememesi gerekir.
 _FOCUSED_GROUPS = {
     "network", "hardware", "containers", "web", "database", "ntp", "ssl",
-    "cron", "users", "apps", "limits", "filesystem",
+    "cron", "users", "apps", "limits", "filesystem", "security",
 }
 _MINIMAL_BASE = {"kernel", "os"}
+
+# KEYWORD_TO_GROUPS içindeki, tek başına mesajda belirli bir konu (extra_groups) varken
+# devre dışı bırakılması gereken çok genel/geniş kapsamlı kelimeler — bkz. detect_needed_groups.
+_GENERIC_BROADENING_WORDS = {"durum", "status", "saglik", "sağlık"}
 
 # Açıkça genel sistem sorgusu olduğunu gösteren kelimeler (tam kelime veya güvenli substring)
 _GENERAL_TRIGGER_WORDS = {
@@ -840,8 +846,20 @@ def detect_needed_groups(message: str) -> List[str]:
     for group, keywords in EXTRA_GROUPS_KEYWORDS.items():
         if any(kw in msg for kw in keywords):
             extra_groups.add(group)
+
+    # Mesaj zaten belirli bir tek konuya işaret ediyor mu (selinux->security, docker->containers vb.)?
+    has_specific_topic = bool(extra_groups)
+
     for keyword, group_list in KEYWORD_TO_GROUPS.items():
         if keyword in msg:
+            # "durum"/"status"/"saglik" gibi ÇOK genel kelimeler, mesajda ZATEN belirli bir
+            # konu varsa (ör. "selinux durumu") cpu/memory/disk/uptime/services'i otomatik
+            # eklemesin. Bu genişletme olmasaydı "X durumu" kalıbındaki HER tek-konulu soru
+            # (disk/cpu hariç) gereksiz yere STANDARD_GROUPS'un tamamını (~9 grup, 60+ komut)
+            # taramak zorunda kalıyor, tek sunucuda bile 20s+ sürüp context timeout'a
+            # (bkz. "selinux durumu" -> enes97 vakası) yol açıyordu.
+            if keyword in _GENERIC_BROADENING_WORDS and has_specific_topic:
+                continue
             extra_groups.update(group_list)
 
     # Derin performans analizi çok yavaş
