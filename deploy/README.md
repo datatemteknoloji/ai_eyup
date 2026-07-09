@@ -9,7 +9,7 @@ exist once the bundle is assembled).
 | File | Purpose |
 |---|---|
 | `docker-compose.prod.yml` | Production stack: pinned image versions, immutable backend image (no live source mount), HTTPS frontend, `localhost`-only DB/Redis binding, SELinux `:Z` bind-mount labels |
-| `install-rhel.sh` | RHEL/Rocky/AlmaLinux 9 installer: Docker setup, data directories, random secret generation (`SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`), self-signed TLS, firewalld rules, `docker compose up -d` |
+| `install-rhel.sh` | RHEL/Rocky/AlmaLinux 9 installer: prompts for an install directory (default `/opt/ainew`), copies the package there and puts all persistent data under `<dir>/data` (nothing under `/var/lib`), Docker setup, random secret generation (`SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`), self-signed TLS, firewalld rules, `docker compose up -d` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
 
 ## Building and installing a release

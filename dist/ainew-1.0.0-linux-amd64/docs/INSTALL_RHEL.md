@@ -10,7 +10,7 @@ Müşteri ortamlarında tekrarlanabilir kurulum için tasarlanmıştır.
 | İşletim sistemi | RHEL 9.x (x86_64) — Rocky/AlmaLinux 9 ile de uyumludur |
 | CPU | 4 çekirdek |
 | RAM | 8 GB (Ollama ile yerel LLM kullanılacaksa 16 GB+ önerilir) |
-| Disk | 50 GB boş alan (`/var/lib/server_management` altında büyür) |
+| Disk | 50 GB boş alan (kurulumda seçeceğiniz kurulum dizini altında büyür, varsayılan `/opt/ainew`) |
 | Ağ | 80/443 (arayüz), 9090/9091 (Prometheus/Pushgateway) — dahili ağda açık olmalı |
 | Yetki | root / sudo |
 
@@ -58,14 +58,20 @@ klasörüne girin.
 sudo ./install-rhel.sh
 ```
 
-Betik idempotent'tir — tekrar çalıştırıldığında mevcut `.env`/sertifika dosyalarını
-bozmaz, sadece eksikleri tamamlar. Yaptıkları:
+Betik idempotent'tir — tekrar çalıştırıldığında mevcut kurulum dizinini/`.env`/sertifika
+dosyalarını bozmaz, sadece eksikleri tamamlar. Yaptıkları:
 
 1. Docker CE + Compose plugin kurulumu (yoksa, `dnf` ile resmi Docker reposundan)
-2. `/var/lib/server_management` altında veri dizinleri
+2. **Kurulum dizini seçimi** — sizden bir mutlak yol ister (varsayılan `/opt/ainew`).
+   Uygulama paketinin TAMAMI (kaynak/derleme dosyaları, imajlar, scriptler) VE tüm
+   kalıcı veriler (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar,
+   Ollama modelleri) bu **tek** kök dizin altında toplanır — `/var/lib` gibi sistem
+   dizinlerine dağılmaz. Paket, çalıştığınız yerden bu dizine kopyalanır (`<dizin>/data/`
+   altında veriler). Yeniden çalıştırıldığında (bu dizinden) tekrar sorulmaz —
+   `DATA_DIR` ortam değişkeniyle de önceden belirtilebilir (interaktif olmayan kurulumlar için).
 3. `.env` dosyası: `SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`
    rastgele üretilir; `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır
-4. Self-signed TLS sertifikası (`/var/lib/server_management/certs`) — 10 yıl geçerli
+4. Self-signed TLS sertifikası (`<kurulum-dizini>/data/certs`) — 10 yıl geçerli
 5. `firewalld` üzerinde 80/443/9090/9091 portlarının açılması
 6. İmajların yüklenmesi (`docker load`, offline modda) veya derlenmesi (online modda)
 7. `docker compose -f docker-compose.prod.yml up -d`
@@ -74,15 +80,17 @@ bozmaz, sadece eksikleri tamamlar. Yaptıkları:
 Kurulum sonunda ekranda şu bilgiler görünür:
 
 ```
-Arayüz     : https://<sunucu-ip>
-Kullanıcı  : admin
-Parola     : <otomatik üretilen parola>
+Arayüz         : https://<sunucu-ip>
+Kullanıcı      : admin
+Parola         : <otomatik üretilen parola>
+Kurulum dizini : /opt/ainew  (paket + .env)
+Veri dizini    : /opt/ainew/data  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)
 ```
 
 **Tarayıcı "bağlantı güvenli değil" uyarısı verecektir** — bu normaldir, çünkü
 sertifika self-signed'dır. Kurumsal bir CA sertifikanız varsa adım 5'i atlayıp
-`/var/lib/server_management/certs/server.crt` ve `server.key` dosyalarının
-üzerine kendi sertifikanızı koyup `docker compose -f docker-compose.prod.yml restart frontend`
+`<kurulum-dizini>/data/certs/server.crt` ve `server.key` dosyalarının üzerine kendi
+sertifikanızı koyup `docker compose -f docker-compose.prod.yml restart frontend`
 çalıştırabilirsiniz.
 
 ## 4. İlk giriş sonrası yapılacaklar
