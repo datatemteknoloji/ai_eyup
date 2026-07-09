@@ -5,10 +5,11 @@ Codebase'deki tüm SSH bağlantı noktaları (ssh_manager, server_connector, ter
 level1, package_service, system_update_service, rhsm_sync_service) aynı deseni
 kullanıyordu: önce private key, olmazsa şifre ile paramiko.SSHClient.connect().
 Bu modül o deseni TEK yerden sağlar, böylece PAM tabanlı sıkılaştırılmış (hardened)
-sshd sunucularına uyum (keyboard-interactive fallback) her çağıran için otomatik
+sshd sunucularına uyum (keyboard-interactive önceliği) her çağıran için otomatik
 uygulanır ve gelecekte tekrar dağılıp unutulmaz.
 """
 import logging
+import socket
 from typing import Optional
 
 import paramiko
@@ -28,14 +29,17 @@ def connect_ssh(
 ) -> bool:
     """paramiko SSHClient ile bağlan: önce key (varsa), olmazsa şifre.
 
-    Bazı sıkılaştırılmış (PAM tabanlı) sshd yapılandırmaları "password" SSH auth
-    metodunu formalite olarak kabul edip PAM seviyesinde reddeder, ama AYNI şifreyi
-    "keyboard-interactive" (PAM conversation) üzerinden kabul eder — OpenSSH istemcisi
-    bu ikisini kullanıcıya aynı "şifre sor" davranışıyla gösterdiği için fark edilmez,
-    ama paramiko'nun connect(password=...) çağrısı keyboard-interactive'i otomatik
-    denemez (sadece sunucu "password" metodunu HİÇ desteklemediğinde otomatik düşer).
-    Bu fonksiyon, düz şifre denemesi AuthenticationException ile başarısız olursa aynı
-    şifreyle otomatik olarak keyboard-interactive'e düşer.
+    Şifreyle bağlanırken ÖNCE "keyboard-interactive" (PAM conversation) denenir,
+    o başarısız olursa düz "password" SSH auth metoduna düşülür. Sıra bilerek bu
+    şekilde: çoğu PAM tabanlı sıkılaştırılmış (hardened) sshd yapılandırması
+    "password" metodunu formalite olarak kabul edip PAM seviyesinde reddeder, ama
+    AYNI şifreyi "keyboard-interactive" üzerinden kabul eder — OpenSSH istemcisinin
+    "şifre sor" prompt'u da zaten fiilen bu yöntemi kullanır, kullanıcı farkı
+    görmez. "password" metodunu formalite olarak kabul edip reddeden bir sunucuda,
+    paramiko'nun connect(password=...) çağrısı bunu otomatik olarak
+    keyboard-interactive'e düşürmez (sadece sunucu "password" metodunu HİÇ
+    desteklemediğinde otomatik düşer) — bu yüzden keyboard-interactive'i EN BAŞTA
+    deneyip normal/eski sunucular için password'e düşmek, tersinden daha güvenilir.
 
     Dönüş: True (bağlandı). Bağlanılamazsa paramiko.AuthenticationException fırlatır.
     """
@@ -52,23 +56,27 @@ def connect_ssh(
             logger.warning(f"Key auth failed for {hostname}, trying password... ({key_err})")
 
     if not connected and password:
+        transport = _open_transport(hostname, port, timeout)
         try:
-            client.connect(
-                hostname=hostname, port=port, username=username, password=password,
-                timeout=timeout, allow_agent=False, look_for_keys=False,
-            )
-            connected = True
-        except paramiko.AuthenticationException:
-            transport = client.get_transport()
-            if transport is not None and transport.is_active():
-                logger.warning(f"'password' auth reddedildi, keyboard-interactive deneniyor: {hostname}")
+            try:
                 transport.auth_interactive(
                     username,
                     lambda title, instructions, prompt_list: [password] * len(prompt_list),
                 )
                 connected = True
-            else:
-                raise
+            except paramiko.SSHException as ki_err:
+                logger.warning(
+                    f"keyboard-interactive başarısız, 'password' metoduna düşülüyor: {hostname} ({ki_err})"
+                )
+                transport.auth_password(username, password)
+                connected = True
+        except Exception:
+            transport.close()
+            raise
+        if connected:
+            # exec_command/vb. çağrılarının çalışması için transport'u client'a bağla —
+            # client.connect() kullanmadığımız için normalde bunu SSHClient kendisi yapardı.
+            client._transport = transport
 
     if not connected:
         raise paramiko.AuthenticationException(
@@ -76,3 +84,16 @@ def connect_ssh(
         )
 
     return True
+
+
+def _open_transport(hostname: str, port: int, timeout: float) -> paramiko.Transport:
+    """TCP + SSH handshake'i tamamlanmış (henüz auth edilmemiş) bir Transport açar.
+
+    Host key doğrulaması burada bilerek atlanır: çağıranların tamamı zaten
+    AutoAddPolicy kullanıyordu (ilk görüşte güven, known_hosts'a hiç yazılmıyor),
+    bu da fiilen doğrulama yapmadığından davranış değişmiyor.
+    """
+    sock = socket.create_connection((hostname, port), timeout=timeout)
+    transport = paramiko.Transport(sock)
+    transport.start_client(timeout=timeout)
+    return transport
