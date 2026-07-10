@@ -206,6 +206,132 @@ def _infra_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, An
         return {"ok": False, "error": str(e)}
 
 
+def _sys_summary_cmd(args: Dict[str, Any]) -> str:
+    return (
+        "echo '=== UPTIME / LOAD ==='; uptime; "
+        "echo; echo '=== CPU ==='; "
+        "lscpu 2>/dev/null | grep -E 'Model name|Socket|Core|Thread|CPU\\(s\\)|MHz'; "
+        "echo; echo '=== BELLEK ==='; free -h"
+    )
+
+
+_PATH_RE = re.compile(r"/[\w./\-]*")
+
+
+def _disk_usage_cmd(args: Dict[str, Any]) -> str:
+    mount = (args.get("mount") or "").strip()
+    if mount:
+        mount = _check(_PATH_RE, mount, "mount")
+        return f"df -h {mount}; echo; echo '=== INODE KULLANIMI ==='; df -i {mount}"
+    return "df -h; echo; echo '=== INODE KULLANIMI ==='; df -i"
+
+
+def _large_dirs_cmd(args: Dict[str, Any]) -> str:
+    path = (args.get("path") or "/").strip()
+    path = _check(_PATH_RE, path, "path")
+    depth = max(1, min(int(args.get("depth") or 1), 3))
+    count = max(1, min(int(args.get("count") or 15), 30))
+    return f"du -xh {path} --max-depth={depth} 2>/dev/null | sort -rh | head -{count}"
+
+
+def _processes_cmd(args: Dict[str, Any]) -> str:
+    sort_by = (args.get("sort_by") or "cpu").strip().lower()
+    key = "-%mem" if sort_by == "mem" else "-%cpu"
+    count = max(1, min(int(args.get("count") or 15), 50))
+    # +1: ps aux başlık satırını da sayar, head bunu düşürmesin
+    return f"ps aux --sort={key} | head -{count + 1}"
+
+
+def _service_status_cmd(args: Dict[str, Any]) -> str:
+    service = (args.get("service") or "").strip()
+    if not _service_arg_ok(service):
+        raise ValueError("geçersiz servis adı")
+    return f"systemctl status {service} --no-pager -l"
+
+
+def _service_logs_cmd(args: Dict[str, Any]) -> str:
+    service = (args.get("service") or "").strip()
+    if not _service_arg_ok(service):
+        raise ValueError("geçersiz servis adı")
+    lines = max(1, min(int(args.get("lines") or 100), 1000))
+    return f"journalctl -u {service} -n {lines} --no-pager"
+
+
+def _network_status_cmd(args: Dict[str, Any]) -> str:
+    return (
+        "echo '=== IP ADRESLERI ==='; ip -brief addr 2>/dev/null || ifconfig; "
+        "echo; echo '=== ROUTING ==='; ip route 2>/dev/null || route -n; "
+        "echo; echo '=== DINLEYEN PORTLAR ==='; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; "
+        "echo; echo '=== AKTIF BAGLANTILAR (ilk 30) ==='; "
+        "(ss -tunp 2>/dev/null | head -30) || (netstat -tunp 2>/dev/null | head -30)"
+    )
+
+
+_PKG_NAME_RE = re.compile(r"[A-Za-z0-9._+\-]+")
+
+
+def _package_status_cmd(args: Dict[str, Any]) -> str:
+    package = (args.get("package") or "").strip()
+    if package:
+        pkg = _check(_PKG_NAME_RE, package, "package")
+        return (
+            f"rpm -q {pkg} 2>/dev/null || dpkg -s {pkg} 2>/dev/null "
+            f"|| echo 'Paket bulunamadi: {pkg}'"
+        )
+    return (
+        "if command -v dnf >/dev/null 2>&1; then "
+        "echo '=== GUNCELLENEBILIR PAKETLER (dnf) ==='; dnf check-update 2>/dev/null | head -40; "
+        "echo; echo '=== KURULU PAKET SAYISI ==='; rpm -qa | wc -l; "
+        "elif command -v apt >/dev/null 2>&1; then "
+        "echo '=== GUNCELLENEBILIR PAKETLER (apt) ==='; apt list --upgradable 2>/dev/null | head -40; "
+        "echo; echo '=== KURULU PAKET SAYISI ==='; dpkg -l | wc -l; "
+        "else echo 'Desteklenen paket yoneticisi bulunamadi'; fi"
+    )
+
+
+def _security_events_cmd(args: Dict[str, Any]) -> str:
+    hours = max(1, min(int(args.get("hours") or 24), 168))
+    return (
+        "echo '=== SON GIRISLER (last) ==='; last -n 20; "
+        f"echo; echo '=== BASARISIZ SSH GIRISLERI (son {hours}s) ==='; "
+        f"(journalctl -u sshd --since '{hours} hours ago' --no-pager 2>/dev/null "
+        "| grep -iE 'failed|invalid|authentication failure' | tail -30) "
+        "|| (grep -iE 'failed|invalid' /var/log/secure /var/log/auth.log 2>/dev/null | tail -30) "
+        "|| echo 'Log kaynagi bulunamadi'; "
+        "echo; echo '=== SELINUX ==='; sestatus 2>/dev/null || getenforce 2>/dev/null || echo 'SELinux yok'; "
+        "echo; echo '=== FIREWALL ==='; "
+        "firewall-cmd --state 2>/dev/null || systemctl is-active firewalld 2>/dev/null || echo 'bilinmiyor'"
+    )
+
+
+# Sabit, elle onaylanmış komut menüsü — execute_approved_command SADECE buradaki
+# key'lerden birini kabul eder, LLM'in serbest metin komut göndermesi mümkün değildir
+# (run_diagnostic'in aksine, burada args'tan hiçbir şey shell'e enterpole edilmez).
+APPROVED_COMMANDS: Dict[str, str] = {
+    "whoami": "whoami",
+    "hostname": "hostname -f 2>/dev/null || hostname",
+    "os_release": "cat /etc/os-release",
+    "kernel_version": "uname -a",
+    "who_logged_in": "who",
+    "current_user_id": "id",
+    "date_time": "date",
+    "timezone": "timedatectl 2>/dev/null || cat /etc/timezone 2>/dev/null",
+    "sudo_permissions": "sudo -l",
+    "mounted_filesystems": "mount | column -t",
+    "resource_limits": "ulimit -a",
+    "docker_containers": "docker ps -a 2>/dev/null || echo 'docker kurulu değil'",
+}
+
+
+def _approved_command_cmd(args: Dict[str, Any]) -> str:
+    cmd_id = (args.get("command_id") or "").strip()
+    if cmd_id not in APPROVED_COMMANDS:
+        raise ValueError(
+            f"onaylanmamış command_id: {cmd_id!r} (izinli: {', '.join(APPROVED_COMMANDS)})"
+        )
+    return APPROVED_COMMANDS[cmd_id]
+
+
 def _update_packages_cmd(args: Dict[str, Any]) -> str:
     mgr = (args.get("manager") or "dnf").strip().lower()
     packages = args.get("packages") or []
@@ -370,6 +496,181 @@ TOOLS: Dict[str, Tool] = {
         },
         risk_level=RiskLevel.READ_ONLY,
         build_command=_lvm_info_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_system_summary": Tool(
+        name="get_system_summary",
+        description="CPU, RAM, uptime ve load bilgisini SALT-OKUNUR özetler (uptime, lscpu, free).",
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_sys_summary_cmd,
+        timeout=30,
+    ),
+    "get_disk_usage": Tool(
+        name="get_disk_usage",
+        description="Disk ve dosya sistemi dolulukları ile inode kullanımını SALT-OKUNUR gösterir (df -h / df -i).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "mount": {"type": "string", "description": "Belirli bir mount noktası (opsiyonel, örn. /var)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_disk_usage_cmd,
+        timeout=30,
+    ),
+    "get_large_directories": Tool(
+        name="get_large_directories",
+        description=(
+            "Belirtilen dizin altında en fazla alan kullanan alt dizinleri SALT-OKUNUR listeler "
+            "(du + sort). Disk doluluğu araştırırken hangi dizinin şiştiğini bulmak için kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "path": {"type": "string", "description": "Taranacak kök dizin (varsayılan /)"},
+                "depth": {"type": "integer", "description": "Alt dizin derinliği (1-3, varsayılan 1)"},
+                "count": {"type": "integer", "description": "Kaç sonuç gösterilsin (1-30, varsayılan 15)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_large_dirs_cmd,
+        timeout=60,
+        allow_sudo=True,
+    ),
+    "get_processes": Tool(
+        name="get_processes",
+        description="CPU veya RAM tüketimine göre sıralı süreç listesini SALT-OKUNUR döner (ps aux).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "sort_by": {"type": "string", "enum": ["cpu", "mem"], "description": "Sıralama kriteri (varsayılan cpu)"},
+                "count": {"type": "integer", "description": "Kaç süreç gösterilsin (1-50, varsayılan 15)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_processes_cmd,
+        timeout=30,
+    ),
+    "get_service_status": Tool(
+        name="get_service_status",
+        description="Bir systemd servisinin durumunu SALT-OKUNUR sorgular (systemctl status).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "service": {"type": "string", "description": "systemd servis adı"},
+            },
+            "required": ["service"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_service_status_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_service_logs": Tool(
+        name="get_service_logs",
+        description="Belirlenen systemd servisinin son loglarını SALT-OKUNUR getirir (journalctl -u).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "service": {"type": "string", "description": "systemd servis adı"},
+                "lines": {"type": "integer", "description": "Satır sayısı (1-1000, varsayılan 100)"},
+            },
+            "required": ["service"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_service_logs_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_network_status": Tool(
+        name="get_network_status",
+        description=(
+            "IP adresleri, routing tablosu, dinleyen portlar ve aktif bağlantıları SALT-OKUNUR "
+            "kontrol eder (ip addr/route, ss -tulpn)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_network_status_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_package_status": Tool(
+        name="get_package_status",
+        description=(
+            "Paket ve güncelleme durumunu SALT-OKUNUR sorgular (dnf/apt check-update, rpm/dpkg). "
+            "package verilirse yalnızca o paketin kurulu sürümünü gösterir."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "package": {"type": "string", "description": "Belirli bir paket adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_package_status_cmd,
+        timeout=45,
+    ),
+    "get_security_events": Tool(
+        name="get_security_events",
+        description=(
+            "SSH giriş denemelerini, başarısız kimlik doğrulamaları, SELinux ve firewall durumunu "
+            "SALT-OKUNUR inceler (last, journalctl -u sshd / /var/log/secure, sestatus, firewall-cmd)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılsın (1-168, varsayılan 24)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_security_events_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "execute_approved_command": Tool(
+        name="execute_approved_command",
+        description=(
+            "Yalnızca ÖNCEDEN ONAYLANMIŞ sabit bir komut listesinden (command_id ile seçilir) "
+            "komut çalıştırır — serbest metin komut kabul edilmez. İzinli command_id'ler: "
+            + ", ".join(APPROVED_COMMANDS)
+            + ". Diğer/keyfi salt-okunur komutlar için run_diagnostic'i kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "command_id": {
+                    "type": "string",
+                    "enum": sorted(APPROVED_COMMANDS.keys()),
+                    "description": "Çalıştırılacak onaylı komutun kimliği",
+                },
+            },
+            "required": ["command_id"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_approved_command_cmd,
         timeout=30,
         allow_sudo=True,
     ),

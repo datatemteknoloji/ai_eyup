@@ -112,7 +112,14 @@ def run_ssh_command(
 
     def _perm_denied(out: str, err: str) -> bool:
         combined = (out + err).lower()
-        return "permission denied" in combined or "permision denied" in combined
+        return (
+            "permission denied" in combined
+            or "permision denied" in combined
+            # journalctl özel mesajı: "insufficient permissions" / "erişim izni yetersiz"
+            or "insufficient permission" in combined
+            or "must be superuser" in combined
+            or "operation not permitted" in combined
+        )
 
     try:
         success, stdout, stderr = ssh.execute_command(
