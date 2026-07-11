@@ -256,188 +256,29 @@ async def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db
 async def sync_hypervisor_vms(hypervisor_id: int, request: Request, db: Session = Depends(get_db)):
     """Hypervisor'dan VM'leri senkronize et (yalnızca Entegrasyonlar)"""
     require_integrations_inventory(request)
-    from app.models.server import Server
     try:
         hypervisor = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
         if not hypervisor:
             raise HTTPException(status_code=404, detail="Hypervisor not found")
 
-        synced = 0
-        errors = []
-        vms = []
-
-        htype = hypervisor.hypervisor_type.value if hypervisor.hypervisor_type else ""
-        
-        if htype == "vmware":
-            try:
-                from app.services.vmware.vcenter_client import VCenterClient
-                client = VCenterClient(
-                    host=hypervisor.ip_address or hypervisor.hostname,
-                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
-                    password=hypervisor.password or hypervisor.connection_config.get("password", "")
-                )
-                if not client.login():
-                    errors.append("vCenter bağlantı hatası: giriş başarısız (host/kullanıcı/şifre kontrol edin)")
-                else:
-                    vms = client.sync_vms_to_inventory()  # CPU/RAM için detaylı API
-                    client.logout()
-            except ImportError:
-                errors.append("VMware client modülü bulunamadı")
-            except Exception as e:
-                errors.append(f"vCenter bağlantı hatası: {str(e)}")
-        elif htype == "kvm":
-            try:
-                from app.services.ovirt.ovirt_client import OVirtClient
-                client = OVirtClient(
-                    host=hypervisor.ip_address or hypervisor.hostname,
-                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
-                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
-                    port=hypervisor.port,
-                    verify_ssl=False,
-                )
-                vms = client.list_vms()
-            except ImportError:
-                errors.append("oVirt client modülü bulunamadı")
-            except Exception as e:
-                errors.append(f"oVirt bağlantı hatası: {str(e)}")
-        elif htype == "proxmox":
-            try:
-                from app.services.hypervisor.proxmox_client import ProxmoxClient
-                client = ProxmoxClient(
-                    host=hypervisor.ip_address or hypervisor.hostname,
-                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
-                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
-                    port=hypervisor.port or 8006,
-                    verify_ssl=False,
-                )
-                vms = client.list_vms()
-            except Exception as e:
-                errors.append(f"Proxmox bağlantı hatası: {str(e)}")
-        elif htype == "hyperv":
-            try:
-                from app.services.windows.winrm_client import WinRMClient
-                from app.services.hypervisor.hyperv_client import HyperVClient
-                winrm = WinRMClient(
-                    host=hypervisor.ip_address or hypervisor.hostname,
-                    username=hypervisor.username or hypervisor.connection_config.get("username", ""),
-                    password=hypervisor.password or hypervisor.connection_config.get("password", ""),
-                    port=hypervisor.port or 5985,
-                )
-                hv_client = HyperVClient(winrm)
-                vms = hv_client.list_vms()
-            except Exception as e:
-                errors.append(f"Hyper-V bağlantı hatası: {str(e)}")
-        else:
-            errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
-
-        def _vm_status(vm: dict) -> str:
-            """oVirt/VMware ham durumunu uygulama durumuna çevirir."""
-            mapping = {
-                # oVirt raw
-                "up": "ONLINE", "powering_up": "ONLINE",
-                "down": "OFFLINE", "not_responding": "OFFLINE",
-                "suspended": "OFFLINE", "stopped": "OFFLINE",
-                # VMware raw
-                "powered_on": "ONLINE", "poweredon": "ONLINE", "running": "ONLINE",
-                "powered_off": "OFFLINE", "poweredoff": "OFFLINE",
-                # zaten dönüştürülmüş (list_vms içinde map edilmiş)
-                "online": "ONLINE", "offline": "OFFLINE",
-            }
-            raw = (vm.get("status") or vm.get("power_state") or "").lower().replace(" ", "_").replace("-", "_")
-            return mapping.get(raw, "UNKNOWN")
-
-        # VM'leri sunuculara ekle/güncelle
-        from app.models.credential import GlobalCredential
-        
-        # Global Credential'ı al (varsa)
-        global_cred = db.query(GlobalCredential).first()
-        
-        for vm in vms:
-            vm_name = vm.get("name", "Unknown")
-            vm_status = _vm_status(vm)
-            vm_id = (vm.get("vm_id") or "").strip()
-            vm_ip = (vm.get("ip_address") or "").strip()
-
-            existing = None
-            if vm_id:
-                existing = db.query(Server).filter(
-                    Server.hypervisor_id == hypervisor_id,
-                    Server.hypervisor_vm_id == vm_id,
-                ).first()
-            if not existing and vm_ip:
-                existing = db.query(Server).filter(Server.ip_address == vm_ip).first()
-            if not existing:
-                existing = db.query(Server).filter(Server.name == vm_name).first()
-
-            if not existing:
-                # Yeni sunucu: Global Credential varsa connection_config'e koy
-                conn_cfg = {}
-                if global_cred:
-                    conn_cfg = {
-                        "username": global_cred.username,
-                        "password": global_cred.password,
-                        "private_key": global_cred.private_key,
-                        "port": global_cred.port or 22,
-                        "sudo_password": global_cred.sudo_password
-                    }
-                
-                # ai_ready: SADECE IP adresi varsa ve SSH başarılıysa true
-                # Hypervisor sync sırasında SSH test yapmıyoruz, sadece IP kontrolü
-                ai_ready_status = False  # Varsayılan: false
-                if vm.get("ip_address") and vm.get("ip_address").strip():
-                    # IP var, credential uygula/SSH test yap seçeneği kullanıcıya bırakılır
-                    ai_ready_status = False  # Kullanıcı "Apply Credential" ile test edecek
-                
-                new_server = Server(
-                    name=vm_name,
-                    hostname=vm_name,
-                    ip_address=vm.get("ip_address", ""),
-                    status=vm_status,
-                    os_type=vm.get("os_type", ""),
-                    server_type="VIRTUAL",
-                    cpu_cores=vm.get("cpu_cores", 0),
-                    memory_gb=vm.get("memory_gb", 0),
-                    connection_config=conn_cfg,
-                    ai_ready=ai_ready_status,
-                    hypervisor_id=hypervisor_id,
-                    hypervisor_vm_id=vm.get("vm_id", ""),
-                )
-                db.add(new_server)
-                synced += 1
-            else:
-                # Mevcut sunucuyu güncelle - connection_config ve ai_ready değerlerini KORU
-                if vm_name and existing.name != vm_name:
-                    existing.name = vm_name
-                if vm_name and (not existing.hostname or existing.hostname == existing.name):
-                    existing.hostname = vm_name
-                existing.status = vm_status
-                # hypervisor_id eksikse düzelt
-                if not existing.hypervisor_id:
-                    existing.hypervisor_id = hypervisor_id
-                if vm.get("vm_id") and not existing.hypervisor_vm_id:
-                    existing.hypervisor_vm_id = vm["vm_id"]
-                if vm.get("ip_address"):
-                    existing.ip_address = vm["ip_address"]
-                if "cpu_cores" in vm:
-                    existing.cpu_cores = vm["cpu_cores"]
-                if "memory_gb" in vm:
-                    existing.memory_gb = vm["memory_gb"]
-                if vm.get("os_type"):
-                    existing.os_type = vm["os_type"]
-                # ÖNEMLI: connection_config ve ai_ready'ye DOKUNMA!
-
+        # Ortak sync mantığı: hem burada hem background task'ta aynı fonksiyon
+        # kullanılır, böylece datastore/disk/tools gibi detay alanları (enrichment)
+        # manuel senkronizasyonda da eksik kalmaz.
+        from app.services.inventory_sync_service import sync_hypervisor_vms as _sync_vms
+        result = _sync_vms(db, hypervisor)
         db.commit()
 
         from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
         prom_stats = sync_node_exporter_targets_from_db(db)
 
         return {
-            "success": len(errors) == 0,
+            "success": len(result["errors"]) == 0,
             "hypervisor": hypervisor.name,
-            "synced_count": synced,
-            "total_vms": len(vms),
+            "synced_count": result["synced_count"],
+            "total_vms": result["total_vms"],
+            "enriched_count": result.get("enriched_count", 0),
             "prometheus_targets": prom_stats.get("targets_after"),
-            "errors": errors
+            "errors": result["errors"],
         }
     except HTTPException:
         raise

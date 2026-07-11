@@ -184,6 +184,37 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
             errors.append("oVirt client modülü bulunamadı")
         except Exception as e:
             errors.append(f"oVirt bağlantı hatası: {str(e)}")
+    elif htype == "proxmox":
+        try:
+            from app.services.hypervisor.proxmox_client import ProxmoxClient
+            client = ProxmoxClient(
+                host=hypervisor.ip_address or hypervisor.hostname,
+                username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
+                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                port=hypervisor.port or 8006,
+                verify_ssl=False,
+            )
+            vms = client.list_vms()
+        except ImportError:
+            errors.append("Proxmox client modülü bulunamadı")
+        except Exception as e:
+            errors.append(f"Proxmox bağlantı hatası: {str(e)}")
+    elif htype == "hyperv":
+        try:
+            from app.services.windows.winrm_client import WinRMClient
+            from app.services.hypervisor.hyperv_client import HyperVClient
+            winrm = WinRMClient(
+                host=hypervisor.ip_address or hypervisor.hostname,
+                username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
+                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                port=hypervisor.port or 5985,
+            )
+            client = HyperVClient(winrm)
+            vms = client.list_vms()
+        except ImportError:
+            errors.append("Hyper-V client modülü bulunamadı")
+        except Exception as e:
+            errors.append(f"Hyper-V bağlantı hatası: {str(e)}")
     else:
         errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
 
