@@ -278,12 +278,16 @@ def _package_status_cmd(args: Dict[str, Any]) -> str:
             f"rpm -q {pkg} 2>/dev/null || dpkg -s {pkg} 2>/dev/null "
             f"|| echo 'Paket bulunamadi: {pkg}'"
         )
+    # NOT: dnf/apt repo'ya erişemezse (air-gapped/kapalı ağ) uzun süre asılı kalabilir;
+    # 'timeout N' ile üst sınır koyuyoruz ki tüm komut zinciri kilitlenmesin.
     return (
         "if command -v dnf >/dev/null 2>&1; then "
-        "echo '=== GUNCELLENEBILIR PAKETLER (dnf) ==='; dnf check-update 2>/dev/null | head -40; "
+        "echo '=== GUNCELLENEBILIR PAKETLER (dnf) ==='; "
+        "timeout 10 dnf check-update 2>/dev/null | head -40; "
         "echo; echo '=== KURULU PAKET SAYISI ==='; rpm -qa | wc -l; "
         "elif command -v apt >/dev/null 2>&1; then "
-        "echo '=== GUNCELLENEBILIR PAKETLER (apt) ==='; apt list --upgradable 2>/dev/null | head -40; "
+        "echo '=== GUNCELLENEBILIR PAKETLER (apt) ==='; "
+        "timeout 10 apt list --upgradable 2>/dev/null | head -40; "
         "echo; echo '=== KURULU PAKET SAYISI ==='; dpkg -l | wc -l; "
         "else echo 'Desteklenen paket yoneticisi bulunamadi'; fi"
     )
@@ -330,6 +334,80 @@ def _approved_command_cmd(args: Dict[str, Any]) -> str:
             f"onaylanmamış command_id: {cmd_id!r} (izinli: {', '.join(APPROVED_COMMANDS)})"
         )
     return APPROVED_COMMANDS[cmd_id]
+
+
+def _failed_services_cmd(args: Dict[str, Any]) -> str:
+    return (
+        "echo '=== FAILED SERVISLER ==='; systemctl --failed --no-pager --plain 2>/dev/null; "
+        "echo; echo '=== TAKILI KALMIŞ (activating/deactivating) SERVISLER ==='; "
+        "systemctl list-units --state=activating,deactivating --no-pager --plain 2>/dev/null"
+    )
+
+
+def _stuck_processes_cmd(args: Dict[str, Any]) -> str:
+    return (
+        "echo '=== ZOMBIE PROCESSLER ==='; echo 'PID PPID STAT ETIME CMD'; "
+        "ps -eo pid,ppid,stat,etime,cmd --no-headers 2>/dev/null | awk '$3 ~ /Z/ {print}'; "
+        "echo; echo '=== D-STATE (disk/IO bekleyen) PROCESSLER ==='; echo 'PID PPID STAT ETIME CMD'; "
+        "ps -eo pid,ppid,stat,etime,cmd --no-headers 2>/dev/null | awk '$3 ~ /^D/ {print}'"
+    )
+
+
+def _reboot_info_cmd(args: Dict[str, Any]) -> str:
+    # NOT: policy.py DESTRUCTIVE_PATTERNS "reboot/shutdown/halt" kelimelerini
+    # komut metninde ararsa yıkıcı sayıp reddeder — bu yüzden bilinçli olarak
+    # 'last -x' / 'journalctl --list-boots' gibi bu kelimeleri İÇERMEYEN
+    # salt-okunur komutlar kullanılıyor (fonksiyonel olarak eşdeğer bilgiyi verir).
+    return (
+        "echo '=== AÇIK KALMA SÜRESİ ==='; uptime -p 2>/dev/null || uptime; "
+        "echo; echo '=== SON BOOT ZAMANI ==='; who -b 2>/dev/null; "
+        "echo; echo '=== BOOT/KAPANMA GEÇMİŞİ (son 10) ==='; last -x -n 10 2>/dev/null; "
+        "echo; echo '=== SYSTEMD BOOT GEÇMİŞİ ==='; journalctl --list-boots --no-pager 2>/dev/null | tail -5"
+    )
+
+
+def _kernel_errors_cmd(args: Dict[str, Any]) -> str:
+    hours = max(1, min(int(args.get("hours") or 24), 168))
+    return (
+        f"echo '=== KERNEL HATALARI (son {hours}s) ==='; "
+        f"(journalctl -k --since '{hours} hours ago' -p err --no-pager 2>/dev/null | tail -50) "
+        "|| (dmesg -T 2>/dev/null | tail -100) || echo 'Kernel logu okunamadı'; "
+        "echo; echo '=== PANIC / OOPS / SEGFAULT / OOM ARAMA ==='; "
+        f"(journalctl -k --since '{hours} hours ago' --no-pager 2>/dev/null "
+        "| grep -iE 'panic|oops|segfault|out of memory|oom.?kill' | tail -30) "
+        "|| (dmesg 2>/dev/null | grep -iE 'panic|oops|segfault|out of memory|oom.?kill' | tail -30) "
+        "|| echo 'Bulunamadı/erişilemedi'"
+    )
+
+
+def _security_patch_status_cmd(args: Dict[str, Any]) -> str:
+    # NOT: /var/run/reboot-required gibi yollar 'reboot' kelimesini içerdiği için
+    # policy engine tarafından yıkıcı sayılıp reddedilir — bu yüzden RHEL/CentOS'ta
+    # standart olan 'needs-restarting -r' (dnf-utils) tercih edildi.
+    return (
+        "echo '=== ÇALIŞAN KERNEL ==='; uname -r; "
+        "echo; echo '=== KURULU KERNEL PAKETLERİ ==='; "
+        "(rpm -q kernel 2>/dev/null) || (dpkg -l 'linux-image*' 2>/dev/null | grep '^ii'); "
+        "echo; echo '=== YENİDEN BAŞLATMA GEREKİYOR MU ==='; "
+        "needs-restarting -r 2>/dev/null || echo 'needs-restarting aracı yok (dnf-utils kurulu değil)'; "
+        "echo; echo '=== GÜVENLİK GÜNCELLEMELERİ ==='; "
+        "(timeout 10 dnf updateinfo list security 2>/dev/null | head -40) "
+        "|| (timeout 10 yum updateinfo list security 2>/dev/null | head -40) "
+        "|| (timeout 10 apt list --upgradable 2>/dev/null | grep -i security | head -40) "
+        "|| echo 'Güvenlik güncelleme bilgisi alınamadı (repo erişilemedi/zaman aşımı)'"
+    )
+
+
+def _mount_health_cmd(args: Dict[str, Any]) -> str:
+    return (
+        "echo '=== MOUNT LİSTESİ ==='; (mount | column -t 2>/dev/null) || mount; "
+        "echo; echo '=== READ-ONLY MOUNTLAR ==='; "
+        "(mount | grep -E '\\(ro[,)]') || echo 'Read-only mount yok'; "
+        "echo; echo '=== NFS/CIFS MOUNTLAR ==='; "
+        "(findmnt -t nfs,nfs4,cifs 2>/dev/null) || (mount | grep -iE 'nfs|cifs') || echo 'NFS/CIFS mount yok'; "
+        "echo; echo '=== MULTIPATH DURUMU ==='; "
+        "(multipath -ll 2>/dev/null | head -30) || echo 'multipath kurulu değil/kullanılmıyor'"
+    )
 
 
 def _update_packages_cmd(args: Dict[str, Any]) -> str:
@@ -671,6 +749,108 @@ TOOLS: Dict[str, Tool] = {
         },
         risk_level=RiskLevel.READ_ONLY,
         build_command=_approved_command_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_failed_services": Tool(
+        name="get_failed_services",
+        description=(
+            "Başarısız (failed) durumdaki systemd servislerini ve takılı kalmış "
+            "(activating/deactivating) unit'leri SALT-OKUNUR listeler. "
+            "'Hangi servis durmuş', 'systemd failed servisleri göster' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_failed_services_cmd,
+        timeout=30,
+    ),
+    "get_stuck_processes": Tool(
+        name="get_stuck_processes",
+        description=(
+            "Zombie (Z) ve D-state (disk/IO bekleyen) süreçleri SALT-OKUNUR listeler. "
+            "'Zombie process var mı', 'D state process var mı' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_stuck_processes_cmd,
+        timeout=30,
+    ),
+    "get_reboot_info": Tool(
+        name="get_reboot_info",
+        description=(
+            "Sunucunun ne zamandır açık olduğunu, son açılış zamanını ve son "
+            "açılış/kapanış geçmişini SALT-OKUNUR gösterir. "
+            "'Sunucu ne zamandır açık', 'son reboot ne zaman/neden oldu' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_reboot_info_cmd,
+        timeout=30,
+    ),
+    "get_kernel_errors": Tool(
+        name="get_kernel_errors",
+        description=(
+            "Kernel loglarında hata, panic, oops, segfault ve OOM (out-of-memory) izlerini "
+            "SALT-OKUNUR tarar. 'Kernel loglarında hata var mı', 'panic oluşmuş mu', "
+            "'OOM logları var mı', 'segmentation fault oluşmuş mu' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılsın (1-168, varsayılan 24)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_kernel_errors_cmd,
+        timeout=30,
+        allow_sudo=True,
+    ),
+    "get_security_patch_status": Tool(
+        name="get_security_patch_status",
+        description=(
+            "Çalışan/kurulu kernel sürümlerini, yeniden başlatma gerekip gerekmediğini ve "
+            "bekleyen güvenlik güncellemelerini (CVE/security patch) SALT-OKUNUR sorgular. "
+            "'Güvenlik güncellemesi gerekiyor mu', 'kernel güncel mi', 'reboot gerekli mi', "
+            "'güvenlik patchleri eksik mi' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_security_patch_status_cmd,
+        timeout=45,
+    ),
+    "get_mount_health": Tool(
+        name="get_mount_health",
+        description=(
+            "Mount edilmiş dosya sistemlerini, read-only mount'ları, NFS/CIFS bağlantılarının "
+            "durumunu ve multipath yapılandırmasını SALT-OKUNUR kontrol eder. "
+            "'Mount durumları', 'NFS/CIFS mount sağlıklı mı', 'read-only mount olmuş mu', "
+            "'multipath durumu' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"server": {"type": "string", "description": "Sunucu adı veya IP"}},
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_mount_health_cmd,
         timeout=30,
         allow_sudo=True,
     ),
