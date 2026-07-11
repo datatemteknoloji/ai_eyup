@@ -845,14 +845,21 @@ async def ask_hypervisor_question(
     session_id = req.session_id
 
     try:
+        session = None
         if session_id:
             session = db.query(ChatSession).filter(
                 ChatSession.id == session_id,
                 ChatSession.category == HV_SESSION_CATEGORY,
             ).first()
             if not session:
-                raise HTTPException(status_code=404, detail="Oturum bulunamadı")
-        else:
+                # Oturum silinmiş/artık yok (ör. kullanıcı sohbeti sildi ama eski
+                # session_id ile yeni bir soru gönderdi) — 404 ile tıkanıp kalmak
+                # yerine sessizce yeni bir oturum aç, kullanıcı cevabını görsün.
+                logger.warning(
+                    f"[HypervisorAsk] session_id={session_id} bulunamadı, yeni oturum açılıyor"
+                )
+                session_id = None
+        if not session:
             session = ChatSession(
                 title=_hv_session_title(question),
                 server_ids=[],

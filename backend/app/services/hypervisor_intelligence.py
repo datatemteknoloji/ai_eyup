@@ -1359,6 +1359,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"cluster\s*bazında\s*kullanılabilir\s*kaynak", h_cluster_cpu_ram),
 
     # Storage
+    (r"datastore\s*dağılım|vm.*datastore.*dağılım|datastore.*bazında.*vm|vm.*datastore.*bazında", h_datastore_by_disk),
     (r"en\s*dolu\s*datastore|%?\s*85\s*üzeri\s*dolu\s*datastore", h_datastore_over_85),
     (r"storage\s*latency\s*yüksek", lambda db, q: h_storage_not_available(db, "Datastore latency")),
     (r"storage\s*bağlantı\s*problemi|datastore.a\s*erişemeyen|datastore'a\s*erişemeyen", lambda db, q: h_storage_not_available(db, "Datastore bağlantı/erişim durumu")),

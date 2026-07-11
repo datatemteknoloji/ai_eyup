@@ -549,7 +549,21 @@ export default function HypervisorChat({
           session_id: activeSessionId,
         }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        // Eski/silinmiş bir oturum kimliğiyle isteği tekrar denemeyelim ki
+        // aynı hataya sonsuza dek çarpmasın; kullanıcı görünür bir hata alsın.
+        if (activeSessionId) setSelectedSessionId(null)
+        setMessages(prev => [...prev, {
+          id: `tmp-${Date.now() + 1}`,
+          role: 'assistant',
+          content: data?.detail || `İstek başarısız oldu (HTTP ${res.status}).`,
+          error: 'http_error',
+          timestamp: new Date(),
+        }])
+        return
+      }
 
       if (data.session_id) {
         setSelectedSessionId(data.session_id)
