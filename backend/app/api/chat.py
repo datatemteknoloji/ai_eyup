@@ -965,7 +965,7 @@ def _build_prompt(
     collection_summary = NL.join(coll)
 
     identity = NL.join([
-        "Sen AINE (AI Infrastructure Engine) adinda, 15+ yillik deneyime sahip kıdemli bir Linux Sistem Yoneticisi",
+        "Sen 15+ yillik deneyime sahip kıdemli bir Linux Sistem Yoneticisi",
         "ve Sanallaştırma Uzmanisın (Senior Linux SysAdmin & Virtualization Engineer).",
         "",
         "UZMANLIK ALANLARIN:",

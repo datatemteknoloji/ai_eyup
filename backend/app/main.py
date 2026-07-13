@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.1",
+    version="1.0.2",
     description="Server Management System API"
 )
 
@@ -247,6 +247,10 @@ async def startup_tasks():
                 _s.MANAGEMENT_SERVER_IP = _rows["management_server_ip"]
             if _rows.get("ollama_active_model"):
                 _s.OLLAMA_DEFAULT_MODEL = _rows["ollama_active_model"]
+            if _rows.get("prometheus_url"):
+                _s.PROMETHEUS_URL = _rows["prometheus_url"]
+            if _rows.get("pushgateway_url") is not None:
+                _s.PUSHGATEWAY_URL = _rows["pushgateway_url"]
             # Uzak AI gateway (örn. Bifrost) — DB'de ayarlıysa .env default'unun üzerine yazar
             if _rows.get("remote_llm_enabled") is not None:
                 _s.REMOTE_LLM_ENABLED = _rows["remote_llm_enabled"].lower() == "true"
@@ -316,7 +320,7 @@ async def shutdown_tasks():
 
 @app.get("/")
 async def root():
-    return {"message": "Server Management API", "version": "1.0.1"}
+    return {"message": "Server Management API", "version": "1.0.2"}
 
 # ─── Local repository static file serving ─────────────────────────────────────
 try:

@@ -352,6 +352,7 @@ async def get_settings(db: Session = Depends(get_db)):
         "ollama_url": settings.OLLAMA_URL,
         "ollama_model": active_model,
         "prometheus_url": settings.PROMETHEUS_URL,
+        "pushgateway_url": settings.PUSHGATEWAY_URL,
         "metric_retention_days": metric_retention_days,
         "management_server_ip": management_server_ip,
         "detected_management_ip": detected_ip,
@@ -385,6 +386,50 @@ async def set_management_server_ip(payload: dict, db: Session = Depends(get_db))
     settings.MANAGEMENT_SERVER_IP = ip
     logger.info(f"Yönetim sunucu IP güncellendi: {ip}")
     return {"success": True, "ip": ip}
+
+
+@router.put("/prometheus")
+async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
+    """Prometheus / Pushgateway URL'lerini kaydet (müşteri ortamındaki mevcut
+    Prometheus'a bağlanmak için). Restart gerekmez — runtime'a hemen yansır.
+
+    Body: {prometheus_url, pushgateway_url?}
+    pushgateway_url boş gönderilirse mevcut değer korunur; tamamen temizlemek
+    için boş string yerine null değil, "" gönderilir (opsiyonel alan).
+    """
+    from app.core.config import settings
+    import re
+
+    def _save(key: str, value: str):
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(AppSettings(key=key, value=value))
+
+    prom_url = (payload.get("prometheus_url") or "").strip().rstrip("/")
+    if not prom_url:
+        raise HTTPException(status_code=400, detail="Prometheus URL zorunludur")
+    if not re.match(r"^https?://", prom_url, re.I):
+        raise HTTPException(status_code=400, detail="Prometheus URL http:// veya https:// ile başlamalı")
+
+    # pushgateway opsiyonel — gönderilmezse mevcut değeri koru
+    pg_raw = payload.get("pushgateway_url")
+    if pg_raw is None:
+        pg_url = settings.PUSHGATEWAY_URL
+    else:
+        pg_url = (pg_raw or "").strip().rstrip("/")
+        if pg_url and not re.match(r"^https?://", pg_url, re.I):
+            raise HTTPException(status_code=400, detail="Pushgateway URL http:// veya https:// ile başlamalı")
+
+    _save("prometheus_url", prom_url)
+    _save("pushgateway_url", pg_url)
+    db.commit()
+
+    settings.PROMETHEUS_URL = prom_url
+    settings.PUSHGATEWAY_URL = pg_url
+    logger.info(f"Prometheus URL güncellendi: {prom_url} (pushgateway={pg_url or 'unset'})")
+    return {"success": True, "prometheus_url": prom_url, "pushgateway_url": pg_url}
 
 
 @router.put("/ollama-model")

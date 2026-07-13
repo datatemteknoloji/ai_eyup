@@ -9,7 +9,9 @@ exist once the bundle is assembled).
 | File | Purpose |
 |---|---|
 | `docker-compose.prod.yml` | Production stack: pinned image versions, immutable backend image (no live source mount), HTTPS frontend, `localhost`-only DB/Redis binding, SELinux `:Z` bind-mount labels |
-| `install-rhel.sh` | RHEL/Rocky/AlmaLinux 9 installer: prompts for an install directory (default `/opt/ainew`), copies the package there and puts all persistent data under `<dir>/data` (nothing under `/var/lib`), Docker setup, random secret generation (`SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`), self-signed TLS, firewalld rules, `docker compose up -d` |
+| `install-rhel.sh` | RHEL/Rocky/AlmaLinux 9 installer: prompts for an install directory (default `/opt/ainew`), copies the package there and puts all persistent data under `<dir>/data`, Docker setup, random secrets, self-signed TLS, firewalld, `docker compose up -d` |
+| `update-rhel.sh` | In-place upgrade: backs up `.env` + DB + previous image tags, loads new images, retargets `BACKEND_IMAGE`/`FRONTEND_IMAGE`, restarts — never touches `data/` |
+| `rollback-rhel.sh` | Roll back to the last (or specified) pre-update backup; optional `--restore-db` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
 
 ## Building and installing a release
@@ -24,6 +26,22 @@ ssh root@<host>
 tar xzf ainew-<version>-linux-amd64.tar.gz
 cd ainew-<version>-linux-amd64
 sudo ./install-rhel.sh
+```
+
+## Upgrading / rolling back on a customer host
+
+```bash
+# Upgrade (run from the NEW package directory)
+tar xzf ainew-1.0.1-linux-amd64.tar.gz
+cd ainew-1.0.1-linux-amd64
+sudo ./update-rhel.sh --install-dir /opt/ainew
+
+# Roll back application images to the previous version
+cd /opt/ainew
+sudo ./rollback-rhel.sh
+
+# Roll back images + database to the pre-update snapshot
+sudo ./rollback-rhel.sh --restore-db
 ```
 
 Full walkthrough, requirements, and maintenance commands: [../docs/INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).

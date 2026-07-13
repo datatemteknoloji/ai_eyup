@@ -502,7 +502,7 @@ const UnifiedChat: React.FC<{
                 <div className="w-20 h-20 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-violet-500/25">
                   <span className="text-2xl font-bold text-white">AI</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-2">AINE Tüm Altyapı Asistanı</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">Altyapı Asistanı</h2>
                 <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
             ) : (messages.length === 0 && !pendingUserMessage) ? (

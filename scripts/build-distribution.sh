@@ -15,7 +15,7 @@
 #
 # Çıktı:
 #   dist/ainew-<version>-<platform>.tar.gz
-#     ├── docker-compose.prod.yml, install-rhel.sh   (deploy/ içinden kopyalanır)
+#     ├── docker-compose.prod.yml, install-rhel.sh, update-rhel.sh, rollback-rhel.sh
 #     ├── frontend/nginx.prod.conf                    (deploy/ içinden kopyalanır)
 #     ├── (tüm kaynak kod: backend/, frontend/, prometheus/, docs/, ...)
 #     └── images/*.tar.gz   (docker load ile yüklenecek önceden derlenmiş imajlar;
@@ -100,8 +100,10 @@ rsync -a \
 echo "▶ Production dağıtım varlıkları yerleştiriliyor (deploy/)..."
 cp deploy/docker-compose.prod.yml "$STAGE/docker-compose.prod.yml"
 cp deploy/install-rhel.sh "$STAGE/install-rhel.sh"
+cp deploy/update-rhel.sh "$STAGE/update-rhel.sh"
+cp deploy/rollback-rhel.sh "$STAGE/rollback-rhel.sh"
 cp deploy/nginx.prod.conf "$STAGE/frontend/nginx.prod.conf"
-chmod +x "$STAGE/install-rhel.sh"
+chmod +x "$STAGE/install-rhel.sh" "$STAGE/update-rhel.sh" "$STAGE/rollback-rhel.sh"
 
 # Müşteriye özel/gerçek sunucu verisi içeren dosyaları boş şablonla değiştir
 echo "[]" > "$STAGE/prometheus/targets/node_exporter_targets.json"
@@ -206,7 +208,10 @@ du -sh "${STAGE}.tar.gz"
 
 echo
 echo "✔ Paket hazır: ${STAGE}.tar.gz"
-echo "  Müşteri sunucusunda:"
-echo "    tar xzf $(basename "${STAGE}.tar.gz")"
-echo "    cd $(basename "$STAGE")"
-echo "    sudo ./install-rhel.sh"
+echo "  İlk kurulum:"
+echo "    tar xzf $(basename "${STAGE}.tar.gz") && cd $(basename "$STAGE") && sudo ./install-rhel.sh"
+echo "  Güncelleme:"
+echo "    tar xzf $(basename "${STAGE}.tar.gz") && cd $(basename "$STAGE")"
+echo "    sudo ./update-rhel.sh --install-dir /opt/ainew"
+echo "  Geri alma:"
+echo "    cd /opt/ainew && sudo ./rollback-rhel.sh"

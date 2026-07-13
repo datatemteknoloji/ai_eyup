@@ -70,6 +70,7 @@ interface GeneralSettings {
   ollama_url: string
   ollama_model: string
   prometheus_url: string
+  pushgateway_url?: string
   metric_retention_days?: number
   management_server_ip?: string
   detected_management_ip?: string
@@ -512,11 +513,52 @@ const Settings: React.FC = () => {
     }
   }, [generalSettings?.metric_retention_days])
 
+  React.useEffect(() => {
+    if (generalSettings) {
+      setPromForm({
+        prometheus_url: generalSettings.prometheus_url || '',
+        pushgateway_url: generalSettings.pushgateway_url || '',
+      })
+    }
+  }, [generalSettings?.prometheus_url, generalSettings?.pushgateway_url])
+
+  const savePrometheus = async () => {
+    setPromSaving(true)
+    setPromSaved(false)
+    setPromError('')
+    try {
+      const r = await fetch(`${API_BASE_URL}/settings/prometheus`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prometheus_url: promForm.prometheus_url.trim(),
+          pushgateway_url: promForm.pushgateway_url.trim(),
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.detail || 'Kayıt başarısız')
+      }
+      setPromSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['general-settings'] })
+      setTimeout(() => setPromSaved(false), 3000)
+    } catch (e: any) {
+      setPromError(e?.message || 'Kayıt başarısız')
+    } finally {
+      setPromSaving(false)
+    }
+  }
+
   // Uzak AI (OpenAI-uyumlu gateway, örn. Bifrost) ayarları
   const [remoteLlmForm, setRemoteLlmForm] = useState({ enabled: false, url: '', model: '', api_key: '', verify_ssl: true, ca_bundle: '' })
   const [remoteLlmSaved, setRemoteLlmSaved] = useState(false)
   const [remoteLlmError, setRemoteLlmError] = useState('')
   const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
+
+  const [promForm, setPromForm] = useState({ prometheus_url: '', pushgateway_url: '' })
+  const [promSaving, setPromSaving] = useState(false)
+  const [promSaved, setPromSaved] = useState(false)
+  const [promError, setPromError] = useState('')
   React.useEffect(() => {
     if (generalSettings?.remote_llm) {
       const r = generalSettings.remote_llm
@@ -1380,16 +1422,51 @@ const Settings: React.FC = () => {
               <h2 className="text-xl font-semibold text-white mb-6">Monitoring Ayarları</h2>
               <div className="space-y-6">
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
-                  <h3 className="text-lg font-medium text-white mb-4">Prometheus</h3>
+                  <h3 className="text-lg font-medium text-white mb-1">Prometheus</h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Canlı metrikler, grafikler ve AIOps bu adrese sorgu atar. Müşteri ortamında halihazırda
+                    Prometheus varsa buraya onun adresini yazın (ör. <code className="text-slate-400">http://10.x.x.x:9090</code>).
+                    Kaydet sonrası restart gerekmez.
+                  </p>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Prometheus URL</label>
-                      <input type="text" value="http://prometheus:9090" disabled className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <input
+                        type="text"
+                        value={promForm.prometheus_url}
+                        onChange={e => setPromForm(f => ({ ...f, prometheus_url: e.target.value }))}
+                        placeholder="http://prometheus:9090"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
                     </div>
                     <div>
-                      <label className="block text-sm text-slate-300 mb-2">Pushgateway URL</label>
-                      <input type="text" value="http://pushgateway:9091" disabled className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-400 cursor-not-allowed" />
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Pushgateway URL
+                        <span className="text-xs text-slate-500 ml-2">— opsiyonel, şu an kullanılmıyor</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={promForm.pushgateway_url}
+                        onChange={e => setPromForm(f => ({ ...f, pushgateway_url: e.target.value }))}
+                        placeholder="http://pushgateway:9091"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Kısa ömürlü iş metrikleri için push hedefi. Uygulama şu an push etmiyor; boş bırakılabilir.
+                      </p>
                     </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={savePrometheus}
+                        disabled={promSaving || !promForm.prometheus_url.trim()}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+                      >
+                        {promSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                      </button>
+                      {promSaved && <span className="text-green-400 text-sm">Kaydedildi</span>}
+                      {promError && <span className="text-red-400 text-sm">{promError}</span>}
+                    </div>
+
                     {/* Yönetim Sunucu IP */}
                     <div className="border-t border-white/[0.06] pt-4">
                       <label className="block text-sm text-slate-300 mb-1">

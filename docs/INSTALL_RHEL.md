@@ -1,4 +1,4 @@
-# RHEL 9 Kurulum Rehberi — AINE Altyapı Yönetim Platformu
+# RHEL 9 Kurulum Rehberi — Altyapı Yönetim Platformu
 
 Bu doküman, ürünü **yeni/boş bir RHEL 9 sunucusuna** kurmak için hazırlanmıştır.
 Müşteri ortamlarında tekrarlanabilir kurulum için tasarlanmıştır.
@@ -150,16 +150,71 @@ docker compose -f docker-compose.prod.yml down
 docker compose -f docker-compose.prod.yml exec db pg_dump -U postgres server_management > yedek_$(date +%F).sql
 ```
 
-## 7. Güncelleme (yeni sürüm)
+## 7. Güncelleme (yeni sürüm) ve geri alma (rollback)
 
-1. Yeni sürümün paketini (`ainew-<yeni-versiyon>-linux-amd64.tar.gz`) sunucuya kopyalayın
-2. Mevcut kurulumu durdurun: `docker compose -f docker-compose.prod.yml down`
-3. Yeni paketi açıp `.env` dosyanızı **eski kurulumdan yeni dizine kopyalayın**
-   (SECRET_KEY/parolalar korunmalı — yenisini `cp .env.example .env` ile üretmeyin!)
-4. `sudo ./install-rhel.sh` — mevcut `.env` ve sertifikaları koruyarak yeni imajları
-   yükler/derler ve servisleri ayağa kaldırır
-5. Veritabanı şeması `Base.metadata.create_all` + idempotent `ALTER TABLE` mantığıyla
-   otomatik güncellenir (backend ilk açılışta uygular); manuel migration adımı yoktur
+Kalıcı veri (`DATA_DIR` — DB, Redis, sertifikalar, Ollama modelleri, yüklenen
+dosyalar) **asla silinmez / üzerine yazılmaz**. Güncelleme sadece uygulama
+dosyalarını ve Docker imaj etiketlerini değiştirir. Her güncellemeden önce
+otomatik yedek alınır.
+
+### 7.1 Güncelleme
+
+```bash
+# 1) Yeni paket sunucuya
+scp ainew-1.0.1-linux-amd64.tar.gz root@<sunucu>:/root/
+ssh root@<sunucu>
+tar xzf ainew-1.0.1-linux-amd64.tar.gz
+cd ainew-1.0.1-linux-amd64
+
+# 2) Mevcut kurulumu güncelle (ör. /opt/ainew)
+sudo ./update-rhel.sh --install-dir /opt/ainew
+```
+
+`update-rhel.sh` sırasıyla:
+
+1. `$DATA_DIR/backups/pre-update-<eski>-to-<yeni>-<tarih>/` altına yedek alır  
+   (`.env`, eski imaj etiketleri, Postgres dump)
+2. Yeni paket dosyalarını kurulum dizinine kopyalar (`.env` ve `data/` korunur)
+3. `.env` içindeki `BACKEND_IMAGE` / `FRONTEND_IMAGE` etiketlerini yeni sürüme çeker
+4. `images/*.tar.gz` ile yeni imajları `docker load` eder (eski imajlar silinmez)
+5. `docker compose up -d` + sağlık kontrolü
+
+### 7.2 Geri alma (rollback)
+
+```bash
+cd /opt/ainew
+
+# A) Sadece uygulama imajı eski sürüme dönsün (hızlı — genelde yeterli)
+sudo ./rollback-rhel.sh
+
+# B) İmaj + veritabanı da güncelleme anındaki hâline dönsün
+#    (o andan sonraki TÜM DB değişiklikleri kaybolur — onay ister)
+sudo ./rollback-rhel.sh --restore-db
+
+# C) Belirli bir yedeğe dön
+sudo ./rollback-rhel.sh --backup /opt/ainew/data/backups/pre-update-1.0.0-to-1.0.1-20260713-153000
+```
+
+**Ne zaman `--restore-db`?** Yeni sürüm DB şemasını ileri taşıdıktan sonra
+eski imajın şemayla uyumsuz çalıştığı nadir durumlarda. Aksi halde imaj-only
+rollback yeterlidir (yeni eklenen sunucu kayıtları vb. korunur).
+
+### 7.3 Manuel kontrol
+
+```bash
+cd /opt/ainew
+cat VERSION
+grep -E 'BACKEND_IMAGE|FRONTEND_IMAGE' .env
+docker compose -f docker-compose.prod.yml ps
+curl -sf http://127.0.0.1:8000/ | jq .
+ls -la data/backups/
+```
+
+### 7.4 Eski davranış (referans)
+
+Eski dokümandaki “compose down → yeni paket aç → .env kopyala → install-rhel.sh”
+yöntemi hâlâ çalışır ama yedek/rollback sağlamaz; yeni sürümlerde
+`update-rhel.sh` / `rollback-rhel.sh` kullanın.
 
 ## 8. Bilinen sınırlamalar / güvenlik notları
 

@@ -289,7 +289,7 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
     collection_summary = NL.join(coll)
 
     identity = NL.join([
-        "Sen AINE (AI Infrastructure Engine) adinda, 15+ yillik deneyime sahip kıdemli bir",
+        "Sen 15+ yillik deneyime sahip kıdemli bir",
         "Windows Server Sistem Yoneticisisin (Senior Windows Systems Administrator).",
         "",
         "UZMANLIK ALANLARIN:",

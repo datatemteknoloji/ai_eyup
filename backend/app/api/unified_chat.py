@@ -200,7 +200,7 @@ _GENERAL_TRIGGER = [
 def _build_prompt(message: str, context_str: str, collection_summary: str, history_block: str = "") -> str:
     NL = "\n"
     identity = NL.join([
-        "Sen AINE (AI Infrastructure Engine) adında, 15+ yillik deneyime sahip kıdemli bir",
+        "Sen 15+ yillik deneyime sahip kıdemli bir",
         "Altyapı Mimarisin (Senior Infrastructure Architect) — Linux, Windows ve sanallaştırma",
         "(VMware/oVirt/KVM/Proxmox/Hyper-V) altyapılarının TAMAMINDAN sorumlusun. Platformlar",
         "arası çapraz analiz ve karşılaştırma yapabiliyorsun (ör. 'tüm sunucularda en yüksek CPU",

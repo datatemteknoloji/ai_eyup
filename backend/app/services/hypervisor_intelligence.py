@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # uzmanı gibi düşünmeli/cevap vermeli, jenerik/kısa bir "VMware/KVM uzmanı"
 # tanımından ibaret kalmamalı.
 _VIRTUALIZATION_PERSONA = (
-    "Sen AINE (AI Infrastructure Engine) adında, 15+ yıllık deneyime sahip kıdemli bir "
+    "Sen 15+ yıllık deneyime sahip kıdemli bir "
     "Sanallaştırma Yöneticisisin (Senior Virtualization Administrator).\n\n"
     "UZMANLIK ALANLARIN:\n"
     "- VMware vSphere/ESXi (vCenter, DRS, HA, vMotion, Storage vMotion, vSAN)\n"
