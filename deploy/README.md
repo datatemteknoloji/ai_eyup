@@ -8,8 +8,9 @@ exist once the bundle is assembled).
 
 | File | Purpose |
 |---|---|
-| `docker-compose.prod.yml` | Production stack: pinned image versions, immutable backend image (no live source mount), HTTPS frontend, `localhost`-only DB/Redis binding, SELinux `:Z` bind-mount labels |
-| `install-rhel.sh` | RHEL/Rocky/AlmaLinux 9 installer: prompts for an install directory (default `/opt/ainew`), copies the package there and puts all persistent data under `<dir>/data`, Docker setup, random secrets, self-signed TLS, firewalld, `docker compose up -d` |
+| `docker-compose.prod.yml` | Production stack: pinned images, `pull_policy: never`, no `build:` (offline-safe), HTTPS frontend, localhost-only DB/Redis |
+| `docker-compose.build.yml` | Optional online build overlay (registry required) — not used by default install |
+| `install-rhel.sh` | RHEL installer: requires `images/*.tar.gz`, `docker load`, `up -d --no-build`; creates Docker data-root/tmp if missing |
 | `update-rhel.sh` | In-place upgrade: backs up `.env` + DB + previous image tags, loads new images, retargets `BACKEND_IMAGE`/`FRONTEND_IMAGE`, restarts — never touches `data/` |
 | `rollback-rhel.sh` | Roll back to the last (or specified) pre-update backup; optional `--restore-db` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
