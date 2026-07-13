@@ -121,12 +121,35 @@ def connect_ssh(
                 last_err = conn_err
 
     if not connected:
-        msg = "Hem key hem de password ile bağlantı başarısız (veya hiçbiri sağlanmadı)."
+        if password is None and pkey is None:
+            msg = "SSH kimlik bilgisi yok (password/key sağlanmadı)."
+        elif last_err is not None and _is_timeout_err(last_err):
+            msg = (
+                f"SSH zaman aşımı / erişilemiyor ({hostname}:{port}). "
+                "Ağ, firewall veya sunucu yanıt vermiyor olabilir."
+            )
+        elif last_err is not None and _is_banner_err(last_err):
+            msg = (
+                f"SSH banner okunamadı ({hostname}:{port}). "
+                "Yoğun paralel bağlantı veya Centrify/sshd gecikmesi olabilir — tekrar denenebilir."
+            )
+        else:
+            msg = "SSH kimlik doğrulama başarısız (key/password reddedildi)."
         if last_err is not None:
             raise paramiko.AuthenticationException(f"{msg} Son hata: {last_err}") from last_err
         raise paramiko.AuthenticationException(msg)
 
     return True
+
+
+def _is_timeout_err(err: BaseException) -> bool:
+    s = str(err).lower()
+    return "timed out" in s or "timeout" in s or "errno 110" in s
+
+
+def _is_banner_err(err: BaseException) -> bool:
+    s = str(err).lower()
+    return "banner" in s or "bad file descriptor" in s or "errno 9" in s
 
 
 def _auth_keyboard_interactive(

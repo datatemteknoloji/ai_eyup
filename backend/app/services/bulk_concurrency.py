@@ -4,7 +4,7 @@ Toplu SSH / WinRM / TCP kontrolleri için ortak paralellik ayarları.
 Ürün 3000–4000 sunucu ölçeğinde çalışacak şekilde varsayılanlar
 yüksektir; ortam değişkeniyle ince ayar yapılabilir.
 
-  BULK_SSH_WORKERS   — AI Ready, credential SSH test, OS refresh (varsayılan 50)
+  BULK_SSH_WORKERS   — AI Ready, credential SSH test, OS refresh (varsayılan 25)
   BULK_TCP_WORKERS   — health checker TCP/ping (varsayılan 100, daha hafif)
 """
 from __future__ import annotations
@@ -13,7 +13,8 @@ import os
 from typing import Optional
 
 
-DEFAULT_BULK_SSH_WORKERS = 50
+# Centrify/PAM ortamlarda 50 paralel oturum banner/EBADF üretebiliyor; 25 daha güvenli.
+DEFAULT_BULK_SSH_WORKERS = 25
 DEFAULT_BULK_TCP_WORKERS = 100
 _MAX_SSH = 128
 _MAX_TCP = 256

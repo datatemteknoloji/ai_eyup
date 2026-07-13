@@ -12,8 +12,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.services.bulk_concurrency import bulk_ssh_workers
+from app.services.ssh_credentials import resolve_ssh_creds
 from app.services.ssh_manager import SSHManager
-from app.core.encryption import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,8 @@ class BulkAIReadyService:
     def scan_and_mark_ai_ready(db: Session, credential_id: Optional[int] = None) -> Dict:
         """
         Tüm sunucuları tara ve SSH bağlantısı yapılabilenleri AI Ready yap.
-        SSH testleri BULK_SSH_WORKERS (varsayılan 50) paralel worker ile yapılır.
+        SSH testleri BULK_SSH_WORKERS (varsayılan 25) paralel worker ile yapılır.
+        Kimlik: sunucu connection_config → yoksa seçilen/global credential (SSH butonu ile aynı).
         """
         if credential_id:
             credential = db.query(GlobalCredential).filter(
@@ -50,17 +51,24 @@ class BulkAIReadyService:
             Server.ip_address != "",
         ).all()
 
-        plain_password = decrypt_secret(credential.password) if credential.password else None
-        plain_key = decrypt_secret(credential.private_key) if credential.private_key else None
-        plain_sudo = decrypt_secret(credential.sudo_password) if credential.sudo_password else None
-        username = credential.username
-        port = credential.port or 22
-
-        snapshots = [
-            {"id": s.id, "name": s.name, "ip": (s.ip_address or "").strip()}
-            for s in servers
-            if (s.ip_address or "").strip()
-        ]
+        snapshots = []
+        for s in servers:
+            ip = (s.ip_address or "").strip()
+            if not ip:
+                continue
+            creds = resolve_ssh_creds(s, global_cred=credential, ip=ip, name=s.name)
+            if not creds.get("has_secret"):
+                continue
+            snapshots.append({
+                "id": s.id,
+                "name": s.name,
+                "ip": ip,
+                "username": creds["username"],
+                "password": creds["password"],
+                "private_key": creds["private_key"],
+                "port": creds["port"],
+                "sudo_password": creds["sudo_password"],
+            })
 
         workers = bulk_ssh_workers()
         logger.info(
@@ -74,11 +82,11 @@ class BulkAIReadyService:
             try:
                 ssh = SSHManager(
                     host=snap["ip"],
-                    username=username,
-                    password=plain_password,
-                    private_key=plain_key,
-                    port=port,
-                    sudo_password=plain_sudo,
+                    username=snap["username"],
+                    password=snap["password"],
+                    private_key=snap["private_key"],
+                    port=snap["port"],
+                    sudo_password=snap["sudo_password"],
                 )
                 test_result = ssh.test_connection()
                 ssh.close()
@@ -91,13 +99,14 @@ class BulkAIReadyService:
                         "message": "SSH bağlantısı başarılı",
                         "details": test_result.get("details", {}),
                     }
+                detail = test_result.get("message") or ""
                 return {
                     "server_id": snap["id"],
                     "server_name": snap["name"],
                     "ip_address": snap["ip"],
                     "ok": False,
                     "message": "SSH bağlantısı başarısız",
-                    "details": test_result.get("message", ""),
+                    "details": detail,
                 }
             except Exception as e:
                 return {
@@ -130,11 +139,12 @@ class BulkAIReadyService:
             if row["ok"]:
                 if not server.connection_config:
                     server.connection_config = {}
+                # Başarılı olanlara global credential yaz (SSH butonu aynı kaynağı görsün)
                 server.connection_config.update({
-                    "username": username,
+                    "username": credential.username,
                     "password": credential.password,
                     "private_key": credential.private_key,
-                    "port": port,
+                    "port": credential.port or 22,
                     "sudo_password": credential.sudo_password,
                 })
                 flag_modified(server, "connection_config")

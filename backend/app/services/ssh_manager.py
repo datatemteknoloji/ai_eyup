@@ -26,45 +26,63 @@ class SSHManager:
         self.client = None
     
     def connect(self) -> bool:
-        """SSH bağlantısı kur"""
-        try:
-            self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-            # Private key varsa kullan
-            pkey = None
-            if self.private_key_str:
-                try:
-                    key_file = StringIO(self.private_key_str)
-                    pkey = paramiko.RSAKey.from_private_key(key_file)
-                except Exception:
+        """SSH bağlantısı kur (banner/EBADF için bir kez yeniden dener)."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                self.client = paramiko.SSHClient()
+                self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+                pkey = None
+                if self.private_key_str:
                     try:
                         key_file = StringIO(self.private_key_str)
-                        pkey = paramiko.Ed25519Key.from_private_key(key_file)
-                    except Exception as e:
-                        logger.warning(f"Private key parse failed: {e}")
-            
-            # Bağlan (önce key, olmazsa password — Centrify/PAM keyboard-interactive dahil)
-            # timeout=5 Centrify + Banner /etc/issue ortamında banner/auth yarışına düşüyordu
-            connected = connect_ssh(
-                self.client,
-                hostname=self.host,
-                username=self.username,
-                port=self.port,
-                password=self.password,
-                pkey=pkey,
-                timeout=20,
-            )
+                        pkey = paramiko.RSAKey.from_private_key(key_file)
+                    except Exception:
+                        try:
+                            key_file = StringIO(self.private_key_str)
+                            pkey = paramiko.Ed25519Key.from_private_key(key_file)
+                        except Exception as e:
+                            logger.warning(f"Private key parse failed: {e}")
 
-            if not connected:
-                raise Exception("Hem key hem de password ile bağlantı başarısız.")
-            
-            logger.info(f"✅ SSH bağlantısı başarılı: {self.username}@{self.host}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ SSH bağlantı hatası ({self.host}): {e}")
-            return False
+                connected = connect_ssh(
+                    self.client,
+                    hostname=self.host,
+                    username=self.username,
+                    port=self.port,
+                    password=self.password,
+                    pkey=pkey,
+                    timeout=20,
+                )
+
+                if not connected:
+                    raise Exception("SSH bağlantısı kurulamadı.")
+
+                logger.info(f"✅ SSH bağlantısı başarılı: {self.username}@{self.host}")
+                return True
+
+            except Exception as e:
+                last_exc = e
+                err = str(e).lower()
+                retryable = "banner" in err or "bad file descriptor" in err or "errno 9" in err
+                try:
+                    if self.client:
+                        self.client.close()
+                except Exception:
+                    pass
+                self.client = None
+                if attempt == 0 and retryable:
+                    logger.warning(
+                        "SSH geçici hata, yeniden deneniyor (%s): %s",
+                        self.host,
+                        e,
+                    )
+                    continue
+                logger.error(f"❌ SSH bağlantı hatası ({self.host}): {e}")
+                return False
+        if last_exc:
+            logger.error(f"❌ SSH bağlantı hatası ({self.host}): {last_exc}")
+        return False
     
     def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 15) -> Tuple[bool, str, str]:
         """

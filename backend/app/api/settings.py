@@ -263,10 +263,16 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
     """Tüm sunucularda SSH test et, ai_ready güncelle (paralel) ve SSH key dağıt."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from app.services.bulk_concurrency import bulk_ssh_workers
+    from app.services.ssh_credentials import resolve_ssh_creds
 
     servers = db.query(Server).all()
     if not servers:
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
+
+    global_cred = (
+        db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()  # noqa: E712
+        or db.query(GlobalCredential).first()
+    )
 
     successful = []
     failed = []
@@ -279,20 +285,23 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
             server.ai_ready = False
             skipped.append(server.name)
             continue
-        if not server.connection_config or not server.connection_config.get("username"):
+        creds = resolve_ssh_creds(server, global_cred=global_cred)
+        if not creds.get("username") or not creds.get("has_secret"):
             server.ai_ready = False
             skipped.append(server.name)
             continue
-        cfg = server.connection_config
+        cfg = server.connection_config or {}
         test_targets.append({
             "id": server.id,
             "name": server.name,
-            "ip": server.ip_address.strip(),
-            "username": cfg.get("username"),
-            "password": decrypt_secret(cfg.get("password")),
-            "private_key": decrypt_secret(cfg.get("private_key")),
-            "port": cfg.get("port", 22),
-            "enc_private_key": cfg.get("private_key"),
+            "ip": creds["host"],
+            "username": creds["username"],
+            "password": creds["password"],
+            "private_key": creds["private_key"],
+            "port": creds["port"],
+            "enc_private_key": cfg.get("private_key") or (
+                getattr(global_cred, "private_key", None) if global_cred else None
+            ),
         })
 
     workers = bulk_ssh_workers()
@@ -308,7 +317,8 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
                 private_key=snap["private_key"],
                 port=snap["port"] or 22,
             )
-            ssh.connect()
+            if not ssh.connect():
+                return {"id": snap["id"], "name": snap["name"], "ok": False, "key_ok": False}
             key_ok = False
             try:
                 if snap.get("enc_private_key"):
