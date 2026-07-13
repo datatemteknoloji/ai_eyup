@@ -44,7 +44,8 @@ class SSHManager:
                     except Exception as e:
                         logger.warning(f"Private key parse failed: {e}")
             
-            # Bağlan (önce key, olmazsa password — keyboard-interactive fallback dahil)
+            # Bağlan (önce key, olmazsa password — Centrify/PAM keyboard-interactive dahil)
+            # timeout=5 Centrify + Banner /etc/issue ortamında banner/auth yarışına düşüyordu
             connected = connect_ssh(
                 self.client,
                 hostname=self.host,
@@ -52,7 +53,7 @@ class SSHManager:
                 port=self.port,
                 password=self.password,
                 pkey=pkey,
-                timeout=5,
+                timeout=20,
             )
 
             if not connected:

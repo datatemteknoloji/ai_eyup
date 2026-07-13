@@ -57,7 +57,7 @@ class ServerConnector:
                         key_file.seek(0)
                         pkey = paramiko.ECDSAKey.from_private_key(key_file)
 
-            # Önce key, olmazsa password (keyboard-interactive fallback dahil)
+            # Önce key, olmazsa password (Centrify/PAM keyboard-interactive dahil)
             connected = connect_ssh(
                 ssh,
                 hostname=self.ip_address,
@@ -65,7 +65,7 @@ class ServerConnector:
                 port=self.port,
                 password=self._password,
                 pkey=pkey,
-                timeout=10,
+                timeout=20,
             )
                 
             if not connected:
