@@ -41,16 +41,29 @@ git clone <repo-url> ainew
 cd ainew/dist/ainew-<versiyon>-linux-amd64
 ```
 
-### C) GitHub "Download ZIP" (tarayıcıdan indirip elle taşıma)
+### C) GitHub Releases (önerilen tarayıcı indirmesi — dosya adında sürüm vardır)
 
-GitHub reposunun "Code → Download ZIP" bağlantısından indirip, ZIP'i air-gapped sunucuya
-elle (USB/SCP/dahili paylaşım) taşıyıp açın, sonra `dist/ainew-<versiyon>-linux-amd64/`
-klasörüne girin.
+**Code → Download ZIP kullanmayın** (`ai_eyup-main.zip` sürüm içermez).
+
+1. Repo → **Releases** → ilgili sürüm (ör. **ainew 1.0.3**)
+2. Asset: **`ainew-<versiyon>-linux-amd64.tar.gz`** indirin
+3. Air-gapped sunucuya taşıyıp açın:
+
+```bash
+tar xzf ainew-<versiyon>-linux-amd64.tar.gz
+cd ainew-<versiyon>-linux-amd64
+```
+
+### D) GitHub kaynak ZIP (tag üzerinden; adında sürüm vardır)
+
+Tag sayfasından veya Release içindeki “Source code (zip)” ile:
+`ai_eyup-v<versiyon>.zip` → açınca `dist/ainew-<versiyon>-linux-amd64/` klasörüne girin.
 
 > **Not:** `images/*.tar.gz` dosyalarından 90MB'ı aşanlar (GitHub'ın Git LFS'siz 100MB
 > sınırı nedeniyle) `.part01`, `.part02`, ... şeklinde parçalara bölünmüş olarak depoda
 > tutulur. `install-rhel.sh` bunları kurulumdan önce otomatik olarak birleştirir — elle bir
-> işlem yapmanıza gerek yoktur. B ve C yöntemleri Git LFS **gerektirmez**.
+> işlem yapmanıza gerek yoktur. B/D yöntemleri Git LFS **gerektirmez**. Release asset (C)
+> tek `.tar.gz` dosyasıdır (parçalar paket içinde birleştirilmiş halde gelir).
 
 ## 3. Kurulum
 

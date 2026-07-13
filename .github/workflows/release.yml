@@ -1,0 +1,73 @@
+name: Publish Release
+
+# Tag push (v1.0.3 vb.) → GitHub Release oluşturur.
+# İndirme dosya adı: ainew-<versiyon>-linux-amd64.tar.gz
+# (Code → Download ZIP "ai_eyup-main" diye gelir; sürüm bu Release asset'inde.)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build versioned package archive
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="ainew-${VERSION}-linux-amd64"
+          if [[ ! -d "dist/${NAME}" ]]; then
+            echo "dist/${NAME} bulunamadı — önce build-distribution.sh ile paketi commit edin."
+            ls -la dist/ || true
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          # Release indirme adı = uygulama adı + sürüm
+          tar -C dist -czf "${NAME}.tar.gz" "${NAME}"
+          ls -lh "${NAME}.tar.gz"
+          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ainew ${{ steps.pkg.outputs.version }}
+          generate_release_notes: true
+          body: |
+            ## ainew ${{ steps.pkg.outputs.version }}
+
+            Offline kurulum / güncelleme paketi (Docker imajları dahil).
+
+            ### İndirme
+            Aşağıdaki asset'i indirin (dosya adı sürüm içerir):
+            - **`${{ steps.pkg.outputs.name }}.tar.gz`**
+
+            ### Güncelleme (mevcut kurulum)
+            ```bash
+            tar xzf ${{ steps.pkg.outputs.name }}.tar.gz
+            cd ${{ steps.pkg.outputs.name }}
+            sudo ./update-rhel.sh --install-dir /opt/ainew
+            ```
+
+            ### İlk kurulum
+            ```bash
+            tar xzf ${{ steps.pkg.outputs.name }}.tar.gz
+            cd ${{ steps.pkg.outputs.name }}
+            sudo ./install-rhel.sh
+            ```
+          files: |
+            ${{ steps.pkg.outputs.name }}.tar.gz
+            ${{ steps.pkg.outputs.name }}.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

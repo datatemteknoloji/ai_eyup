@@ -2,9 +2,13 @@
 
 **ainew** is a self-hosted platform for managing Linux servers and VMware hypervisors at scale. It combines SSH-based automation, real-time monitoring, and local AI (Ollama) to give operations teams a single control plane — without sending data to external cloud services.
 
+**Customer download (version in the filename):** [Releases](https://github.com/datatemteknoloji/ai_eyup/releases) → `ainew-<version>-linux-amd64.tar.gz`  
+Do not use **Code → Download ZIP** (`ai_eyup-main.zip` has no version in the name).
+
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/frontend-React%2FTypeScript-61DAFB)](https://react.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](#)
+[![Release](https://img.shields.io/github/v/release/datatemteknoloji/ai_eyup)](https://github.com/datatemteknoloji/ai_eyup/releases)
 
 ---
 

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.2",
+    version="1.0.3",
     description="Server Management System API"
 )
 
@@ -320,7 +320,7 @@ async def shutdown_tasks():
 
 @app.get("/")
 async def root():
-    return {"message": "Server Management API", "version": "1.0.2"}
+    return {"message": "Server Management API", "version": "1.0.3"}
 
 # ─── Local repository static file serving ─────────────────────────────────────
 try:
