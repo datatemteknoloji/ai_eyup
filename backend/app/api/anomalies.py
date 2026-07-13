@@ -218,7 +218,7 @@ async def get_anomaly_summary(db: Session = Depends(get_db)):
 async def get_metric_history(
     server_id: int,
     metric_name: str = Query("cpu_usage_percent"),
-    hours: int = Query(24, ge=1, le=168),
+    hours: int = Query(24, ge=1, le=720),
     db: Session = Depends(get_db)
 ):
     """Bir sunucunun belirli metriğinin tarihsel verilerini dondur."""

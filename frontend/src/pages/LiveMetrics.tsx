@@ -12,13 +12,21 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-/** Zaman aralığı seçenekleri: real-time (15dk) ile 8 saate kadar */
+/**
+ * Zaman aralığı seçenekleri: real-time (15dk) ile 30 güne kadar.
+ * Prometheus (canlı metrikler) ve TimescaleDB (metric_data) artık 30 gün
+ * saklıyor; step değerleri, geniş aralıklarda grafik nokta sayısını makul
+ * seviyede (~150-300 nokta) tutacak şekilde kademeli olarak büyütülüyor.
+ */
 const TIME_RANGES = [
   { label: 'Son 15 dk', value: 900, step: 30 },
   { label: 'Son 30 dk', value: 1800, step: 30 },
   { label: 'Son 1 saat', value: 3600, step: 60 },
   { label: 'Son 2 saat', value: 7200, step: 120 },
   { label: 'Son 8 saat', value: 28800, step: 300 },
+  { label: 'Son 24 saat', value: 86400, step: 600 },
+  { label: 'Son 7 gün', value: 604800, step: 3600 },
+  { label: 'Son 30 gün', value: 2592000, step: 14400 },
 ] as const
 
 type PromResult = {

@@ -37,6 +37,28 @@ from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
+# ── Sanallaştırma AI kimliği ────────────────────────────────────────────────
+# Linux (chat.py) ve Windows (windows_chat.py) sohbetlerindeki kıdemli admin
+# personasıyla aynı derinlikte — bu modül de kendi alanının (sanallaştırma)
+# uzmanı gibi düşünmeli/cevap vermeli, jenerik/kısa bir "VMware/KVM uzmanı"
+# tanımından ibaret kalmamalı.
+_VIRTUALIZATION_PERSONA = (
+    "Sen AINE (AI Infrastructure Engine) adında, 15+ yıllık deneyime sahip kıdemli bir "
+    "Sanallaştırma Yöneticisisin (Senior Virtualization Administrator).\n\n"
+    "UZMANLIK ALANLARIN:\n"
+    "- VMware vSphere/ESXi (vCenter, DRS, HA, vMotion, Storage vMotion, vSAN)\n"
+    "- KVM/oVirt/oLVM (cluster, storage domain, live migration, snapshot yönetimi)\n"
+    "- Proxmox VE (cluster, ZFS/Ceph storage, LXC/QEMU)\n"
+    "- Microsoft Hyper-V (Failover Cluster, Live Migration, VHDX yönetimi)\n"
+    "- Kapasite planlama: CPU/RAM overcommit oranları, datastore/storage doluluk analizi, "
+    "kaynak darboğazı tespiti\n"
+    "- VM yaşam döngüsü: provisioning, template/klonlama, kaynak resize, snapshot/backup stratejisi\n"
+    "- Ağ sanallaştırma: vSwitch/vDS, VLAN, port group tasarımı\n"
+    "- Lisanslama ve sürüm uyumluluğu, guest OS/Tools durumu, HA/DRS risk değerlendirmesi\n\n"
+    "Her soruya kıdemli bir sanallaştırma yöneticisi gibi yaklaş: sadece veriyi listeleme, "
+    "kapasite riskini, olası kök nedeni ve somut aksiyon önerisini de belirt."
+)
+
 # ── Intent keywords ───────────────────────────────────────────────────────────
 INTENT_PATTERNS = {
     "count_hosts":     r"kaç\s+(esx|host|sunucu)|how many.*(esx|host)",
@@ -1443,7 +1465,9 @@ def answer_report_question(
     active_model = model or get_active_model(db)
     title = REPORT_TITLES.get(report_type, report_type)
 
-    prompt = f"""Sen bir VMware/KVM altyapı uzmanısın. Aşağıdaki rapor verisini analiz et ve Türkçe, pratik bir özet yaz.
+    prompt = f"""{_VIRTUALIZATION_PERSONA}
+
+Aşağıdaki rapor verisini bu uzmanlığınla analiz et ve Türkçe, pratik bir özet yaz.
 
 RAPOR: {title}
 {md_preview[:3000]}
@@ -1509,7 +1533,10 @@ def answer_hypervisor_question(
 
     t0 = datetime.utcnow()
 
-    cached = qa_cache.get_cached_answer(question, model)
+    # Takip sorularinda (conversation_history varsa) cache'e bakilmiyor — aksi halde
+    # "peki cpu?" gibi baglama bagli bir soru, izole/eski bir soruyla metin benzerligi
+    # yuzunden yanlislikla eslesip bu oturumun gecmisini yok sayan bir cevap donebilir.
+    cached = qa_cache.get_cached_answer(question, model) if not conversation_history else None
     if cached is not None:
         hits = cached.pop("_cache_hits", None)
         cached["cached"] = True
@@ -1569,7 +1596,7 @@ def _compute_hypervisor_answer(
 
     # System prompt
     system_prompt = (
-        "Sen bir VMware/KVM altyapı uzmanısın. "
+        _VIRTUALIZATION_PERSONA + "\n\n"
         "Sana sağlanan gerçek veri üzerinden Türkçe, net ve pratik yanıtlar ver. "
         "Sayısal değerleri tablolar veya liste halinde sun. "
         "Yorum yaparken kapasite uyarıları, riskler ve önerileri belirt. "

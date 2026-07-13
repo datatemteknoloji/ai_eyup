@@ -21,6 +21,8 @@ from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.workflow_run import WorkflowRun
 from app.models.module import Module, UserModule
+from app.models.learned_fact import LearnedFact
+from app.models.discovered_application import DiscoveredApplication
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatQACache",
@@ -36,4 +38,6 @@ __all__ = [
     "AgentAction",
     "User", "AuditLog", "WorkflowRun",
     "Module", "UserModule",
+    "LearnedFact",
+    "DiscoveredApplication",
 ]

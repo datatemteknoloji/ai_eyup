@@ -658,6 +658,16 @@ class BackgroundTaskManager:
                     if secaudit_stats.get("updated"):
                         logger.info(f"Auto-onboarding: {secaudit_stats['updated']} Linux sunucunun güvenlik denetimi toplandı")
 
+                    # Uygulama/servis keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) —
+                    # sunucu bazında en fazla 12 saatte bir taranır (app_discovery.RESCAN_INTERVAL).
+                    from app.services.app_discovery import discover_applications_all_servers
+                    appdisc_stats = await loop.run_in_executor(None, discover_applications_all_servers, db)
+                    if appdisc_stats.get("scanned"):
+                        logger.info(
+                            f"Auto-onboarding: {appdisc_stats['scanned']} sunucuda uygulama taraması yapıldı "
+                            f"({appdisc_stats.get('apps_found', 0)} uygulama tespit edildi)"
+                        )
+
                     from app.services import qa_cache
                     qa_cache.invalidate_all()
                 except Exception as e:

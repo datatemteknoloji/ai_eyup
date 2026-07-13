@@ -3,6 +3,7 @@ Linux sunuculardan SSH ile gercek sistem bilgilerini toplar.
 AI Chat icin zengin context olusturur.
 """
 import logging
+import re
 from typing import Dict, Any, List
 from app.services.ssh_manager import SSHManager
 from app.core.encryption import decrypt_secret
@@ -150,9 +151,21 @@ COMMAND_GROUPS = {
     ],
     # ── PAKETLER ─────────────────────────────────────────────────────────────
     "packages": [
+        # "en son ne zaman güncelleme yapıldı" gibi sorulara DOĞRUDAN cevap: dnf/yum
+        # transaction history en son Update/Install/Erase işleminin tarihini gösterir —
+        # recent_packages (rpm -qa --last) tek paket bazlı olduğu için bazen yanıltıcı/
+        # eksik olabiliyordu, bu komut tüm toplu güncelleme islemlerini tarihli listeler.
+        # NOT: "dnf history" root olmadan "readonly database" hatasi verir — bu key
+        # _SUDO_PREFERRED_KEYS'te oldugu icin sudo_password varsa otomatik sudo ile calisir.
+        ("dnf history 2>/dev/null | head -8 || yum history 2>/dev/null | head -8 || "
+         "(grep -h ' upgrade ' /var/log/apt/history.log* 2>/dev/null | tail -8) || "
+         "echo 'update history not available'", "update_history"),
         ("rpm -qa --last 2>/dev/null | head -15", "recent_packages"),
         ("rpm -qa 2>/dev/null | wc -l", "rpm_count"),
-        ("yum check-update 2>/dev/null | tail -5 || dnf check-update 2>/dev/null | tail -5 || apt list --upgradable 2>/dev/null | tail -5", "pending_updates"),
+        # timeout 10: air-gapped/repo'ya erisimi olmayan sunucularda check-update repo
+        # metadata yenilemeye calisip uzun sure asilabiliyor — bkz. agent/tools.py'deki
+        # ayni gerekce ile eklenen _package_status_cmd timeout'u.
+        ("timeout 10 yum check-update 2>/dev/null | tail -5 || timeout 10 dnf check-update 2>/dev/null | tail -5 || timeout 10 apt list --upgradable 2>/dev/null | tail -5", "pending_updates"),
         ("rpm -qa 2>/dev/null | grep -iE 'kernel|java|python|nginx|apache|mysql|postgres|redis|docker|openssl' | sort | head -20 || dpkg -l 2>/dev/null | grep -iE 'kernel|java|python|nginx|apache|mysql|postgres|redis|docker|openssl' | head -20", "key_packages"),
         ("dpkg -l 2>/dev/null | tail -15 || true", "deb_packages"),
         ("pip3 list 2>/dev/null | head -15 || pip list 2>/dev/null | head -15 || true", "python_packages"),
@@ -716,8 +729,14 @@ KEYWORD_TO_GROUPS: dict = {
     "ilo": ["hardware"], "imm": ["hardware"],
 
     # NTP / ZAMAN
+    # NOT: bare "zaman" kelimesi KASITLI OLARAK burada YOK — "ne zaman", "hangi zaman"
+    # gibi Türkçe'de son derece yaygın "when" ifadeleri barındırıyor ve NTP/saat
+    # senkronizasyonuyla hiçbir ilgisi olmayan sorularda (ör. "en son update ne zaman
+    # yapılmış?") yanlışlıkla ntp+os grubunu tetikleyip, focused-mode mantığı yüzünden
+    # asıl ilgili grubun (packages) SESSİZCE düşmesine yol açıyordu. Sadece daha
+    # spesifik "zaman senkron(izasyon)" / "saat senkron" ifadeleri NTP'yi tetikler.
     "ntp": ["ntp"], "chrony": ["ntp"], "chronyc": ["ntp"], "ntpq": ["ntp"],
-    "zaman": ["ntp", "os"], "time sync": ["ntp"], "senkron": ["ntp"],
+    "zaman senkron": ["ntp"], "time sync": ["ntp"], "senkron": ["ntp"],
     "timedatectl": ["ntp", "os"], "saat senkron": ["ntp"],
     "drift": ["ntp"], "offset": ["ntp"], "ntp server": ["ntp"],
 
@@ -810,9 +829,15 @@ EXTRA_GROUPS_KEYWORDS = {
 # cpu/memory/disk/uptime/services'i beraberinde sürüklememesi gerekir.
 _FOCUSED_GROUPS = {
     "network", "hardware", "containers", "web", "database", "ntp", "ssl",
-    "cron", "users", "apps", "limits", "filesystem", "security",
+    "cron", "users", "apps", "limits", "filesystem", "security", "packages",
 }
 _MINIMAL_BASE = {"kernel", "os"}
+
+# "dnf history" gibi bazı komutlar normal kullanıcıyla exit=0 dönüp anlamsız/eksik çıktı
+# (ör. "readonly database") verebiliyor — bu key'ler icin sudo_password mevcutsa önce
+# sudo ile denenir (veya normal deneme "readonly database"/"not root" ile başarısız
+# görünürse sudo ile tekrar denenir). Bkz. collect_server_info.
+_SUDO_PREFERRED_KEYS = {"update_history"}
 
 # KEYWORD_TO_GROUPS içindeki, tek başına mesajda belirli bir konu (extra_groups) varken
 # devre dışı bırakılması gereken çok genel/geniş kapsamlı kelimeler — bkz. detect_needed_groups.
@@ -826,6 +851,46 @@ _GENERAL_TRIGGER_WORDS = {
     "detayli", "detaylı", "full report", "neler var",
     "kontrol et", "incele", "check all",
 }
+
+
+# Bu kelimeler tek başlarına ("nasılsın?", "genel olarak iyi") sıradan sohbette de
+# sıkça geçtiği için has_recognized_topic()'te BAŞLI BAŞINA bir konu saymaz — sadece
+# detect_needed_groups() içinde zaten belirli bir konu varsa o konuyu genişletirler
+# (bkz. _GENERIC_BROADENING_WORDS / is_explicit_general orada da aynı mantıkla ele alınıyor).
+_TOPIC_TOO_GENERIC_STANDALONE = {
+    "durum", "status", "saglik", "sağlık", "nasil", "nasıl", "genel",
+    "ozet", "özet", "hakkinda", "hakkında", "rapor", "report", "summary",
+}
+
+
+def has_recognized_topic(message: str) -> bool:
+    """
+    Mesaj, KEYWORD_TO_GROUPS veya EXTRA_GROUPS_KEYWORDS içindeki herhangi bir
+    konuyla eşleşiyor mu? chat.py/unified_chat.py'deki SSH tetikleme keyword
+    listeleri (SSH_ONLY_KEYWORDS/SSH_SYSINFO_KEYWORDS/vb.) bu dosyadaki çok daha
+    kapsamlı sözlüklerle senkron değildi — örn. "vm.swappiness", "sysctl",
+    "dirty_ratio" gibi kernel tuning terimleri detect_needed_groups() tarafında
+    doğru gruba (kernel/memory/performance_deep) eşleniyordu ama chat.py hiçbir
+    zaman needs_ssh=True yapmadığı için _collect_ssh() hiç çalışmıyor, SSH
+    context boş kalıyor ve LLM context'siz "SSH bağlantısı sağlanamadı" gibi
+    bir cevap üretiyordu (context YOK'tu, SSH GERÇEKTEN başarısız değildi).
+    Bu fonksiyon, chat.py'nin needs_ssh hesaplamasına eklenerek bu sınıftaki
+    sorunları (yeni bir terim eklendiğinde iki listeyi senkron tutma yükü
+    olmadan) kalıcı olarak kapatır.
+    """
+    import unicodedata
+    msg = unicodedata.normalize('NFKD', message.lower())
+    msg = ''.join(c for c in msg if not unicodedata.combining(c))
+    if any(kw in msg for kw in KEYWORD_TO_GROUPS if kw not in _TOPIC_TOO_GENERIC_STANDALONE):
+        return True
+    for keywords in EXTRA_GROUPS_KEYWORDS.values():
+        if any(kw in msg for kw in keywords):
+            return True
+    # "vm.min_free_kbytes" gibi listede olmayan ama sysctl formatına uyan HERHANGİ bir
+    # parametre adı geçiyorsa da bir konu tanınmış sayılır — bkz. extract_sysctl_params().
+    if _SYSCTL_PARAM_RE.search(message.lower()):
+        return True
+    return False
 
 
 def detect_needed_groups(message: str) -> List[str]:
@@ -901,7 +966,43 @@ def detect_needed_groups(message: str) -> List[str]:
     return list(groups)
 
 
-def collect_server_info(server, groups: List[str], global_cred=None) -> Dict[str, Any]:
+# Mesajda geçen sysctl parametre adlarını yakalar — "vm.min_free_kbytes", "net.ipv4.tcp_fin_timeout"
+# gibi HERHANGİ bir sysctl anahtarını (sadece sysctl_important'taki 4 sabit parametreyi değil)
+# tanıyabilmek için. Sadece bilinen sysctl kök isim uzaylarıyla (vm/net/kernel/fs/...) başlayanları
+# eşleştiriyoruz ki IP adresi ("192.168.1.1"), sürüm numarası ("8.0.1") veya dosya adı
+# ("config.yaml") gibi noktalı ama sysctl OLMAYAN metinler yanlışlıkla eşleşmesin.
+_SYSCTL_PARAM_RE = re.compile(
+    r'\b(?:vm|net|kernel|fs|dev|abi|debug|crypto|user)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*\b'
+)
+# "tüm/bütün sysctl parametrelerini getir" gibi TAM LİSTE isteklerini yakalar (spesifik bir
+# parametre adı vermeden). Bu durumda sysctl -a ile toplu bir döküm alınır (çıktı sınırlanır).
+_SYSCTL_ALL_RE = re.compile(r'(tum|butun|hepsi|all)\s+(sysctl|kernel\s+parametre)', re.IGNORECASE)
+
+
+def extract_sysctl_params(message: str) -> List[str]:
+    """Mesajda geçen spesifik sysctl parametre adlarını (varsa) döner."""
+    if not message:
+        return []
+    found = [m.group(0) for m in _SYSCTL_PARAM_RE.finditer(message.lower())]
+    # Sıra korunarak tekilleştir, en fazla 10 parametre (aşırı uzun komut riskini sınırlar)
+    seen = []
+    for p in found:
+        if p not in seen:
+            seen.append(p)
+    return seen[:10]
+
+
+def wants_full_sysctl_dump(message: str) -> bool:
+    """Mesaj, spesifik parametre adı vermeden TÜM sysctl çıktısını istiyor mu?"""
+    if not message:
+        return False
+    import unicodedata
+    msg = unicodedata.normalize('NFKD', message.lower())
+    msg = ''.join(c for c in msg if not unicodedata.combining(c))
+    return bool(_SYSCTL_ALL_RE.search(msg))
+
+
+def collect_server_info(server, groups: List[str], global_cred=None, message: str = None) -> Dict[str, Any]:
     conn = server.connection_config or {}
     username = conn.get("username") or (global_cred.username if global_cred else None)
     # DB'de şifre/anahtar alanları Fernet ile şifreli tutuluyor (bkz. app.core.encryption) —
@@ -937,12 +1038,45 @@ def collect_server_info(server, groups: List[str], global_cred=None) -> Dict[str
                 try:
                     # Deep performance komutları için biraz daha uzun, normal komutlar kısa
                     timeout = 45 if group_name == "performance_deep" else 15
-                    success, stdout, stderr = ssh.execute_command(cmd, cmd_timeout=timeout)
+                    use_sudo = key in _SUDO_PREFERRED_KEYS and bool(sudo_password)
+                    success, stdout, stderr = ssh.execute_command(cmd, use_sudo=use_sudo, cmd_timeout=timeout)
                     output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
+                    # "dnf history" gibi bazı komutlar root olmadan calisip exit=0 dondurur
+                    # ama anlamli veri vermez ("readonly database" hatasi) — sudo ile tekrar dene.
+                    if (not use_sudo and key in _SUDO_PREFERRED_KEYS and sudo_password
+                            and any(p in output.lower() for p in ("readonly database", "not root", "permission denied"))):
+                        success, stdout, stderr = ssh.execute_command(cmd, use_sudo=True, cmd_timeout=timeout)
+                        output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
                     if output:
                         results[key] = output
                 except Exception as e:
                     logger.debug(f"Cmd failed {cmd}: {e}")
+
+        # Mesajda "vm.min_free_kbytes" gibi spesifik bir sysctl parametresi geçiyorsa —
+        # sysctl_important sabit listesinde (vm.swappiness/dirty_ratio/ip_forward/tcp_syncookies)
+        # olmasa bile — bunu doğrudan hedefleyen ek bir sysctl komutu çalıştır. Böylece AI
+        # BİLDİĞİ HERHANGİ bir sysctl parametresini, sabit koda gerek kalmadan SSH ile
+        # doğrudan sorgulayabilir.
+        try:
+            requested_params = extract_sysctl_params(message) if message else []
+            if requested_params:
+                cmd = "sysctl " + " ".join(requested_params) + " 2>/dev/null"
+                success, stdout, stderr = ssh.execute_command(cmd, cmd_timeout=15)
+                output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
+                if output:
+                    results["sysctl_requested"] = output
+            elif message and wants_full_sysctl_dump(message):
+                # Spesifik parametre belirtilmeden "tüm sysctl parametreleri" istendiyse —
+                # çıktı çok büyük olabileceğinden (1000+ satır) LLM context'ini şişirmemek
+                # için ilk 200 satırla sınırlanır.
+                success, stdout, stderr = ssh.execute_command(
+                    "sysctl -a 2>/dev/null | head -200", cmd_timeout=20
+                )
+                output = stdout.strip() if success and stdout.strip() else ""
+                if output:
+                    results["sysctl_all_dump"] = output + "\n... (çıktı ilk 200 satırla sınırlandı)"
+        except Exception as e:
+            logger.debug(f"Dynamic sysctl fetch failed: {e}")
     finally:
         ssh.close()
 
@@ -1014,6 +1148,7 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
         # Kernel / OS
         "kernel_version": "Kernel", "kernel_full": "Kernel (full)", "kernel_proc_version": "Kernel (/proc)",
         "sysctl_kernel": "sysctl (kernel)", "sysctl_important": "sysctl (önemli)",
+        "sysctl_requested": "sysctl (sorulan parametre)", "sysctl_all_dump": "sysctl -a (tüm parametreler, kısmi)",
         "dmesg_errors": "dmesg Hatalar", "kernel_modules": "Kernel Modülleri",
         "os_info": "OS", "os_hostnamectl": "OS (hostnamectl)",
         "hostname_short": "Hostname", "hostname_fqdn": "FQDN",
@@ -1070,6 +1205,7 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
         "system_users": "Sistem Kullanıcıları", "system_groups": "Gruplar",
         "ssh_dirs": "SSH Dizinleri", "audit_rules": "Audit Kuralları", "auth_events": "Auth Olayları",
         # Packages
+        "update_history": "Güncelleme Geçmişi (dnf/yum history — en son yapılan güncelleme tarihleri)",
         "recent_packages": "Son Kurulan Paketler", "rpm_count": "Paket Sayısı",
         "pending_updates": "Bekleyen Güncellemeler", "key_packages": "Anahtar Paketler",
         "deb_packages": "Debian Paketleri", "python_packages": "Python Paketleri",

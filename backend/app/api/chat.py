@@ -251,6 +251,7 @@ async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
             "session_id": m.session_id,
             "role": m.role,
             "content": m.content,
+            "meta": m.meta or None,
             "created_at": m.created_at.isoformat() if m.created_at else "",
         }
         for m in messages
@@ -321,6 +322,13 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+        # Konusma gecmisi — bu session'da onceki mesaj var mi? (takip sorusu mu?)
+        # Su anki mesaj henuz DB'ye kaydedilmeden once cekiliyor, bu yuzden hariç
+        # tutma gerekmiyor. Bkz. app/services/chat_history.py docstring'i.
+        from app.services.chat_history import fetch_recent_history, format_history_block
+        _prior_history = fetch_recent_history(db, session_id, limit=8)
+        history_block = format_history_block(_prior_history)
 
         # Seçili sunucuları bul
         selected_servers = []
@@ -440,7 +448,14 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         msg_lower_ctx = message.lower()
         needs_prometheus = any(k in msg_lower_ctx for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
         SERVER_TRIGGER_CTX = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS + APP_KEYWORDS
-        needs_ssh_ctx = any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) and not request.skip_server_context
+        # Yukarıdaki elle yazılmış listeler dışında kalan ama linux_info_collector'ın
+        # KEYWORD_TO_GROUPS/EXTRA_GROUPS_KEYWORDS'ünde tanımlı bir konu varsa (örn.
+        # "vm.swappiness", "sysctl", "dirty_ratio" gibi kernel tuning terimleri) yine
+        # SSH context topla — bkz. has_recognized_topic() docstring'i.
+        from app.services.linux_info_collector import has_recognized_topic as _has_topic_ctx
+        needs_ssh_ctx = (
+            any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) or _has_topic_ctx(message)
+        ) and not request.skip_server_context
         ssh_timeout_ctx = 40.0 if any(k in msg_lower_ctx for k in DEEP_PERF_KEYWORDS) else 20.0
 
         # Kullanıcı sunucu seçmemişse yalnızca sunucu/altyapı niyeti varsa tüm AI-ready sunucuları ekle.
@@ -504,7 +519,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                     tasks = [
                         loop.run_in_executor(
                             None,
-                            lambda s=srv, g=groups, gc=global_cred: collect_server_info(s, g, gc),
+                            lambda s=srv, g=groups, gc=global_cred, m=message: collect_server_info(s, g, gc, m),
                         )
                         for srv in selected_servers
                     ]
@@ -515,7 +530,13 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                         srv = selected_servers[i]
                         if task in done:
                             try:
-                                all_server_contexts.append(build_server_context(srv, task.result()))
+                                info_result = task.result()
+                                all_server_contexts.append(build_server_context(srv, info_result))
+                                try:
+                                    from app.services.fact_learning import extract_and_store_facts
+                                    extract_and_store_facts(db, srv, info_result, platform="linux")
+                                except Exception:
+                                    pass
                             except Exception as e_srv:
                                 logger.warning("SSH failed for %s: %s", srv.name, e_srv)
                                 all_server_contexts.append(build_server_context(srv, {"error": str(e_srv)}))
@@ -548,6 +569,43 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
             if prometheus_context:
                 context_parts.append(prometheus_context.strip())
+
+            # Onceden ogrenilmis yapisal gercekler (bkz. fact_learning.py) — canli
+            # SSH verisi eksik/zaman asimina ugramis alanlar icin dusmeyen bir
+            # fallback ve tekrar SSH'a gitmeden hizli cevap saglar.
+            if selected_servers:
+                try:
+                    from app.services.fact_learning import get_learned_facts_block
+                    _facts_blocks = []
+                    for _s in selected_servers[:5]:
+                        _fb = get_learned_facts_block(db, _s)
+                        if _fb:
+                            _facts_blocks.append(f"[{_s.name}]\n{_fb}")
+                    if _facts_blocks:
+                        context_parts.append(
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis SSH taramalarindan — "
+                            "canli BAGLAM ile celisirse canli veriyi esas al, kullanirken 'onceden "
+                            "ogrenilmis (X once dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    from app.services.app_discovery import get_discovered_apps_block
+                    _apps_blocks = []
+                    for _s in selected_servers[:5]:
+                        _ab = get_discovered_apps_block(db, _s)
+                        if _ab:
+                            _apps_blocks.append(f"[{_s.name}]\n{_ab}")
+                    if _apps_blocks:
+                        context_parts.append(
+                            "TESPIT EDILEN UYGULAMALAR (otomatik tarama ile bulunan calisan servisler — "
+                            "Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.; periyodik tarandigi icin en "
+                            "guncel BAGLAM'daki canli veriyle celisirse canli veriyi esas al):\n"
+                            + "\n\n".join(_apps_blocks)
+                        )
+                except Exception:
+                    pass
 
             # RAG: Runbook, geçmiş incident/event ve metrik açıklamaları (use_rag=True ise)
             if request.use_rag is not False:
@@ -586,6 +644,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 ssh_server_count=len(all_server_contexts) if ssh_context else 0,
                 prometheus_available=bool(prometheus_context),
                 selected_server_names=[s.name for s in selected_servers],
+                history_block=history_block,
             )
 
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -883,6 +942,7 @@ def _build_prompt(
     ssh_server_count,
     prometheus_available,
     selected_server_names,
+    history_block="",
 ):
     NL = "\n"
     parts = []
@@ -940,11 +1000,29 @@ def _build_prompt(
         "",
         "ONEMLI: Asla 'SSH yapamam' veya 'dogrudan baglanamam' deme.",
         "Sistem SSH yapabiliyor. Eger veri gelmemisse toplanmamis demektir, toplanamaz degil.",
+        "",
+        "ONEMLI: Kullaniciya ASLA 'bunu su komutla siz kontrol edebilirsiniz' / 'asagidaki",
+        "yontemleri kullanarak bulabilirsiniz' seklinde bir KILAVUZ/MANUEL TALIMAT LISTESI verme.",
+        "Sistem SSH ile komutu ZATEN calistirabiliyor — BAGLAM'da ilgili veri yoksa bu SENIN",
+        "o komutu calistirmadigin/calistiramadigin anlamina gelir, kullanicinin gitmesi degil.",
+        "Bu durumda sadece 'Bu bilgi mevcut taramada toplanmadi.' de; kullaniciyi kendi",
+        "basina komut calistirmaya yonlendirme.",
     ])
 
     rules = NL.join([
         "YANIT KURALLARI:",
+        "0. ONCEKI KONUSMA bolumu varsa, bu bir SOHBETIN PARCASIDIR — takip sorularini",
+        "   ('peki cpu?', 'o sunucuda ise nasil?', 'ayni sunucu icin...' gibi) ONCEKI KONUSMA'ya",
+        "   bakarak hangi sunucu/konudan bahsedildigini cikararak yanitla. Ancak GUNCEL veri",
+        "   icin her zaman asagidaki BAGLAM bolumunu esas al — ONCEKI KONUSMA'daki eski",
+        "   degerleri/verileri GUNCEL degermis gibi tekrar etme, sadece baglam/niyet icin kullan.",
         "1. BAGLAM bolumundeki GERCEK veriyi once kullan — kendi bilginle asla tahmin yapma",
+        "1b. ONCEDEN OGRENILMIS BILGILER bolumunu SADECE canli SSH verisinde o bilgi YOKSA kullan",
+        "    ve kullanirken acikca belirt: '(onceden ogrenilmis, [X] once dogrulandi)'. Canli veri",
+        "    varsa ve celisiyorsa HER ZAMAN canli veriyi esas al.",
+        "1c. 'Bu sunucuda hangi uygulamalar/veritabanlari/servisler calisiyor' gibi sorularda TESPIT",
+        "    EDILEN UYGULAMALAR bolumunu kullan (otomatik periyodik tarama sonucu) — bu bolum bos ise",
+        "    'Bu sunucu icin uygulama taramasi henuz yapilmadi veya hicbir bilinen servis bulunamadi.' de.",
         "2. Baglam bos veya yetersizse: 'Bu sunucu icin SSH verisi alinamadi (baglanamadi veya zaman asimi).' de.",
         "   ASLA 'tekrar deneniyor' veya 'bekleniyor' deme — bu sistem otomatik retry yapmaz.",
         "3. ASLA 'SSH yapamam', 'dogrudan baglanamam', 'veri tabanindan bakiyorum' yazma.",
@@ -973,6 +1051,8 @@ def _build_prompt(
         prompt_parts.append("TOPLAMA DURUMU:\n" + collection_summary)
     prompt_parts.append(rules)
     prompt_parts.append("BAGLAM:\n" + context_str)
+    if history_block:
+        prompt_parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     prompt_parts.append("KULLANICI SORUSU: " + message)
     prompt_parts.append("YANIT (Markdown, Turkce):")
 
@@ -1018,9 +1098,18 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
+            # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
+            from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
+            _is_followup = has_prior_messages(db, session_id)
+            history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
+
             # ── 1. Cache kontrolü ─────────────────────────────────────────
+            # Takip sorularinda cache'e bakilmiyor: onceki turlere bagimli bir soru
+            # ("peki cpu?" gibi), session'i bilmeyen izole bir cache anahtariyla
+            # eslesip baglamsiz/eski bir cevap donebilir (bkz. chat_cache_service.py
+            # _context_key — session_id icermiyor).
             server_ids = request.server_ids or []
-            cached = get_cached_answer(db, message, server_ids)
+            cached = None if _is_followup else get_cached_answer(db, message, server_ids)
             if cached:
                 db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.commit()
@@ -1292,6 +1381,37 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 ]
                 server_context = "Seçili sunucular:\n" + "\n".join(lines)
 
+            # ── 2c. Grafik/zaman serisi rapor isteği (node_exporter → TimescaleDB) ──
+            # "son 2 saatlik disk ve network utilizasyonu ver" gibi hem bir süre HEM
+            # bir metrik türü içeren mesajları LLM'e gitmeden, deterministik olarak
+            # metric_data'dan çekip metin özeti + grafik verisi (meta.charts) olarak
+            # döndürür. Süre belirtilmezse (örn. "cpu kullanımını göster") normal
+            # metin/Prometheus akışına devam eder.
+            from app.services.metric_history import detect_chart_request, build_chart_response
+            chart_req = detect_chart_request(message)
+            if chart_req and selected_servers:
+                target_server = selected_servers[0]
+                chart_result = build_chart_response(db, target_server, chart_req["hours"], chart_req["groups"])
+                if chart_result:
+                    db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                    db.commit()
+                    answer_text = chart_result["summary_text"]
+                    if len(selected_servers) > 1:
+                        answer_text += f"\n\n_(Not: Birden fazla sunucu seçili, grafik sadece **{target_server.name}** için oluşturuldu.)_"
+                    for i in range(0, len(answer_text), 8):
+                        yield _sse({"token": answer_text[i:i+8]})
+                    db.add(ChatMessage(
+                        session_id=session_id, role="assistant", content=answer_text,
+                        meta={"charts": chart_result["charts"]},
+                    ))
+                    s_chart = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    if s_chart:
+                        from datetime import datetime as _dt, timezone as _tz2
+                        s_chart.updated_at = _dt.now(_tz2.utc)
+                    db.commit()
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
+
             # ── 3. Keyword analizi ────────────────────────────────────────
             PROMETHEUS_KEYWORDS = [
                 'cpu', 'ram', 'memory', 'bellek', 'disk', 'bandwidth',
@@ -1347,7 +1467,16 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             needs_prometheus = any(k in ml for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
             # SSH: sunucu/sistem sorusu içeriyorsa her zaman çalıştır (keyword listesine bağlı değil)
             SERVER_TRIGGER = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
-            needs_ssh = any(k in ml for k in SERVER_TRIGGER) and not request.skip_server_context
+            # Elle yazılmış SERVER_TRIGGER listesi dışında kalan ama linux_info_collector'ın
+            # kapsamlı KEYWORD_TO_GROUPS/EXTRA_GROUPS_KEYWORDS'ünde tanımlı bir konu varsa
+            # (örn. "vm.swappiness", "sysctl", "dirty_ratio") yine SSH context topla —
+            # aksi halde needs_ssh hep False kalır, _collect_ssh() hiç çalışmaz, context boş
+            # gider ve LLM context'siz "SSH bağlantısı sağlanamadı" diye cevap verir (SSH
+            # aslında hiç denenmemiştir). Bkz. has_recognized_topic() docstring'i.
+            from app.services.linux_info_collector import has_recognized_topic as _has_topic
+            needs_ssh = (
+                any(k in ml for k in SERVER_TRIGGER) or _has_topic(message)
+            ) and not request.skip_server_context
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
             # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
             # düşen sorgular (STANDARD_GROUPS'un tamamı, ~9 grup/60+ komut) tek sunucuda bile
@@ -1384,7 +1513,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     groups = detect_needed_groups(message)
                     loop = _asyncio.get_event_loop()
                     tasks = [
-                        loop.run_in_executor(None, lambda s=srv: collect_server_info(s, groups, global_cred))
+                        loop.run_in_executor(None, lambda s=srv: collect_server_info(s, groups, global_cred, message))
                         for srv in selected_servers
                     ]
                     done, pending = await _asyncio.wait(tasks, timeout=context_timeout)
@@ -1396,6 +1525,11 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             try:
                                 info = t.result()
                                 ctxs.append(_bsc(selected_servers[i], info))
+                                try:
+                                    from app.services.fact_learning import extract_and_store_facts
+                                    extract_and_store_facts(db, selected_servers[i], info, platform="linux")
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                     return "\n\n".join(ctxs)
@@ -1456,6 +1590,41 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
             if prom_ctx:
                 context_parts.append(prom_ctx.strip())
+
+            if selected_servers:
+                try:
+                    from app.services.fact_learning import get_learned_facts_block
+                    _facts_blocks = []
+                    for _s in selected_servers[:5]:
+                        _fb = get_learned_facts_block(db, _s)
+                        if _fb:
+                            _facts_blocks.append(f"[{_s.name}]\n{_fb}")
+                    if _facts_blocks:
+                        context_parts.append(
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis SSH taramalarindan — "
+                            "canli BAGLAM ile celisirse canli veriyi esas al, kullanirken 'onceden "
+                            "ogrenilmis (X once dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    from app.services.app_discovery import get_discovered_apps_block
+                    _apps_blocks = []
+                    for _s in selected_servers[:5]:
+                        _ab = get_discovered_apps_block(db, _s)
+                        if _ab:
+                            _apps_blocks.append(f"[{_s.name}]\n{_ab}")
+                    if _apps_blocks:
+                        context_parts.append(
+                            "TESPIT EDILEN UYGULAMALAR (otomatik tarama ile bulunan calisan servisler — "
+                            "Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.; periyodik tarandigi icin en "
+                            "guncel BAGLAM'daki canli veriyle celisirse canli veriyi esas al):\n"
+                            + "\n\n".join(_apps_blocks)
+                        )
+                except Exception:
+                    pass
+
             if rag_ctx.get("runbook"):
                 context_parts.append("RUNBOOK:\n" + rag_ctx["runbook"].strip())
             if rag_ctx.get("incidents"):
@@ -1486,6 +1655,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 ssh_server_count=len([s for s in selected_servers]) if ssh_ctx else 0,
                 prometheus_available=bool(prom_ctx),
                 selected_server_names=[s.name for s in selected_servers],
+                history_block=history_block,
             )
 
             # Kullanıcı mesajını kaydet
@@ -1547,8 +1717,10 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 s.updated_at = datetime.now(timezone.utc)
             db.commit()
 
-            # SSH verisi içeren yanıtlar canlı veri — cache'e kaydetme
-            if full_response and not is_deep and not needs_ssh:
+            # SSH verisi içeren yanıtlar canlı veri, takip soruları da bağlama bağımlı —
+            # ikisi de cache'e kaydedilmez (aksi halde sonraki izole bir soru bu bağlama
+            # bağımlı cevabı yanlışlıkla kullanabilir).
+            if full_response and not is_deep and not needs_ssh and not _is_followup:
                 save_to_cache(db, message, full_response, server_ids)
 
             yield _sse({"done": True, "session_id": session_id})

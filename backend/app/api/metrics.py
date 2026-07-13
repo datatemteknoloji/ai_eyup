@@ -134,7 +134,7 @@ async def get_current_metrics(
 async def get_metric_history(
     server_id: int,
     metric_name: str = Query(..., description="Metric name (cpu_usage, memory_usage, etc)"),
-    hours: int = Query(24, ge=1, le=168, description="Hours of history (1-168)"),
+    hours: int = Query(24, ge=1, le=720, description="Hours of history (1-720, i.e. up to 30 days)"),
     db: Session = Depends(get_db)
 ):
     """Get metric history for a server"""

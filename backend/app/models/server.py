@@ -71,6 +71,12 @@ class Server(Base):
     linux_failed_logins_24h = Column(Integer, nullable=True)
     linux_security_last_check = Column(DateTime(timezone=True), nullable=True)
 
+    # Uygulama/servis keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) —
+    # background task periyodik SSH/WinRM ile tarar, sonuçlar discovered_applications
+    # tablosuna yazılır (bkz. app/services/app_discovery.py). Bu alan sadece
+    # "en son ne zaman tarandı" bilgisini tutar (rescan aralığını belirlemek için).
+    app_discovery_last_scan = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

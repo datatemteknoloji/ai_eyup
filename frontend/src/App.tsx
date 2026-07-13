@@ -5,6 +5,8 @@ import { BrandingProvider } from './branding/BrandingContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import Login from './pages/Login'
 import AuditLog from './pages/AuditLog'
+import KnowledgeBase from './pages/KnowledgeBase'
+import Applications from './pages/Applications'
 import Servers from './pages/Servers'
 import Hypervisors from './pages/Hypervisors'
 import Agent from './pages/Agent'
@@ -230,6 +232,8 @@ function App() {
                       <Route path="/packages" element={<RequireModule moduleId="linux"><ErrorBoundary><PackageManager /></ErrorBoundary></RequireModule>} />
                       <Route path="/repositories" element={<RequireModule moduleId="linux"><ErrorBoundary><Repositories /></ErrorBoundary></RequireModule>} />
                       <Route path="/system-update" element={<RequireModule moduleId="linux"><ErrorBoundary><SystemUpdate /></ErrorBoundary></RequireModule>} />
+                      <Route path="/knowledge-base" element={<ErrorBoundary><KnowledgeBase /></ErrorBoundary>} />
+                      <Route path="/applications" element={<ErrorBoundary><Applications /></ErrorBoundary>} />
                       <Route path="/audit" element={<RequireAdmin><ErrorBoundary><AuditLog /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>

@@ -81,7 +81,13 @@ def get_cached_answer(db: Session, question: str, server_ids: list = None) -> Op
         logger.debug(f"Cache lookup failed: {e}")
     return None
 
-# Yanıtın gerçek veriye dayalı olmadığını gösteren kalıplar — cache'e kaydedilmez
+# Yanıtın gerçek veriye dayalı olmadığını gösteren kalıplar — cache'e kaydedilmez.
+# NOT: Bu liste eksik olduğunda (örn. "SSH bağlantısı sağlanamadı" gibi çok yaygın
+# bir hata cümlesi kapsanmadığında), geçici bir SSH/timeout sorunu sırasında üretilen
+# "veri alınamadı" yanıtı KALICI olarak cache'e yazılır ve sorun çözüldükten SONRA
+# BİLE aynı/benzer soru (>=0.80 benzerlik) sorulduğunda hep bu eski hatalı yanıt
+# dönmeye devam eder — kullanıcı gerçek veriyi asla göremez (bkz. "vm.swappiness"
+# sorgusunun eski, artık geçersiz bir SSH hatasını sonsuza kadar tekrarlaması vakası).
 _BAD_ANSWER_PATTERNS = [
     "bu bilgi mevcut değil",
     "bilgi mevcut degil",
@@ -92,7 +98,49 @@ _BAD_ANSWER_PATTERNS = [
     "belirlenemedi",
     "veri tabanındaki bilgileri",
     "bana sağlanan veri",
+    # SSH/veri toplama başarısızlığı ifadeleri (Türkçe, aksanlı ve aksansız varyantlar)
+    "ssh bağlantısı sağlanamadı", "ssh baglantisi saglanamadi",
+    "ssh bağlantısı sağlanamadığı", "ssh baglantisi saglanamadigi",
+    "ssh bağlantısı kurulamadı", "ssh baglantisi kurulamadi",
+    "ssh bağlantısı başarısız", "ssh baglantisi basarisiz",
+    "veri alınamadı", "veri alinamadi",
+    "veri toplanamadı", "veri toplanamadi",
+    "veri toplanmadığı", "veri toplanmadigi",
+    "veri sağlanamadı", "veri saglanamadi",
+    "okuyamıyoruz", "okuyamiyoruz",
+    "sağlayamıyorum", "saglayamiyorum",
+    "göremiyorum", "goremiyorum",
+    "erişim yok", "erisim yok",
+    "zaman aşımı", "zaman asimi",
+    "bağlanılamadı", "baglanilamadi",
+    "bilgi alınamadı", "bilgi alinamadi",
 ]
+
+
+def purge_bad_cache_entries(db: Session) -> int:
+    """
+    _BAD_ANSWER_PATTERNS'e uyan (SSH/veri toplama hatası içeren) mevcut cache
+    kayıtlarını siler. Bu liste zaman içinde genişletildiğinde (bkz. yukarıdaki
+    not) veya customer kurulumunda daha önce hatalı bir yanıt cache'e girmişse,
+    başlangıçta (app startup) çağrılarak "eski hata sonsuza kadar tekrarlanır"
+    durumunu kendiliğinden düzeltir. Idempotent — silinecek satır yoksa no-op.
+    """
+    try:
+        rows = db.query(ChatQACache).all()
+        to_delete = [
+            r for r in rows
+            if any(bad in (r.answer or "").lower() for bad in _BAD_ANSWER_PATTERNS)
+        ]
+        for r in to_delete:
+            db.delete(r)
+        if to_delete:
+            db.commit()
+            logger.info(f"Chat cache temizliği: {len(to_delete)} hatalı/eski yanıt silindi")
+        return len(to_delete)
+    except Exception as e:
+        logger.debug(f"Cache purge failed: {e}")
+        db.rollback()
+        return 0
 
 
 def save_to_cache(db: Session, question: str, answer: str, server_ids: list = None) -> None:

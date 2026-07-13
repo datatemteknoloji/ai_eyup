@@ -76,9 +76,25 @@ class VCenterClient:
             
             if response.status_code in (200, 201):
                 return response.json() if response.text else {}
-            else:
-                logger.error(f"API call failed: {response.status_code} - {response.text}")
+
+            # VMware Tools kurulu/çalışmıyor olan VM'lerde guest/* endpoint'leri
+            # (identity, local filesystem vb.) 503 tools_not_running döner — bu
+            # beklenen bir durum; ERROR olarak loglamak her sync turunda onlarca
+            # satır gürültü üretir. Aynı şekilde powered-off VM'lerde guest
+            # operasyonları da SERVICE_UNAVAILABLE olabilir.
+            body = response.text or ""
+            if response.status_code == 503 and (
+                "tools_not_running" in body
+                or "VMware Tools are not running" in body
+            ):
+                logger.debug(
+                    "Guest API unavailable (VMware Tools not running) for %s: %s",
+                    endpoint, body[:200],
+                )
                 return None
+
+            logger.error(f"API call failed: {response.status_code} - {body}")
+            return None
         except Exception as e:
             logger.error(f"API call error: {e}")
             return None

@@ -271,7 +271,8 @@ _ALL_WINRM_KEYWORDS = [
 
 
 def _build_prompt(message: str, context_str: str, winrm_collected: bool,
-                   winrm_server_count: int, selected_server_names: List[str]) -> str:
+                   winrm_server_count: int, selected_server_names: List[str],
+                   history_block: str = "") -> str:
     NL = "\n"
     coll = []
     if winrm_collected and winrm_server_count > 0:
@@ -309,11 +310,26 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
         "",
         "ONEMLI: Asla 'WinRM yapamam' veya 'dogrudan baglanamam' deme.",
         "Sistem WinRM yapabiliyor. Eger veri gelmemisse toplanmamis demektir, toplanamaz degil.",
+        "",
+        "ONEMLI: Kullaniciya ASLA 'bunu su komutla siz kontrol edebilirsiniz' / 'asagidaki",
+        "yontemleri kullanarak bulabilirsiniz' seklinde bir KILAVUZ/MANUEL TALIMAT LISTESI verme.",
+        "Sistem WinRM ile komutu ZATEN calistirabiliyor — BAGLAM'da ilgili veri yoksa bu senin",
+        "o komutu calistirmadigin anlamina gelir, kullanicinin gitmesi degil. Bu durumda sadece",
+        "'Bu bilgi mevcut taramada toplanmadi.' de; kullaniciyi kendi basina komut calistirmaya",
+        "yonlendirme.",
     ])
 
     rules = NL.join([
         "YANIT KURALLARI:",
+        "0. ONCEKI KONUSMA bolumu varsa bu bir sohbetin parcasidir — takip sorularini",
+        "   ('peki disk?', 'o sunucuda ise nasil?' gibi) ONCEKI KONUSMA'ya bakarak hangi",
+        "   sunucu/konudan bahsedildigini cikararak yanitla. Guncel veri icin her zaman",
+        "   BAGLAM bolumunu esas al — gecmisteki eski degerleri guncelmis gibi tekrar etme.",
         "1. BAGLAM bolumundeki GERCEK veriyi once kullan — kendi bilginle asla tahmin yapma",
+        "1b. ONCEDEN OGRENILMIS BILGILER sadece canli veride o bilgi yoksa kullanilir; kullanirken",
+        "    '(onceden ogrenilmis, X once dogrulandi)' diye belirt. Celiski varsa canli veri kazanir.",
+        "1c. 'Hangi uygulamalar/veritabanlari calisiyor' gibi sorularda TESPIT EDILEN UYGULAMALAR",
+        "    bolumunu kullan (otomatik periyodik tarama) — bos ise 'uygulama taramasi henuz yapilmadi' de.",
         "2. Baglam bos veya yetersizse: 'Bu sunucu icin WinRM verisi alinamadi (baglanamadi veya zaman asimi).' de.",
         "   ASLA 'tekrar deneniyor' veya 'bekleniyor' deme — bu sistem otomatik retry yapmaz.",
         "3. ASLA 'WinRM yapamam', 'dogrudan baglanamam', 'veri tabanindan bakiyorum' yazma.",
@@ -336,6 +352,8 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
         prompt_parts.append("TOPLAMA DURUMU:\n" + collection_summary)
     prompt_parts.append(rules)
     prompt_parts.append("BAGLAM:\n" + context_str)
+    if history_block:
+        prompt_parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     prompt_parts.append("KULLANICI SORUSU: " + message)
     prompt_parts.append("YANIT (Markdown, Turkce):")
     return "\n\n".join(prompt_parts)
@@ -365,6 +383,9 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+    from app.services.chat_history import fetch_recent_history, format_history_block
+    history_block = format_history_block(fetch_recent_history(db, session_id, limit=8))
+
     all_windows_servers = _get_windows_servers(db)
     selected_servers: List[Server] = []
     if request.server_ids:
@@ -393,6 +414,11 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                     continue
                 info = collect_server_info(client, groups)
                 ctxs.append(build_server_context(srv.name, srv.ip_address or "-", info))
+                try:
+                    from app.services.fact_learning import extract_and_store_facts
+                    extract_and_store_facts(db, srv, info, platform="windows")
+                except Exception:
+                    pass
             winrm_ctx = "\n\n".join(ctxs)
         except Exception as e:
             logger.warning(f"WinRM info collect failed: {e}")
@@ -403,6 +429,39 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     elif selected_servers:
         lines = [f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Windows'}, Durum={s.status}" for s in selected_servers]
         context_parts.append("VERITABANI BILGILERI:\n" + "\n".join(lines))
+
+    if selected_servers:
+        try:
+            from app.services.fact_learning import get_learned_facts_block
+            _facts_blocks = []
+            for _s in selected_servers[:5]:
+                _fb = get_learned_facts_block(db, _s)
+                if _fb:
+                    _facts_blocks.append(f"[{_s.name}]\n{_fb}")
+            if _facts_blocks:
+                context_parts.append(
+                    "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis taramalardan — canli veriyle "
+                    "celisirse canli veriyi esas al, kullanirken 'onceden ogrenilmis (X once "
+                    "dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                )
+        except Exception:
+            pass
+
+        try:
+            from app.services.app_discovery import get_discovered_apps_block
+            _apps_blocks = []
+            for _s in selected_servers[:5]:
+                _ab = get_discovered_apps_block(db, _s)
+                if _ab:
+                    _apps_blocks.append(f"[{_s.name}]\n{_ab}")
+            if _apps_blocks:
+                context_parts.append(
+                    "TESPIT EDILEN UYGULAMALAR (otomatik tarama ile bulunan calisan servisler — "
+                    "IIS, MSSQL, PostgreSQL vb.; celisirse canli veriyi esas al):\n"
+                    + "\n\n".join(_apps_blocks)
+                )
+        except Exception:
+            pass
 
     event_ctx = _windows_event_context(db, selected_servers)
     if event_ctx:
@@ -426,6 +485,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         winrm_collected=bool(winrm_ctx),
         winrm_server_count=len(selected_servers) if winrm_ctx else 0,
         selected_server_names=[s.name for s in selected_servers],
+        history_block=history_block,
     )
 
     try:
@@ -476,6 +536,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
+            from app.services.chat_history import fetch_recent_history, format_history_block
+            history_block = format_history_block(fetch_recent_history(db, session_id, limit=8))
+
             # ── Sunucu seçimi (yalnızca Windows sunucular) ──────────────────
             all_windows_servers = _get_windows_servers(db)
             selected_servers: List[Server] = []
@@ -517,19 +580,26 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     def _collect_one(srv):
                         client = _build_windows_client(srv, db)
                         if not client:
-                            return build_server_context(srv.name, srv.ip_address or "-", {"error": "WinRM kimlik bilgisi/bağlantı yok"})
+                            return build_server_context(srv.name, srv.ip_address or "-", {"error": "WinRM kimlik bilgisi/bağlantı yok"}), None
                         info = collect_server_info(client, groups)
-                        return build_server_context(srv.name, srv.ip_address or "-", info)
+                        return build_server_context(srv.name, srv.ip_address or "-", info), info
 
                     tasks = [loop.run_in_executor(None, _collect_one, srv) for srv in selected_servers]
                     done, pending = await asyncio.wait(tasks, timeout=context_timeout)
                     for t in pending:
                         t.cancel()
                     ctxs = []
-                    for t in tasks:
+                    for i, t in enumerate(tasks):
                         if t in done:
                             try:
-                                ctxs.append(t.result())
+                                ctx_str, info = t.result()
+                                ctxs.append(ctx_str)
+                                if info:
+                                    try:
+                                        from app.services.fact_learning import extract_and_store_facts
+                                        extract_and_store_facts(db, selected_servers[i], info, platform="windows")
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
                     return "\n\n".join(ctxs)
@@ -563,6 +633,40 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + winrm_ctx.strip())
             elif server_context:
                 context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
+
+            if selected_servers:
+                try:
+                    from app.services.fact_learning import get_learned_facts_block
+                    _facts_blocks = []
+                    for _s in selected_servers[:5]:
+                        _fb = get_learned_facts_block(db, _s)
+                        if _fb:
+                            _facts_blocks.append(f"[{_s.name}]\n{_fb}")
+                    if _facts_blocks:
+                        context_parts.append(
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis taramalardan — canli veriyle "
+                            "celisirse canli veriyi esas al, kullanirken 'onceden ogrenilmis (X once "
+                            "dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    from app.services.app_discovery import get_discovered_apps_block
+                    _apps_blocks = []
+                    for _s in selected_servers[:5]:
+                        _ab = get_discovered_apps_block(db, _s)
+                        if _ab:
+                            _apps_blocks.append(f"[{_s.name}]\n{_ab}")
+                    if _apps_blocks:
+                        context_parts.append(
+                            "TESPIT EDILEN UYGULAMALAR (otomatik tarama ile bulunan calisan servisler — "
+                            "IIS, MSSQL, PostgreSQL vb.; celisirse canli veriyi esas al):\n"
+                            + "\n\n".join(_apps_blocks)
+                        )
+                except Exception:
+                    pass
+
             if event_ctx:
                 context_parts.append(event_ctx)
             if rag_ctx.get("runbook"):
@@ -578,6 +682,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 winrm_collected=bool(winrm_ctx),
                 winrm_server_count=len(selected_servers) if winrm_ctx else 0,
                 selected_server_names=[s.name for s in selected_servers],
+                history_block=history_block,
             )
 
             db.add(ChatMessage(session_id=session_id, role="user", content=message))

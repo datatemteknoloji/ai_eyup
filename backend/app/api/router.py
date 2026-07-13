@@ -251,3 +251,17 @@ try:
     api_router.include_router(public.router, prefix="/public", tags=["public"])
 except Exception as e:
     logger.error(f"Could not load public router: {e}", exc_info=True)
+
+# Bilgi Bankası (AI'nin öğrendiği kalıcı sunucu gerçekleri)
+try:
+    from app.api import knowledge
+    api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
+except Exception as e:
+    logger.error(f"Could not load knowledge router: {e}", exc_info=True)
+
+# Uygulama/Servis Keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb. otomatik tespiti)
+try:
+    from app.api import applications
+    api_router.include_router(applications.router, prefix="/applications", tags=["applications"])
+except Exception as e:
+    logger.error(f"Could not load applications router: {e}", exc_info=True)

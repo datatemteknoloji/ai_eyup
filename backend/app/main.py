@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.0",
+    version="1.0.1",
     description="Server Management System API"
 )
 
@@ -136,6 +136,7 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_selinux_status VARCHAR(20)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_failed_logins_24h INTEGER",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_security_last_check TIMESTAMPTZ",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS app_discovery_last_scan TIMESTAMPTZ",
             ]:
                 _conn.execute(_sa_text(_col_sql))
             _conn.execute(_sa_text(
@@ -175,6 +176,20 @@ async def startup_tasks():
             _udb.close()
     except Exception as _ue:
         logger.error(f"Admin seed hatası: {_ue}")
+
+    # Chat Q&A cache temizliği — SSH/veri toplama hatası içeren eski yanıtlar
+    # (bkz. chat_cache_service._BAD_ANSWER_PATTERNS) kalıcı olarak cache'te
+    # kalıp altta yatan sorun çözüldükten sonra da tekrar tekrar dönebiliyordu.
+    try:
+        from app.core.database import SessionLocal as _SLc
+        from app.services.chat_cache_service import purge_bad_cache_entries
+        _cdb = _SLc()
+        try:
+            purge_bad_cache_entries(_cdb)
+        finally:
+            _cdb.close()
+    except Exception as _ce:
+        logger.debug(f"Chat cache temizliği atlandı: {_ce}")
 
     # TimescaleDB hypertable'ları oluştur
     try:
@@ -301,7 +316,7 @@ async def shutdown_tasks():
 
 @app.get("/")
 async def root():
-    return {"message": "Server Management API", "version": "1.0.0"}
+    return {"message": "Server Management API", "version": "1.0.1"}
 
 # ─── Local repository static file serving ─────────────────────────────────────
 try:

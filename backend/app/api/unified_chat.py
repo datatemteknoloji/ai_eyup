@@ -197,14 +197,30 @@ _GENERAL_TRIGGER = [
 ]
 
 
-def _build_prompt(message: str, context_str: str, collection_summary: str) -> str:
+def _build_prompt(message: str, context_str: str, collection_summary: str, history_block: str = "") -> str:
     NL = "\n"
     identity = NL.join([
         "Sen AINE (AI Infrastructure Engine) adında, 15+ yillik deneyime sahip kıdemli bir",
         "Altyapı Mimarisin (Senior Infrastructure Architect) — Linux, Windows ve sanallaştırma",
-        "(VMware/oVirt/KVM) altyapılarının TAMAMINDAN sorumlusun. Platformlar arası çapraz",
-        "analiz ve karşılaştırma yapabiliyorsun (ör. 'tüm sunucularda en yüksek CPU kullanan 5 sunucu',",
-        "'Linux ve Windows arasında güvenlik yaması durumu karşılaştırması', 'genel altyapı sağlık özeti').",
+        "(VMware/oVirt/KVM/Proxmox/Hyper-V) altyapılarının TAMAMINDAN sorumlusun. Platformlar",
+        "arası çapraz analiz ve karşılaştırma yapabiliyorsun (ör. 'tüm sunucularda en yüksek CPU",
+        "kullanan 5 sunucu', 'Linux ve Windows arasında güvenlik yaması durumu karşılaştırması',",
+        "'genel altyapı sağlık özeti').",
+        "",
+        "ROL DEĞİŞİMİ — HER PLATFORMU KENDİ UZMANI GİBİ DÜŞÜN:",
+        "Tek bir jenerik bakış açısıyla değil, BAĞLAM'daki veri hangi platforma aitse o platformun",
+        "kıdemli yöneticisi gibi düşünüp cevap ver:",
+        "- 'LINUX SUNUCULARDAN ALINAN GERCEK VERILER' bölümünü değerlendirirken kıdemli bir Linux",
+        "  Sistem Yöneticisi gibi düşün: RHEL/CentOS/Ubuntu/Debian, systemd, SELinux, LVM, kernel",
+        "  parametreleri (sysctl), paket yönetimi (dnf/apt), journalctl/log analizi.",
+        "- 'WINDOWS SUNUCULARDAN ALINAN GERCEK VERILER' bölümünü değerlendirirken kıdemli bir",
+        "  Windows Server Yöneticisi gibi düşün: Active Directory, GPO, PowerShell, WSUS/yama",
+        "  yönetimi, Event Viewer/Event Log analizi, IIS, Windows Firewall/Defender.",
+        "- Sanallaştırma/VM/hypervisor envanteri sorulduğunda kıdemli bir Sanallaştırma",
+        "  Yöneticisi gibi düşün: cluster/HA/DRS, datastore/storage kapasite planlama, VM",
+        "  migration/snapshot stratejisi, kaynak overcommit riskleri.",
+        "Platformlar arası bir soruda (ör. 'tüm sunucular') her platformun kendi uzmanlık",
+        "perspektifinden bulgularını üret, SONRA bunları tek bir mimar özetinde birleştir.",
         "",
         "SISTEM YETENEKLERI:",
         "- Linux AI Ready sunuculara SSH ile bağlanıp gerçek komut/metrik toplayabiliyorsun",
@@ -214,17 +230,34 @@ def _build_prompt(message: str, context_str: str, collection_summary: str) -> st
         "",
         "ONEMLI: Asla 'SSH/WinRM yapamam' veya 'doğrudan bağlanamam' deme.",
         "Sistem bunu yapabiliyor. Veri gelmemişse toplanmamış demektir, toplanamaz değil.",
+        "",
+        "ONEMLI: Kullaniciya ASLA 'bunu su komutla siz kontrol edebilirsiniz' / 'asagidaki",
+        "yontemleri kullanarak bulabilirsiniz' seklinde bir KILAVUZ/MANUEL TALIMAT LISTESI verme.",
+        "Sistem SSH/WinRM ile komutu ZATEN calistirabiliyor — BAGLAM'da ilgili veri yoksa bu",
+        "senin o komutu calistirmadigin anlamina gelir, kullanicinin gitmesi degil. Bu durumda",
+        "sadece 'Bu bilgi mevcut taramada toplanmadi.' de; kullaniciyi kendi basina komut",
+        "calistirmaya yonlendirme.",
     ])
 
     rules = NL.join([
         "YANIT KURALLARI:",
+        "0. ONCEKI KONUSMA bölümü varsa bu bir sohbetin parçasıdır — takip sorularını",
+        "   ('peki cpu?', 'o sunucuda ise nasıl?' gibi) ONCEKI KONUSMA'ya bakarak hangi",
+        "   sunucu/platform/konudan bahsedildiğini çıkararak yanıtla. Güncel veri için her",
+        "   zaman BAĞLAM bölümünü esas al — geçmişteki eski değerleri güncelmiş gibi tekrar etme.",
         "1. BAĞLAM bölümündeki GERÇEK veriyi kullan — kendi bilginle asla tahmin yapma",
+        "1b. ONCEDEN OGRENILMIS BILGILER sadece canli veride o bilgi yoksa kullanilir; kullanirken",
+        "    '(onceden ogrenilmis, X once dogrulandi)' diye belirt. Celiski varsa canli veri kazanir.",
+        "1c. 'Hangi uygulamalar/veritabanlari calisiyor' gibi sorularda TESPIT EDILEN UYGULAMALAR",
+        "    bolumunu kullan (otomatik periyodik tarama) — bos ise 'uygulama taramasi henuz yapilmadi' de.",
         "2. Platformlar arası soruda (ör. 'tüm sunucular') Linux ve Windows verilerini AYRI",
-        "   bölümler halinde ama TEK bir yanıt/tablo içinde birleştir",
+        "   bölümler halinde, yukarıdaki ROL DEĞİŞİMİ kuralına göre değerlendirip TEK bir",
+        "   yanıt/tablo içinde birleştir",
         "3. Tablo istenirse Markdown tablo kullan, mümkünse 'Platform' kolonu ekle (Linux/Windows)",
         "4. Türkçe yanıtla — net ve açıklayıcı yaz",
         "5. Veri eksikse hangi platform/sunucu için eksik olduğunu açıkça belirt",
-        "6. Her soruyu kıdemli bir mimar gibi ele al: kök neden, tanı komutu, çözüm adımları, risk uyarısı",
+        "6. Her soruyu ilgili platformun kıdemli yöneticisi gibi ele al: kök neden, tanı komutu, "
+        "çözüm adımları, risk uyarısı",
     ])
 
     parts = [identity]
@@ -232,6 +265,8 @@ def _build_prompt(message: str, context_str: str, collection_summary: str) -> st
         parts.append("TOPLAMA DURUMU:\n" + collection_summary)
     parts.append(rules)
     parts.append("BAGLAM:\n" + context_str)
+    if history_block:
+        parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     parts.append("KULLANICI SORUSU: " + message)
     parts.append("YANIT (Markdown, Türkçe):")
     return "\n\n".join(parts)
@@ -265,8 +300,14 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
             yield _sse({"session_id": session_id, "start": True})
 
+            # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
+            from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
+            _is_followup = has_prior_messages(db, session_id)
+            history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
+
+            # Takip sorularinda cache'e bakilmiyor — bkz. chat.py'deki ayni mantik.
             cache_key_ids: List[int] = []
-            cached = get_cached_answer(db, message, cache_key_ids)
+            cached = None if _is_followup else get_cached_answer(db, message, cache_key_ids)
             if cached:
                 db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.commit()
@@ -283,7 +324,13 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
             ml = message.lower()
             skip_ctx = bool(request.skip_server_context)
-            wants_linux = (any(k in ml for k in _LINUX_TRIGGER) or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
+            # chat.py'deki has_recognized_topic() ile aynı mantık — "vm.min_free_kbytes" gibi
+            # _LINUX_TRIGGER/_GENERAL_TRIGGER listelerinde olmayan ama spesifik bir sysctl/kernel
+            # parametresine işaret eden sorgular da Linux context toplamayı tetiklemeli.
+            from app.services.linux_info_collector import has_recognized_topic as _has_topic_u
+            wants_linux = (
+                any(k in ml for k in _LINUX_TRIGGER) or any(k in ml for k in _GENERAL_TRIGGER) or _has_topic_u(message)
+            ) and not skip_ctx
             wants_windows = (any(k in ml for k in _WINDOWS_TRIGGER) or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
 
             linux_servers = _linux_ai_ready_servers(db)
@@ -328,7 +375,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     from app.services.linux_info_collector import detect_needed_groups, collect_server_info, build_server_context
                     groups = detect_needed_groups(message)
                     loop = _asyncio.get_event_loop()
-                    tasks = [loop.run_in_executor(None, lambda s=srv: collect_server_info(s, groups, global_cred)) for srv in linux_targets]
+                    tasks = [loop.run_in_executor(None, lambda s=srv: collect_server_info(s, groups, global_cred, message)) for srv in linux_targets]
                     done, pending = await _asyncio.wait(tasks, timeout=context_timeout)
                     for t in pending:
                         t.cancel()
@@ -336,7 +383,13 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     for i, t in enumerate(tasks):
                         if t in done:
                             try:
-                                ctxs.append(build_server_context(linux_targets[i], t.result()))
+                                info = t.result()
+                                ctxs.append(build_server_context(linux_targets[i], info))
+                                try:
+                                    from app.services.fact_learning import extract_and_store_facts
+                                    extract_and_store_facts(db, linux_targets[i], info, platform="linux")
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                     return "\n\n".join(ctxs)
@@ -356,19 +409,26 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     def _collect_one(srv):
                         client = _build_client(srv, db)
                         if not client:
-                            return build_server_context(srv.name, srv.ip_address or "-", {"error": "WinRM kimlik bilgisi/bağlantı yok"})
+                            return build_server_context(srv.name, srv.ip_address or "-", {"error": "WinRM kimlik bilgisi/bağlantı yok"}), None
                         info = collect_server_info(client, groups)
-                        return build_server_context(srv.name, srv.ip_address or "-", info)
+                        return build_server_context(srv.name, srv.ip_address or "-", info), info
 
                     tasks = [loop.run_in_executor(None, _collect_one, srv) for srv in windows_targets]
                     done, pending = await _asyncio.wait(tasks, timeout=context_timeout)
                     for t in pending:
                         t.cancel()
                     ctxs = []
-                    for t in tasks:
+                    for i, t in enumerate(tasks):
                         if t in done:
                             try:
-                                ctxs.append(t.result())
+                                ctx_str, info = t.result()
+                                ctxs.append(ctx_str)
+                                if info:
+                                    try:
+                                        from app.services.fact_learning import extract_and_store_facts
+                                        extract_and_store_facts(db, windows_targets[i], info, platform="windows")
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
                     return "\n\n".join(ctxs)
@@ -418,6 +478,41 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 context_parts.append("LINUX SUNUCULARDAN ALINAN GERCEK VERILER (SSH):\n" + linux_ctx.strip())
             if windows_ctx:
                 context_parts.append("WINDOWS SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + windows_ctx.strip())
+
+            _all_targets = list(linux_targets) + list(windows_targets)
+            if _all_targets:
+                try:
+                    from app.services.fact_learning import get_learned_facts_block
+                    _facts_blocks = []
+                    for _s in _all_targets[:5]:
+                        _fb = get_learned_facts_block(db, _s)
+                        if _fb:
+                            _facts_blocks.append(f"[{_s.name}]\n{_fb}")
+                    if _facts_blocks:
+                        context_parts.append(
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis taramalardan — canli "
+                            "veriyle celisirse canli veriyi esas al, kullanirken 'onceden ogrenilmis "
+                            "(X once dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    from app.services.app_discovery import get_discovered_apps_block
+                    _apps_blocks = []
+                    for _s in _all_targets[:5]:
+                        _ab = get_discovered_apps_block(db, _s)
+                        if _ab:
+                            _apps_blocks.append(f"[{_s.name}]\n{_ab}")
+                    if _apps_blocks:
+                        context_parts.append(
+                            "TESPIT EDILEN UYGULAMALAR (otomatik tarama ile bulunan calisan servisler — "
+                            "Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.; celisirse canli veriyi esas al):\n"
+                            + "\n\n".join(_apps_blocks)
+                        )
+                except Exception:
+                    pass
+
             if rag_ctx.get("runbook"):
                 context_parts.append("RUNBOOK:\n" + rag_ctx["runbook"].strip())
             if rag_ctx.get("incidents"):
@@ -435,7 +530,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 coll_lines.append("WINDOWS: Bu sorgu için canlı veri toplanamadı (zaman aşımı/bağlantı).")
             collection_summary = "\n".join(coll_lines)
 
-            prompt = _build_prompt(message, context_str, collection_summary)
+            prompt = _build_prompt(message, context_str, collection_summary, history_block)
 
             db.add(ChatMessage(session_id=session_id, role="user", content=message))
             db.commit()
@@ -478,7 +573,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 s.updated_at = datetime.now(timezone.utc)
             db.commit()
 
-            if full_response and not linux_ctx and not windows_ctx:
+            if full_response and not linux_ctx and not windows_ctx and not _is_followup:
                 save_to_cache(db, message, full_response, cache_key_ids)
 
             yield _sse({"done": True, "session_id": session_id})

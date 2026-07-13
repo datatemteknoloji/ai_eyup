@@ -10,7 +10,7 @@
 #
 # Ne yapar:
 #   1. Docker CE + Compose plugin kurulumu (yoksa)
-#   2. Kurulum dizini seçimi (sorulur) — paket + tüm kalıcı veriler oraya kurulur
+#   2. /var/lib/server_management altında veri dizinleri
 #   3. .env dosyası (SECRET_KEY, POSTGRES_PASSWORD, ADMIN_DEFAULT_PASSWORD,
 #      CORS_ORIGINS otomatik üretilir/doldurulur)
 #   4. Self-signed TLS sertifikası (frontend HTTPS için)
@@ -25,18 +25,18 @@
 # kuruluma modelleri taşımak için, kaynak (internet erişimi olan) makinede
 # önce modelleri `ollama pull` ile indirip scripts/export-ollama-models.sh
 # ile dışa aktarın, tarball'ı bu sunucuya kopyalayın ve
-# scripts/import-ollama-models.sh ile kurulum dizininizin altındaki
-# <INSTALL_DIR>/data/ollama içine geri yükleyin (ollama servisini başlatmadan önce).
+# scripts/import-ollama-models.sh ile /var/lib/server_management/ollama
+# altına geri yükleyin (ollama servisini başlatmadan önce).
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+DATA_DIR="${DATA_DIR:-/var/lib/server_management}"
 COMPOSE_FILE="docker-compose.prod.yml"
 ENV_FILE=".env"
 IMAGES_DIR="./images"
-DEFAULT_INSTALL_DIR="/opt/ainew"
 
 c_green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 c_yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
@@ -50,43 +50,6 @@ fi
 
 if [[ ! -f /etc/redhat-release ]]; then
   c_yellow "Uyarı: /etc/redhat-release bulunamadı, RHEL/Rocky/AlmaLinux dışında bir sistem olabilir. Devam ediliyor..."
-fi
-
-# ── 0. Kurulum dizini ────────────────────────────────────────────────────────
-# Uygulama paketinin TAMAMI (kaynak/derleme dosyaları, imajlar, scriptler) VE
-# kalıcı veriler (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar,
-# Ollama modelleri) TEK bir kök dizin altında toplanır — /var/lib gibi sistem
-# dizinlerine dağılmaz. Zaten kurulmuşsa (bu dizinde .env varsa) tekrar sorulmaz.
-if [[ -f "$SCRIPT_DIR/$ENV_FILE" ]] && grep -q '^DATA_DIR=' "$SCRIPT_DIR/$ENV_FILE" 2>/dev/null; then
-  INSTALL_DIR="$SCRIPT_DIR"
-  DATA_DIR="$(grep '^DATA_DIR=' "$SCRIPT_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
-  c_green "Mevcut kurulum tespit edildi, kurulum dizini: $INSTALL_DIR"
-else
-  if [[ -z "${INSTALL_DIR:-}" ]]; then
-    if [[ -t 0 ]]; then
-      echo
-      read -rp "Kurulum dizini — uygulamanın TAMAMI (paket + veritabanı + yüklenen dosyalar + modeller) buraya kurulacak, mutlak yol girin [${DEFAULT_INSTALL_DIR}]: " INSTALL_DIR
-      INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-    else
-      INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-      c_yellow "İnteraktif olmayan çalıştırma: varsayılan kurulum dizini kullanılıyor: $INSTALL_DIR"
-    fi
-  fi
-  INSTALL_DIR="$(realpath -m "$INSTALL_DIR")"
-
-  if [[ "$INSTALL_DIR" != "$SCRIPT_DIR" ]]; then
-    step "Uygulama paketi kopyalanıyor: $SCRIPT_DIR -> $INSTALL_DIR"
-    mkdir -p "$INSTALL_DIR"
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --exclude '.git' "$SCRIPT_DIR"/ "$INSTALL_DIR"/
-    else
-      cp -a "$SCRIPT_DIR"/. "$INSTALL_DIR"/
-    fi
-    c_green "Paket kopyalandı: $INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    SCRIPT_DIR="$INSTALL_DIR"
-  fi
-  DATA_DIR="$INSTALL_DIR/data"
 fi
 
 # ── 1. Docker kurulumu ─────────────────────────────────────────────────────
@@ -107,21 +70,6 @@ step "Veri dizinleri oluşturuluyor: $DATA_DIR"
 mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,prometheus,certs,ollama}
 # SELinux etiketleme docker-compose.prod.yml içindeki :Z bayrağı ile container
 # başlatılırken otomatik yapılır; burada sadece dizinlerin var olması yeterli.
-
-# postgres/redis hariç: bu dizinler kendi resmi imajlarının entrypoint'i
-# tarafından (root olarak başlayıp doğru kullanıcıya chown edip düşen) otomatik
-# düzeltiliyor. Ama backend (appuser, non-root) ve prometheus (nobody, non-root)
-# imajları böyle bir self-heal yapmıyor — mkdir ile root:root oluşan bu
-# dizinlere yazamayıp "Permission denied" ile çöküyorlar (chroma, repos,
-# uploads, prometheus TSDB verisi). Ollama da genelde non-root çalışır.
-# Bu host tek-amaçlı bir uygulama sunucusu olduğu için 777 kabul edilebilir.
-chmod -R 777 "$DATA_DIR"/{chroma,repos,uploads,prometheus,ollama}
-
-# prometheus/targets/*.json: backend (appuser) yazıyor, prometheus (nobody)
-# okuyor — ikisi de farklı non-root kullanıcı, ikisinin de erişebilmesi için
-# aynı sebeple 777.
-chmod -R 777 "$SCRIPT_DIR/prometheus/targets" 2>/dev/null || true
-
 c_green "Tamam."
 
 # ── 3. .env dosyası ─────────────────────────────────────────────────────────
@@ -252,9 +200,6 @@ c_green "═══════════════════════�
 echo " Arayüz     : https://${PRIMARY_IP}  (self-signed sertifika — tarayıcı uyarısı normaldir)"
 echo " Kullanıcı  : admin"
 echo " Parola     : ${ADMIN_PW}"
-echo
-echo " Kurulum dizini : $INSTALL_DIR  (paket + $ENV_FILE)"
-echo " Veri dizini    : $DATA_DIR  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)"
 echo
 c_yellow " ⚠ İlk girişten sonra Ayarlar > Kullanıcılar üzerinden admin parolasını değiştirin."
 c_yellow " ⚠ .env dosyasını güvenli bir yerde yedekleyin — SECRET_KEY ve DB parolasını içerir."

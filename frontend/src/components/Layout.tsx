@@ -328,6 +328,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
 
     // ── System ────────────────────────────────────────────────────────────
+    { type: 'link', path: '/applications', name: 'Uygulamalar', icon: <Package size={18} /> },
+    { type: 'link', path: '/knowledge-base', name: 'Bilgi Bankası', icon: <Brain size={18} /> },
     { type: 'link', path: '/audit',    name: 'Audit Log',          icon: <ScrollText size={18} /> },
     { type: 'link', path: '/users',    name: 'Kullanıcı Yönetimi', icon: <Users size={18} /> },
     { type: 'link', path: '/settings', name: 'Ayarlar',            icon: <Settings size={18} /> },
