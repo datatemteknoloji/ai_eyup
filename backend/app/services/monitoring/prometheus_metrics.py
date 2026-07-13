@@ -4,7 +4,7 @@ Prometheus Metrics Service - Tüm metrikleri çekmek ve AI'a context sağlamak i
 import httpx
 import logging
 from typing import Dict, List, Optional, Any
-from app.core.config import settings
+from app.core.config import settings, promql_job_matcher
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +14,11 @@ def node_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str
     if not server_ip and not hostname:
         return False
     try:
+        job = promql_job_matcher(kind="linux")
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(
                 f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": 'up{job="node-exporter"}'}
+                params={"query": f'up{{{job}}}'},
             )
             if resp.status_code != 200:
                 return False
@@ -41,13 +42,14 @@ def node_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str
 
 
 def get_node_exporter_up_map() -> Dict[str, str]:
-    """Prometheus up{job=node-exporter} sonuçlarını instance -> '0'|'1' map olarak döner."""
+    """Prometheus up{job=...} sonuçlarını instance -> '0'|'1' map olarak döner."""
     result_map: Dict[str, str] = {}
     try:
+        job = promql_job_matcher(kind="linux")
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(
                 f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": 'up{job="node-exporter"}'},
+                params={"query": f'up{{{job}}}'},
             )
             if resp.status_code != 200:
                 return result_map
@@ -114,17 +116,18 @@ def sync_node_exporter_running_from_prometheus(db) -> Dict[str, int]:
 # ── Windows Exporter (node_exporter'ın Windows eşleniği, port 9182) ─────────
 
 WINDOWS_EXPORTER_PORT = 9182
-WINDOWS_EXPORTER_JOB = "windows-exporter"
+WINDOWS_EXPORTER_JOB = "windows-exporter"  # varsayılan; runtime'da settings.PROMETHEUS_WINDOWS_JOBS kullanılır
 
 
 def get_windows_exporter_up_map() -> Dict[str, str]:
-    """Prometheus up{job=windows-exporter} sonuçlarını instance -> '0'|'1' map olarak döner."""
+    """Prometheus up{job=windows...} sonuçlarını instance -> '0'|'1' map olarak döner."""
     result_map: Dict[str, str] = {}
     try:
+        job = promql_job_matcher(kind="windows")
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(
                 f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": f'up{{job="{WINDOWS_EXPORTER_JOB}"}}'},
+                params={"query": f'up{{{job}}}'},
             )
             if resp.status_code != 200:
                 return result_map

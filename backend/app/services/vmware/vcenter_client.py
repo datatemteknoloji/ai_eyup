@@ -80,15 +80,17 @@ class VCenterClient:
             # VMware Tools kurulu/çalışmıyor olan VM'lerde guest/* endpoint'leri
             # (identity, local filesystem vb.) 503 tools_not_running döner — bu
             # beklenen bir durum; ERROR olarak loglamak her sync turunda onlarca
-            # satır gürültü üretir. Aynı şekilde powered-off VM'lerde guest
-            # operasyonları da SERVICE_UNAVAILABLE olabilir.
+            # satır gürültü üretir. Aynı şekilde Tools çalışsa bile guest info
+            # vermeyen VM'ler information_not_available / SERVICE_UNAVAILABLE alır.
             body = response.text or ""
             if response.status_code == 503 and (
                 "tools_not_running" in body
                 or "VMware Tools are not running" in body
+                or "information_not_available" in body
+                or "provided no information" in body
             ):
                 logger.debug(
-                    "Guest API unavailable (VMware Tools not running) for %s: %s",
+                    "Guest API unavailable (VMware Tools / guest info) for %s: %s",
                     endpoint, body[:200],
                 )
                 return None

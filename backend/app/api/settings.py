@@ -353,6 +353,8 @@ async def get_settings(db: Session = Depends(get_db)):
         "ollama_model": active_model,
         "prometheus_url": settings.PROMETHEUS_URL,
         "pushgateway_url": settings.PUSHGATEWAY_URL,
+        "prometheus_linux_jobs": list(settings.PROMETHEUS_LINUX_JOBS) or ["node-exporter"],
+        "prometheus_windows_jobs": list(settings.PROMETHEUS_WINDOWS_JOBS) or ["windows-exporter"],
         "metric_retention_days": metric_retention_days,
         "management_server_ip": management_server_ip,
         "detected_management_ip": detected_ip,
@@ -390,14 +392,17 @@ async def set_management_server_ip(payload: dict, db: Session = Depends(get_db))
 
 @router.put("/prometheus")
 async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
-    """Prometheus / Pushgateway URL'lerini kaydet (müşteri ortamındaki mevcut
-    Prometheus'a bağlanmak için). Restart gerekmez — runtime'a hemen yansır.
+    """Prometheus URL + job adlarını kaydet. Restart gerekmez.
 
-    Body: {prometheus_url, pushgateway_url?}
-    pushgateway_url boş gönderilirse mevcut değer korunur; tamamen temizlemek
-    için boş string yerine null değil, "" gönderilir (opsiyonel alan).
+    Body: {
+      prometheus_url,
+      pushgateway_url?,
+      prometheus_linux_jobs?: string[],   # örn. ["node-exporter","prometheus"]
+      prometheus_windows_jobs?: string[],
+    }
     """
-    from app.core.config import settings
+    from app.core.config import settings, _parse_job_list
+    import json
     import re
 
     def _save(key: str, value: str):
@@ -422,14 +427,44 @@ async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
         if pg_url and not re.match(r"^https?://", pg_url, re.I):
             raise HTTPException(status_code=400, detail="Pushgateway URL http:// veya https:// ile başlamalı")
 
+    def _normalize_jobs(raw, default: list) -> list:
+        if raw is None:
+            return list(default)
+        if isinstance(raw, list):
+            jobs = [str(x).strip() for x in raw if str(x).strip()]
+            return jobs or list(default)
+        return _parse_job_list(str(raw), default)
+
+    linux_jobs = _normalize_jobs(
+        payload.get("prometheus_linux_jobs"),
+        list(settings.PROMETHEUS_LINUX_JOBS) or ["node-exporter"],
+    )
+    windows_jobs = _normalize_jobs(
+        payload.get("prometheus_windows_jobs"),
+        list(settings.PROMETHEUS_WINDOWS_JOBS) or ["windows-exporter"],
+    )
+
     _save("prometheus_url", prom_url)
     _save("pushgateway_url", pg_url)
+    _save("prometheus_linux_jobs", json.dumps(linux_jobs, ensure_ascii=False))
+    _save("prometheus_windows_jobs", json.dumps(windows_jobs, ensure_ascii=False))
     db.commit()
 
     settings.PROMETHEUS_URL = prom_url
     settings.PUSHGATEWAY_URL = pg_url
-    logger.info(f"Prometheus URL güncellendi: {prom_url} (pushgateway={pg_url or 'unset'})")
-    return {"success": True, "prometheus_url": prom_url, "pushgateway_url": pg_url}
+    settings.PROMETHEUS_LINUX_JOBS = linux_jobs
+    settings.PROMETHEUS_WINDOWS_JOBS = windows_jobs
+    logger.info(
+        f"Prometheus URL güncellendi: {prom_url} "
+        f"(pushgateway={pg_url or 'unset'}, linux_jobs={linux_jobs}, windows_jobs={windows_jobs})"
+    )
+    return {
+        "success": True,
+        "prometheus_url": prom_url,
+        "pushgateway_url": pg_url,
+        "prometheus_linux_jobs": linux_jobs,
+        "prometheus_windows_jobs": windows_jobs,
+    }
 
 
 @router.put("/ollama-model")

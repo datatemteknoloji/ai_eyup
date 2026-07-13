@@ -4,7 +4,7 @@ Application configuration
 import logging
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,14 @@ class Settings:
     # Prometheus
     PROMETHEUS_URL: str = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
     PUSHGATEWAY_URL: str = os.getenv("PUSHGATEWAY_URL", "http://pushgateway:9091")
+    # Müşteri Prometheus job adları (virgülle ayrılmış veya Settings UI'dan JSON liste)
+    # Örn. "node-exporter,prometheus" — birden fazla job OR ile sorgulanır
+    PROMETHEUS_LINUX_JOBS: List[str] = [
+        p.strip() for p in os.getenv("PROMETHEUS_LINUX_JOBS", "node-exporter").split(",") if p.strip()
+    ] or ["node-exporter"]
+    PROMETHEUS_WINDOWS_JOBS: List[str] = [
+        p.strip() for p in os.getenv("PROMETHEUS_WINDOWS_JOBS", "windows-exporter").split(",") if p.strip()
+    ] or ["windows-exporter"]
     
     # Security - SECRET_KEY ZORUNLU!
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
@@ -144,6 +152,57 @@ def get_guard_model(db) -> str:
 def remote_llm_enabled() -> bool:
     """Uzak (OpenAI-uyumlu) LLM gateway aktif mi — URL + API key ayarlı olmalı."""
     return bool(settings.REMOTE_LLM_ENABLED and settings.REMOTE_LLM_URL and settings.REMOTE_LLM_API_KEY)
+
+
+def _parse_job_list(raw: Optional[str], default: List[str]) -> List[str]:
+    """JSON liste veya virgülle ayrılmış job adlarını parse eder."""
+    import json
+    text = (raw or "").strip()
+    if not text:
+        return list(default)
+    if text.startswith("["):
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                jobs = [str(x).strip() for x in data if str(x).strip()]
+                return jobs or list(default)
+        except Exception:
+            pass
+    jobs = [p.strip() for p in text.split(",") if p.strip()]
+    return jobs or list(default)
+
+
+def get_prometheus_linux_jobs() -> List[str]:
+    return list(settings.PROMETHEUS_LINUX_JOBS) or ["node-exporter"]
+
+
+def get_prometheus_windows_jobs() -> List[str]:
+    return list(settings.PROMETHEUS_WINDOWS_JOBS) or ["windows-exporter"]
+
+
+def promql_job_matcher(jobs: Optional[List[str]] = None, *, kind: str = "linux") -> str:
+    """PromQL job seçici: tek job → job=\"x\", çoklu → job=~\"a|b\".
+
+    kind: 'linux' | 'windows' — jobs verilmezse settings'ten okunur.
+    """
+    import re as _re
+    if jobs is None:
+        jobs = get_prometheus_linux_jobs() if kind == "linux" else get_prometheus_windows_jobs()
+    cleaned = [j.strip() for j in (jobs or []) if j and str(j).strip()]
+    if not cleaned:
+        cleaned = ["node-exporter"] if kind == "linux" else ["windows-exporter"]
+    if len(cleaned) == 1:
+        j = cleaned[0].replace("\\", "\\\\").replace('"', '\\"')
+        return f'job="{j}"'
+    pattern = "|".join(_re.escape(j) for j in cleaned)
+    return f'job=~"{pattern}"'
+
+
+def apply_promql_job(query: str, *, kind: str = "linux", old_literal: Optional[str] = None) -> str:
+    """Şablondaki sabit job=\"...\" ifadesini ayardaki matcher ile değiştirir."""
+    if old_literal is None:
+        old_literal = 'job="node-exporter"' if kind == "linux" else 'job="windows-exporter"'
+    return query.replace(old_literal, promql_job_matcher(kind=kind))
 
 
 def remote_llm_ssl_verify():

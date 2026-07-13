@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.3",
+    version="1.0.4",
     description="Server Management System API"
 )
 
@@ -251,6 +251,16 @@ async def startup_tasks():
                 _s.PROMETHEUS_URL = _rows["prometheus_url"]
             if _rows.get("pushgateway_url") is not None:
                 _s.PUSHGATEWAY_URL = _rows["pushgateway_url"]
+            if _rows.get("prometheus_linux_jobs") is not None:
+                from app.core.config import _parse_job_list
+                _s.PROMETHEUS_LINUX_JOBS = _parse_job_list(
+                    _rows["prometheus_linux_jobs"], ["node-exporter"]
+                )
+            if _rows.get("prometheus_windows_jobs") is not None:
+                from app.core.config import _parse_job_list
+                _s.PROMETHEUS_WINDOWS_JOBS = _parse_job_list(
+                    _rows["prometheus_windows_jobs"], ["windows-exporter"]
+                )
             # Uzak AI gateway (örn. Bifrost) — DB'de ayarlıysa .env default'unun üzerine yazar
             if _rows.get("remote_llm_enabled") is not None:
                 _s.REMOTE_LLM_ENABLED = _rows["remote_llm_enabled"].lower() == "true"
@@ -320,7 +330,7 @@ async def shutdown_tasks():
 
 @app.get("/")
 async def root():
-    return {"message": "Server Management API", "version": "1.0.3"}
+    return {"message": "Server Management API", "version": "1.0.4"}
 
 # ─── Local repository static file serving ─────────────────────────────────────
 try:

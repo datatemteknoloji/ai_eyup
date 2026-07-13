@@ -452,10 +452,12 @@ def _prometheus_node_exporter_up(server_ip: Optional[str], hostname: Optional[st
     if not server_ip and not hostname:
         return False
     try:
+        from app.core.config import promql_job_matcher
+        job = promql_job_matcher(kind="linux")
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(
                 f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": 'up{job="node-exporter"}'}
+                params={"query": f'up{{{job}}}'},
             )
             if resp.status_code != 200:
                 return False

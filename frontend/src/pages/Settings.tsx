@@ -71,6 +71,8 @@ interface GeneralSettings {
   ollama_model: string
   prometheus_url: string
   pushgateway_url?: string
+  prometheus_linux_jobs?: string[]
+  prometheus_windows_jobs?: string[]
   metric_retention_days?: number
   management_server_ip?: string
   detected_management_ip?: string
@@ -518,9 +520,19 @@ const Settings: React.FC = () => {
       setPromForm({
         prometheus_url: generalSettings.prometheus_url || '',
         pushgateway_url: generalSettings.pushgateway_url || '',
+        linux_jobs: generalSettings.prometheus_linux_jobs?.length
+          ? [...generalSettings.prometheus_linux_jobs]
+          : ['node-exporter'],
+        windows_jobs: generalSettings.prometheus_windows_jobs?.length
+          ? [...generalSettings.prometheus_windows_jobs]
+          : ['windows-exporter'],
+        linux_job_input: '',
+        windows_job_input: '',
       })
     }
-  }, [generalSettings?.prometheus_url, generalSettings?.pushgateway_url])
+  }, [generalSettings?.prometheus_url, generalSettings?.pushgateway_url,
+      JSON.stringify(generalSettings?.prometheus_linux_jobs),
+      JSON.stringify(generalSettings?.prometheus_windows_jobs)])
 
   const savePrometheus = async () => {
     setPromSaving(true)
@@ -533,6 +545,8 @@ const Settings: React.FC = () => {
         body: JSON.stringify({
           prometheus_url: promForm.prometheus_url.trim(),
           pushgateway_url: promForm.pushgateway_url.trim(),
+          prometheus_linux_jobs: promForm.linux_jobs,
+          prometheus_windows_jobs: promForm.windows_jobs,
         }),
       })
       if (!r.ok) {
@@ -555,7 +569,14 @@ const Settings: React.FC = () => {
   const [remoteLlmError, setRemoteLlmError] = useState('')
   const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
 
-  const [promForm, setPromForm] = useState({ prometheus_url: '', pushgateway_url: '' })
+  const [promForm, setPromForm] = useState({
+    prometheus_url: '',
+    pushgateway_url: '',
+    linux_jobs: ['node-exporter'] as string[],
+    windows_jobs: ['windows-exporter'] as string[],
+    linux_job_input: '',
+    windows_job_input: '',
+  })
   const [promSaving, setPromSaving] = useState(false)
   const [promSaved, setPromSaved] = useState(false)
   const [promError, setPromError] = useState('')
@@ -1455,10 +1476,143 @@ const Settings: React.FC = () => {
                         Kısa ömürlü iş metrikleri için push hedefi. Uygulama şu an push etmiyor; boş bırakılabilir.
                       </p>
                     </div>
+
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Linux job adları
+                        <span className="text-xs text-slate-500 ml-2">— birden fazla eklenebilir (örn. node-exporter, prometheus)</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {promForm.linux_jobs.map((job) => (
+                          <span
+                            key={job}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-200 text-xs font-mono"
+                          >
+                            {job}
+                            <button
+                              type="button"
+                              onClick={() => setPromForm(f => ({
+                                ...f,
+                                linux_jobs: f.linux_jobs.filter(j => j !== job),
+                              }))}
+                              className="text-blue-300/80 hover:text-white"
+                              title="Kaldır"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={promForm.linux_job_input}
+                          onChange={e => setPromForm(f => ({ ...f, linux_job_input: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              const v = promForm.linux_job_input.trim()
+                              if (v && !promForm.linux_jobs.includes(v)) {
+                                setPromForm(f => ({
+                                  ...f,
+                                  linux_jobs: [...f.linux_jobs, v],
+                                  linux_job_input: '',
+                                }))
+                              }
+                            }
+                          }}
+                          placeholder="job adı ekle (Enter)"
+                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const v = promForm.linux_job_input.trim()
+                            if (v && !promForm.linux_jobs.includes(v)) {
+                              setPromForm(f => ({
+                                ...f,
+                                linux_jobs: [...f.linux_jobs, v],
+                                linux_job_input: '',
+                              }))
+                            }
+                          }}
+                          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
+                        >
+                          Ekle
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Windows job adları
+                        <span className="text-xs text-slate-500 ml-2">— birden fazla eklenebilir</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {promForm.windows_jobs.map((job) => (
+                          <span
+                            key={job}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-xs font-mono"
+                          >
+                            {job}
+                            <button
+                              type="button"
+                              onClick={() => setPromForm(f => ({
+                                ...f,
+                                windows_jobs: f.windows_jobs.filter(j => j !== job),
+                              }))}
+                              className="text-emerald-300/80 hover:text-white"
+                              title="Kaldır"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={promForm.windows_job_input}
+                          onChange={e => setPromForm(f => ({ ...f, windows_job_input: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              const v = promForm.windows_job_input.trim()
+                              if (v && !promForm.windows_jobs.includes(v)) {
+                                setPromForm(f => ({
+                                  ...f,
+                                  windows_jobs: [...f.windows_jobs, v],
+                                  windows_job_input: '',
+                                }))
+                              }
+                            }
+                          }}
+                          placeholder="job adı ekle (Enter)"
+                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const v = promForm.windows_job_input.trim()
+                            if (v && !promForm.windows_jobs.includes(v)) {
+                              setPromForm(f => ({
+                                ...f,
+                                windows_jobs: [...f.windows_jobs, v],
+                                windows_job_input: '',
+                              }))
+                            }
+                          }}
+                          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
+                        >
+                          Ekle
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="flex items-center gap-3">
                       <button
                         onClick={savePrometheus}
-                        disabled={promSaving || !promForm.prometheus_url.trim()}
+                        disabled={promSaving || !promForm.prometheus_url.trim() || promForm.linux_jobs.length === 0}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
                       >
                         {promSaving ? 'Kaydediliyor...' : 'Kaydet'}

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Tuple
 import httpx
 from sqlalchemy.orm import Session
-from app.core.config import settings
+from app.core.config import settings, apply_promql_job
 from app.models.server import Server
 from app.models.metric import MetricData
 from app.services.platform_scope import is_windows_server
@@ -146,7 +146,8 @@ class MetricSyncService:
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             for query_tpl, db_metric_name, unit, category in metrics_list:
-                query = query_tpl.replace("{instance}", instance)
+                kind = "windows" if is_windows_server(server) else "linux"
+                query = apply_promql_job(query_tpl, kind=kind).replace("{instance}", instance)
                 try:
                     resp = await client.get(
                         f"{settings.PROMETHEUS_URL}/api/v1/query_range",

@@ -81,9 +81,28 @@ const fetchMetricServersOverview = async (): Promise<MetricServerOverview> => {
   return response.json()
 }
 
+const buildJobMatcher = (jobs: string[]): string => {
+  const cleaned = (jobs || []).map((j) => j.trim()).filter(Boolean)
+  if (cleaned.length === 0) return 'job="node-exporter"'
+  if (cleaned.length === 1) {
+    const j = cleaned[0].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return `job="${j}"`
+  }
+  const pattern = cleaned
+    .map((j) => j.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+  return `job=~"${pattern}"`
+}
+
+const fetchGeneralSettings = async (): Promise<{ prometheus_linux_jobs?: string[] }> => {
+  const response = await fetch(`${API_BASE_URL}/settings/`)
+  if (!response.ok) return { prometheus_linux_jobs: ['node-exporter'] }
+  return response.json()
+}
+
 // instance'in up durumunu tutan map
-const fetchInstanceUpStatus = async (): Promise<Record<string, boolean>> => {
-  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent('up{job="node-exporter"}')}`)
+const fetchInstanceUpStatus = async (jobMatcher: string): Promise<Record<string, boolean>> => {
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent(`up{${jobMatcher}}`)}`)
   if (!response.ok) return {}
   const data = await response.json()
   const results = data?.data?.result || []
@@ -95,8 +114,8 @@ const fetchInstanceUpStatus = async (): Promise<Record<string, boolean>> => {
   return map
 }
 
-const fetchInstanceLabels = async (): Promise<Record<string, string>> => {
-  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent('up{job="node-exporter"}')}`)
+const fetchInstanceLabels = async (jobMatcher: string): Promise<Record<string, string>> => {
+  const response = await fetch(`${API_BASE_URL}/metrics/prometheus/query?query=${encodeURIComponent(`up{${jobMatcher}}`)}`)
   if (!response.ok) throw new Error('Failed to fetch instance labels')
   const data = await response.json()
   const results: PromResult[] = data?.data?.result || []
@@ -478,20 +497,30 @@ const LiveMetrics: React.FC = () => {
     refetchInterval: refetchIntervalSlow,
   })
 
+  const { data: promSettings } = useQuery({
+    queryKey: ['general-settings'],
+    queryFn: fetchGeneralSettings,
+    staleTime: 60000,
+  })
+  const jobMatcher = useMemo(
+    () => buildJobMatcher(promSettings?.prometheus_linux_jobs || ['node-exporter']),
+    [promSettings?.prometheus_linux_jobs]
+  )
+
   const onlineMetricServers = useMemo(
     () => (metricsOverview?.servers ?? []).filter((s) => (s.status || '').toUpperCase() === 'ONLINE'),
     [metricsOverview]
   )
 
   const { data: instanceLabels = {} } = useQuery({
-    queryKey: ['prometheus-instance-labels', realTimeMode],
-    queryFn: fetchInstanceLabels,
+    queryKey: ['prometheus-instance-labels', realTimeMode, jobMatcher],
+    queryFn: () => fetchInstanceLabels(jobMatcher),
     refetchInterval: realTimeMode ? realTimeRefetchMs : 30000
   })
 
   const { data: instanceUpStatus = {} } = useQuery({
-    queryKey: ['prometheus-instance-up', realTimeMode],
-    queryFn: fetchInstanceUpStatus,
+    queryKey: ['prometheus-instance-up', realTimeMode, jobMatcher],
+    queryFn: () => fetchInstanceUpStatus(jobMatcher),
     refetchInterval: realTimeMode ? realTimeRefetchMs : 15000
   })
 
@@ -503,10 +532,10 @@ const LiveMetrics: React.FC = () => {
 
   const selector =
     selectedInstances.length === 0
-      ? 'job="node-exporter"'
+      ? jobMatcher
       : selectedInstances.length === 1
-        ? `job="node-exporter",instance="${selectedInstances[0]}"`
-        : `job="node-exporter",instance=~"${selectedInstances.map(escapePrometheusRegex).join('|')}"`
+        ? `${jobMatcher},instance="${selectedInstances[0]}"`
+        : `${jobMatcher},instance=~"${selectedInstances.map(escapePrometheusRegex).join('|')}"`
 
   const byInstance = selectedInstances.length !== 1
   const instanceQueryKey = selectedInstances.length === 0 ? 'all' : selectedInstances.slice().sort().join(',')
@@ -548,13 +577,13 @@ const LiveMetrics: React.FC = () => {
   }
 
   const cpuRangeQuery = selectedInstances.length === 0
-    ? `100 - (avg(rate(node_cpu_seconds_total{mode="idle",job="node-exporter"}[5m])) * 100)`
+    ? `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${jobMatcher}}[5m])) * 100)`
     : `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
   const memoryRangeQuery = selectedInstances.length === 0
-    ? `(1 - (avg(node_memory_MemAvailable_bytes{job="node-exporter"}) / avg(node_memory_MemTotal_bytes{job="node-exporter"}))) * 100`
+    ? `(1 - (avg(node_memory_MemAvailable_bytes{${jobMatcher}}) / avg(node_memory_MemTotal_bytes{${jobMatcher}}))) * 100`
     : `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`
   const diskRangeQuery = selectedInstances.length === 0
-    ? `(1 - (avg(node_filesystem_avail_bytes{mountpoint="/",job="node-exporter"}) / avg(node_filesystem_size_bytes{mountpoint="/",job="node-exporter"}))) * 100`
+    ? `(1 - (avg(node_filesystem_avail_bytes{mountpoint="/",${jobMatcher}}) / avg(node_filesystem_size_bytes{mountpoint="/",${jobMatcher}}))) * 100`
     : `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`
 
   const cpuChartRangeQuery = `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`

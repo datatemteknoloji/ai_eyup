@@ -1,3 +1,0 @@
-"""
-Alerting services module
-"""
