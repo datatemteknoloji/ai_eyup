@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.credential import GlobalCredential
 from app.models.hypervisor import Hypervisor
@@ -14,6 +15,43 @@ from app.models.server import Server
 from app.services.snapshot_service import _apply_vm_details_to_server
 
 logger = logging.getLogger(__name__)
+
+
+def update_sync_job(hypervisor_id: int, **patch) -> None:
+    """Hypervisor.meta_data.sync_job alanını güncelle (thread-safe, ayrı session)."""
+    from app.core.database import ThreadSessionLocal
+
+    db = ThreadSessionLocal()
+    try:
+        hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+        if not hv:
+            return
+        meta = dict(hv.meta_data or {})
+        job = dict(meta.get("sync_job") or {})
+        job.update(patch)
+        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+        meta["sync_job"] = job
+        hv.meta_data = meta
+        flag_modified(hv, "meta_data")
+        st = patch.get("status")
+        if st == "running":
+            hv.status = "SYNCING"
+        elif st == "done":
+            hv.status = "ONLINE"
+        elif st == "error":
+            hv.status = "ERROR"
+        db.commit()
+    except Exception as exc:
+        logger.warning("sync_job update failed (hv=%s): %s", hypervisor_id, exc)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def get_sync_job(hypervisor: Hypervisor) -> dict:
+    meta = hypervisor.meta_data or {}
+    job = meta.get("sync_job") or {}
+    return job if isinstance(job, dict) else {}
 
 
 def _vm_status(vm: dict) -> str:
@@ -155,17 +193,34 @@ def _upsert_vm_record(
     return created
 
 
-def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
+def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: bool = False) -> dict:
     """
     Tek bir hypervisor'dan VM'leri senkronize et.
     Returns: { synced_count, total_vms, errors, enriched_count }
+    track_progress=True ise meta_data.sync_job güncellenir (UI tarama ekranı).
     """
+    hv_id = hypervisor.id
+
+    def _prog(**kw):
+        if track_progress and hv_id:
+            update_sync_job(hv_id, **kw)
+
     synced = 0
     enriched = 0
     errors = []
     vms = []
     client = None
     htype = hypervisor.hypervisor_type.value if hypervisor.hypervisor_type else ""
+
+    _prog(
+        status="running",
+        phase="connecting",
+        percent=2,
+        message="Hypervisor'a bağlanılıyor...",
+        vms_done=0,
+        vms_total=0,
+        error=None,
+    )
 
     if htype == "vmware":
         try:
@@ -178,6 +233,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
             if not client.login():
                 errors.append("vCenter bağlantı hatası: giriş başarısız (host/kullanıcı/şifre kontrol edin)")
             else:
+                _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
                 vms = client.sync_vms_to_inventory()
         except ImportError:
             errors.append("VMware client modülü bulunamadı")
@@ -193,6 +249,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 verify_ssl=False,
                 port=hypervisor.port or 443,
             )
+            _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
             vms = client.list_vms()
         except ImportError:
             errors.append("oVirt client modülü bulunamadı")
@@ -208,6 +265,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 port=hypervisor.port or 8006,
                 verify_ssl=False,
             )
+            _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
             vms = client.list_vms()
         except ImportError:
             errors.append("Proxmox client modülü bulunamadı")
@@ -224,6 +282,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 port=hypervisor.port or 5985,
             )
             client = HyperVClient(winrm)
+            _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
             vms = client.list_vms()
         except ImportError:
             errors.append("Hyper-V client modülü bulunamadı")
@@ -231,6 +290,23 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
             errors.append(f"Hyper-V bağlantı hatası: {str(e)}")
     else:
         errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
+
+    if errors and not vms:
+        _prog(status="error", phase="error", percent=100, message=errors[0], error=errors[0])
+        return {
+            "synced_count": 0,
+            "total_vms": 0,
+            "enriched_count": 0,
+            "errors": errors,
+        }
+
+    _prog(
+        phase="listed",
+        percent=12,
+        message=f"{len(vms)} VM bulundu, detaylar taranıyor...",
+        vms_total=len(vms),
+        vms_done=0,
+    )
 
     global_cred = db.query(GlobalCredential).first()
 
@@ -258,10 +334,37 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 "vCenter enrichment ön-çekim: %s VM (paralel)",
                 len(need),
             )
-            preloaded = client.fetch_full_details_parallel(need)
+            _prog(
+                phase="enriching",
+                percent=15,
+                message=f"VM detayları taranıyor (0/{len(need)})...",
+                vms_total=len(need),
+                vms_done=0,
+            )
+
+            def _enrich_prog(done: int, total: int):
+                # listing 15% → saving 85%
+                pct = 15 + int(70 * (done / max(total, 1)))
+                _prog(
+                    phase="enriching",
+                    percent=min(85, pct),
+                    message=f"VM detayları taranıyor ({done}/{total})...",
+                    vms_done=done,
+                    vms_total=total,
+                )
+
+            preloaded = client.fetch_full_details_parallel(need, on_progress=_enrich_prog)
+
+    _prog(
+        phase="saving",
+        percent=88,
+        message="Envantere kaydediliyor...",
+        vms_total=len(vms),
+        vms_done=0,
+    )
 
     try:
-        for vm in vms:
+        for i, vm in enumerate(vms, 1):
             before = _find_existing_server(db, hypervisor.id, vm)
             was_missing_meta = (
                 before is None
@@ -280,6 +383,15 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
                 synced += 1
             elif was_missing_meta:
                 enriched += 1
+            if track_progress and (i % 25 == 0 or i == len(vms)):
+                pct = 88 + int(10 * (i / max(len(vms), 1)))
+                _prog(
+                    phase="saving",
+                    percent=min(98, pct),
+                    message=f"Envantere kaydediliyor ({i}/{len(vms)})...",
+                    vms_done=i,
+                    vms_total=len(vms),
+                )
 
         hypervisor.last_sync = datetime.now(timezone.utc)
         db.add(hypervisor)
@@ -290,12 +402,35 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor) -> dict:
             except Exception:
                 pass
 
-    return {
+    result = {
         "synced_count": synced,
         "total_vms": len(vms),
         "enriched_count": enriched,
         "errors": errors,
     }
+    if errors:
+        _prog(
+            status="error",
+            phase="error",
+            percent=100,
+            message="; ".join(errors)[:300],
+            error="; ".join(errors)[:300],
+            vms_done=len(vms),
+            vms_total=len(vms),
+            synced_count=synced,
+        )
+    else:
+        _prog(
+            status="done",
+            phase="done",
+            percent=100,
+            message=f"Tamamlandı — {len(vms)} VM (yeni: {synced})",
+            vms_done=len(vms),
+            vms_total=len(vms),
+            synced_count=synced,
+            enriched_count=enriched,
+        )
+    return result
 
 
 def sync_all_hypervisors(db: Session) -> dict:

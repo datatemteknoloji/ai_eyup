@@ -29,6 +29,24 @@ def _mask_hv_config(cfg: dict | None) -> dict:
     }
 
 
+def _hv_to_response(h: Hypervisor) -> dict:
+    from app.services.inventory_sync_service import get_sync_job
+    return {
+        "id": h.id,
+        "name": h.name,
+        "type": h.hypervisor_type.value if h.hypervisor_type else None,
+        "hostname": h.hostname,
+        "ip_address": h.ip_address,
+        "port": h.port,
+        "username": h.username,
+        "connection_config": _mask_hv_config(h.connection_config),
+        "status": h.status,
+        "sync_job": get_sync_job(h) or None,
+        "created_at": h.created_at,
+        "updated_at": h.updated_at,
+    }
+
+
 class TestConnectionRequest(BaseModel):
     type: str
     hostname: Optional[str] = None
@@ -119,18 +137,7 @@ async def list_hypervisors(db: Session = Depends(get_db)):
     """Hypervisor'ları listele"""
     try:
         hypervisors = db.query(Hypervisor).all()
-        return [{
-            "id": h.id,
-            "name": h.name,
-            "type": h.hypervisor_type.value if h.hypervisor_type else None,
-            "hostname": h.hostname,
-            "ip_address": h.ip_address,
-            "port": h.port,
-            "username": h.username,
-            "connection_config": _mask_hv_config(h.connection_config),
-            "created_at": h.created_at,
-            "updated_at": h.updated_at
-        } for h in hypervisors]
+        return [_hv_to_response(h) for h in hypervisors]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing hypervisors: {str(e)}")
 
@@ -175,24 +182,31 @@ async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: 
         db.add(db_hypervisor)
         db.commit()
         db.refresh(db_hypervisor)
-        
-        return {
-            "id": db_hypervisor.id,
-            "name": db_hypervisor.name,
-            "type": db_hypervisor.type,
-            "hostname": db_hypervisor.hostname,
-            "ip_address": db_hypervisor.ip_address,
-            "port": db_hypervisor.port,
-            "username": db_hypervisor.username,
-            "connection_config": _mask_hv_config(db_hypervisor.connection_config),
-            "created_at": db_hypervisor.created_at,
-            "updated_at": db_hypervisor.updated_at
-        }
+
+        return _hv_to_response(db_hypervisor)
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error creating hypervisor: {str(e)}")
+
+
+@router.get("/{hypervisor_id}/sync-status")
+async def hypervisor_sync_status(hypervisor_id: int, db: Session = Depends(get_db)):
+    """VM sync ilerleme durumu (tarama ekranı için)."""
+    hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+    if not hv:
+        raise HTTPException(status_code=404, detail="Hypervisor not found")
+    from app.services.inventory_sync_service import get_sync_job
+    vm_count = db.query(Server).filter(Server.hypervisor_id == hypervisor_id).count()
+    job = get_sync_job(hv)
+    return {
+        "hypervisor_id": hv.id,
+        "hypervisor_name": hv.name,
+        "status": hv.status,
+        "sync_job": job,
+        "vm_count_in_db": vm_count,
+    }
 
 @router.put("/{hypervisor_id}", response_model=HypervisorResponse)
 async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db: Session = Depends(get_db)):
@@ -253,19 +267,99 @@ async def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db
 
 
 @router.post("/{hypervisor_id}/sync-vms")
-async def sync_hypervisor_vms(hypervisor_id: int, request: Request, db: Session = Depends(get_db)):
-    """Hypervisor'dan VM'leri senkronize et (yalnızca Entegrasyonlar)"""
+async def sync_hypervisor_vms(
+    hypervisor_id: int,
+    request: Request,
+    background: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Hypervisor'dan VM'leri senkronize et (yalnızca Entegrasyonlar).
+
+    background=true (varsayılan): hemen döner, arka planda tarar — UI ilerleme ekranı.
+    background=false: bitene kadar bekler (eski davranış).
+    """
     require_integrations_inventory(request)
     try:
         hypervisor = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
         if not hypervisor:
             raise HTTPException(status_code=404, detail="Hypervisor not found")
 
-        # Ortak sync mantığı: hem burada hem background task'ta aynı fonksiyon
-        # kullanılır, böylece datastore/disk/tools gibi detay alanları (enrichment)
-        # manuel senkronizasyonda da eksik kalmaz.
-        from app.services.inventory_sync_service import sync_hypervisor_vms as _sync_vms
-        result = _sync_vms(db, hypervisor)
+        from app.services.inventory_sync_service import (
+            sync_hypervisor_vms as _sync_vms,
+            update_sync_job,
+            get_sync_job,
+        )
+
+        if background:
+            job = get_sync_job(hypervisor)
+            if job.get("status") == "running":
+                return {
+                    "success": True,
+                    "started": False,
+                    "background": True,
+                    "hypervisor_id": hypervisor.id,
+                    "hypervisor": hypervisor.name,
+                    "message": "Tarama zaten devam ediyor",
+                    "sync_job": job,
+                }
+
+            update_sync_job(
+                hypervisor.id,
+                status="running",
+                phase="queued",
+                percent=1,
+                message="Tarama kuyruğa alındı...",
+                vms_done=0,
+                vms_total=0,
+                error=None,
+            )
+
+            import threading
+            from app.core.database import ThreadSessionLocal
+
+            hid = hypervisor.id
+            hname = hypervisor.name
+
+            def _worker():
+                wdb = ThreadSessionLocal()
+                try:
+                    hv = wdb.query(Hypervisor).filter(Hypervisor.id == hid).first()
+                    if not hv:
+                        return
+                    result = _sync_vms(wdb, hv, track_progress=True)
+                    wdb.commit()
+                    try:
+                        from app.services.monitoring.prometheus_metrics import (
+                            sync_node_exporter_targets_from_db,
+                        )
+                        sync_node_exporter_targets_from_db(wdb)
+                    except Exception as pe:
+                        logger.warning("prometheus target sync after VM sync: %s", pe)
+                except Exception as exc:
+                    logger.exception("background sync-vms failed (hv=%s)", hid)
+                    wdb.rollback()
+                    update_sync_job(
+                        hid,
+                        status="error",
+                        phase="error",
+                        percent=100,
+                        message=str(exc)[:300],
+                        error=str(exc)[:300],
+                    )
+                finally:
+                    wdb.close()
+
+            threading.Thread(target=_worker, name=f"sync-vms-{hid}", daemon=True).start()
+            return {
+                "success": True,
+                "started": True,
+                "background": True,
+                "hypervisor_id": hid,
+                "hypervisor": hname,
+                "message": "VM taraması başlatıldı",
+            }
+
+        result = _sync_vms(db, hypervisor, track_progress=True)
         db.commit()
 
         from app.services.monitoring.prometheus_metrics import sync_node_exporter_targets_from_db
@@ -273,6 +367,7 @@ async def sync_hypervisor_vms(hypervisor_id: int, request: Request, db: Session 
 
         return {
             "success": len(result["errors"]) == 0,
+            "background": False,
             "hypervisor": hypervisor.name,
             "synced_count": result["synced_count"],
             "total_vms": result["total_vms"],

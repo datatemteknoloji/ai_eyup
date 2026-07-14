@@ -37,6 +37,8 @@ class HypervisorResponse(BaseModel):
     port: Optional[int]
     username: Optional[str]
     connection_config: Optional[Dict[str, Any]]
+    status: Optional[str] = None
+    sync_job: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 

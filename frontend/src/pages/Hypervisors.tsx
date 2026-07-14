@@ -19,6 +19,19 @@ const NEON = {
 interface Hypervisor {
   id: number; name: string; type: string; hostname: string
   ip_address: string; port: number; username: string; connection_config: any
+  status?: string
+  sync_job?: SyncJob | null
+}
+
+interface SyncJob {
+  status?: string
+  phase?: string
+  percent?: number
+  message?: string
+  vms_done?: number
+  vms_total?: number
+  error?: string
+  synced_count?: number
 }
 
 interface VM {
@@ -548,6 +561,136 @@ const HypervisorManagement = ({
   )
 }
 
+// ── Sync Scanning Overlay ───────────────────────────────────────────────────
+const SyncScanningOverlay = ({
+  hypervisorId,
+  hypervisorName,
+  onDone,
+  onDismiss,
+}: {
+  hypervisorId: number
+  hypervisorName: string
+  onDone: (job: SyncJob) => void
+  onDismiss: () => void
+}) => {
+  const [job, setJob] = useState<SyncJob>({ status: 'running', percent: 1, message: 'Tarama başlıyor...' })
+  const [vmCount, setVmCount] = useState(0)
+
+  const onDoneRef = React.useRef(onDone)
+  onDoneRef.current = onDone
+
+  useEffect(() => {
+    let cancelled = false
+    let finished = false
+    const tick = async () => {
+      if (finished || cancelled) return
+      try {
+        const r = await fetch(`${API_BASE_URL}/hypervisors/${hypervisorId}/sync-status`, {
+          headers: inventoryHeaders(),
+        })
+        if (!r.ok || cancelled) return
+        const data = await r.json()
+        const j: SyncJob = data.sync_job || {}
+        setJob(j)
+        setVmCount(data.vm_count_in_db || 0)
+        if (j.status === 'done' || j.status === 'error') {
+          finished = true
+          onDoneRef.current(j)
+        }
+      } catch {
+        /* poll again */
+      }
+    }
+    tick()
+    const id = setInterval(tick, 2000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [hypervisorId])
+
+  const pct = Math.max(0, Math.min(100, Number(job.percent) || 0))
+  const done = job.status === 'done' || job.status === 'error'
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+      <div className="bg-cyber-card rounded-2xl border border-white/[0.08] w-full max-w-lg shadow-2xl p-6">
+        <div className="flex items-start gap-4 mb-5">
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+            job.status === 'error' ? 'bg-red-500/15' : job.status === 'done' ? 'bg-green-500/15' : 'bg-blue-500/15'
+          }`}>
+            {job.status === 'error' ? (
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            ) : job.status === 'done' ? (
+              <Check className="w-6 h-6 text-green-400" />
+            ) : (
+              <RefreshCw className="w-6 h-6 text-blue-400 animate-spin" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-white">
+              {job.status === 'done' ? 'Tarama tamamlandı' : job.status === 'error' ? 'Tarama hatası' : 'VM envanteri taranıyor'}
+            </h2>
+            <p className="text-sm text-slate-400 mt-0.5 truncate">{hypervisorName}</p>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="flex justify-between text-xs text-slate-400 mb-1.5">
+            <span>{job.message || 'İşleniyor...'}</span>
+            <span className="font-mono text-slate-300">{pct}%</span>
+          </div>
+          <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                job.status === 'error' ? 'bg-red-500' : job.status === 'done' ? 'bg-green-500' : 'bg-blue-500'
+              }`}
+              style={{ width: `${pct || 3}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">İlerleme</div>
+            <div className="text-sm text-white font-medium mt-0.5">
+              {job.vms_done != null && job.vms_total != null
+                ? `${job.vms_done} / ${job.vms_total}`
+                : '—'}
+            </div>
+          </div>
+          <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">DB'de VM</div>
+            <div className="text-sm text-white font-medium mt-0.5">{vmCount}</div>
+          </div>
+        </div>
+
+        {!done && (
+          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            İlk tam tarama büyük ortamlarda 15–20 dakika sürebilir. Bu pencereyi kapatabilirsiniz;
+            Sync VMs ile durumu izlemeye devam edebilirsiniz.
+          </p>
+        )}
+        {job.status === 'error' && job.error && (
+          <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 mb-4">
+            {job.error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="px-4 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
+          >
+            {done ? 'Kapat' : 'Arka planda devam et'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Add Hypervisor Modal ────────────────────────────────────────────────────
 const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) => {
   const [formData, setFormData] = useState({
@@ -660,6 +803,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
 const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventoryEdit = false }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>(allowInventoryEdit ? 'hypervisors' : 'dashboard')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [scanTarget, setScanTarget] = useState<{ id: number; name: string } | null>(null)
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const queryClient = useQueryClient()
@@ -710,6 +854,16 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   }, [hypervisors])
 
   // Mutations
+  const startScan = async (id: number, name: string) => {
+    const r = await fetch(`${API_BASE_URL}/hypervisors/${id}/sync-vms?background=true`, {
+      method: 'POST',
+      headers: inventoryHeaders(),
+    })
+    if (!r.ok) throw new Error((await r.json()).detail || 'Sync başlatılamadı')
+    setScanTarget({ id, name })
+    return r.json()
+  }
+
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/`, {
@@ -720,7 +874,15 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
       if (!r.ok) throw new Error((await r.json()).detail || 'Ekleme hatası')
       return r.json()
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+    onSuccess: async (created) => {
+      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+      try {
+        await startScan(created.id, created.name)
+      } catch (e) {
+        alert(e instanceof Error ? e.message : 'Tarama başlatılamadı')
+      }
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Ekleme hatası'),
   })
 
   const deleteMutation = useMutation({
@@ -736,14 +898,10 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
 
   const syncMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}/sync-vms`, { method: 'POST', headers: inventoryHeaders() })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Sync hatası')
-      return r.json()
+      const hv = hypervisors.find(h => h.id === id)
+      return startScan(id, hv?.name || `Hypervisor #${id}`)
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      alert(`${data.synced_count} yeni VM eklendi. Toplam: ${data.total_vms} VM`)
-    }
+    onError: (e) => alert(e instanceof Error ? e.message : 'Sync hatası'),
   })
 
   const syncAllMutation = useMutation({
@@ -786,6 +944,21 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
       {allowInventoryEdit && showAddModal && <AddHypervisorModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
+      {scanTarget && (
+        <SyncScanningOverlay
+          hypervisorId={scanTarget.id}
+          hypervisorName={scanTarget.name}
+          onDone={() => {
+            queryClient.invalidateQueries({ queryKey: ['servers'] })
+            queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+          }}
+          onDismiss={() => {
+            setScanTarget(null)
+            queryClient.invalidateQueries({ queryKey: ['servers'] })
+            queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+          }}
+        />
+      )}
 
       <div className="space-y-6">
         <div>

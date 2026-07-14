@@ -263,11 +263,13 @@ class VCenterClient:
         self,
         items: List[Dict],
         max_workers: Optional[int] = None,
+        on_progress=None,
     ) -> Dict[str, Dict]:
         """
         Birden fazla VM için get_vm_full_details'i paralel çalıştırır.
         items: [{"vm_id": "...", "name": "..."}, ...]
         Dönüş: {vm_id: details_dict}
+        on_progress(done, total) opsiyonel ilerleme callback'i.
         """
         workers = _sync_workers(max_workers)
         targets = [
@@ -299,6 +301,11 @@ class VCenterClient:
                 if det:
                     result[vid] = det
                 done += 1
+                if on_progress:
+                    try:
+                        on_progress(done, len(targets))
+                    except Exception:
+                        pass
                 if done % 50 == 0 or done == len(targets):
                     logger.info(
                         "vCenter full_details ilerlemesi %s/%s (workers=%s)",
