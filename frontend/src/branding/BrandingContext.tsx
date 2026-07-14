@@ -6,6 +6,7 @@ export const DEFAULT_APP_NAME = 'datatem AI'
 interface BrandingContextValue {
   appName: string
   logoUrl: string | null
+  version: string
   loading: boolean
   refreshBranding: () => Promise<void>
 }
@@ -13,6 +14,7 @@ interface BrandingContextValue {
 const BrandingContext = createContext<BrandingContextValue>({
   appName: DEFAULT_APP_NAME,
   logoUrl: null,
+  version: '',
   loading: true,
   refreshBranding: async () => {},
 })
@@ -22,6 +24,7 @@ export const useBranding = () => useContext(BrandingContext)
 export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [appName, setAppName] = useState(DEFAULT_APP_NAME)
   const [hasLogo, setHasLogo] = useState(false)
+  const [version, setVersion] = useState('')
   const [cacheBust, setCacheBust] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -32,6 +35,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const data = await r.json()
         setAppName(data.app_name || DEFAULT_APP_NAME)
         setHasLogo(Boolean(data.has_logo))
+        if (data.version) setVersion(String(data.version).replace(/^v/i, ''))
       }
     } catch {
       // Sessizce varsayılanlarda kal — marka bilgisi kritik değil
@@ -48,13 +52,13 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [fetchBranding])
 
   useEffect(() => {
-    document.title = appName
-  }, [appName])
+    document.title = version ? `${appName} ${version}` : appName
+  }, [appName, version])
 
   const logoUrl = hasLogo ? `${API_BASE_URL}/public/logo?v=${cacheBust}` : null
 
   return (
-    <BrandingContext.Provider value={{ appName, logoUrl, loading, refreshBranding }}>
+    <BrandingContext.Provider value={{ appName, logoUrl, version, loading, refreshBranding }}>
       {children}
     </BrandingContext.Provider>
   )

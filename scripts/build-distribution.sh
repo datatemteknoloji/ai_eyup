@@ -122,10 +122,15 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   # manifestleri üretir; bu bazı Docker sürümlerinde (containerd image store ile)
   # "docker save" işlemini "content digest not found" hatasıyla bozar.
   echo "▶ Backend imajı derleniyor (${PLATFORM})..."
-  docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false -t "ainew-backend:${VERSION}" --load ./backend
+  # Sürüm bilgisini imaja göm (UI /health / public API)
+  cp -f VERSION backend/VERSION 2>/dev/null || true
+  docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false \
+    --build-arg "APP_VERSION=${VERSION}" \
+    -t "ainew-backend:${VERSION}" --load ./backend
 
   echo "▶ Frontend imajı derleniyor (${PLATFORM})..."
-  docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false -t "ainew-frontend:${VERSION}" --load ./frontend
+  docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false \
+    -t "ainew-frontend:${VERSION}" --load ./frontend
 
   # Not: Docker'ın containerd content-store'u ile çok mimarili (multi-arch) upstream
   # imajlarını doğrudan "docker pull --platform + docker save" ile kaydetmek bazı

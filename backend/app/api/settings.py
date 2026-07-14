@@ -497,6 +497,7 @@ async def put_advanced_settings(
 async def get_settings(db: Session = Depends(get_db)):
     """Genel ayarları getir"""
     from app.core.config import settings
+    from app.core.version import get_app_version
     default_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
     # DB'den aktif model oku, yoksa config default'u kullan
     model_row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
@@ -537,6 +538,7 @@ async def get_settings(db: Session = Depends(get_db)):
             "verify_ssl": settings.REMOTE_LLM_VERIFY_SSL,
             "ca_bundle": settings.REMOTE_LLM_CA_BUNDLE,
         },
+        "app_version": get_app_version(),
     }
 
 

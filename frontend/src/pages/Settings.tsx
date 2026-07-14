@@ -814,7 +814,7 @@ const Settings: React.FC = () => {
   }
 
   // Kurumsal Kimlik (marka adı + logo)
-  const { appName, logoUrl, refreshBranding } = useBranding()
+  const { appName, logoUrl, version, refreshBranding } = useBranding()
   const [brandingName, setBrandingName] = useState('')
   const [brandingNameSaving, setBrandingNameSaving] = useState(false)
   const [brandingNameSaved, setBrandingNameSaved] = useState(false)
@@ -1947,7 +1947,12 @@ const Settings: React.FC = () => {
                       <span className="text-white font-bold text-2xl">SM</span>
                     </div>
                   )}
-                  <div><h3 className="text-2xl font-bold text-white">{appName}</h3><p className="text-slate-400">v1.0.0 - AI Infrastructure Management</p></div>
+                  <div>
+                    <h3 className="text-2xl font-bold text-white">{appName}</h3>
+                    <p className="text-slate-400">
+                      {version ? `v${version}` : '—'} — AI Infrastructure Management
+                    </p>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4">
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Backend</p><p className="text-white font-medium">FastAPI + Python</p></div>

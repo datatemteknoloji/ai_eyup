@@ -4,6 +4,7 @@ FastAPI Main Application
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.version import get_app_version
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.8",
+    version=get_app_version(),
     description="Server Management System API"
 )
 
@@ -345,7 +346,7 @@ except Exception as _e:
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": get_app_version()}
 
 if __name__ == "__main__":
     import uvicorn

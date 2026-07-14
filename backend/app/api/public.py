@@ -36,10 +36,22 @@ def _get_setting(db: Session, key: str) -> str:
 @router.get("/branding")
 async def get_branding(db: Session = Depends(get_db)):
     """Marka adı + logo var mı bilgisi — açık uç, giriş ekranından da çağrılır."""
+    from app.core.version import get_app_version
     app_name = _get_setting(db, "branding_app_name") or DEFAULT_APP_NAME
     logo_filename = _get_setting(db, "branding_logo_filename")
     has_logo = bool(logo_filename) and os.path.isfile(os.path.join(LOGO_DIR, logo_filename))
-    return {"app_name": app_name, "has_logo": has_logo}
+    return {
+        "app_name": app_name,
+        "has_logo": has_logo,
+        "version": get_app_version(),
+    }
+
+
+@router.get("/version")
+async def get_version():
+    """Uygulama sürümü — açık uç."""
+    from app.core.version import get_app_version
+    return {"version": get_app_version()}
 
 
 @router.get("/logo")

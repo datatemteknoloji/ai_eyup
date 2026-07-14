@@ -152,7 +152,7 @@ function childVisible(child: GroupChild, hasModule: (id: string) => boolean): bo
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
   const { user, logout, hasModule } = useAuth()
-  const { appName, logoUrl } = useBranding()
+  const { appName, logoUrl, version } = useBranding()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -547,7 +547,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="p-3 border-t border-slate-700 flex-shrink-0">
           {sidebarOpen && (
             <div className="text-xs text-slate-500">
-              <p>{appName} v2.0</p>
+              <p>{appName}{version ? ` v${version}` : ''}</p>
             </div>
           )}
         </div>

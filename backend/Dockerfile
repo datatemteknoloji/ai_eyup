@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+ARG APP_VERSION=0.0.0
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \

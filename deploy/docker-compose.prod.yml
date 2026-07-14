@@ -76,8 +76,10 @@ services:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY .env dosyasinda tanimli olmali}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD .env dosyasinda tanimli olmali}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - APP_VERSION=${APP_VERSION:-}
     volumes:
       - ./backend/static:/app/static:Z
+      - ./VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets:Z
       - ./prometheus/targets:/etc/prometheus/targets:Z
       - ${DATA_DIR:-/var/lib/server_management}/chroma:/var/lib/server_management/chroma:Z

@@ -179,6 +179,7 @@ else
   fill_env_var "BACKEND_IMAGE" "ainew-backend:${APP_VERSION}"
   fill_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
 fi
+fill_env_var "APP_VERSION" "$APP_VERSION"
 
 c_green "$ENV_FILE hazır (mevcut değerler korunur, sadece boş/varsayılanlar dolduruldu)."
 

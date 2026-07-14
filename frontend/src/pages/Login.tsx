@@ -5,7 +5,7 @@ import { useBranding } from '../branding/BrandingContext'
 
 const Login: React.FC = () => {
   const { login } = useAuth()
-  const { appName, logoUrl } = useBranding()
+  const { appName, logoUrl, version } = useBranding()
   const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -81,7 +81,9 @@ const Login: React.FC = () => {
           </button>
         </form>
 
-        <p className="text-center text-xs text-slate-600 mt-4">Server Management v1.0 · © 2026</p>
+        <p className="text-center text-xs text-slate-600 mt-4">
+          {appName}{version ? ` v${version}` : ''} · © 2026
+        </p>
       </div>
     </div>
   )

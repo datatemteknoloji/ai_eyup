@@ -53,9 +53,11 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - APP_VERSION=${APP_VERSION:-}
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
+      - ./backend/VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
       - /var/lib/server_management/chroma:/var/lib/server_management/chroma

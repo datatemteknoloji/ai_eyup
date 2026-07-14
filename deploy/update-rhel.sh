@@ -158,8 +158,10 @@ set_env() {
 }
 set_env "BACKEND_IMAGE"  "$NEW_BACKEND"  "$INSTALL_DIR/$ENV_FILE"
 set_env "FRONTEND_IMAGE" "$NEW_FRONTEND" "$INSTALL_DIR/$ENV_FILE"
+set_env "APP_VERSION"    "$NEW_VERSION"  "$INSTALL_DIR/$ENV_FILE"
 c_green "BACKEND_IMAGE=$NEW_BACKEND"
 c_green "FRONTEND_IMAGE=$NEW_FRONTEND"
+c_green "APP_VERSION=$NEW_VERSION"
 
 # ── 4. Yeni imajları yükle ──────────────────────────────────────────────────
 step "Yeni Docker imajları yükleniyor"
