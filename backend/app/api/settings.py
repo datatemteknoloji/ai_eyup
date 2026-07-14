@@ -155,41 +155,59 @@ async def set_default_credential(credential_id: int, db: Session = Depends(get_d
 
 @router.post("/credentials/{credential_id}/apply")
 async def apply_credential_to_servers(credential_id: int, request: ApplyCredentialRequest, db: Session = Depends(get_db)):
-    """Global credential'ı sunuculara uygula (SSH/AI Ready testleri paralel)."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """Linux SSH credential — yalnızca Linux sunuculara.
+
+    Credential yazımı anında biter; AI Ready SSH testleri arka planda çalışır
+    (nginx HTML timeout / Unexpected token '<' sorununu önler).
+    """
+    import threading
+    from app.core.database import ThreadSessionLocal as SessionLocal
     from app.services.bulk_concurrency import bulk_ssh_workers
+    from app.services.platform_scope import is_linux_server, is_windows_server
 
     cred = db.query(GlobalCredential).filter(GlobalCredential.id == credential_id).first()
     if not cred:
         raise HTTPException(status_code=404, detail="Credential bulunamadı")
 
     if request.server_ids:
-        servers = db.query(Server).filter(Server.id.in_(request.server_ids)).all()
+        candidates = db.query(Server).filter(Server.id.in_(request.server_ids)).all()
     else:
-        servers = db.query(Server).all()
+        candidates = db.query(Server).all()
+
+    skipped_windows = sum(1 for s in candidates if is_windows_server(s))
+    servers = [s for s in candidates if is_linux_server(s)]
 
     if not servers:
-        raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Uygulanacak Linux sunucu bulunamadı. "
+                "SSH credential yalnızca Linux sunuculara uygulanır; "
+                "Windows için Ayarlar → Windows (WinRM) kullanın."
+            ),
+        )
 
-    applied = 0
-    failed = []
     plain_password = decrypt_secret(cred.password) if cred.password else None
     plain_key = decrypt_secret(cred.private_key) if cred.private_key else None
     plain_sudo = decrypt_secret(cred.sudo_password) if cred.sudo_password else None
+    username = cred.username
+    port = cred.port or 22
+    cred_name = cred.name
 
-    # 1) Credential'ı tüm sunuculara yaz (hızlı, seriyal DB)
+    applied = 0
+    no_ip = 0
     test_targets = []
     for server in servers:
         if not server.connection_config:
             server.connection_config = {}
-        server.connection_config["username"] = cred.username
+        server.connection_config["username"] = username
         if plain_password:
             server.connection_config["password"] = encrypt_secret(plain_password)
         if plain_key:
             server.connection_config["private_key"] = encrypt_secret(plain_key)
         if plain_sudo:
             server.connection_config["sudo_password"] = encrypt_secret(plain_sudo)
-        server.connection_config["port"] = cred.port
+        server.connection_config["port"] = port
         flag_modified(server, "connection_config")
         applied += 1
 
@@ -197,77 +215,118 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
             ip = (server.ip_address or "").strip()
             if not ip:
                 server.ai_ready = False
-                failed.append(f"{server.name} (IP yok)")
+                no_ip += 1
             else:
                 test_targets.append({"id": server.id, "name": server.name, "ip": ip})
 
-    # 2) SSH testleri paralel
-    if request.set_ai_ready and test_targets:
-        workers = bulk_ssh_workers()
-        logger.info(
-            "Credential apply SSH test: %s sunucu, workers=%s",
-            len(test_targets),
-            workers,
-        )
-
-        def _ssh_one(snap: dict) -> tuple:
-            try:
-                from app.services.ssh_manager import SSHManager
-                ssh = SSHManager(
-                    host=snap["ip"],
-                    username=cred.username,
-                    password=plain_password,
-                    private_key=plain_key,
-                    port=cred.port or 22,
-                )
-                ok = bool(ssh.connect())
-                ssh.close()
-                return snap["id"], snap["name"], ok
-            except Exception as e:
-                logger.debug("SSH test failed for %s: %s", snap["name"], e)
-                return snap["id"], snap["name"], False
-
-        by_id = {s.id: s for s in servers}
-        done = 0
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cred-apply-ssh") as pool:
-            futures = [pool.submit(_ssh_one, t) for t in test_targets]
-            for fut in as_completed(futures):
-                srv_id, name, ok = fut.result()
-                srv = by_id.get(srv_id)
-                if srv is not None:
-                    srv.ai_ready = ok
-                if not ok:
-                    failed.append(name)
-                done += 1
-                if done % 100 == 0 or done == len(test_targets):
-                    logger.info("Credential SSH test ilerlemesi %s/%s", done, len(test_targets))
-
     db.commit()
-    msg = f"'{cred.name}' credential {applied} sunucuya uygulandı"
-    if failed:
-        msg += f". SSH bağlantı başarısız ({len(failed)}): {', '.join(failed[:5])}"
-        if len(failed) > 5:
-            msg += f" ve {len(failed)-5} diğer"
+
+    ssh_started = False
+    if request.set_ai_ready and test_targets:
+        ssh_started = True
+        targets_snap = list(test_targets)
+        workers = bulk_ssh_workers()
+
+        def _bg_ssh_ai_ready() -> None:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from app.services.ssh_manager import SSHManager
+
+            def _one(snap: dict) -> tuple:
+                try:
+                    ssh = SSHManager(
+                        host=snap["ip"],
+                        username=username,
+                        password=plain_password,
+                        private_key=plain_key,
+                        port=port,
+                    )
+                    ok = bool(ssh.connect())
+                    ssh.close()
+                    return snap["id"], ok
+                except Exception:
+                    return snap["id"], False
+
+            logger.info(
+                "Credential apply SSH (arka plan): %s sunucu, workers=%s",
+                len(targets_snap),
+                workers,
+            )
+            results: dict = {}
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cred-apply-ssh") as pool:
+                futs = [pool.submit(_one, t) for t in targets_snap]
+                done = 0
+                for fut in as_completed(futs):
+                    sid, ok = fut.result()
+                    results[sid] = ok
+                    done += 1
+                    if done % 100 == 0 or done == len(targets_snap):
+                        logger.info("Credential SSH (arka plan) %s/%s", done, len(targets_snap))
+
+            bg = SessionLocal()
+            try:
+                ok_n = fail_n = 0
+                for sid, ok in results.items():
+                    row = bg.query(Server).filter(Server.id == sid).first()
+                    if row is None:
+                        continue
+                    row.ai_ready = ok
+                    if ok:
+                        ok_n += 1
+                    else:
+                        fail_n += 1
+                bg.commit()
+                logger.info(
+                    "Credential '%s' AI Ready tamamlandı: ok=%s fail=%s",
+                    cred_name, ok_n, fail_n,
+                )
+            except Exception:
+                logger.exception("Credential apply AI Ready arka plan DB hatası")
+                bg.rollback()
+            finally:
+                bg.close()
+
+        threading.Thread(
+            target=_bg_ssh_ai_ready,
+            daemon=True,
+            name=f"cred-apply-{credential_id}",
+        ).start()
+
+    msg = f"'{cred_name}' credential {applied} Linux sunucuya uygulandı"
+    if skipped_windows:
+        msg += f" ({skipped_windows} Windows atlandı)"
+    if ssh_started:
+        msg += (
+            f". AI Ready SSH testi arka planda başladı ({len(test_targets)} sunucu) — "
+            "birkaç dakika içinde ai_ready güncellenir."
+        )
+    elif no_ip:
+        msg += f". {no_ip} sunucuda IP yok, AI Ready işaretlenmedi."
+
     return {
         "success": True,
         "message": msg,
         "applied_count": applied,
-        "ai_ready_count": applied - len(failed),
-        "failed_ssh": failed[:20],
-        "workers": bulk_ssh_workers() if request.set_ai_ready else 0,
+        "skipped_windows": skipped_windows,
+        "ssh_test_queued": ssh_started,
+        "ssh_test_count": len(test_targets),
+        "ai_ready_count": None,
+        "failed_ssh": [],
+        "workers": bulk_ssh_workers() if ssh_started else 0,
     }
 
 
 @router.post("/credentials/test-all-ssh")
 async def test_all_servers_ssh(db: Session = Depends(get_db)):
-    """Tüm sunucularda SSH test et, ai_ready güncelle (paralel) ve SSH key dağıt."""
+    """Linux sunucularda SSH test et (Windows hariç)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from app.services.bulk_concurrency import bulk_ssh_workers
     from app.services.ssh_credentials import resolve_ssh_creds
+    from app.services.platform_scope import is_linux_server
 
-    servers = db.query(Server).all()
+    all_servers = db.query(Server).all()
+    servers = [s for s in all_servers if is_linux_server(s)]
     if not servers:
-        raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
+        raise HTTPException(status_code=404, detail="Hiç Linux sunucu bulunamadı")
 
     global_cred = (
         db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()  # noqa: E712

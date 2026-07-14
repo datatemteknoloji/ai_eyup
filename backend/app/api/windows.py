@@ -835,22 +835,21 @@ def delete_global_winrm_credential(db: Session = Depends(get_db)):
 
 @router.post("/global-credential/apply")
 def apply_global_winrm_credential(db: Session = Depends(get_db)):
-    """
-    Apply the global WinRM credential to all Windows servers that don't have
-    their own per-server credential configured. Also marks them as os_type=windows.
-    """
+    """Global WinRM credential — yalnızca Windows sunuculara (Linux atlanır)."""
+    from app.services.platform_scope import is_windows_server
+
     gcred = _get_global_winrm(db)
     if not gcred:
         raise HTTPException(status_code=400, detail="Global WinRM credential tanımlanmamış")
 
     servers = db.query(Server).all()
     updated = []
+    skipped_linux = 0
     for s in servers:
-        os_low = (s.os_type or "").lower()
-        if "windows" not in os_low:
+        if not is_windows_server(s):
+            skipped_linux += 1
             continue
         cfg = s.connection_config or {}
-        # Skip servers that already have their own WinRM credential
         winrm_port = cfg.get("winrm_port")
         has_own = bool(cfg.get("winrm")) and bool(cfg.get("username")) and \
                   bool(winrm_port and int(winrm_port) >= 5985)
@@ -864,13 +863,20 @@ def apply_global_winrm_credential(db: Session = Depends(get_db)):
             "winrm": True,
             "_from_global": True,
         })
+        if not s.os_type or "windows" not in (s.os_type or "").lower():
+            s.os_type = "windows"
         s.connection_config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(s, "connection_config")
         updated.append(s.name or str(s.id))
 
     db.commit()
-    return {"applied_to": len(updated), "servers": updated}
+    return {
+        "applied_to": len(updated),
+        "servers": updated,
+        "skipped_linux": skipped_linux,
+        "message": f"{len(updated)} Windows sunucuya uygulandı ({skipped_linux} Linux atlandı)",
+    }
 
 
 @router.post("/global-credential/test")

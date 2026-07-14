@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.services.bulk_concurrency import bulk_ssh_workers
+from app.services.platform_scope import is_linux_server
 from app.services.ssh_credentials import resolve_ssh_creds
 from app.services.ssh_manager import SSHManager
 
@@ -46,10 +47,14 @@ class BulkAIReadyService:
                 "error": "Global credential bulunamadı. Lütfen önce Settings'ten credential tanımlayın.",
             }
 
-        servers = db.query(Server).filter(
-            Server.ip_address != None,  # noqa: E711
-            Server.ip_address != "",
-        ).all()
+        # SSH / AI Ready yalnızca Linux — Windows WinRM ile ayrı test edilir
+        servers = [
+            s for s in db.query(Server).filter(
+                Server.ip_address != None,  # noqa: E711
+                Server.ip_address != "",
+            ).all()
+            if is_linux_server(s)
+        ]
 
         snapshots = []
         for s in servers:

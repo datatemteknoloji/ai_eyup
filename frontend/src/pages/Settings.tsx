@@ -19,7 +19,16 @@ interface Server {
   name: string
   ip_address: string
   ai_ready: boolean
+  os_type?: string
   connection_config: any
+}
+
+const isWindowsServer = (s: Server) => {
+  const os = (s.os_type || '').toLowerCase()
+  if (os.includes('windows')) return true
+  const cfg = s.connection_config || {}
+  if (cfg.winrm || cfg.protocol === 'winrm') return true
+  return false
 }
 
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -468,7 +477,7 @@ const Settings: React.FC = () => {
   // WinRM credential state
   const [winrmForm, setWinrmForm] = useState({ username: '', password: '', port: 5985, use_https: false })
   const [winrmEditing, setWinrmEditing] = useState(false)
-  const [winrmApplyResult, setWinrmApplyResult] = useState<{ applied_to: number; servers: string[] } | null>(null)
+  const [winrmApplyResult, setWinrmApplyResult] = useState<{ applied_to: number; servers: string[]; skipped_linux?: number; message?: string } | null>(null)
 
   const [metricRetentionDays, setMetricRetentionDays] = useState<number>(30)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
@@ -705,6 +714,8 @@ const Settings: React.FC = () => {
       return res.json()
     }
   })
+  const linuxServers = React.useMemo(() => servers.filter(s => !isWindowsServer(s)), [servers])
+  const windowsServers = React.useMemo(() => servers.filter(s => isWindowsServer(s)), [servers])
 
   // WinRM Queries & Mutations
   const { data: winrmCred } = useQuery<{ configured: boolean; username?: string; port?: number; use_https?: boolean; has_password?: boolean }>({
@@ -801,8 +812,21 @@ const Settings: React.FC = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_ids: serverIds, set_ai_ready: aiReady })
       })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const text = await res.text()
+      let r: any = null
+      try {
+        r = text ? JSON.parse(text) : null
+      } catch {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? 'İstek zaman aşımına uğradı (proxy). Credential yazımı arka planda sürebilir — sayfayı yenileyin.'
+            : `Sunucu HTML/beklenmeyen cevap döndü (HTTP ${res.status}).`
+        )
+      }
+      if (!res.ok) {
+        const detail = r?.detail
+        throw new Error(typeof detail === 'string' ? detail : (detail?.[0]?.msg || 'Hata'))
+      }
       return r
     },
     onSuccess: (data) => {
@@ -817,8 +841,18 @@ const Settings: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/settings/credentials/test-all-ssh`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }
       })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const text = await res.text()
+      let r: any = null
+      try {
+        r = text ? JSON.parse(text) : null
+      } catch {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? 'SSH test zaman aşımı. Backend loglarını kontrol edin.'
+            : `Sunucu HTML/beklenmeyen cevap döndü (HTTP ${res.status}).`
+        )
+      }
+      if (!res.ok) throw new Error(r?.detail || 'Hata')
       return r
     },
     onSuccess: (data) => {
@@ -905,8 +939,8 @@ const Settings: React.FC = () => {
             <div>
               <div className="flex flex-wrap items-start gap-3 mb-6">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-xl font-semibold text-white">Global Credentials</h2>
-                  <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın ve sunuculara toplu uygulayın</p>
+                  <h2 className="text-xl font-semibold text-white">Linux SSH Credentials</h2>
+                  <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın — yalnızca Linux sunuculara uygulanır (Windows için WinRM sekmesi)</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => checkAllServersSSH.mutate()}
@@ -986,7 +1020,7 @@ const Settings: React.FC = () => {
                 <div className="text-center py-12 bg-cyber-deep/30 rounded-xl border border-dashed border-white/[0.06]">
                   <span className="text-2xl font-bold text-blue-400 block mb-4">KEY</span>
                   <p className="text-slate-400 mb-2">Henüz credential eklenmemiş</p>
-                  <p className="text-slate-500 text-sm">Yeni credential ekleyip tüm sunuculara toplu uygulayabilirsiniz</p>
+                  <p className="text-slate-500 text-sm">Yeni credential ekleyip Linux sunuculara toplu uygulayabilirsiniz</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1361,7 +1395,9 @@ const Settings: React.FC = () => {
               {/* Apply result */}
               {winrmApplyResult && (
                 <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-sm text-green-300">
-                  <p className="font-medium mb-1">✓ {winrmApplyResult.applied_to} sunucuya uygulandı</p>
+                  <p className="font-medium mb-1">
+                    ✓ {winrmApplyResult.message || `${winrmApplyResult.applied_to} Windows sunucuya uygulandı`}
+                  </p>
                   {winrmApplyResult.servers.length > 0 && (
                     <p className="text-green-400/70 text-xs">{winrmApplyResult.servers.join(', ')}</p>
                   )}
@@ -1743,7 +1779,7 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-      {/* ═══ Apply Modal ═══ */}
+      {/* ═══ Apply Modal (Linux SSH only) ═══ */}
       {applyModal.open && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-hidden flex flex-col">
@@ -1751,8 +1787,13 @@ const Settings: React.FC = () => {
               <div>
                 <h2 className="text-xl font-semibold text-white">Credential Uygula</h2>
                 <p className="text-sm text-slate-400 mt-1">
-                  <span className="text-blue-400 font-medium">"{applyModal.credName}"</span> credential'ını sunuculara uygula
+                  <span className="text-blue-400 font-medium">"{applyModal.credName}"</span> SSH credential'ını yalnızca <span className="text-green-400">Linux</span> sunuculara uygula
                 </p>
+                {windowsServers.length > 0 && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    {windowsServers.length} Windows sunucu atlanır — WinRM için Windows (WinRM) sekmesini kullanın.
+                  </p>
+                )}
               </div>
               <button onClick={() => setApplyModal({ open: false, credId: 0, credName: '' })} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
@@ -1760,17 +1801,17 @@ const Settings: React.FC = () => {
             <div className="flex gap-3 mb-4">
               <button onClick={() => setApplyMode('all')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'all' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
-                🌐 Tüm Sunuculara ({servers.length})
+                🐧 Tüm Linux ({linuxServers.length})
               </button>
               <button onClick={() => setApplyMode('select')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'select' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
-                Seçili Sunuculara ({selectedServerIds.length})
+                Seçili Linux ({selectedServerIds.length})
               </button>
             </div>
 
             {applyMode === 'select' && (
               <div className="flex-1 overflow-y-auto mb-4 border border-white/[0.06] rounded-lg max-h-60">
-                {servers.map(s => (
+                {linuxServers.map(s => (
                   <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-white/[0.06]/50 border-b border-white/[0.04] last:border-b-0 ${selectedServerIds.includes(s.id) ? 'bg-blue-500/10' : ''}`}>
                     <input type="checkbox" checked={selectedServerIds.includes(s.id)}
                       onChange={() => setSelectedServerIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
@@ -1780,22 +1821,29 @@ const Settings: React.FC = () => {
                     {s.ai_ready && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 ml-auto">AI</span>}
                   </label>
                 ))}
+                {linuxServers.length === 0 && (
+                  <p className="px-4 py-6 text-sm text-slate-500 text-center">Linux sunucu bulunamadı</p>
+                )}
               </div>
             )}
 
             <div className="flex items-center gap-2 mb-4">
               <input type="checkbox" checked={setAiReady} onChange={e => setSetAiReady(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
-              <span className="text-sm text-slate-300">Sunucuları <strong className="text-blue-400">AI Ready</strong> olarak işaretle</span>
+              <span className="text-sm text-slate-300">Linux sunucuları <strong className="text-blue-400">AI Ready</strong> olarak işaretle (SSH test)</span>
             </div>
 
             <div className="flex justify-end gap-3 pt-3 border-t border-white/[0.06]">
               <button onClick={() => setApplyModal({ open: false, credId: 0, credName: '' })}
                 className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
-              <button onClick={() => applyCred.mutate({ credId: applyModal.credId, serverIds: applyMode === 'all' ? null : selectedServerIds, aiReady: setAiReady })}
-                disabled={applyCred.isPending || (applyMode === 'select' && selectedServerIds.length === 0)}
+              <button onClick={() => applyCred.mutate({
+                credId: applyModal.credId,
+                serverIds: applyMode === 'all' ? linuxServers.map(s => s.id) : selectedServerIds,
+                aiReady: setAiReady,
+              })}
+                disabled={applyCred.isPending || linuxServers.length === 0 || (applyMode === 'select' && selectedServerIds.length === 0)}
                 className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 font-medium text-sm">
-                {applyCred.isPending ? 'Uygulanıyor...' : `${applyMode === 'all' ? servers.length : selectedServerIds.length} Sunucuya Uygula`}
+                {applyCred.isPending ? 'Uygulanıyor...' : `${applyMode === 'all' ? linuxServers.length : selectedServerIds.length} Linux Sunucuya Uygula`}
               </button>
             </div>
 
