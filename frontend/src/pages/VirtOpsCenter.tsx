@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   RefreshCw, Search, X, Cpu, MemoryStick, HardDrive, Server, Cloud,
-  AlertTriangle, CheckCircle2, ShieldAlert, Zap, ScrollText, Database,
+  AlertTriangle, CheckCircle2, Zap, ScrollText, Database,
   Activity, ChevronRight, Layers,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
@@ -107,14 +107,15 @@ function HealthRing({ score, label }: { score: number; label: string }) {
 
 function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: React.ReactNode }) {
   const color = pct >= 90 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : pct >= 50 ? 'bg-blue-500' : 'bg-green-500'
+  const safe = Math.min(100, Math.max(0, Number(pct) || 0))
   return (
-    <div>
-      <div className="flex items-center justify-between text-xs mb-1">
-        <span className="text-slate-400 flex items-center gap-1">{icon}{label}</span>
-        <span className="text-slate-300 font-medium">%{pct?.toFixed(0) ?? 0}</span>
+    <div className="min-w-0 w-full">
+      <div className="flex items-center justify-between text-xs mb-1 gap-2">
+        <span className="text-slate-400 flex items-center gap-1 truncate">{icon}<span className="truncate">{label}</span></span>
+        <span className="text-slate-300 font-medium flex-shrink-0">%{safe.toFixed(0)}</span>
       </div>
-      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, pct || 0)}%` }} />
+      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden w-full">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${safe}%` }} />
       </div>
     </div>
   )
@@ -123,36 +124,36 @@ function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: R
 function PlatformManagerCard({ p }: { p: PlatformCard }) {
   const style = PLATFORM_COLOR[p.type] || 'from-slate-600/20 to-slate-700/10 border-slate-600/30'
   return (
-    <div className={`rounded-xl border bg-gradient-to-br p-4 ${style}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center">
+    <div className={`rounded-xl border bg-gradient-to-br p-4 w-[min(100%,320px)] min-w-[280px] flex-shrink-0 ${style}`}>
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center flex-shrink-0">
             <Cloud size={18} className="text-white" />
           </div>
-          <div>
-            <div className="text-white font-semibold">{p.name}</div>
-            <div className="text-xs text-slate-400">{p.platform} · {p.ip_address}:{p.port}</div>
+          <div className="min-w-0">
+            <div className="text-white font-semibold truncate">{p.name}</div>
+            <div className="text-xs text-slate-400 truncate">{p.platform} · {p.ip_address}:{p.port}</div>
           </div>
         </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase ${SEV_BADGE[p.status] || SEV_BADGE.ok}`}>
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase flex-shrink-0 ${SEV_BADGE[p.status] || SEV_BADGE.ok}`}>
           {p.status === 'ok' ? 'OK' : p.status}
         </span>
       </div>
       <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-        <div className="bg-slate-900/40 rounded-lg py-2">
+        <div className="bg-slate-900/40 rounded-lg py-2 px-1">
           <div className="text-lg font-bold text-white">{p.host_count}</div>
           <div className="text-[10px] text-slate-500">Host</div>
         </div>
-        <div className="bg-slate-900/40 rounded-lg py-2">
+        <div className="bg-slate-900/40 rounded-lg py-2 px-1">
           <div className="text-lg font-bold text-green-400">{p.vm_running}</div>
           <div className="text-[10px] text-slate-500">VM Aktif</div>
         </div>
-        <div className="bg-slate-900/40 rounded-lg py-2">
+        <div className="bg-slate-900/40 rounded-lg py-2 px-1">
           <div className="text-lg font-bold text-slate-400">{p.vm_offline}</div>
           <div className="text-[10px] text-slate-500">VM Kapalı</div>
         </div>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         <ResourceBar label="CPU" pct={p.avg_cpu_pct} icon={<Cpu size={11} />} />
         <ResourceBar label="RAM" pct={p.avg_mem_pct} icon={<MemoryStick size={11} />} />
         <ResourceBar label="Disk" pct={p.avg_disk_pct} icon={<HardDrive size={11} />} />
@@ -163,8 +164,8 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
       {p.issues.length > 0 && (
         <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
           {p.issues.slice(0, 2).map((i, idx) => (
-            <div key={idx} className="text-xs text-amber-300 flex items-center gap-1.5">
-              <AlertTriangle size={11} /> {i.title}
+            <div key={idx} className="text-xs text-amber-300 flex items-center gap-1.5 min-w-0">
+              <AlertTriangle size={11} className="flex-shrink-0" /> <span className="truncate">{i.title}</span>
             </div>
           ))}
         </div>
@@ -186,8 +187,8 @@ function HostAlertCard({ host, onSelect, selected }: {
         sev === 'critical' ? 'border-red-500/30 bg-red-500/5' : 'border-amber-500/25 bg-amber-500/5'
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-bold ${SEV_BADGE[sev]}`}>
               {sev.toUpperCase()}
@@ -204,27 +205,23 @@ function HostAlertCard({ host, onSelect, selected }: {
             {isPlatform && <Cloud size={14} className="text-cyan-400 shrink-0" />}
             {host.host_name}
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-slate-500 truncate">
             {isPlatform
               ? `${host.platform} · ${host.vms_running}/${host.vms_total} VM`
               : `${host.hypervisor_name} · ${host.vms_running}/${host.vms_total} VM`}
           </div>
         </div>
-        {!isPlatform && (
-          <div className="text-right text-xs shrink-0">
-            <div className={host.cpu_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
-              CPU %{host.cpu_usage_pct?.toFixed(0)}
-            </div>
-            <div className={host.mem_usage_pct >= 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
-              RAM %{host.mem_usage_pct?.toFixed(0)}
-            </div>
-            <div className="text-slate-500">Disk %{host.ds_usage_pct?.toFixed(0)}</div>
-          </div>
-        )}
       </div>
+      {!isPlatform && (
+        <div className="grid grid-cols-3 gap-3 mt-3">
+          <ResourceBar label="CPU" pct={host.cpu_usage_pct} icon={<Cpu size={11} />} />
+          <ResourceBar label="RAM" pct={host.mem_usage_pct} icon={<MemoryStick size={11} />} />
+          <ResourceBar label="Disk" pct={host.ds_usage_pct} icon={<HardDrive size={11} />} />
+        </div>
+      )}
       <div className="flex flex-wrap gap-1 mt-2">
-        {host.issues.slice(0, 3).map((i, idx) => (
-          <span key={idx} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+        {host.issues.slice(0, 4).map((i, idx) => (
+          <span key={idx} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 max-w-full truncate">
             {i.title}
           </span>
         ))}
@@ -250,7 +247,7 @@ function LogTimeline({ logs }: { logs: PlatformLog[] }) {
             log.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
           }`} />
           <div className="min-w-0 flex-1">
-            <div className="text-sm text-slate-200 leading-snug">{log.title}</div>
+            <div className="text-sm text-slate-200 leading-snug break-words">{log.title}</div>
             <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-500">
               <span>{
                 log.source_label
@@ -327,20 +324,20 @@ export default function VirtOpsCenter() {
   const allOk = (data?.critical_count ?? 0) === 0 && (data?.warning_count ?? 0) === 0
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-slate-950">
-      {/* Header */}
-      <div className="flex-none px-6 py-4 border-b border-slate-800 bg-slate-900/80">
-        <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
-          <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <Zap size={20} className="text-cyan-400" />
-              Sanallaştırma Komuta Merkezi
+    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 bg-slate-950 overflow-hidden">
+      {/* Header — daha kompakt */}
+      <div className="flex-none px-4 sm:px-6 py-3 border-b border-slate-800 bg-slate-900/80">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-white flex items-center gap-2">
+              <Zap size={18} className="text-cyan-400 flex-shrink-0" />
+              <span className="truncate">Sanallaştırma Komuta Merkezi</span>
             </h1>
-            <p className="text-sm text-slate-400 mt-0.5">
-              vCenter · OLVM Manager · ESX host kaynakları · platform logları
+            <p className="text-xs text-slate-500 mt-0.5 hidden sm:block">
+              vCenter · OLVM · ESX kaynakları · platform logları
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Link to="/hypervisors" className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-1">
               <Layers size={12} /> Dashboard
             </Link>
@@ -362,7 +359,7 @@ export default function VirtOpsCenter() {
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
             >
               <ScrollText size={12} />
-              vCenter Event Sync
+              vCenter Sync
             </button>
             <button
               onClick={() => { refetch(); invalidate() }}
@@ -376,76 +373,65 @@ export default function VirtOpsCenter() {
         </div>
 
         {isLoading ? (
-          <div className="h-16 flex items-center justify-center">
+          <div className="h-12 flex items-center justify-center">
             <RefreshCw size={20} className="text-slate-500 animate-spin" />
           </div>
         ) : data && (
-          <div className="flex items-center gap-6 flex-wrap">
+          <div className="flex items-center gap-4 flex-wrap">
             <HealthRing score={data.health.score} label={data.health.label} />
-            <div className="flex gap-3">
-              <div className={`px-4 py-2 rounded-xl border text-center min-w-[72px] ${
+            <div className="flex gap-2">
+              <div className={`px-3 py-1.5 rounded-xl border text-center min-w-[64px] ${
                 data.critical_count > 0 ? 'border-red-500/50 bg-red-500/10' : 'border-slate-700 bg-slate-800/40'
               }`}>
-                <div className={`text-2xl font-bold ${data.critical_count > 0 ? 'text-red-400' : 'text-slate-600'}`}>
+                <div className={`text-xl font-bold ${data.critical_count > 0 ? 'text-red-400' : 'text-slate-600'}`}>
                   {data.critical_count}
                 </div>
-                <div className="text-[10px] text-slate-500 flex flex-col items-center justify-center gap-0.5">
-                  <span className="flex items-center gap-1"><ShieldAlert size={10} /> Kritik</span>
-                  {((data.critical_host_count ?? 0) > 0 || (data.critical_platform_count ?? 0) > 0) && (
-                    <span className="text-slate-600">
-                      {data.critical_host_count ?? 0} host · {data.critical_platform_count ?? 0} platform
-                    </span>
-                  )}
-                </div>
+                <div className="text-[10px] text-slate-500">Kritik</div>
               </div>
-              <div className={`px-4 py-2 rounded-xl border text-center min-w-[72px] ${
+              <div className={`px-3 py-1.5 rounded-xl border text-center min-w-[64px] ${
                 data.warning_count > 0 ? 'border-amber-500/40 bg-amber-500/8' : 'border-slate-700 bg-slate-800/40'
               }`}>
-                <div className={`text-2xl font-bold ${data.warning_count > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                <div className={`text-xl font-bold ${data.warning_count > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
                   {data.warning_count}
                 </div>
-                <div className="text-[10px] text-slate-500 flex items-center justify-center gap-1">
-                  <AlertTriangle size={10} /> Uyarı
-                </div>
+                <div className="text-[10px] text-slate-500">Uyarı</div>
               </div>
-              <div className="px-4 py-2 rounded-xl border border-green-500/20 bg-green-500/5 text-center min-w-[72px]">
-                <div className="text-2xl font-bold text-green-400">{data.totals.vm_running}</div>
-                <div className="text-[10px] text-slate-500 flex items-center justify-center gap-1">
-                  <CheckCircle2 size={10} /> VM Aktif
-                </div>
+              <div className="px-3 py-1.5 rounded-xl border border-green-500/20 bg-green-500/5 text-center min-w-[64px]">
+                <div className="text-xl font-bold text-green-400">{data.totals.vm_running}</div>
+                <div className="text-[10px] text-slate-500">VM Aktif</div>
               </div>
             </div>
-            <div className="flex gap-4 text-xs text-slate-400">
+            <div className="flex gap-3 text-xs text-slate-400 flex-wrap">
               <span><Database size={12} className="inline mr-1" />{data.totals.hypervisor_count} manager</span>
               <span><Server size={12} className="inline mr-1" />{data.totals.host_count} host</span>
-              <span><Cpu size={12} className="inline mr-1" />Ort. CPU %{data.totals.avg_cpu_pct}</span>
-              <span><MemoryStick size={12} className="inline mr-1" />Ort. RAM %{data.totals.avg_mem_pct}</span>
+              <span><Cpu size={12} className="inline mr-1" />CPU %{data.totals.avg_cpu_pct}</span>
+              <span><MemoryStick size={12} className="inline mr-1" />RAM %{data.totals.avg_mem_pct}</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Platform managers */}
+      {/* Platform managers — yatay kaydırma; barlar ezilmez */}
       {data && data.platforms.length > 0 && (
-        <div className="flex-none px-6 py-4 border-b border-slate-800/60">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+        <div className="flex-none px-4 sm:px-6 py-3 border-b border-slate-800/60">
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
             <Cloud size={13} /> Yönetim Platformları
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
             {data.platforms.map(p => <PlatformManagerCard key={p.id} p={p} />)}
           </div>
         </div>
       )}
 
       {/* Filter bar */}
-      <div className="flex-none px-6 py-3 border-b border-slate-800/60 flex items-center gap-3 flex-wrap">
-        <div className="relative">
+      <div className="flex-none px-4 sm:px-6 py-2.5 border-b border-slate-800/60 flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[12rem] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Host, platform veya log ara…"
-            className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 w-64 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+            className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
           />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
@@ -466,10 +452,9 @@ export default function VirtOpsCenter() {
         ))}
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Host alerts */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 border-r border-slate-800/60">
+      {/* Main: uyarılar + loglar — geniş ekranda yan yana, dar ekranda alt alta */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)] overflow-hidden">
+        <div className="min-h-0 overflow-y-auto px-4 sm:px-6 py-4 border-b xl:border-b-0 xl:border-r border-slate-800/60">
           {allOk && !search && sevFilter === 'all' ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <CheckCircle2 size={48} className="text-green-400 mb-4" />
@@ -478,10 +463,10 @@ export default function VirtOpsCenter() {
             </div>
           ) : (
             <>
-              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-950/95 py-1 z-10">
                 <Server size={13} /> Aktif Uyarılar ({filteredHosts.length})
               </h2>
-              <div className="space-y-3">
+              <div className="space-y-3 max-w-4xl">
                 {filteredHosts.map(h => (
                   <HostAlertCard
                     key={`${h.alert_type || 'host'}-${h.hypervisor_id}-${h.host_name}`}
@@ -507,13 +492,13 @@ export default function VirtOpsCenter() {
           )}
 
           {selectedHost && (
-            <div className="mt-6 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5">
-              <h3 className="text-sm font-semibold text-cyan-300 mb-3">{selectedHost.host_name} — Detay</h3>
+            <div className="mt-6 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 max-w-4xl">
+              <h3 className="text-sm font-semibold text-cyan-300 mb-3 truncate">{selectedHost.host_name} — Detay</h3>
               <div className="space-y-2 mb-4">
                 {selectedHost.issues.map((i, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-sm">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
-                    <span className="text-slate-300">{i.title}</span>
+                  <div key={idx} className="flex items-center gap-2 text-sm min-w-0">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
+                    <span className="text-slate-300 truncate">{i.title}</span>
                   </div>
                 ))}
               </div>
@@ -529,10 +514,10 @@ export default function VirtOpsCenter() {
           )}
         </div>
 
-        {/* Platform logs */}
-        <div className="w-[380px] flex-shrink-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/90 py-2 -mt-2 z-10">
-            <ScrollText size={13} /> Platform Logları — vCenter Event / Alarm (24s)
+        <div className="min-h-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/95 py-2 -mt-2 z-10">
+            <ScrollText size={13} className="flex-shrink-0" />
+            <span className="truncate">Platform Logları — vCenter Event / Alarm (24s)</span>
           </h2>
           <LogTimeline logs={filteredLogs} />
         </div>

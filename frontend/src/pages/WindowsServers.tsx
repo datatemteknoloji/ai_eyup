@@ -5,7 +5,7 @@ import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Shield, Cpu, MemoryStick, Download, Play, Square, RotateCcw,
   Search, X, CheckCircle, XCircle, Globe, CheckCircle2, BrainCircuit } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import BulkJobOverlay from '../components/BulkJobOverlay'
+import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId } from '../components/BulkJobOverlay'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -656,6 +656,18 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   const [result, setResult] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [bulkJobId, setBulkJobId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    restoreActiveBulkJobId().then(id => {
+      if (!cancelled && id) setBulkJobId(id)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    persistBulkJobId(bulkJobId)
+  }, [bulkJobId])
 
   const handleClick = async () => {
     setConfirmOpen(false)

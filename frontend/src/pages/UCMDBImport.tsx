@@ -1,8 +1,8 @@
-import React, { useCallback, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import React, { useCallback, useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Upload, FileText, CheckCircle, AlertTriangle,
-  ChevronRight, RefreshCw, Table2, Download,
+  ChevronRight, RefreshCw, Table2, Download, Plug, Server, Database,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
@@ -117,12 +117,115 @@ const DropZone: React.FC<{ onFile: (f: File) => void; loading: boolean }> = ({ o
 // ── Main Component ────────────────────────────────────────────────────────────
 
 const UCMDBImport: React.FC = () => {
+  const qc = useQueryClient()
+  const [mode, setMode] = useState<'api' | 'csv'>('api')
   const [step, setStep] = useState<Step>('upload')
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [uploadId, setUploadId] = useState<string | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
   const [updateExisting, setUpdateExisting] = useState(true)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [syncResult, setSyncResult] = useState<any>(null)
+  const [form, setForm] = useState({
+    enabled: false,
+    base_url: '',
+    username: '',
+    password: '',
+    verify_ssl: false,
+    sync_physical: true,
+    sync_exadata: true,
+    sync_virtual: false,
+    physical_ci_types: 'unix, nt, node, host_node, aix_server',
+    physical_tql: '',
+    exadata_ci_types: 'oracle_exadata, exadata, oracle_db_machine',
+    exadata_tql: '',
+    exadata_node_name_patterns: 'db0, cel, exadata, -db, -cel',
+  })
+
+  const { data: conn } = useQuery({
+    queryKey: ['ucmdb-connection'],
+    queryFn: async () => {
+      const r = await fetch(`${UCMDB_API}/connection`, { headers: inventoryHeaders() })
+      if (!r.ok) throw new Error('Bağlantı ayarları alınamadı')
+      return r.json()
+    },
+  })
+
+  useEffect(() => {
+    if (!conn) return
+    setForm(f => ({
+      ...f,
+      enabled: !!conn.enabled,
+      base_url: conn.base_url || '',
+      username: conn.username || '',
+      password: '',
+      verify_ssl: !!conn.verify_ssl,
+      sync_physical: conn.sync_physical !== false,
+      sync_exadata: conn.sync_exadata !== false,
+      sync_virtual: !!conn.sync_virtual,
+      physical_ci_types: (conn.physical_ci_types || []).join(', '),
+      physical_tql: conn.physical_tql || '',
+      exadata_ci_types: (conn.exadata_ci_types || []).join(', '),
+      exadata_tql: conn.exadata_tql || '',
+      exadata_node_name_patterns: (conn.exadata_node_name_patterns || []).join(', '),
+    }))
+  }, [conn])
+
+  const splitList = (s: string) => s.split(/[,;\n]/).map(x => x.trim()).filter(Boolean)
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const body: any = {
+        enabled: form.enabled,
+        base_url: form.base_url.trim(),
+        username: form.username.trim(),
+        verify_ssl: form.verify_ssl,
+        sync_physical: form.sync_physical,
+        sync_exadata: form.sync_exadata,
+        sync_virtual: form.sync_virtual,
+        physical_ci_types: splitList(form.physical_ci_types),
+        physical_tql: form.physical_tql.trim(),
+        exadata_ci_types: splitList(form.exadata_ci_types),
+        exadata_tql: form.exadata_tql.trim(),
+        exadata_node_name_patterns: splitList(form.exadata_node_name_patterns),
+      }
+      if (form.password.trim()) body.password = form.password.trim()
+      const r = await fetch(`${UCMDB_API}/connection`, {
+        method: 'PUT',
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Kayıt başarısız')
+      return d
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ucmdb-connection'] }),
+  })
+
+  const testMut = useMutation({
+    mutationFn: async () => {
+      await saveMut.mutateAsync()
+      const r = await fetch(`${UCMDB_API}/connection/test`, { method: 'POST', headers: inventoryHeaders() })
+      const d = await r.json()
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Test başarısız')
+      return d
+    },
+  })
+
+  const syncMut = useMutation({
+    mutationFn: async (dry_run: boolean) => {
+      await saveMut.mutateAsync()
+      const r = await fetch(`${UCMDB_API}/sync`, {
+        method: 'POST',
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ dry_run }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Sync başarısız')
+      return d
+    },
+    onSuccess: (d) => setSyncResult(d),
+  })
 
   // Field options from backend
   const { data: fieldOpts } = useQuery<{ fields: FieldOption[] }>({
@@ -192,14 +295,158 @@ const UCMDBImport: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
       <div>
-        <h1 className="text-xl font-bold text-white">UCMDB Import</h1>
+        <h1 className="text-xl font-bold text-white">OpenText uCMDB</h1>
         <p className="text-slate-400 text-sm mt-0.5">
-          OpenText UCMDB'den alınan CSV/Excel export dosyasını sunucu envanterine aktar — fiziksel sunucular, VM'ler, Unix/Windows/AIX
+          REST API ile fiziksel sunucu ve Exadata çekin; veya CSV/Excel export aktarın
         </p>
       </div>
 
+      <div className="flex gap-1 p-1 rounded-xl bg-slate-800/80 border border-slate-700 w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('api')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${mode === 'api' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+        >
+          <Plug size={14} /> API Sync
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('csv')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${mode === 'csv' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+        >
+          <Upload size={14} /> CSV / Excel
+        </button>
+      </div>
+
+      {mode === 'api' && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 space-y-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-white font-semibold flex items-center gap-2"><Server size={16} /> REST bağlantısı</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Örn: https://ucmdb.firma.com:8443/rest-api</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input type="checkbox" checked={form.enabled} onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))} />
+              Periyodik sync (envanter aralığı)
+            </label>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-400 md:col-span-2">Base URL
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.base_url} onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+                placeholder="https://ucmdb:8443/rest-api" />
+            </label>
+            <label className="text-xs text-slate-400">Kullanıcı
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+            </label>
+            <label className="text-xs text-slate-400">Parola {conn?.password_set ? '(kayıtlı — boş bırakırsanız korunur)' : ''}
+              <input type="password" className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                placeholder={conn?.password_set ? '••••••••' : ''} />
+            </label>
+            <label className="text-xs text-slate-400 md:col-span-2 flex items-center gap-2 pt-2">
+              <input type="checkbox" checked={form.verify_ssl} onChange={e => setForm(f => ({ ...f, verify_ssl: e.target.checked }))} />
+              SSL sertifikasını doğrula
+            </label>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-3 border-t border-slate-700 pt-4">
+            <label className="text-xs text-slate-400 flex items-center gap-2">
+              <input type="checkbox" checked={form.sync_physical} onChange={e => setForm(f => ({ ...f, sync_physical: e.target.checked }))} />
+              Fiziksel sunucuları çek
+            </label>
+            <label className="text-xs text-slate-400 flex items-center gap-2">
+              <input type="checkbox" checked={form.sync_exadata} onChange={e => setForm(f => ({ ...f, sync_exadata: e.target.checked }))} />
+              <Database size={12} /> Exadata rack/node çek
+            </label>
+            <label className="text-xs text-slate-400 flex items-center gap-2 md:col-span-2">
+              <input type="checkbox" checked={form.sync_virtual} onChange={e => setForm(f => ({ ...f, sync_virtual: e.target.checked }))} />
+              Sanal makineleri de aktar (varsayılan: hayır — VM’ler hypervisor sync’ten gelir)
+            </label>
+            <label className="text-xs text-slate-400">Fiziksel CI tipleri (virgülle)
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.physical_ci_types} onChange={e => setForm(f => ({ ...f, physical_ci_types: e.target.value }))} />
+            </label>
+            <label className="text-xs text-slate-400">Fiziksel TQL adı (opsiyonel)
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.physical_tql} onChange={e => setForm(f => ({ ...f, physical_tql: e.target.value }))}
+                placeholder="Kaydedilmiş TQL adı" />
+            </label>
+            <label className="text-xs text-slate-400">Exadata CI tipleri
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.exadata_ci_types} onChange={e => setForm(f => ({ ...f, exadata_ci_types: e.target.value }))} />
+            </label>
+            <label className="text-xs text-slate-400">Exadata TQL (opsiyonel)
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.exadata_tql} onChange={e => setForm(f => ({ ...f, exadata_tql: e.target.value }))} />
+            </label>
+            <label className="text-xs text-slate-400 md:col-span-2">Exadata node isim kalıpları
+              <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                value={form.exadata_node_name_patterns} onChange={e => setForm(f => ({ ...f, exadata_node_name_patterns: e.target.value }))} />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-2">
+            <button type="button" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
+              className="px-4 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50">
+              {saveMut.isPending ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+            <button type="button" onClick={() => testMut.mutate()} disabled={testMut.isPending || saveMut.isPending}
+              className="px-4 py-2 rounded-lg text-sm bg-white/[0.07] border border-slate-600 text-slate-200 hover:bg-slate-700 disabled:opacity-50">
+              {testMut.isPending ? 'Test…' : 'Bağlantıyı test et'}
+            </button>
+            <button type="button" onClick={() => syncMut.mutate(true)} disabled={syncMut.isPending}
+              className="px-4 py-2 rounded-lg text-sm bg-amber-600/80 hover:bg-amber-600 text-white disabled:opacity-50">
+              Önizleme (dry-run)
+            </button>
+            <button type="button" onClick={() => syncMut.mutate(false)} disabled={syncMut.isPending}
+              className="px-4 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 inline-flex items-center gap-1.5">
+              <RefreshCw size={14} className={syncMut.isPending ? 'animate-spin' : ''} />
+              {syncMut.isPending ? 'Senkronize…' : 'Şimdi Sync'}
+            </button>
+          </div>
+
+          {(saveMut.isError || testMut.isError || syncMut.isError) && (
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
+              {(saveMut.error || testMut.error || syncMut.error) instanceof Error
+                ? (saveMut.error || testMut.error || syncMut.error)?.message
+                : 'Hata'}
+            </div>
+          )}
+          {testMut.isSuccess && (
+            <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-sm text-green-300">
+              {testMut.data?.message || 'Bağlantı OK'}
+            </div>
+          )}
+          {syncResult && (
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-600 text-sm text-slate-300 space-y-2">
+              <p className="font-medium text-white">{syncResult.dry_run ? 'Önizleme' : 'Sync sonucu'}</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div>Fiziksel CI: <b className="text-white">{syncResult.physical_fetched ?? 0}</b></div>
+                <div>Exadata CI: <b className="text-white">{syncResult.exadata_fetched ?? 0}</b></div>
+                <div>Yeni sunucu: <b className="text-green-400">{syncResult.created ?? 0}</b></div>
+                <div>Güncellenen: <b className="text-blue-400">{syncResult.updated ?? 0}</b></div>
+                <div>Exadata rack +: <b>{syncResult.exadata_rack_created ?? 0}</b></div>
+                <div>Exadata node +: <b>{syncResult.exadata_node_created ?? 0}</b></div>
+              </div>
+              {!!(syncResult.errors || []).length && (
+                <ul className="text-amber-300 text-xs list-disc pl-4">
+                  {syncResult.errors.slice(0, 8).map((e: string, i: number) => <li key={i}>{e}</li>)}
+                </ul>
+              )}
+              {syncResult.preview_physical && (
+                <p className="text-xs text-slate-500">Örnek fiziksel: {syncResult.preview_physical.slice(0, 5).map((x: any) => x.name).join(', ')}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'csv' && (
+        <>
       <Steps current={step} />
 
       {/* ── Step 1: Upload ── */}
@@ -452,6 +699,8 @@ const UCMDBImport: React.FC = () => {
             </a>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   )

@@ -1025,6 +1025,19 @@ def _resolve_wipe_tables(categories: Optional[List[str]]) -> List[str]:
     return tables
 
 
+def _table_exists(db: Session, table: str) -> bool:
+    """Wipe listesinde eski/opsiyonel tablolar olabilir; yoksa silme adımını atla."""
+    return bool(
+        db.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = :t"
+            ),
+            {"t": table},
+        ).scalar()
+    )
+
+
 def _execute_wipe(db: Session, tables: List[str]) -> None:
     """Seçilen tabloları FK kısıtlamalarını bozmadan siler.
 
@@ -1034,10 +1047,17 @@ def _execute_wipe(db: Session, tables: List[str]) -> None:
     ondelete tanımsız (RESTRICT) iki ilişki elle ele alınır:
       - business_service_map.server_id -> servers
       - infrastructure_reports.hypervisor_id -> hypervisors
+
+    DB'de olmayan tablolar (ör. kaldırılmış triage_cache) sessizce atlanır —
+    preview zaten bunları 0 sayar; DELETE başarısız olmamalı.
     """
     table_set = set(tables)
 
-    if "hypervisors" in table_set and "infrastructure_reports" not in table_set:
+    if (
+        "hypervisors" in table_set
+        and "infrastructure_reports" not in table_set
+        and _table_exists(db, "infrastructure_reports")
+    ):
         db.execute(text('UPDATE infrastructure_reports SET hypervisor_id = NULL WHERE hypervisor_id IS NOT NULL'))
 
     def _sort_key(t: str) -> int:
@@ -1048,6 +1068,9 @@ def _execute_wipe(db: Session, tables: List[str]) -> None:
         return 1
 
     for table in sorted(tables, key=_sort_key):
+        if not _table_exists(db, table):
+            logger.info("wipe_all_data: tablo yok, atlanıyor: %s", table)
+            continue
         db.execute(text(f'DELETE FROM "{table}"'))
         try:
             db.execute(text(f'ALTER SEQUENCE IF EXISTS "{table}_id_seq" RESTART WITH 1'))

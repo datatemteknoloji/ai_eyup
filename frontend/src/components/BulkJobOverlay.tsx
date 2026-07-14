@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { RefreshCw, Check, AlertTriangle } from 'lucide-react'
+import { RefreshCw, Check, AlertTriangle, Maximize2 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 
 export interface BulkJob {
@@ -17,12 +17,63 @@ export interface BulkJob {
   result?: Record<string, unknown>
 }
 
+const STORAGE_JOB = 'ainew.bulkJobId'
+const STORAGE_MIN = 'ainew.bulkJobMinimized'
+
 const fmtDur = (sec: number) => {
   if (sec < 60) return `${sec} sn`
   const m = Math.floor(sec / 60)
   const s = sec % 60
   if (m < 60) return `${m} dk ${s} sn`
   return `${Math.floor(m / 60)} sa ${m % 60} dk`
+}
+
+const kindLabel = (kind?: string) =>
+  kind === 'ai_ready'
+    ? 'Linux SSH AI Ready'
+    : kind === 'win_ai_ready'
+      ? 'Windows WinRM AI Ready'
+      : kind === 'health_check'
+        ? 'Sunucu durum kontrolü'
+        : kind === 'os_refresh'
+          ? 'OS bilgisi yenileme'
+          : kind || 'bulk'
+
+/** Sayfa yenileme / navigasyonda çalışan toplu işi geri yükle */
+export async function restoreActiveBulkJobId(): Promise<string | null> {
+  const saved = sessionStorage.getItem(STORAGE_JOB)
+  if (saved) {
+    try {
+      const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs/${saved}`)
+      if (r.ok) {
+        const j: BulkJob = await r.json()
+        if (j.status === 'running' || j.status === 'done' || j.status === 'error') {
+          return saved
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+    sessionStorage.removeItem(STORAGE_JOB)
+    sessionStorage.removeItem(STORAGE_MIN)
+  }
+  try {
+    const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs?active=true`)
+    if (!r.ok) return null
+    const d = await r.json()
+    const first = (d.jobs as BulkJob[] | undefined)?.[0]
+    return first?.id || null
+  } catch {
+    return null
+  }
+}
+
+export function persistBulkJobId(jobId: string | null) {
+  if (jobId) sessionStorage.setItem(STORAGE_JOB, jobId)
+  else {
+    sessionStorage.removeItem(STORAGE_JOB)
+    sessionStorage.removeItem(STORAGE_MIN)
+  }
 }
 
 /** vCenter tarama ekranı ile aynı stil — toplu AI Ready / health / OS işleri */
@@ -38,6 +89,9 @@ export const BulkJobOverlay: React.FC<{
     message: 'İşlem başlıyor...',
   })
   const [elapsedSec, setElapsedSec] = useState(0)
+  const [minimized, setMinimized] = useState(
+    () => sessionStorage.getItem(STORAGE_MIN) === jobId
+  )
   const startedAtRef = React.useRef(Date.now())
   const onDoneRef = React.useRef(onDone)
   onDoneRef.current = onDone
@@ -45,6 +99,7 @@ export const BulkJobOverlay: React.FC<{
   useEffect(() => {
     startedAtRef.current = Date.now()
     setElapsedSec(0)
+    setMinimized(sessionStorage.getItem(STORAGE_MIN) === jobId)
     const t = setInterval(() => {
       setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000))
     }, 1000)
@@ -79,12 +134,93 @@ export const BulkJobOverlay: React.FC<{
     }
   }, [jobId])
 
+  const goBackground = () => {
+    sessionStorage.setItem(STORAGE_MIN, jobId)
+    setMinimized(true)
+  }
+
+  const reopen = () => {
+    sessionStorage.removeItem(STORAGE_MIN)
+    setMinimized(false)
+  }
+
+  const closeFully = () => {
+    sessionStorage.removeItem(STORAGE_MIN)
+    sessionStorage.removeItem(STORAGE_JOB)
+    onDismiss()
+  }
+
   const pct = Math.max(0, Math.min(100, Number(job.percent) || 0))
   const done = job.status === 'done' || job.status === 'error'
   const etaSec =
     !done && pct >= 8 && elapsedSec >= 10
       ? Math.max(0, Math.round((elapsedSec / pct) * (100 - pct)))
       : null
+
+  if (minimized) {
+    return (
+      <div className="fixed bottom-4 right-4 z-[60] max-w-sm w-[min(100vw-2rem,22rem)]">
+        <button
+          type="button"
+          onClick={reopen}
+          className="w-full text-left bg-slate-800/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl shadow-black/50 p-3 hover:border-blue-500/50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                job.status === 'error'
+                  ? 'bg-red-500/15'
+                  : job.status === 'done'
+                    ? 'bg-green-500/15'
+                    : 'bg-blue-500/15'
+              }`}
+            >
+              {job.status === 'error' ? (
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+              ) : job.status === 'done' ? (
+                <Check className="w-4 h-4 text-green-400" />
+              ) : (
+                <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-white font-medium truncate">
+                {done
+                  ? job.status === 'error'
+                    ? 'İşlem hatası'
+                    : 'İşlem tamamlandı'
+                  : job.title || 'Toplu işlem sürüyor'}
+              </div>
+              <div className="text-[11px] text-slate-400 truncate mt-0.5">
+                {done ? kindLabel(job.kind) : `${pct}% · ${job.message || 'İşleniyor...'}`}
+              </div>
+            </div>
+            <Maximize2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          </div>
+          {!done && (
+            <div className="h-1.5 rounded-full bg-slate-900 overflow-hidden mt-2.5">
+              <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${pct || 3}%` }} />
+            </div>
+          )}
+        </button>
+        {done ? (
+          <div className="flex justify-end mt-1.5">
+            <button
+              type="button"
+              onClick={closeFully}
+              className="text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700"
+            >
+              Kapat
+            </button>
+          </div>
+        ) : (
+          <p className="text-[10px] text-slate-500 mt-1.5 pl-1">
+            Tıklayarak ilerleme ekranını tekrar açın
+          </p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
@@ -115,17 +251,7 @@ export const BulkJobOverlay: React.FC<{
                   ? 'İşlem hatası'
                   : job.title || 'Toplu işlem sürüyor'}
             </h2>
-            <p className="text-sm text-slate-400 mt-0.5 truncate">
-              {job.kind === 'ai_ready'
-                ? 'Linux SSH AI Ready'
-                : job.kind === 'win_ai_ready'
-                  ? 'Windows WinRM AI Ready'
-                  : job.kind === 'health_check'
-                    ? 'Sunucu durum kontrolü'
-                    : job.kind === 'os_refresh'
-                      ? 'OS bilgisi yenileme'
-                      : job.kind || 'bulk'}
-            </p>
+            <p className="text-sm text-slate-400 mt-0.5 truncate">{kindLabel(job.kind)}</p>
           </div>
         </div>
 
@@ -178,8 +304,8 @@ export const BulkJobOverlay: React.FC<{
 
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            Büyük ortamlarda bu işlem birkaç dakika sürebilir. Pencereyi kapatırsanız işlem arka planda
-            devam eder.
+            Büyük ortamlarda bu işlem birkaç dakika sürebilir. “Arka planda devam et” ile küçültebilirsiniz;
+            sağ alttaki karttan veya tekrar tıklayarak ilerleme ekranını açabilirsiniz.
           </p>
         )}
         {job.status === 'error' && job.error && (
@@ -191,7 +317,7 @@ export const BulkJobOverlay: React.FC<{
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            onClick={onDismiss}
+            onClick={done ? closeFully : goBackground}
             className="px-4 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
           >
             {done ? 'Kapat' : 'Arka planda devam et'}

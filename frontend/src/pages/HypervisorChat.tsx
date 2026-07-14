@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronUp, FileDown,
   Search, Plus, Trash2, BarChart3, History,
 } from 'lucide-react'
-import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '../utils/pdfExport'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -620,6 +620,48 @@ export default function HypervisorChat({
               <p className="text-slate-400 text-xs">Altyapı sorguları ve rapor üretimi</p>
             </div>
           </div>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => exportChatMessagesToPrintWindow(
+                messages.map(m => ({
+                  role: m.role,
+                  content: m.content,
+                  created_at: m.timestamp?.toISOString?.() || undefined,
+                })),
+                {
+                  title: 'Sanallaştırma AI Asistan',
+                  subtitle: new Date().toLocaleString('tr-TR'),
+                  filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
+                },
+              )}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+            >
+              <FileDown size={13} /> Sohbeti PDF
+            </button>
+          )}
+        </div>
+      )}
+      {embedded && messages.length > 0 && (
+        <div className="flex justify-end px-4 pt-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => exportChatMessagesToPrintWindow(
+              messages.map(m => ({
+                role: m.role,
+                content: m.content,
+                created_at: m.timestamp?.toISOString?.() || undefined,
+              })),
+              {
+                title: 'Sanallaştırma AI Asistan',
+                subtitle: new Date().toLocaleString('tr-TR'),
+                filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
+              },
+            )}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+          >
+            <FileDown size={13} /> Sohbeti PDF
+          </button>
         </div>
       )}
 
@@ -704,7 +746,7 @@ export default function HypervisorChat({
   )
 
   return (
-    <div className={`flex bg-slate-900 ${embedded ? 'h-[calc(100vh-220px)] min-h-[520px]' : 'h-screen'}`}>
+    <div className={`flex bg-slate-900 ${embedded ? 'h-full min-h-[520px]' : 'h-screen'}`}>
       <HistorySidebar
         sessions={sessions}
         selectedId={selectedSessionId}

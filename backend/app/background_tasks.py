@@ -326,6 +326,23 @@ class BackgroundTaskManager:
                         f"Inventory sync: {result['total_synced']} sunucu, "
                         f"{len(result['hypervisors'])} hypervisor"
                     )
+
+                    # uCMDB REST (açıksa): fiziksel + Exadata
+                    try:
+                        from app.services.ucmdb_sync_service import load_connection, sync_from_ucmdb
+                        ucfg = load_connection(db)
+                        if ucfg.get("enabled") and ucfg.get("base_url") and ucfg.get("password"):
+                            ures = await loop.run_in_executor(
+                                None, lambda: sync_from_ucmdb(db, dry_run=False)
+                            )
+                            logger.info(
+                                "uCMDB sync: physical +%s/~%s, exadata fetched=%s errors=%s",
+                                ures.get("created"), ures.get("updated"),
+                                ures.get("exadata_fetched"), len(ures.get("errors") or []),
+                            )
+                    except Exception as ue:
+                        logger.warning("uCMDB periodic sync skipped/failed: %s", ue)
+
                     from app.services import qa_cache
                     qa_cache.invalidate_all()
                 except Exception as e:

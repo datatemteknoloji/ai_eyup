@@ -6,7 +6,8 @@ import { inventoryHeaders } from '../lib/inventoryApi'
 import {
   Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
   Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
-  Database, Settings, X, Check, AlertTriangle, BarChart3,
+  Database, Settings, X, Check, AlertTriangle, BarChart3, HardDrive,
+  Network, Cloud, ExternalLink,
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 
@@ -39,6 +40,29 @@ interface VM {
   status: string; os_type: string; cpu_cores: number; memory_gb: number
   hypervisor_id: number; hypervisor_vm_id: string; vm_power_state?: string
   ai_ready?: boolean
+  disk_gb?: number
+  platform?: string
+}
+
+interface VmDetailsPayload {
+  server_id: number
+  server_name?: string
+  hypervisor_id?: number
+  hypervisor_vm_id?: string
+  vm_name?: string
+  vm_guest_hostname?: string
+  vm_guest_ip?: string
+  vm_cpu_count?: number
+  vm_memory_mb?: number
+  vm_disk_gb?: number
+  vm_power_state?: string
+  vm_tools_status?: string
+  vm_network_info?: { name?: string; mac?: string; ips?: { address: string; version?: string }[] }[]
+  vm_cluster?: string
+  vm_datastore?: string
+  vm_hardware_version?: string
+  vm_last_sync?: string | null
+  can_snapshot?: boolean
 }
 
 interface EsxHost {
@@ -217,11 +241,199 @@ const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
   )
 }
 
+// ── VM Detail Drawer ────────────────────────────────────────────────────────
+const VMDetailDrawer = ({
+  vm,
+  hypervisorName,
+  onClose,
+}: {
+  vm: VM
+  hypervisorName: string
+  onClose: () => void
+}) => {
+  const isOn = vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+
+  const { data: details, isLoading, isError, refetch, isFetching } = useQuery<VmDetailsPayload>({
+    queryKey: ['hypervisor-vm-details', vm.id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${vm.id}/vm-details`)
+      if (!r.ok) throw new Error('VM detayı alınamadı')
+      return r.json()
+    },
+    enabled: !!vm.id,
+    staleTime: 30_000,
+  })
+
+  const [syncing, setSyncing] = useState(false)
+  const syncVm = async () => {
+    setSyncing(true)
+    try {
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${vm.id}/search-vm`, { method: 'POST' })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.detail || `HTTP ${r.status}`)
+      }
+      await refetch()
+    } catch (e: any) {
+      alert(e?.message || 'VM bilgisini yenilerken hata')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const cpu = details?.vm_cpu_count ?? vm.cpu_cores
+  const ramMb = details?.vm_memory_mb
+  const ramGb = ramMb != null ? ramMb / 1024 : vm.memory_gb
+  const diskGb = details?.vm_disk_gb ?? vm.disk_gb
+  const power = details?.vm_power_state || vm.vm_power_state || vm.status
+  const powerOn = ['up', 'poweredon', 'running', 'online'].includes((power || '').toLowerCase()) || isOn
+
+  const fields: { label: string; val?: string | number | null }[] = [
+    { label: 'VM ID', val: details?.hypervisor_vm_id || vm.hypervisor_vm_id },
+    { label: 'VM Adı', val: details?.vm_name || vm.name },
+    { label: 'Guest Host', val: details?.vm_guest_hostname || vm.hostname },
+    { label: 'IP', val: details?.vm_guest_ip || vm.ip_address },
+    { label: 'OS', val: vm.os_type },
+    { label: 'Hypervisor', val: hypervisorName },
+    { label: 'Cluster', val: details?.vm_cluster },
+    { label: 'Datastore', val: details?.vm_datastore },
+    { label: 'HW Versiyon', val: details?.vm_hardware_version },
+    { label: 'VMware Tools', val: details?.vm_tools_status },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md h-full bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex-none px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex items-start gap-3">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${powerOn ? 'bg-green-500/15' : 'bg-slate-700/60'}`}>
+              <Monitor className={`w-5 h-5 ${powerOn ? 'text-green-400' : 'text-slate-400'}`} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-white truncate">{vm.name}</h2>
+              <p className="text-xs text-slate-500 truncate mt-0.5">{hypervisorName || 'Hypervisor'}</p>
+              <span className={`inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                powerOn ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-400'
+              }`}>
+                {powerOn ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
+                {powerOn ? 'Çalışıyor' : 'Kapalı'}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
+              <Cpu className="w-4 h-4 text-cyan-400 mx-auto mb-1" />
+              <div className="text-lg font-bold text-white">{cpu ?? '—'}</div>
+              <div className="text-[10px] text-slate-500">vCPU</div>
+            </div>
+            <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
+              <MemoryStick className="w-4 h-4 text-purple-400 mx-auto mb-1" />
+              <div className="text-lg font-bold text-white">{ramGb != null ? Number(ramGb).toFixed(ramGb < 10 ? 1 : 0) : '—'}</div>
+              <div className="text-[10px] text-slate-500">GB RAM</div>
+            </div>
+            <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
+              <HardDrive className="w-4 h-4 text-orange-400 mx-auto mb-1" />
+              <div className="text-lg font-bold text-white">{diskGb ?? '—'}</div>
+              <div className="text-[10px] text-slate-500">GB Disk</div>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Cloud className="w-3.5 h-3.5" /> VM Bilgileri
+              </h3>
+              <button
+                onClick={syncVm}
+                disabled={syncing || isFetching}
+                className="text-[11px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-50 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${syncing || isFetching ? 'animate-spin' : ''}`} />
+                Yenile
+              </button>
+            </div>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="w-5 h-5 text-slate-500 animate-spin" />
+              </div>
+            ) : isError ? (
+              <p className="text-xs text-amber-400 mb-2">Detaylar yüklenemedi. Liste bilgileri gösteriliyor.</p>
+            ) : null}
+            <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 divide-y divide-slate-800/80">
+              {fields.filter(f => f.val != null && f.val !== '').map(f => (
+                <div key={f.label} className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+                  <span className="text-slate-500 flex-shrink-0">{f.label}</span>
+                  <span className="text-slate-200 text-right break-all font-mono text-xs">{String(f.val)}</span>
+                </div>
+              ))}
+            </div>
+            {details?.vm_last_sync && (
+              <p className="text-[10px] text-slate-600 mt-2">
+                Son sync: {new Date(details.vm_last_sync).toLocaleString('tr-TR')}
+              </p>
+            )}
+          </div>
+
+          {(details?.vm_network_info?.length ?? 0) > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Network className="w-3.5 h-3.5" /> Ağ Adaptörleri
+              </h3>
+              <div className="space-y-2">
+                {details!.vm_network_info!.map((nic, i) => (
+                  <div key={i} className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2.5">
+                    <div className="text-sm text-slate-200">{nic.name || `NIC ${i + 1}`}</div>
+                    {nic.mac && <div className="text-[11px] text-slate-500 font-mono mt-0.5">{nic.mac}</div>}
+                    {nic.ips?.map(ip => (
+                      <div key={ip.address} className="text-[11px] text-cyan-400 font-mono mt-0.5">
+                        {ip.address}{ip.version ? ` (${ip.version})` : ''}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!details?.hypervisor_vm_id && !vm.hypervisor_vm_id && !isLoading && (
+            <p className="text-xs text-slate-500 bg-slate-800/40 border border-slate-700/50 rounded-lg px-3 py-2">
+              VM ID henüz kaydedilmemiş. “Yenile” ile hypervisor’dan çekebilirsiniz.
+            </p>
+          )}
+        </div>
+
+        <div className="flex-none px-5 py-3 border-t border-slate-800 flex gap-2">
+          <Link
+            to={`/servers?highlight=${vm.id}`}
+            className="flex-1 text-center text-xs px-3 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 flex items-center justify-center gap-1.5"
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Sunucu kaydı
+          </Link>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs hover:text-white border border-slate-700"
+          >
+            Kapat
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── VM Table ────────────────────────────────────────────────────────────────
 const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] }) => {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'cpu' | 'ram'>('name')
+  const [selectedVm, setSelectedVm] = useState<VM | null>(null)
 
   const hvMap = useMemo(() => {
     const m: Record<number, string> = {}
@@ -319,14 +531,20 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
               </tr>
             ) : (
               filtered.slice(0, 100).map(vm => (
-                <tr key={vm.id} className="hover:bg-white/[0.02] transition-colors">
+                <tr
+                  key={vm.id}
+                  onClick={() => setSelectedVm(vm)}
+                  className={`hover:bg-blue-500/5 transition-colors cursor-pointer ${
+                    selectedVm?.id === vm.id ? 'bg-blue-500/10' : ''
+                  }`}
+                >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isPoweredOn(vm) ? 'bg-green-500/15' : 'bg-slate-700/50'}`}>
                         <Server className={`w-4 h-4 ${isPoweredOn(vm) ? 'text-green-400' : 'text-slate-500'}`} />
                       </div>
                       <div>
-                        <div className="text-sm font-medium text-white">{vm.name}</div>
+                        <div className="text-sm font-medium text-blue-300">{vm.name}</div>
                         {vm.ai_ready && <span className="text-[10px] text-cyan-400">AI Ready</span>}
                       </div>
                     </div>
@@ -361,6 +579,14 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
           </div>
         )}
       </div>
+
+      {selectedVm && (
+        <VMDetailDrawer
+          vm={selectedVm}
+          hypervisorName={hvMap[selectedVm.hypervisor_id] || '-'}
+          onClose={() => setSelectedVm(null)}
+        />
+      )}
     </div>
   )
 }
@@ -872,6 +1098,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   const [scanTarget, setScanTarget] = useState<{ id: number; name: string } | null>(null)
   const [scanQueue, setScanQueue] = useState<{ id: number; name: string }[]>([])
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
+  const [selectedVm, setSelectedVm] = useState<VM | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const queryClient = useQueryClient()
 
@@ -1188,15 +1415,20 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                   {vms.slice(0, 8).map(vm => {
                     const isOn = vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
                     return (
-                      <div key={vm.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+                      <button
+                        key={vm.id}
+                        type="button"
+                        onClick={() => setSelectedVm(vm)}
+                        className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg text-left hover:bg-blue-500/10 hover:ring-1 hover:ring-blue-500/30 transition-colors"
+                      >
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isOn ? 'bg-green-500/15' : 'bg-slate-700'}`}>
                           <Server className={`w-4 h-4 ${isOn ? 'text-green-400' : 'text-slate-500'}`} />
                         </div>
                         <div className="min-w-0">
-                          <div className="text-sm text-white truncate">{vm.name}</div>
+                          <div className="text-sm text-blue-300 truncate">{vm.name}</div>
                           <div className="text-xs text-slate-500">{vm.cpu_cores} vCPU • {vm.memory_gb} GB</div>
                         </div>
-                      </div>
+                      </button>
                     )
                   })}
                 </div>
@@ -1248,6 +1480,14 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
           />
         )}
       </div>
+
+      {selectedVm && (
+        <VMDetailDrawer
+          vm={selectedVm}
+          hypervisorName={hypervisors.find(h => h.id === selectedVm.hypervisor_id)?.name || '-'}
+          onClose={() => setSelectedVm(null)}
+        />
+      )}
     </>
   )
 }

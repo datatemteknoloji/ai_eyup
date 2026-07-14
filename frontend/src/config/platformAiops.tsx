@@ -1,6 +1,6 @@
 import React from 'react'
 import {
-  Zap, ClipboardList, AlertTriangle, Wrench,
+  Zap, ClipboardList, AlertTriangle, Wrench, MessageSquare,
 } from 'lucide-react'
 
 export type PlatformKey = 'linux' | 'virt' | 'windows' | 'exadata'
@@ -46,6 +46,11 @@ export function buildPlatformAiopsChildren(
 ): ChildItem[] {
   const base = PLATFORM_AIOPS_PREFIX[platform]
   return [
+    {
+      path: `${base}/chat`,
+      name: 'Doğal Dil Asistanı',
+      icon: React.createElement(MessageSquare, { size: 15 }),
+    },
     {
       path: `${base}/ops`,
       name: 'Komuta Merkezi',

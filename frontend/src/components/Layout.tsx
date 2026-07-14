@@ -307,7 +307,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
         { type: 'link', path: '/integrations', name: 'Envanter Merkezi', icon: <Database size={15} /> },
-        { type: 'link', path: '/integrations/ucmdb', name: 'UCMDB Import', icon: <FileUp size={15} /> },
+        { type: 'link', path: '/integrations/ucmdb', name: 'uCMDB Entegrasyon', icon: <FileUp size={15} /> },
         { type: 'link', path: '/integrations/hypervisors', name: 'vCenter / OLVM', icon: <Cloud size={15} /> },
         { type: 'link', path: '/integrations/physical-hosts', name: 'Fiziksel Hostlar', icon: <Server size={15} /> },
         { type: 'link', path: '/integrations/exadata', name: 'Exadata Envanter', icon: <Layers size={15} /> },

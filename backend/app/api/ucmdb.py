@@ -1,6 +1,7 @@
 """
 OpenText UCMDB Integration API
-Static import: CSV / Excel export from UCMDB → Server inventory
+- Static import: CSV / Excel export from UCMDB → Server inventory
+- Live API: REST authenticate + topologyQuery → fiziksel sunucu + Exadata
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -405,3 +406,76 @@ def list_field_options():
             {"value": "notes",       "label": "Notlar (meta olarak saklanır)"},
         ]
     }
+
+
+# ── Live REST API connection + sync ─────────────────────────────────────────
+
+class UcmdbConnectionBody(BaseModel):
+    enabled: Optional[bool] = None
+    base_url: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    verify_ssl: Optional[bool] = None
+    sync_physical: Optional[bool] = None
+    sync_exadata: Optional[bool] = None
+    sync_virtual: Optional[bool] = None
+    physical_ci_types: Optional[List[str]] = None
+    physical_tql: Optional[str] = None
+    exadata_ci_types: Optional[List[str]] = None
+    exadata_tql: Optional[str] = None
+    exadata_node_name_patterns: Optional[List[str]] = None
+
+
+class UcmdbSyncBody(BaseModel):
+    dry_run: bool = False
+
+
+@router.get("/connection")
+def get_ucmdb_connection(db: Session = Depends(get_db)):
+    from app.services.ucmdb_sync_service import load_connection, public_connection
+    return public_connection(load_connection(db))
+
+
+@router.put("/connection")
+def put_ucmdb_connection(
+    body: UcmdbConnectionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_integrations_inventory(request)
+    from app.services.ucmdb_sync_service import save_connection
+    data = body.model_dump(exclude_unset=True)
+    return save_connection(db, data)
+
+
+@router.post("/connection/test")
+def test_ucmdb_connection(request: Request, db: Session = Depends(get_db)):
+    require_integrations_inventory(request)
+    from app.services.ucmdb_client import UcmdbClientError
+    from app.services.ucmdb_sync_service import test_connection
+    try:
+        return test_connection(db)
+    except UcmdbClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bağlantı testi hatası: {e}")
+
+
+@router.post("/sync")
+def sync_ucmdb_api(
+    body: UcmdbSyncBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """OpenText uCMDB REST API'den fiziksel sunucu + Exadata çek (upsert)."""
+    require_integrations_inventory(request)
+    from app.services.ucmdb_client import UcmdbClientError
+    from app.services.ucmdb_sync_service import sync_from_ucmdb
+    try:
+        result = sync_from_ucmdb(db, dry_run=body.dry_run)
+        return {"success": True, **result}
+    except UcmdbClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("ucmdb sync failed")
+        raise HTTPException(status_code=500, detail=f"uCMDB sync hatası: {e}")

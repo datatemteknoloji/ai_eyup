@@ -403,8 +403,8 @@ def build_context(
     parts.append(f"## ESX / KVM HOST'LARI ({len(esx_hosts)} adet)\n" + "\n".join(host_lines))
 
     # ── Bölüm 2b: Ağ envanteri (NIC/vSwitch/port group/VLAN/VMkernel) ────────
-    # Sadece network/donanım ile ilgili sorularda detay eklenir — gereksiz token şişmesin.
-    if "network" in intents or "assessment" in intents:
+    # Network / capacity / genel envanter sorularında detay ekle.
+    if any(i in intents for i in ("network", "assessment", "capacity", "general")):
         net_lines = []
         for h in esx_hosts:
             inv = host_inventory.get(h["host"])
@@ -482,6 +482,11 @@ def build_context(
     else:
         parts.append(_vm_list_block(vms, hv_map, intents))
 
+    # ── Bölüm 3b: Cluster özeti (vm_cluster alanına göre) ─────────────────────
+    cluster_parts = _cluster_summary_block(vms, esx_hosts)
+    if cluster_parts:
+        parts.append(cluster_parts)
+
     # ── Bölüm 4: Datastore bazında VM disk özeti ─────────────────────────────
     # VM'lere hypervisor adını ekle (datastore grubu için)
     for vm in vms:
@@ -490,7 +495,61 @@ def build_context(
     if ds_summary:
         parts.append(ds_summary)
 
+    # ── Bölüm 5: Ortam özeti (her soruda) ────────────────────────────────────
+    parts.append(_environment_totals_block(hypervisors, esx_hosts, vms))
+
     return "\n\n".join(parts)
+
+
+def _cluster_summary_block(vms: List[Dict], esx_hosts: List[Dict]) -> str:
+    from collections import defaultdict
+    groups: Dict[str, List[Dict]] = defaultdict(list)
+    for vm in vms:
+        groups[(vm.get("cluster") or "").strip() or "Atanmamış"].append(vm)
+    if not groups:
+        return ""
+    lines = [
+        "## CLUSTER / KAYNAK HAVUZU ÖZETİ",
+        "_Not: vCenter Cluster objesi ayrı sync edilmiyor; VM `vm_cluster` alanına göre gruplanır._",
+    ]
+    for name, group in sorted(groups.items(), key=lambda x: -len(x[1])):
+        on = sum(1 for v in group if str(v.get("power_state") or "").lower() in ("powered_on", "poweredon", "up", "running"))
+        cpu = sum(int(v.get("cpu_count") or 0) for v in group)
+        ram = sum(float(v.get("memory_gb") or 0) for v in group)
+        lines.append(
+            f"  - {name}: {len(group)} VM ({on} açık) · vCPU={cpu} · RAM≈{round(ram, 1)} GB"
+        )
+    if esx_hosts:
+        lines.append("")
+        lines.append("## HOST METRİK ÖZETİ (CPU/RAM/DISK)")
+        for h in sorted(esx_hosts, key=lambda x: -(x.get("cpu_pct") or 0))[:40]:
+            lines.append(
+                f"  - {h['host']}: CPU %{h.get('cpu_pct')} · RAM %{h.get('mem_pct')} "
+                f"({h.get('mem_free_gb')} GB boş) · Disk %{h.get('ds_pct')} · "
+                f"VM {h.get('vms_running')}/{h.get('vms_total')}"
+            )
+    return "\n".join(lines)
+
+
+def _environment_totals_block(
+    hypervisors: List[Dict],
+    esx_hosts: List[Dict],
+    vms: List[Dict],
+) -> str:
+    on = sum(
+        1
+        for v in vms
+        if str(v.get("power_state") or "").lower() in ("powered_on", "poweredon", "up", "running")
+    )
+    return (
+        "## ORTAM TOPLAMLARI\n"
+        f"  Hypervisor: {len(hypervisors)}\n"
+        f"  Host: {len(esx_hosts)}\n"
+        f"  VM: {len(vms)} ({on} açık / {len(vms) - on} kapalı veya bilinmeyen)\n"
+        "  Bu bağlam host metrikleri, VM envanteri, cluster/datastore grupları ve "
+        "(uygun sorularda) ağ/donanım envanterini içerir. Sync sonrası günceldir; "
+        "canlı anlık performans için Sync VMs / host metrik sync çalıştırın."
+    )
 
 
 def _vm_detail_block(vm: Dict[str, Any], hv_map: Dict) -> str:

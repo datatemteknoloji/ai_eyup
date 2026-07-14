@@ -251,6 +251,34 @@ export function exportMarkdownToPrintWindow(
   printWindow.document.close()
 }
 
+/** Chat geçmişini (soru-cevap) tek PDF / yazdırma penceresinde açar. */
+export function exportChatMessagesToPrintWindow(
+  messages: Array<{ role: string; content: string; created_at?: string }>,
+  options: PdfExportOptions = {},
+): void {
+  const parts: string[] = []
+  for (const m of messages) {
+    if (!m?.content?.trim()) continue
+    const isUser = m.role === 'user'
+    const label = isUser ? 'Soru' : 'Asistan'
+    const when = m.created_at
+      ? new Date(m.created_at).toLocaleString('tr-TR')
+      : ''
+    parts.push(
+      `### ${label}${when ? ` — ${when}` : ''}\n\n${m.content.trim()}\n\n---\n`,
+    )
+  }
+  if (parts.length === 0) {
+    alert('Dışa aktarılacak mesaj yok')
+    return
+  }
+  exportMarkdownToPrintWindow(parts.join('\n'), {
+    title: options.title || 'AI Asistan Sohbeti',
+    subtitle: options.subtitle || new Date().toLocaleString('tr-TR'),
+    filename: options.filename || `ai_sohbet_${new Date().toISOString().slice(0, 10)}`,
+  })
+}
+
 // ── Basit Markdown → HTML parser ──────────────────────────────────────────────
 
 function markdownToHtml(md: string): string {

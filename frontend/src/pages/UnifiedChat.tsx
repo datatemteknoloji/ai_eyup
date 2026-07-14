@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
+import { FileDown } from 'lucide-react'
+import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -417,6 +419,20 @@ const UnifiedChat: React.FC<{
           <div className="px-3 py-1 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-200 text-xs font-semibold">
             Tüm Altyapı — Linux + Windows + Sanallaştırma
           </div>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => exportChatMessagesToPrintWindow(messages, {
+                title: 'Tüm Altyapı AI Asistan',
+                subtitle: new Date().toLocaleString('tr-TR'),
+                filename: `unified_ai_${new Date().toISOString().slice(0, 10)}`,
+              })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+              title="Sohbeti PDF olarak kaydet"
+            >
+              <FileDown size={13} /> Sohbeti PDF
+            </button>
+          )}
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-slate-400 text-sm font-medium">RAG:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-violet-600' : 'bg-white/[0.1]'}`}
@@ -557,8 +573,20 @@ const UnifiedChat: React.FC<{
                               : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
                             pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
                           }}>{msg.content}</ReactMarkdown>
-                          {getFirstMarkdownTable(msg.content) && (
-                            <div className="mt-2 flex gap-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {msg.content?.trim().length > 40 && (
+                              <button type="button"
+                                onClick={() => exportMarkdownToPrintWindow(msg.content, {
+                                  title: 'AI Asistan Yanıtı',
+                                  subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString('tr-TR') : undefined,
+                                  filename: `ai_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
+                                })}
+                                className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1">
+                                <FileDown size={12} /> PDF
+                              </button>
+                            )}
+                            {getFirstMarkdownTable(msg.content) && (
+                              <>
                               <button type="button"
                                 onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
                                 className="text-xs px-2 py-1.5 rounded bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] flex items-center gap-1">
@@ -569,8 +597,9 @@ const UnifiedChat: React.FC<{
                                 className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
                                 Excel İndir
                               </button>
-                            </div>
-                          )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       )}
                       <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-violet-200' : 'text-slate-500'}`}>

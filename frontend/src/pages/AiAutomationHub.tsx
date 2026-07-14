@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import Chat from './Chat'
 import WindowsChat from './WindowsChat'
 import UnifiedChat from './UnifiedChat'
-import InfraReports from './InfraReports'
+import HypervisorChat from './HypervisorChat'
 
 type PlatformId = 'all' | 'linux' | 'windows' | 'virt' | 'exadata'
 
@@ -95,11 +95,7 @@ export default function AiAutomationHub() {
             </div>
           </>
         )}
-        {platform === 'virt' && (
-          <div className="flex-1 min-h-0 overflow-auto">
-            <InfraReports platform="virt" />
-          </div>
-        )}
+        {platform === 'virt' && <HypervisorChat embedded />}
       </div>
     </div>
   )

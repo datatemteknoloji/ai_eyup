@@ -4,7 +4,7 @@ import {
   RefreshCw, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
-import BulkJobOverlay from '../components/BulkJobOverlay'
+import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId } from '../components/BulkJobOverlay'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
@@ -231,6 +231,18 @@ const ActionsDropdown: React.FC<{ servers: Server[]; refetch: () => void }> = ({
   const [checkResult, setCheckResult] = useState<string | null>(null)
   const [bulkJobId, setBulkJobId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    restoreActiveBulkJobId().then(id => {
+      if (!cancelled && id) setBulkJobId(id)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    persistBulkJobId(bulkJobId)
+  }, [bulkJobId])
 
   useEffect(() => {
     if (!open) return

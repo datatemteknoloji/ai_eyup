@@ -44,6 +44,7 @@ import {
   LinuxIncidentsPage, VirtIncidentsPage, WindowsIncidentsPage,
   LinuxAnalysisPage, VirtAnalysisPage, WindowsAnalysisPage,
   ExadataOpsPage, ExadataEventsPage, ExadataIncidentsPage, ExadataAnalysisPage,
+  LinuxChatPage, WindowsChatPage, VirtChatPage, ExadataChatPage,
 } from './pages/PlatformAiopsPages'
 
 const queryClient = new QueryClient({
@@ -163,6 +164,7 @@ function App() {
 
                       {/* Linux AIOps */}
                       <Route path="/linux/ops" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/linux/chat" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/linux/events" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/linux/incidents" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/linux/analysis" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -172,6 +174,7 @@ function App() {
 
                       {/* Sanallaştırma AIOps */}
                       <Route path="/virt/ops" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/virt/chat" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/virt/events" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/virt/incidents" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/virt/analysis" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -181,6 +184,7 @@ function App() {
 
                       {/* Windows AIOps */}
                       <Route path="/windows/aiops/ops" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/windows/aiops/chat" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/windows/aiops/events" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/windows/aiops/incidents" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/windows/aiops/analysis" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -190,7 +194,7 @@ function App() {
 
                       {/* Exadata */}
                       <Route path="/exadata" element={<RequireModule moduleId="exadata"><ErrorBoundary><ExadataDashboard /></ErrorBoundary></RequireModule>} />
-                      <Route path="/exadata/chat" element={<Navigate to="/chat?platform=exadata" replace />} />
+                      <Route path="/exadata/chat" element={<RequirePlatformAiops platform="exadata"><ErrorBoundary><ExadataChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/exadata/reports" element={<RequireModule moduleId="exadata"><ErrorBoundary><ExadataInfraReportsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/exadata/ops" element={<RequirePlatformAiops platform="exadata"><ErrorBoundary><ExadataOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/exadata/events" element={<RequirePlatformAiops platform="exadata"><ErrorBoundary><ExadataEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -215,7 +219,7 @@ function App() {
                       <Route path="/windows/events" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/updates" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/ansible" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsAnsible /></ErrorBoundary></RequireModule>} />
-                      <Route path="/windows/chat" element={<Navigate to="/chat?platform=windows" replace />} />
+                      <Route path="/windows/chat" element={<Navigate to="/windows/aiops/chat" replace />} />
                       <Route path="/integrations" element={<RequireModule moduleId="integrations"><ErrorBoundary><IntegrationsHub /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/ucmdb" element={<RequireModule moduleId="integrations"><ErrorBoundary><UCMDBImport /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/hypervisors" element={<RequireAnyModule moduleIds={['integrations', 'virtualization']}><ErrorBoundary><Hypervisors allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
@@ -229,7 +233,7 @@ function App() {
                       <Route path="/chat" element={<RequireAnyModule moduleIds={['ai_automation', 'executive']}><ErrorBoundary><AiAutomationHub /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/agent" element={<RequireModule moduleId="ai_automation"><ErrorBoundary><Agent /></ErrorBoundary></RequireModule>} />
                       <Route path="/metrics" element={<RequireModule moduleId="linux"><ErrorBoundary><LiveMetrics /></ErrorBoundary></RequireModule>} />
-                      <Route path="/hypervisor-chat" element={<Navigate to="/infra-reports" replace />} />
+                      <Route path="/hypervisor-chat" element={<Navigate to="/virt/chat" replace />} />
                       <Route path="/ansible" element={<RequireModule moduleId="linux"><ErrorBoundary><Ansible /></ErrorBoundary></RequireModule>} />
                       <Route path="/mcp" element={<ErrorBoundary><McpTools /></ErrorBoundary>} />
                       <Route path="/packages" element={<RequireModule moduleId="linux"><ErrorBoundary><PackageManager /></ErrorBoundary></RequireModule>} />

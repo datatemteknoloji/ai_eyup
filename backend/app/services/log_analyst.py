@@ -1,29 +1,23 @@
 """
-Log Analyst — DB'deki log satırlarını okuyarak AI destekli Kök Neden Analizi yapar.
+Log Analyst — DB'deki log/olay satırlarını okuyarak AI destekli Kök Neden Analizi yapar.
 
-Akış:
-  SystemEvent (event_id) → log_query → ilgili log satırları (log_entry tipi)
-  → Ollama prompt → yapılandırılmış yanıt (kök neden + öneriler)
-
-Tasarım kararları:
-  - DB-first: SSH re-collect yok; log satırları zaten SystemEvent tablosunda
-  - Local-only: Ollama kullanılır, loglar dışarı çıkmaz
-  - Token cap: max 150 satır / ~8000 token (local model context penceresi)
-  - event_type="log_entry" için tam analiz;
-    "metric_anomaly" için aynı zaman penceresindeki log_entry'ler;
-    diğer tipler için "log bağlamı yok" yanıtı
+Desteklenen event_type:
+  - log_entry, metric_anomaly  → Linux OS journal / ilgili log_entry
+  - virt_log, virt_resource, vcenter_event, vcenter_alarm, vcenter_task
+       → aynı host/pencere içindeki sanallaştırma olayları + alarmın kendi payload'u
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import requests
 from sqlalchemy.orm import Session
 
-from app.core.config import settings, get_active_model
+from app.core.config import get_active_model
 from app.models.event import SystemEvent
 from app.services import llm_gateway
 
@@ -31,88 +25,171 @@ logger = logging.getLogger(__name__)
 
 MAX_LOG_ROWS = 150
 TIME_WINDOW_MINUTES = 30
+VIRT_EVENT_TYPES = (
+    "virt_log",
+    "virt_resource",
+    "vcenter_event",
+    "vcenter_alarm",
+    "vcenter_task",
+)
+OS_EVENT_TYPES = ("log_entry", "metric_anomaly")
+SUPPORTED_EVENT_TYPES = OS_EVENT_TYPES + VIRT_EVENT_TYPES
+
 MUTATING_KEYWORDS = (
     "systemctl", "service", "restart", "reboot", "shutdown",
     "rm ", "kill", "pkill", "halt", "poweroff", "mkfs", "fdisk",
+    "power off", "destroy", "unregister", "delete vm",
 )
 
 
-# ── 1) Log Query ─────────────────────────────────────────────────────────────
+def _row_dict(r: SystemEvent) -> Dict[str, Any]:
+    raw = r.raw_data or {}
+    return {
+        "ts": r.created_at.isoformat() if r.created_at else "",
+        "severity": r.severity or "info",
+        "title": r.title,
+        "description": (r.description or "")[:400],
+        "category": raw.get("category", ""),
+        "event_type": r.event_type,
+        "host_name": raw.get("host_name") or raw.get("entity") or "",
+        "action": raw.get("action") or "",
+    }
+
 
 def log_query(
     db: Session,
     event: SystemEvent,
     max_rows: int = MAX_LOG_ROWS,
 ) -> List[Dict[str, Any]]:
-    """
-    Bir event'e ait log_entry satırlarını DB'den çeker.
-
-    - event_type="log_entry"   → event'in server_id + ±TIME_WINDOW_MINUTES
-    - event_type="metric_anomaly" → aynı penceredeki log_entry satırları
-    - diğer                    → boş liste (caller "log bağlamı yok" döner)
-    """
-    if not event.server_id:
-        return []
-
-    if event.event_type not in ("log_entry", "metric_anomaly"):
-        return []
-
+    et = (event.event_type or "").strip()
     anchor = event.last_seen or event.created_at or datetime.utcnow()
     since = anchor - timedelta(minutes=TIME_WINDOW_MINUTES)
     until = anchor + timedelta(minutes=TIME_WINDOW_MINUTES)
 
-    rows = (
-        db.query(SystemEvent)
-        .filter(
-            SystemEvent.server_id == event.server_id,
-            SystemEvent.event_type == "log_entry",
-            SystemEvent.created_at >= since,
-            SystemEvent.created_at <= until,
+    if et in OS_EVENT_TYPES:
+        if not event.server_id:
+            return []
+        rows = (
+            db.query(SystemEvent)
+            .filter(
+                SystemEvent.server_id == event.server_id,
+                SystemEvent.event_type == "log_entry",
+                SystemEvent.created_at >= since,
+                SystemEvent.created_at <= until,
+            )
+            .order_by(SystemEvent.created_at.desc())
+            .limit(max_rows)
+            .all()
         )
-        .order_by(SystemEvent.created_at.desc())
-        .limit(max_rows)
-        .all()
-    )
+        return [_row_dict(r) for r in rows]
 
-    return [
-        {
-            "ts": r.created_at.isoformat() if r.created_at else "",
-            "severity": r.severity,
-            "title": r.title,
-            "description": (r.description or "")[:400],
-            "category": (r.raw_data or {}).get("category", ""),
-        }
-        for r in rows
-    ]
+    if et in VIRT_EVENT_TYPES:
+        raw = event.raw_data or {}
+        host = (
+            raw.get("host_name")
+            or raw.get("entity")
+            or raw.get("vm_name")
+            or raw.get("object_name")
+            or ""
+        )
+        hv_id = raw.get("hypervisor_id")
+        if not host and event.title:
+            m = re.search(r"entity\s+(\S+)", event.title, re.I)
+            if m:
+                host = m.group(1).rstrip(".")
 
+        candidates = (
+            db.query(SystemEvent)
+            .filter(
+                SystemEvent.event_type.in_(VIRT_EVENT_TYPES),
+                SystemEvent.created_at >= since,
+                SystemEvent.created_at <= until,
+            )
+            .order_by(SystemEvent.created_at.desc())
+            .limit(max_rows * 3)
+            .all()
+        )
 
-# ── 2) Ollama Analizi ─────────────────────────────────────────────────────────
+        def _match(r: SystemEvent) -> bool:
+            if r.id == event.id:
+                return True
+            rr = r.raw_data or {}
+            if hv_id and rr.get("hypervisor_id") == hv_id:
+                return True
+            if host:
+                blob = " ".join(
+                    str(x or "")
+                    for x in (
+                        r.title,
+                        r.description,
+                        rr.get("host_name"),
+                        rr.get("entity"),
+                        rr.get("vm_name"),
+                        rr.get("object_name"),
+                    )
+                ).lower()
+                if host.lower() in blob:
+                    return True
+            if event.title and r.title and event.title[:40] == r.title[:40]:
+                return True
+            return False
+
+        matched = [r for r in candidates if _match(r)]
+        if not any(r.id == event.id for r in matched):
+            matched.insert(0, event)
+        return [_row_dict(r) for r in matched[:max_rows]]
+
+    return []
+
 
 def _build_prompt(event: SystemEvent, log_lines: List[Dict]) -> str:
+    is_virt = (event.event_type or "") in VIRT_EVENT_TYPES
+    persona = (
+        "Sen bir VMware/oVirt sanallaştırma ve AIOps uzmanısın."
+        if is_virt
+        else "Sen bir Linux sistem yöneticisi ve AIOps uzmanısın."
+    )
+    ctx_label = "SANALLAŞTIRMA / PLATFORM OLAYLARI" if is_virt else "LOG SATIRLARI"
+    raw = event.raw_data or {}
+    extra = ""
+    if is_virt:
+        extra = (
+            f"\n  Host/Entity : {raw.get('host_name') or raw.get('entity') or '-'}"
+            f"\n  Aksiyon     : {raw.get('action') or '-'}"
+            f"\n  Kategori    : {raw.get('category') or '-'}"
+            f"\n  Platform    : {raw.get('platform_label') or raw.get('platform') or 'virt'}"
+        )
+
     lines_text = "\n".join(
-        f"[{l['ts'][:19]}] [{l['severity'].upper()}] {l['title']}"
-        + (f" — {l['description'][:200]}" if l["description"] else "")
+        f"[{(l.get('ts') or '')[:19]}] [{(l.get('event_type') or 'log').upper()}] "
+        f"[{(l.get('severity') or 'info').upper()}] {l.get('title') or ''}"
+        + (f" — {(l.get('description') or '')[:200]}" if l.get("description") else "")
         for l in log_lines
     )
-    return f"""Sen bir Linux sistem yöneticisi ve AIOps uzmanısın.
-Aşağıdaki event ve log satırları için TÜRKÇE kök neden analizi yap.
-Kısa, net ve uygulanabilir yanıt ver.
+    empty_hint = (
+        "(yakın zaman penceresinde ek olay bulunamadı — aşağıdaki EVENT satırını temel al)"
+        if is_virt
+        else "(log satırı bulunamadı)"
+    )
+    return f"""{persona}
+Aşağıdaki event ve bağlam satırları için TÜRKÇE kök neden analizi yap.
+Kısa, net ve uygulanabilir yanıt ver. Uydurma; veride yoksa "veri yetersiz" de.
 
 EVENT:
   Tür: {event.event_type}
   Önem: {event.severity}
   Başlık: {event.title}
-  Açıklama: {(event.description or 'Yok')[:300]}
+  Açıklama: {(event.description or 'Yok')[:400]}{extra}
 
-SON {len(log_lines)} LOG SATIRI (son {TIME_WINDOW_MINUTES} dakika, en yeni önce):
-{lines_text or '(log satırı bulunamadı)'}
+SON {len(log_lines)} {ctx_label} (son {TIME_WINDOW_MINUTES} dakika, en yeni önce):
+{lines_text or empty_hint}
 
 Lütfen aşağıdaki JSON formatında yanıt ver (başka bir şey yazma):
 {{
   "root_cause": "Tek cümle kök neden",
-  "impact": "Hangi servis/sistem etkileniyor",
+  "impact": "Hangi VM/host/servis etkileniyor",
   "recommendations": [
-    "adım 1 — somut komut veya aksiyon",
+    "adım 1 — somut kontrol veya aksiyon",
     "adım 2"
   ],
   "confidence": "high|medium|low"
@@ -120,7 +197,6 @@ Lütfen aşağıdaki JSON formatında yanıt ver (başka bir şey yazma):
 
 
 def _parse_response(raw: str) -> Dict[str, Any]:
-    """LLM yanıtından JSON çıkarmaya çalışır; başarısızsa serbest metin döner."""
     raw = raw.strip()
     start = raw.find("{")
     end = raw.rfind("}") + 1
@@ -142,41 +218,26 @@ def _requires_approval(recommendations: List[str]) -> bool:
     return any(kw in text for kw in MUTATING_KEYWORDS)
 
 
-# ── 3) Ana fonksiyon ─────────────────────────────────────────────────────────
-
 def analyze_event_logs(
     db: Session,
     event_id: int,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Bir event için log tabanlı AI kök neden analizi yapar.
-
-    Dönüş:
-      {
-        "root_cause": str,
-        "impact": str,
-        "recommendations": [str, ...],
-        "confidence": "high|medium|low",
-        "log_lines_used": int,
-        "model": str,
-        "requires_approval": bool,
-        "analyzed_at": str,
-      }
-    veya hata durumunda:
-      {"error": str}
-    """
     event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
     if not event:
         return {"error": "Event bulunamadı"}
 
     log_lines = log_query(db, event)
+    et = (event.event_type or "").strip()
 
-    if event.event_type not in ("log_entry", "metric_anomaly"):
+    if et not in SUPPORTED_EVENT_TYPES:
         return {
-            "root_cause": "Bu event tipi için log bağlamı yok.",
+            "root_cause": f"Bu event tipi ({et or '?'}) için otomatik kök neden analizi henüz desteklenmiyor.",
             "impact": "",
-            "recommendations": [],
+            "recommendations": [
+                "AI Sohbet sekmesinden alarm metnini yapıştırıp sorabilirsiniz",
+                "İlgili platform loglarını manuel kontrol edin",
+            ],
             "confidence": "low",
             "log_lines_used": 0,
             "model": "",
@@ -184,7 +245,10 @@ def analyze_event_logs(
             "analyzed_at": datetime.utcnow().isoformat(),
         }
 
-    if not log_lines and event.event_type == "metric_anomaly":
+    if not log_lines and et in VIRT_EVENT_TYPES:
+        log_lines = [_row_dict(event)]
+
+    if not log_lines and et == "metric_anomaly":
         return {
             "root_cause": "Bu metrik anomalisi için yakın zamanda log satırı bulunamadı.",
             "impact": "",
@@ -195,6 +259,9 @@ def analyze_event_logs(
             "requires_approval": False,
             "analyzed_at": datetime.utcnow().isoformat(),
         }
+
+    if not log_lines and et == "log_entry":
+        log_lines = [_row_dict(event)]
 
     active_model = model or get_active_model(db)
     prompt = _build_prompt(event, log_lines)
@@ -222,20 +289,16 @@ def analyze_event_logs(
             "requires_approval": _requires_approval(recommendations),
             "analyzed_at": datetime.utcnow().isoformat(),
         }
-
         logger.info(
-            f"[LogAnalyst] Tamamlandı: event #{event_id} | "
-            f"{len(log_lines)} satır | model={active_model} | "
-            f"confidence={result['confidence']}"
+            f"[LogAnalyst] Tamamlandı: event #{event_id} type={et} | "
+            f"{len(log_lines)} satır | model={active_model}"
         )
         return result
 
     except requests.exceptions.ConnectionError:
-        logger.warning("[LogAnalyst] Ollama'ya bağlanılamadı")
         return {"error": "AI servisi bağlantı hatası — Ollama çalışıyor mu?"}
     except requests.exceptions.Timeout:
-        logger.warning(f"[LogAnalyst] Ollama timeout (event #{event_id})")
         return {"error": "AI servisi zaman aşımı (120s)"}
     except Exception as e:
-        logger.error(f"[LogAnalyst] Beklenmeyen hata (event #{event_id}): {e}")
-        return {"error": f"Analiz hatası: {str(e)[:200]}"}
+        logger.exception(f"[LogAnalyst] Beklenmeyen hata (event #{event_id})")
+        return {"error": str(e)}
