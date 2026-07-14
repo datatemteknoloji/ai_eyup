@@ -12,6 +12,15 @@ from app.services.monitoring.server_health_checker import ServerHealthChecker
 logger = logging.getLogger(__name__)
 
 
+def _rt_sec(key: str, default: int) -> int:
+    """Gelişmiş ayarlardan saniye aralığı (runtime, restart gerekmez)."""
+    try:
+        from app.services.runtime_settings import get_int
+        return int(get_int(key))
+    except Exception:
+        return default
+
+
 class BackgroundTaskManager:
     """Arka plan görevlerini yöneten sınıf"""
 
@@ -43,7 +52,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
 
-        logger.info("Background tasks started (health:5m, metrics:10m, anomaly:5m, logs:15m, inventory:ayarlardan, esx-metrics:15m, rag:30m, snapshot-cleanup:1h, ne-sync:10m, we-sync:10m, sysupdate-recovery:5m, vm-sync:2h, auto-onboarding:10m)")
+        logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
 
     async def stop(self):
         if not self.running:
@@ -63,14 +72,14 @@ class BackgroundTaskManager:
         logger.info("Background tasks stopped")
 
     async def _periodic_health_check(self):
-        """Ilk 30s bekle, sonra her 5 dakikada sunucu durumlarini kontrol et.
-        update_server_statuses blocking -> thread pool da calistir."""
-        logger.info("Periodic health check task started (first run in 30s, then every 300s)")
+        """Ilk 30s bekle, sonra periyodik sunucu durumu (TCP). Tam SSH/WinRM burada yok."""
+        logger.info("Periodic health check task started (interval from Gelişmiş ayarlar)")
         first_run = True
 
         while self.running:
             try:
-                await asyncio.sleep(30 if first_run else 300)
+                interval = max(120, _rt_sec("health_check_interval_sec", 600))
+                await asyncio.sleep(30 if first_run else interval)
                 first_run = False
 
                 if not self.running:
@@ -83,7 +92,7 @@ class BackgroundTaskManager:
                     stats = await loop.run_in_executor(
                         None, ServerHealthChecker.update_server_statuses, db
                     )
-                    if stats.get("updated", 0) > 0:
+                    if stats.get("updated", 0) > 0 or stats.get("checked", 0) > 0:
                         logger.info(
                             f"Health check: {stats.get('checked',0)} checked, "
                             f"{stats.get('updated',0)} updated, "
@@ -99,7 +108,7 @@ class BackgroundTaskManager:
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in health check task: {e}", exc_info=True)
-                await asyncio.sleep(300)
+                await asyncio.sleep(_rt_sec("health_check_interval_sec", 600))
 
     async def _periodic_log_collection(self):
         """Her 15 dakikada ONLINE sunuculardan log toplar.
@@ -138,13 +147,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 900))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Log collection task error: {e}")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 900))
 
     async def _periodic_windows_log_collection(self):
         """Windows sunuculardan WinRM ile event log toplama."""
@@ -168,12 +177,12 @@ class BackgroundTaskManager:
                     logger.error(f"Windows log collection error: {e}")
                 finally:
                     db.close()
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("windows_log_interval_sec", 900))
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Windows log task error: {e}")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("windows_log_interval_sec", 900))
 
     async def _periodic_virt_log_sync(self):
         """Hypervisor olaylarını SystemEvent'e senkronize et."""
@@ -200,12 +209,12 @@ class BackgroundTaskManager:
                     logger.error(f"Virt log sync error: {e}")
                 finally:
                     db.close()
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("virt_log_interval_sec", 900))
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Virt log sync task error: {e}")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("virt_log_interval_sec", 900))
 
     async def _periodic_anomaly_scan(self):
         """Her 5 dakikada Prometheus metriklerinden anomali tarar.
@@ -249,13 +258,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(300)
+                await asyncio.sleep(_rt_sec("anomaly_scan_interval_sec", 300))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Anomaly scan task error: {e}")
-                await asyncio.sleep(300)
+                await asyncio.sleep(_rt_sec("anomaly_scan_interval_sec", 300))
 
     async def _periodic_metric_sync(self):
         """Her 10 dakikada Prometheus metriklerini TimescaleDB ye yazar.
@@ -278,35 +287,27 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("metric_sync_interval_sec", 600))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Metric sync task error: {e}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("metric_sync_interval_sec", 600))
 
     async def _periodic_inventory_sync(self):
-        """Ayarlardan okunan aralikta (min 5dk) hypervisor lardan VM leri DB ye ceker.
-        vCenter API cagrilan blocking -> thread pool da calistir."""
-        from app.models.app_settings import AppSettings
+        """Ayarlardan okunan aralikta hypervisor lardan VM leri DB ye ceker."""
         DEFAULT_MINUTES = 5
-        logger.info("Inventory sync task started (interval from settings, default 5min)")
+        logger.info("Inventory sync task started (interval from Gelişmiş ayarlar)")
         await asyncio.sleep(60)
 
         while self.running:
             try:
-                db = SessionLocal()
                 try:
-                    row = db.query(AppSettings).filter(
-                        AppSettings.key == "inventory_sync_interval_minutes"
-                    ).first()
-                    interval_min = int(row.value) if row and row.value else DEFAULT_MINUTES
-                    interval_sec = max(300, interval_min * 60)
+                    interval_min = max(1, _rt_sec("inventory_sync_interval_minutes", DEFAULT_MINUTES))
+                    interval_sec = max(60, interval_min * 60)
                 except Exception:
                     interval_sec = DEFAULT_MINUTES * 60
-                finally:
-                    db.close()
 
                 await asyncio.sleep(interval_sec)
 
@@ -337,7 +338,7 @@ class BackgroundTaskManager:
                 break
             except Exception as e:
                 logger.error(f"Inventory sync task error: {e}")
-                await asyncio.sleep(3600)
+                await asyncio.sleep(max(60, _rt_sec("inventory_sync_interval_minutes", 5) * 60))
 
 
     async def _periodic_esx_metric_sync(self):
@@ -364,14 +365,14 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
 
             except asyncio.CancelledError:
                 logger.info("ESX metric sync task cancelled")
                 break
             except Exception as e:
                 logger.error(f"ESX metric sync task unexpected error: {e}")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
 
 
     async def _periodic_rag_reindex(self):
@@ -396,14 +397,14 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(1800)
+                await asyncio.sleep(_rt_sec("rag_reindex_interval_sec", 1800))
 
             except asyncio.CancelledError:
                 logger.info("RAG reindex task cancelled")
                 break
             except Exception as e:
                 logger.error(f"RAG reindex task error: {e}")
-                await asyncio.sleep(1800)
+                await asyncio.sleep(_rt_sec("rag_reindex_interval_sec", 1800))
 
 
     async def _periodic_snapshot_cleanup(self):
@@ -428,14 +429,14 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(3600)
+                await asyncio.sleep(_rt_sec("snapshot_cleanup_interval_sec", 3600))
 
             except asyncio.CancelledError:
                 logger.info("Snapshot cleanup task cancelled")
                 break
             except Exception as e:
                 logger.error(f"Snapshot cleanup task error: {e}")
-                await asyncio.sleep(3600)
+                await asyncio.sleep(_rt_sec("snapshot_cleanup_interval_sec", 3600))
 
 
     async def _periodic_system_update_recovery(self):
@@ -475,13 +476,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(300)
+                await asyncio.sleep(_rt_sec("sysupdate_recovery_interval_sec", 300))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"System update recovery task error: {e}")
-                await asyncio.sleep(300)
+                await asyncio.sleep(_rt_sec("sysupdate_recovery_interval_sec", 300))
 
     async def _periodic_node_exporter_sync(self):
         """Her 10 dakikada Prometheus up durumuna göre node_exporter_running bayrağını senkronlar."""
@@ -519,13 +520,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("node_exporter_sync_interval_sec", 600))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Node exporter sync task error: {e}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("node_exporter_sync_interval_sec", 600))
 
     async def _periodic_windows_exporter_sync(self):
         """Her 10 dakikada Prometheus up durumuna göre windows_exporter_running bayrağını senkronlar
@@ -564,13 +565,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("windows_exporter_sync_interval_sec", 600))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Windows exporter sync task error: {e}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("windows_exporter_sync_interval_sec", 600))
 
     async def _periodic_vm_sync(self):
         """
@@ -595,14 +596,14 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(7200)
+                await asyncio.sleep(_rt_sec("vm_auto_sync_interval_sec", 7200))
 
             except asyncio.CancelledError:
                 logger.info("VM auto-sync task cancelled")
                 break
             except Exception as e:
                 logger.error(f"VM auto-sync task error: {e}")
-                await asyncio.sleep(7200)
+                await asyncio.sleep(_rt_sec("vm_auto_sync_interval_sec", 7200))
 
 
     async def _periodic_auto_onboarding(self):
@@ -675,14 +676,14 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
 
             except asyncio.CancelledError:
                 logger.info("Auto-onboarding task cancelled")
                 break
             except Exception as e:
                 logger.error(f"Auto-onboarding task error: {e}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
 
 
 def _run_vm_sync_batch(db) -> None:

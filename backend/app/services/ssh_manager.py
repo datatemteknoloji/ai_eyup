@@ -52,7 +52,6 @@ class SSHManager:
                     port=self.port,
                     password=self.password,
                     pkey=pkey,
-                    timeout=20,
                 )
 
                 if not connected:
@@ -84,7 +83,7 @@ class SSHManager:
             logger.error(f"❌ SSH bağlantı hatası ({self.host}): {last_exc}")
         return False
     
-    def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: int = 15) -> Tuple[bool, str, str]:
+    def execute_command(self, command: str, use_sudo: bool = False, cmd_timeout: Optional[int] = None) -> Tuple[bool, str, str]:
         """
         Komut çalıştır.  Sudo gerektiğinde şifre stdin üzerinden aktarılır;
         komut dizisine gömülmez (log / process list'e düşmez).
@@ -92,6 +91,13 @@ class SSHManager:
         """
         if not self.client:
             return False, "", "SSH bağlantısı yok"
+
+        if cmd_timeout is None:
+            try:
+                from app.services.runtime_settings import get_int
+                cmd_timeout = int(get_int("ssh_default_cmd_timeout_sec"))
+            except Exception:
+                cmd_timeout = 15
 
         # Log için şifresiz görünüm
         log_cmd = command[:80]

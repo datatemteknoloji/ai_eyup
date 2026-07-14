@@ -446,6 +446,51 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
     }
 
 
+# ─── Gelişmiş ayarlar (timeout / interval / worker) ───
+
+@router.get("/advanced")
+async def get_advanced_settings(db: Session = Depends(get_db)):
+    """Timeout, checker aralığı ve worker ayarlarını gruplu listele."""
+    from app.services.runtime_settings import list_advanced_settings, GROUP_LABELS
+    items = list_advanced_settings()
+    groups = []
+    seen = []
+    for it in items:
+        g = it["group"]
+        if g not in seen:
+            seen.append(g)
+            groups.append({
+                "id": g,
+                "label": GROUP_LABELS.get(g, g),
+                "settings": [x for x in items if x["group"] == g],
+            })
+    return {"groups": groups, "settings": items}
+
+
+class AdvancedSettingsUpdate(BaseModel):
+    settings: dict  # key -> value
+
+
+@router.put("/advanced")
+async def put_advanced_settings(
+    body: AdvancedSettingsUpdate,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Gelişmiş ayarları kaydet. Restart gerekmez (cache 15sn)."""
+    from app.services.runtime_settings import save_advanced_settings, ADVANCED_SCHEMA
+    if not isinstance(body.settings, dict) or not body.settings:
+        raise HTTPException(status_code=400, detail="settings sözlüğü gerekli")
+    unknown = [k for k in body.settings if k not in ADVANCED_SCHEMA]
+    saved = save_advanced_settings(body.settings, db)
+    return {
+        "success": True,
+        "saved": saved,
+        "unknown_keys": unknown,
+        "message": f"{len(saved)} ayar kaydedildi. Arka plan görevleri bir sonraki döngüde yeni aralığı kullanır.",
+    }
+
+
 # ─── General Settings ────────────────────────────────
 
 @router.get("/")

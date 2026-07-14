@@ -460,6 +460,187 @@ const DangerZoneTab: React.FC = () => {
 
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
+interface AdvancedSettingItem {
+  key: string
+  value: number | boolean
+  default: number | boolean
+  type: string
+  min?: number
+  max?: number
+  group: string
+  group_label: string
+  label: string
+  help: string
+  env?: string
+}
+
+interface AdvancedGroup {
+  id: string
+  label: string
+  settings: AdvancedSettingItem[]
+}
+
+const AdvancedSettingsTab: React.FC = () => {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
+  const { data, isLoading, error } = useQuery<{ groups: AdvancedGroup[]; settings: AdvancedSettingItem[] }>({
+    queryKey: ['advanced-settings'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/settings/advanced`)
+      if (!res.ok) throw new Error('Gelişmiş ayarlar yüklenemedi')
+      return res.json()
+    },
+  })
+
+  React.useEffect(() => {
+    if (!data?.settings) return
+    const next: Record<string, string> = {}
+    for (const s of data.settings) {
+      next[s.key] = String(s.value)
+    }
+    setDraft(next)
+  }, [data])
+
+  const saveMutation = useMutation({
+    mutationFn: async (settings: Record<string, number | boolean>) => {
+      const res = await fetch(`${API_BASE_URL}/settings/advanced`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings }),
+      })
+      if (!res.ok) {
+        const t = await res.text()
+        throw new Error(t || 'Kayıt başarısız')
+      }
+      return res.json()
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ['advanced-settings'] })
+      setSaveMsg(r.message || 'Kaydedildi')
+      setTimeout(() => setSaveMsg(null), 4000)
+    },
+  })
+
+  const onSave = () => {
+    if (!data?.settings) return
+    const payload: Record<string, number | boolean> = {}
+    for (const s of data.settings) {
+      const raw = draft[s.key]
+      if (raw === undefined || raw === '') continue
+      if (s.type === 'bool') {
+        payload[s.key] = ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase())
+      } else if (s.type === 'float') {
+        payload[s.key] = Number(raw)
+      } else {
+        payload[s.key] = parseInt(String(raw), 10)
+      }
+    }
+    saveMutation.mutate(payload)
+  }
+
+  const resetDefaults = () => {
+    if (!data?.settings) return
+    const next: Record<string, string> = {}
+    for (const s of data.settings) {
+      next[s.key] = String(s.default)
+    }
+    setDraft(next)
+  }
+
+  if (isLoading) {
+    return <div className="text-slate-400 text-sm">Gelişmiş ayarlar yükleniyor...</div>
+  }
+  if (error) {
+    return <div className="text-red-400 text-sm">Yükleme hatası: {(error as Error).message}</div>
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-start gap-3 mb-6">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-xl font-semibold text-white">Gelişmiş Ayarlar</h2>
+          <p className="text-slate-400 text-sm mt-1">
+            Timeout, health checker, worker ve arka plan interval değerleri. Kayıt sonrası restart gerekmez (≈15 sn içinde etkili).
+            Nginx proxy timeout için conf güncellemesi / yeniden deploy gerekir.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={resetDefaults}
+                className="px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
+              >
+                Varsayılanlara al
+              </button>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={saveMutation.isPending}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+              >
+                {saveMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {!isAdmin && (
+        <div className="mb-4 p-3 rounded-lg text-sm bg-amber-500/10 border border-amber-500/30 text-amber-300">
+          Gelişmiş ayarları değiştirmek için admin yetkisi gerekir (salt okunur).
+        </div>
+      )}
+
+      {saveMsg && (
+        <div className="mb-4 p-3 rounded-lg text-sm bg-green-500/10 border border-green-500/30 text-green-400">
+          {saveMsg}
+        </div>
+      )}
+      {saveMutation.isError && (
+        <div className="mb-4 p-3 rounded-lg text-sm bg-red-500/10 border border-red-500/30 text-red-400">
+          {(saveMutation.error as Error).message}
+        </div>
+      )}
+
+      <div className="space-y-6">
+        {(data?.groups || []).map(group => (
+          <div key={group.id} className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
+            <h3 className="text-sm font-semibold text-blue-400 mb-4 uppercase tracking-wide">{group.label}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {group.settings.map(s => (
+                <div key={s.key} className="min-w-0">
+                  <label className="block text-sm text-slate-300 mb-1">{s.label}</label>
+                  <input
+                    type="number"
+                    step={s.type === 'float' ? '0.1' : '1'}
+                    min={s.min}
+                    max={s.max}
+                    value={draft[s.key] ?? ''}
+                    disabled={!isAdmin}
+                    onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
+                    className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    {s.help}
+                    {s.min != null && s.max != null ? ` (${s.min}–${s.max})` : ''}
+                    {s.env ? ` · env: ${s.env}` : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const Settings: React.FC = () => {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -905,6 +1086,7 @@ const Settings: React.FC = () => {
     { id: 'branding', name: 'Kurumsal Kimlik' },
     { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
     { id: 'monitoring', name: 'Monitoring' },
+    { id: 'advanced', name: 'Gelişmiş Ayarlar' },
     { id: 'about', name: 'Hakkında' },
     ...(isAdmin ? [{ id: 'danger', name: 'Tehlikeli Bölge' }] : []),
   ]
@@ -1745,6 +1927,11 @@ const Settings: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ═══ Gelişmiş Ayarlar ═══ */}
+          {activeTab === 'advanced' && (
+            <AdvancedSettingsTab />
           )}
 
           {/* ═══ About ═══ */}

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app oluştur
 app = FastAPI(
     title="Server Management API",
-    version="1.0.4",
+    version="1.0.8",
     description="Server Management System API"
 )
 
@@ -202,7 +202,7 @@ async def startup_tasks():
     # Background task'ları başlat (her 5 dakikada ping kontrolü)
     from app.background_tasks import background_task_manager
     await background_task_manager.start()
-    logger.info("Background tasks started (health checks every 5 minutes)")
+    logger.info("Background tasks started (health checks every 10 minutes, TCP-only)")
 
     # Yarım kalan system update planlarını kurtar / devam ettir
     try:

@@ -21,8 +21,14 @@ class ServerHealthChecker:
     """Sunucu sağlık durumunu kontrol eden servis"""
 
     @staticmethod
-    def ping_server(ip_address: str, port: int = 22, timeout: int = 2) -> Tuple[bool, str]:
+    def ping_server(ip_address: str, port: int = 22, timeout: float = None) -> Tuple[bool, str]:
         """TCP bağlantı dener; (başarılı_mı, hata_açıklaması) döner."""
+        if timeout is None:
+            try:
+                from app.services.runtime_settings import get_float
+                timeout = float(get_float("health_tcp_timeout_sec"))
+            except Exception:
+                timeout = 2.0
         try:
             with socket.create_connection((ip_address, port), timeout=timeout):
                 return True, ""
@@ -37,18 +43,29 @@ class ServerHealthChecker:
             return False, str(e)[:80]
 
     @staticmethod
-    def check_server_status(server: Any, db: Session = None, winrm_global: Optional[dict] = None) -> Tuple[str, str]:
+    def check_server_status(
+        server: Any,
+        db: Session = None,
+        winrm_global: Optional[dict] = None,
+        *,
+        deep: bool = False,
+    ) -> Tuple[str, str]:
         """(status, sebep) döner. Sebep sadece OFFLINE/WARNING için dolu.
 
-        `server` gerçek Server ORM veya SimpleNamespace (paralel worker snapshot) olabilir.
+        deep=False (varsayılan, periyodik tarama): yalnızca TCP port kontrolü.
+        Credential'lı tam SSH/WinRM her 5 dk'da yüzlerce sunucuya auth denemesi
+        yapıyordu — ağ gürültüsü ve log spam üretir. Tam auth yalnızca deep=True
+        (manuel tek sunucu kontrolü) veya AI Ready güncellemede yapılır.
         """
         if not (getattr(server, "ip_address", None) or "").strip():
             current = (getattr(server, "status", None) or "UNKNOWN").upper()
-            return current, ""
+            return current, "ip_yok"
 
         from app.services.platform_scope import is_windows_server
         if is_windows_server(server):
-            return ServerHealthChecker._check_windows_status(server, db, winrm_global=winrm_global)
+            return ServerHealthChecker._check_windows_status(
+                server, db, winrm_global=winrm_global, deep=deep
+            )
 
         port = 22
         try:
@@ -62,6 +79,9 @@ class ServerHealthChecker:
 
         if not is_reachable:
             return "OFFLINE", f"tcp_{port}_ulasilamiyor:{ping_reason}"
+
+        if not deep:
+            return "ONLINE", ""
 
         cfg = getattr(server, "connection_config", None) or {}
         if cfg.get("username"):
@@ -79,21 +99,52 @@ class ServerHealthChecker:
         return "ONLINE", ""
 
     @staticmethod
+    def _has_windows_cred(server: Any, winrm_global: Optional[dict] = None) -> bool:
+        """Per-server veya global WinRM credential var mı?"""
+        cfg = getattr(server, "connection_config", None) or {}
+        if cfg.get("username") and (cfg.get("password") or cfg.get("winrm")):
+            # Kendi credential'ı tanımlanmış (apply sonrası winrm=True + username)
+            if cfg.get("winrm") or cfg.get("protocol") == "winrm" or cfg.get("winrm_port"):
+                return True
+            # Windows olarak işaretli ve username+password varsa WinRM say
+            if cfg.get("password") and cfg.get("username"):
+                return True
+        if winrm_global and winrm_global.get("username") and winrm_global.get("password"):
+            return True
+        return False
+
+    @staticmethod
     def _check_windows_status(
         server: Any,
         db: Session = None,
         winrm_global: Optional[dict] = None,
+        *,
+        deep: bool = False,
     ) -> Tuple[str, str]:
-        """Windows sunucular için WinRM tabanlı sağlık kontrolü."""
+        """Windows sağlık kontrolü.
+
+        Global/per-server WinRM credential yoksa hiçbir bağlantı denemesi yapılmaz
+        (TCP 5985 dahil) — envanterdeki Windows VM'ler boşa taranmaz.
+        """
+        if not ServerHealthChecker._has_windows_cred(server, winrm_global):
+            # Credential yok → dokunma, mevcut durumu koru
+            current = (getattr(server, "status", None) or "UNKNOWN").upper()
+            if current in ("", "UNKNOWN"):
+                return "UNKNOWN", "winrm_cred_yok"
+            return current, "winrm_cred_yok"
+
         cfg = getattr(server, "connection_config", None) or {}
         try:
-            port = int(cfg.get("winrm_port") or 5985)
+            port = int(cfg.get("winrm_port") or (winrm_global or {}).get("port") or 5985)
         except Exception:
             port = 5985
 
         is_reachable, ping_reason = ServerHealthChecker.ping_server(server.ip_address, port=port)
         if not is_reachable:
             return "OFFLINE", f"tcp_{port}_ulasilamiyor:{ping_reason}"
+
+        if not deep:
+            return "ONLINE", ""
 
         try:
             from app.services.windows.winrm_client import WinRMClient
@@ -113,7 +164,7 @@ class ServerHealthChecker:
                         use_https=bool(gcred.get("use_https")),
                     )
             if client is None:
-                return "ONLINE", ""
+                return "UNKNOWN", "winrm_cred_yok"
 
             result = client.test_connection()
             if result.get("connected"):
@@ -124,7 +175,11 @@ class ServerHealthChecker:
 
     @staticmethod
     def _sync_ai_ready(server: Server, status: str, reason: str) -> bool:
-        """SSH erişilemeyen sunucularda ai_ready bayrağını temizle."""
+        """SSH/WinRM erişilemeyen sunucularda ai_ready bayrağını temizle.
+        Credential tanımlı değilse (henüz yapılandırılmamış) bayrağa dokunma.
+        """
+        if reason in ("winrm_cred_yok", "ip_yok"):
+            return False
         if not server.ai_ready:
             return False
         if status == "OFFLINE":
@@ -161,7 +216,13 @@ class ServerHealthChecker:
 
             snapshots = []
             from app.core.encryption import decrypt_secret
+            from app.services.platform_scope import is_windows_server
+            skipped_win_no_cred = 0
             for s in servers:
+                # Windows + hiç WinRM credential yok → hiçbir TCP denemesi yapma
+                if is_windows_server(s) and not ServerHealthChecker._has_windows_cred(s, winrm_global):
+                    skipped_win_no_cred += 1
+                    continue
                 cfg = dict(s.connection_config or {})
                 # Worker thread'lerde SSH için düz metin kimlik bilgisi
                 if cfg.get("password"):
@@ -192,6 +253,11 @@ class ServerHealthChecker:
 
             workers = bulk_tcp_workers()
             stats["workers"] = workers
+            if skipped_win_no_cred:
+                logger.info(
+                    "Health check: %s Windows atlandı (WinRM credential yok)",
+                    skipped_win_no_cred,
+                )
             logger.info("Health check: %s sunucu, workers=%s", len(snapshots), workers)
 
             def _one(snap: dict) -> Tuple[int, str, str, str, bool]:
@@ -226,7 +292,11 @@ class ServerHealthChecker:
                         server.name, new_status, reason,
                     )
 
-                if (old_status or "").upper() != (new_status or "").upper():
+                old_u = (old_status or "").upper()
+                new_u = (new_status or "").upper()
+                status_changed = old_u != new_u
+
+                if status_changed:
                     server.status = new_status
                     stats["updated"] += 1
                     logger.info(
@@ -238,16 +308,24 @@ class ServerHealthChecker:
                     stats["online"] += 1
                 elif new_status == "OFFLINE":
                     stats["offline"] += 1
-                    logger.warning(
-                        "OFFLINE: %s (%s) sebep: %s",
-                        server.name, server.ip_address, reason,
-                    )
+                    # Zaten OFFLINE olanları her turda WARNING spam'leme
+                    if status_changed or not old_u:
+                        logger.warning(
+                            "OFFLINE: %s (%s) sebep: %s",
+                            server.name, server.ip_address or "—", reason or "bilinmiyor",
+                        )
+                    else:
+                        logger.debug(
+                            "OFFLINE (devam): %s (%s) sebep: %s",
+                            server.name, server.ip_address or "—", reason,
+                        )
                 elif new_status == "WARNING":
                     stats["warning"] += 1
-                    logger.warning(
-                        "WARNING: %s (%s) sebep: %s",
-                        server.name, server.ip_address, reason,
-                    )
+                    if status_changed:
+                        logger.warning(
+                            "WARNING: %s (%s) sebep: %s",
+                            server.name, server.ip_address, reason,
+                        )
 
             db.commit()
             return stats

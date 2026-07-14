@@ -18,10 +18,15 @@ DEFAULT_SYNC_WORKERS = 10
 
 def _sync_workers(requested: Optional[int] = None) -> int:
     if requested is not None and requested > 0:
-        return max(1, min(int(requested), 32))
+        return max(1, min(int(requested), 64))
+    try:
+        from app.services.runtime_settings import get_int
+        return max(1, min(get_int("vcenter_sync_workers"), 64))
+    except Exception:
+        pass
     raw = (os.environ.get("VCENTER_SYNC_WORKERS") or "").strip()
     if raw.isdigit() and int(raw) > 0:
-        return max(1, min(int(raw), 32))
+        return max(1, min(int(raw), 64))
     return DEFAULT_SYNC_WORKERS
 
 

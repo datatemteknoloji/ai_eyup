@@ -123,23 +123,30 @@ const BulkNodeExporterButton: React.FC<{ servers: Server[]; onDone: () => void; 
 // ─── AI Ready Güncelle Butonu ─────────────────────────────────────────────────
 const AiReadyUpdateButton: React.FC<{ onDone: () => void; asMenuItem?: boolean }> = ({ onDone, asMenuItem }) => {
   const [loading, setLoading] = React.useState(false)
-  const [result, setResult]   = React.useState<{ai_ready: number; not_ready: number; tested: number} | null>(null)
+  const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
     if (!await showConfirm(
-      'Tüm sunucularda SSH bağlantısı test edilecek. Global Credential ile bağlanabilen sunucular → AI Ready = ✅, bağlanamayanlar → AI Ready = ❌. Devam?'
+      'Yalnızca Linux sunucularda SSH testi arka planda çalışacak. Bağlanabilenler AI Ready=✅. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
     )) return
 
     setLoading(true); setResult(null)
     try {
       const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, { method: 'POST' })
+      const text = await r.text()
+      let d: any = null
+      try { d = text ? JSON.parse(text) : null } catch {
+        setResult(r.status === 504 || r.status === 502 ? 'Zaman aşımı — arka plan devam ediyor olabilir' : `HTTP ${r.status}`)
+        return
+      }
       if (r.ok) {
-        const d = await r.json()
-        setResult(d)
+        setResult(d.message || `${d.tested ?? 0} kuyrukta`)
         onDone()
-        setTimeout(() => setResult(null), 8000)
+        setTimeout(() => { setResult(null); onDone() }, 8000)
+      } else {
+        setResult(typeof d?.detail === 'string' ? d.detail : 'Hata')
       }
     } finally { setLoading(false) }
   }
@@ -153,17 +160,17 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void; asMenuItem?: boolean }
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title="Global Credential ile SSH testi yaparak AI Ready durumunu güncelle"
+        title="Linux SSH ile AI Ready durumunu arka planda güncelle"
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            <span>Test ediliyor...</span>
+            <span>Başlatılıyor...</span>
           </>
         ) : result ? (
           <>
             <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
-            <span>{result.ai_ready} AI Ready · {result.not_ready} bağlanamadı</span>
+            <span className="truncate text-xs">{result}</span>
           </>
         ) : (
           <>
@@ -179,18 +186,30 @@ const AiReadyUpdateButton: React.FC<{ onDone: () => void; asMenuItem?: boolean }
 // ─── OS Bilgisi Yenile Butonu ──────────────────────────────────────────────────
 const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void; asMenuItem?: boolean }> = ({ servers, onDone, asMenuItem }) => {
   const [loading, setLoading] = React.useState(false)
-  const [result, setResult]   = React.useState<{updated: number; failed: number} | null>(null)
+  const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
-    const aiReadyIds = servers.filter(s => s.ai_ready).map(s => s.id)
-    const ids = aiReadyIds.length > 0 ? aiReadyIds : servers.map(s => s.id)
+    const isWin = (s: Server) => {
+      const os = (s.os_type || '').toLowerCase()
+      if (os.includes('windows')) return true
+      const cfg = s.connection_config || {}
+      return !!(cfg.winrm || cfg.protocol === 'winrm')
+    }
+    const linux = servers.filter(s => !isWin(s))
+    const aiReadyIds = linux.filter(s => s.ai_ready).map(s => s.id)
+    const ids = aiReadyIds.length > 0 ? aiReadyIds : linux.map(s => s.id)
+
+    if (ids.length === 0) {
+      alert('Yenilenecek Linux sunucu yok')
+      return
+    }
 
     const confirmed = await showConfirm(
       aiReadyIds.length > 0
-        ? `${aiReadyIds.length} AI-Ready sunucuya SSH bağlanıp OS/Kernel bilgisi güncellenecek. Devam?`
-        : `Tüm ${ids.length} sunucuya SSH bağlanıp OS bilgisi güncellenecek. Devam?`
+        ? `${aiReadyIds.length} AI-Ready Linux sunucuda OS/Kernel bilgisi arka planda güncellenecek. Devam?`
+        : `${ids.length} Linux sunucuda OS bilgisi arka planda güncellenecek. Devam?`
     )
     if (!confirmed) return
 
@@ -201,11 +220,18 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void; asMenuI
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_ids: ids }),
       })
+      const text = await r.text()
+      let d: any = null
+      try { d = text ? JSON.parse(text) : null } catch {
+        setResult(r.status === 504 || r.status === 502 ? 'Zaman aşımı' : `HTTP ${r.status}`)
+        return
+      }
       if (r.ok) {
-        const d = await r.json()
-        setResult(d)
+        setResult(d.message || `${d.updated ?? 0} kuyrukta`)
         onDone()
-        setTimeout(() => setResult(null), 5000)
+        setTimeout(() => { setResult(null); onDone() }, 8000)
+      } else {
+        setResult(typeof d?.detail === 'string' ? d.detail : 'Hata')
       }
     } finally {
       setLoading(false)
@@ -221,17 +247,17 @@ const OsRefreshButton: React.FC<{ servers: Server[]; onDone: () => void; asMenuI
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title="AI-Ready sunucuların OS/Kernel bilgisini SSH ile güncelle"
+        title="Linux sunucuların OS/Kernel bilgisini SSH ile arka planda güncelle"
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            <span>OS Güncelleniyor...</span>
+            <span>Başlatılıyor...</span>
           </>
         ) : result ? (
           <>
             <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
-            <span>{result.updated} güncellendi {result.failed > 0 ? `· ${result.failed} hata` : ''}</span>
+            <span className="truncate text-xs">{result}</span>
           </>
         ) : (
           <>

@@ -45,188 +45,233 @@ def _parse_os_release(raw: str) -> dict:
 @router.post("/update-ai-ready")
 def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     """
-    Tüm IP'li sunucularda SSH bağlantısını test eder.
-    Bağlanabilenler → ai_ready=True, bağlanamayanlar → ai_ready=False.
-    Global Credential öncelikli, yoksa sunucunun kendi connection_config'i kullanılır.
+    Linux sunucularda SSH testini arka planda çalıştırır (Windows hariç).
+    HTTP hemen döner — yüzlerce sunucuda nginx HTML timeout'u önlenir.
+    WinRM için: POST /windows/update-ai-ready
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
     from app.models.credential import GlobalCredential
     from app.core.database import ThreadSessionLocal as SessionLocal
-
     from app.services.platform_scope import is_windows_server
+    from app.services.bulk_concurrency import bulk_ssh_workers
+    from app.services.ssh_credentials import resolve_ssh_creds
 
     server_ids = (body or {}).get("server_ids")
     q = db.query(Server)
     if server_ids:
         q = q.filter(Server.id.in_(server_ids))
-    # Sadece IP'si olan sunucular — Windows sunucular hariç (onlar WinRM ile
-    # `/windows/update-ai-ready` üzerinden test edilir, SSH port 22 testi
-    # Windows'ta anlamsız/yanlış negatif üretir).
     server_list = [
         s for s in q.filter(
-            Server.ip_address != None,
+            Server.ip_address != None,  # noqa: E711
             Server.ip_address != "",
         ).all()
         if not is_windows_server(s)
     ]
 
-    # Global credential — sadece ana thread'de oku
     global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
                   or db.query(GlobalCredential).first()
 
-    # Thread'e geçirmek için immutable snapshot al
-    gc_snapshot = {
-        "username": global_cred.username if global_cred else None,
-        "password": global_cred.password if global_cred else None,
-        "private_key": global_cred.private_key if global_cred else None,
-        "port": global_cred.port if global_cred else 22,
-    } if global_cred else {}
-
-    server_snapshots = [
-        {
+    server_snapshots = []
+    for s in server_list:
+        creds = resolve_ssh_creds(s, global_cred=global_cred)
+        if not creds.get("has_secret"):
+            continue
+        server_snapshots.append({
             "id": s.id,
-            "ip": s.ip_address,
+            "ip": creds["host"],
             "name": s.name,
-            "cfg": s.connection_config or {},
-        }
-        for s in server_list
-    ]
+            "username": creds["username"],
+            "password": creds["password"],
+            "private_key": creds["private_key"],
+            "port": creds["port"],
+        })
 
-    def _test_one(snap: dict) -> tuple[int, bool, str]:
-        from app.core.encryption import decrypt_secret
-        cfg = snap["cfg"]
-        username = cfg.get("username") or gc_snapshot.get("username") or "root"
-        raw_pw = cfg.get("password") or gc_snapshot.get("password")
-        raw_key = cfg.get("private_key") or gc_snapshot.get("private_key")
-        password = decrypt_secret(raw_pw) if raw_pw else None
-        key = decrypt_secret(raw_key) if raw_key else None
-        port = int(cfg.get("port") or gc_snapshot.get("port") or 22)
-
-        from app.services.ssh_manager import SSHManager
-        ssh = SSHManager(
-            host=snap["ip"], username=username,
-            password=password, private_key=key, port=port,
-        )
-        try:
-            ok = ssh.connect()
-            if ok:
-                ssh.close()
-            return snap["id"], ok, snap["name"]
-        except Exception:
-            return snap["id"], False, snap["name"]
-
-    # Her thread kendi DB session'ını açar
-    from app.services.bulk_concurrency import bulk_ssh_workers
     workers = bulk_ssh_workers()
-    test_results: list[tuple[int, bool, str]] = []
-    logger.info("update-ai-ready: %s sunucu, workers=%s", len(server_snapshots), workers)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-ready") as pool:
-        futures = {pool.submit(_test_one, s): s for s in server_snapshots}
-        done = 0
-        for f in as_completed(futures):
-            test_results.append(f.result())
-            done += 1
-            if done % 100 == 0 or done == len(server_snapshots):
-                logger.info("AI Ready ilerlemesi %s/%s", done, len(server_snapshots))
+    queued = len(server_snapshots)
+    logger.info("update-ai-ready (arka plan kuyruk): %s sunucu, workers=%s", queued, workers)
 
-    # Ana thread'de toplu güncelle
-    ready_count = not_ready_count = 0
-    thread_db = SessionLocal()
-    try:
-        for srv_id, ok, name in test_results:
-            thread_db.query(Server).filter_by(id=srv_id).update({"ai_ready": ok})
-            if ok:
-                ready_count += 1
-            else:
-                not_ready_count += 1
-        thread_db.commit()
-    finally:
-        thread_db.close()
+    def _bg() -> None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from app.services.ssh_manager import SSHManager
 
-    logger.info(f"AI Ready güncellendi: {ready_count} hazır, {not_ready_count} bağlanamadı")
+        def _test_one(snap: dict) -> tuple:
+            try:
+                ssh = SSHManager(
+                    host=snap["ip"],
+                    username=snap["username"],
+                    password=snap["password"],
+                    private_key=snap["private_key"],
+                    port=snap["port"],
+                )
+                ok = bool(ssh.connect())
+                if ok:
+                    ssh.close()
+                return snap["id"], ok
+            except Exception:
+                return snap["id"], False
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-ready") as pool:
+            futs = [pool.submit(_test_one, s) for s in server_snapshots]
+            done = 0
+            for f in as_completed(futs):
+                sid, ok = f.result()
+                results[sid] = ok
+                done += 1
+                if done % 100 == 0 or done == len(server_snapshots):
+                    logger.info("AI Ready (arka plan) %s/%s", done, len(server_snapshots))
+
+        thread_db = SessionLocal()
+        try:
+            ready_count = not_ready_count = 0
+            for srv_id, ok in results.items():
+                thread_db.query(Server).filter_by(id=srv_id).update({"ai_ready": ok})
+                if ok:
+                    ready_count += 1
+                else:
+                    not_ready_count += 1
+            thread_db.commit()
+            logger.info(
+                "AI Ready tamamlandı: %s hazır, %s bağlanamadı",
+                ready_count, not_ready_count,
+            )
+        except Exception:
+            logger.exception("AI Ready arka plan DB hatası")
+            thread_db.rollback()
+        finally:
+            thread_db.close()
+
+    if queued:
+        threading.Thread(target=_bg, daemon=True, name="update-ai-ready").start()
+
     return {
-        "tested":    len(test_results),
-        "ai_ready":  ready_count,
-        "not_ready": not_ready_count,
-        "workers":   workers,
+        "queued": True,
+        "tested": queued,
+        "ai_ready": None,
+        "not_ready": None,
+        "workers": workers,
+        "message": (
+            f"{queued} Linux sunucuda SSH AI Ready testi arka planda başladı. "
+            "Birkaç dakika içinde liste güncellenir (Windows hariç)."
+            if queued else
+            "Test edilecek Linux sunucu bulunamadı (credential/IP gerekli)."
+        ),
     }
 
 
 @router.post("/refresh-os-info")
 def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
-    """SSH ile seçili (veya tüm) sunuculardan OS/kernel bilgisini günceller (paralel)."""
+    """SSH ile Linux sunuculardan OS/kernel bilgisini arka planda günceller."""
+    import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from app.services.bulk_concurrency import bulk_ssh_workers
-    from app.core.encryption import decrypt_secret
+    from app.services.platform_scope import is_linux_server
+    from app.services.ssh_credentials import resolve_ssh_creds
+    from app.core.database import ThreadSessionLocal as SessionLocal
+    from app.models.credential import GlobalCredential
 
     server_ids = (body or {}).get("server_ids")
     q = db.query(Server)
     if server_ids:
         q = q.filter(Server.id.in_(server_ids))
-    servers = q.filter(Server.ip_address != None).all()  # noqa: E711
+    candidates = q.filter(Server.ip_address != None).all()  # noqa: E711
+    servers = [s for s in candidates if is_linux_server(s)]
 
-    updated, failed = [], []
+    global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
+                  or db.query(GlobalCredential).first()
+
     snapshots = []
     for srv in servers:
-        cfg = srv.connection_config or {}
+        creds = resolve_ssh_creds(srv, global_cred=global_cred)
+        if not creds.get("has_secret"):
+            continue
         snapshots.append({
             "id": srv.id,
-            "ip": srv.ip_address,
+            "ip": creds["host"],
             "os_type": srv.os_type,
-            "username": cfg.get("username", "root"),
-            "password": decrypt_secret(cfg.get("password")) if cfg.get("password") else None,
-            "private_key": decrypt_secret(cfg.get("private_key")) if cfg.get("private_key") else None,
-            "port": int(cfg.get("port", 22) or 22),
+            "username": creds["username"],
+            "password": creds["password"],
+            "private_key": creds["private_key"],
+            "port": creds["port"],
         })
 
-    def _update_one(snap):
-        try:
-            from app.services.ssh_manager import SSHManager
-            ssh = SSHManager(
-                host=snap["ip"],
-                username=snap["username"] or "root",
-                password=snap["password"],
-                private_key=snap["private_key"],
-                port=snap["port"],
-            )
-            if not ssh.connect():
-                return snap["id"], None, "SSH bağlanamadı"
-            _, raw, _ = ssh.execute_command("cat /etc/os-release 2>/dev/null")
-            info = _parse_os_release(raw)
-            _, k_out, _ = ssh.execute_command("uname -r")
-            ssh.close()
-            return snap["id"], {
-                "os_version":    info.get("PRETTY_NAME"),
-                "os_release_id": info.get("ID"),
-                "os_version_id": info.get("VERSION_ID"),
-                "os_type":       info.get("ID") or snap["os_type"],
-                "kernel_version": k_out.strip() or None,
-            }, None
-        except Exception as e:
-            return snap["id"], None, str(e)
-
     workers = bulk_ssh_workers()
-    logger.info("refresh-os-info: %s sunucu, workers=%s", len(snapshots), workers)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="os-info") as pool:
-        futures = {pool.submit(_update_one, s): s for s in snapshots}
-        done = 0
-        for f in as_completed(futures):
-            srv_id, info, err = f.result()
-            if info:
-                srv = db.query(Server).filter_by(id=srv_id).first()
-                if srv:
-                    for k, v in info.items():
-                        if v:
-                            setattr(srv, k, v)
-                    db.commit()
-                updated.append(srv_id)
-            else:
-                failed.append({"id": srv_id, "error": err})
-            done += 1
-            if done % 100 == 0 or done == len(snapshots):
-                logger.info("OS info ilerlemesi %s/%s", done, len(snapshots))
+    queued = len(snapshots)
+    logger.info("refresh-os-info (arka plan): %s sunucu, workers=%s", queued, workers)
 
-    return {"updated": len(updated), "failed": len(failed), "workers": workers}
+    def _bg() -> None:
+        from app.services.ssh_manager import SSHManager
+
+        def _update_one(snap):
+            try:
+                ssh = SSHManager(
+                    host=snap["ip"],
+                    username=snap["username"] or "root",
+                    password=snap["password"],
+                    private_key=snap["private_key"],
+                    port=snap["port"],
+                )
+                if not ssh.connect():
+                    return snap["id"], None, "SSH bağlanamadı"
+                _, raw, _ = ssh.execute_command("cat /etc/os-release 2>/dev/null")
+                info = _parse_os_release(raw)
+                _, k_out, _ = ssh.execute_command("uname -r")
+                ssh.close()
+                return snap["id"], {
+                    "os_version": info.get("PRETTY_NAME"),
+                    "os_release_id": info.get("ID"),
+                    "os_version_id": info.get("VERSION_ID"),
+                    "os_type": info.get("ID") or snap["os_type"],
+                    "kernel_version": k_out.strip() or None,
+                }, None
+            except Exception as e:
+                return snap["id"], None, str(e)
+
+        results = []
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="os-info") as pool:
+            futs = [pool.submit(_update_one, s) for s in snapshots]
+            done = 0
+            for f in as_completed(futs):
+                results.append(f.result())
+                done += 1
+                if done % 100 == 0 or done == len(snapshots):
+                    logger.info("OS info (arka plan) %s/%s", done, len(snapshots))
+
+        bg = SessionLocal()
+        try:
+            updated = failed = 0
+            for srv_id, info, err in results:
+                if info:
+                    srv = bg.query(Server).filter_by(id=srv_id).first()
+                    if srv:
+                        for k, v in info.items():
+                            if v:
+                                setattr(srv, k, v)
+                        updated += 1
+                else:
+                    failed += 1
+            bg.commit()
+            logger.info("OS info tamamlandı: updated=%s failed=%s", updated, failed)
+        except Exception:
+            logger.exception("OS info arka plan DB hatası")
+            bg.rollback()
+        finally:
+            bg.close()
+
+    if queued:
+        threading.Thread(target=_bg, daemon=True, name="refresh-os-info").start()
+
+    return {
+        "queued": True,
+        "updated": queued,
+        "failed": 0,
+        "workers": workers,
+        "message": (
+            f"{queued} Linux sunucuda OS bilgisi arka planda yenileniyor."
+            if queued else
+            "Yenilenecek Linux sunucu bulunamadı."
+        ),
+    }
 
 
 @router.get("/")
@@ -626,7 +671,7 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Server not found")
         
         old_status = server.status
-        new_status, _ = ServerHealthChecker.check_server_status(server, db)
+        new_status, _ = ServerHealthChecker.check_server_status(server, db, deep=True)
         server.status = new_status
         db.commit()
         

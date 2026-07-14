@@ -108,11 +108,16 @@ class WinRMClient:
         if not host:
             return None
 
+        try:
+            from app.services.runtime_settings import get_int
+            default_to = get_int("winrm_timeout_sec")
+        except Exception:
+            default_to = 30
         return cls(
             host=host,
             username=username,
             password=password,
             port=int(winrm_port),
             use_https=bool(cfg.get("winrm_https")),
-            timeout=cfg.get("timeout") or 30,
+            timeout=cfg.get("timeout") or default_to,
         )

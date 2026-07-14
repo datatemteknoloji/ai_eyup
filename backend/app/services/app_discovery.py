@@ -41,12 +41,21 @@ logger = logging.getLogger(__name__)
 RESCAN_INTERVAL = timedelta(hours=12)
 
 
+def _rescan_interval() -> timedelta:
+    try:
+        from app.services.runtime_settings import get_int
+        hours = max(1, int(get_int("app_discovery_rescan_hours")))
+        return timedelta(hours=hours)
+    except Exception:
+        return RESCAN_INTERVAL
+
+
 def _due_for_rescan(last_scan: Optional[datetime]) -> bool:
     if not last_scan:
         return True
     if last_scan.tzinfo is None:
         last_scan = last_scan.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - last_scan >= RESCAN_INTERVAL
+    return datetime.now(timezone.utc) - last_scan >= _rescan_interval()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,18 @@ BANNER_TIMEOUT = 30.0
 AUTH_TIMEOUT = 30.0
 
 
+def _ssh_timeouts() -> tuple:
+    try:
+        from app.services.runtime_settings import get_float
+        return (
+            float(get_float("ssh_connect_timeout_sec")),
+            float(get_float("ssh_banner_timeout_sec")),
+            float(get_float("ssh_auth_timeout_sec")),
+        )
+    except Exception:
+        return DEFAULT_TIMEOUT, BANNER_TIMEOUT, AUTH_TIMEOUT
+
+
 def connect_ssh(
     client: paramiko.SSHClient,
     *,
@@ -29,7 +41,7 @@ def connect_ssh(
     port: int = 22,
     password: Optional[str] = None,
     pkey: Optional[paramiko.PKey] = None,
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: Optional[float] = None,
 ) -> bool:
     """paramiko SSHClient ile bağlan: önce key (varsa), olmazsa şifre.
 
@@ -40,6 +52,10 @@ def connect_ssh(
 
     Dönüş: True (bağlandı). Bağlanılamazsa paramiko.AuthenticationException fırlatır.
     """
+    connect_t, banner_t, auth_t = _ssh_timeouts()
+    if timeout is None:
+        timeout = connect_t
+
     connected = False
     last_err: Optional[BaseException] = None
 
@@ -51,8 +67,8 @@ def connect_ssh(
                 username=username,
                 pkey=pkey,
                 timeout=timeout,
-                banner_timeout=BANNER_TIMEOUT,
-                auth_timeout=AUTH_TIMEOUT,
+                banner_timeout=banner_t,
+                auth_timeout=auth_t,
                 allow_agent=False,
                 look_for_keys=False,
             )
@@ -76,6 +92,8 @@ def connect_ssh(
                 port,
                 timeout,
                 lambda t: _auth_keyboard_interactive(t, username, password),
+                banner_timeout=banner_t,
+                auth_timeout=auth_t,
             )
             client._transport = transport
             connected = True
@@ -95,6 +113,8 @@ def connect_ssh(
                     port,
                     timeout,
                     lambda t: t.auth_password(username, password),
+                    banner_timeout=banner_t,
+                    auth_timeout=auth_t,
                 )
                 client._transport = transport
                 connected = True
@@ -111,8 +131,8 @@ def connect_ssh(
                     username=username,
                     password=password,
                     timeout=timeout,
-                    banner_timeout=BANNER_TIMEOUT,
-                    auth_timeout=AUTH_TIMEOUT,
+                    banner_timeout=banner_t,
+                    auth_timeout=auth_t,
                     allow_agent=False,
                     look_for_keys=False,
                 )
@@ -179,11 +199,23 @@ def _auth_keyboard_interactive(
     return transport.auth_interactive(username, handler)
 
 
-def _auth_with_fresh_transport(hostname: str, port: int, timeout: float, auth_fn):
+def _auth_with_fresh_transport(
+    hostname: str,
+    port: int,
+    timeout: float,
+    auth_fn,
+    *,
+    banner_timeout: float = BANNER_TIMEOUT,
+    auth_timeout: float = AUTH_TIMEOUT,
+):
     """Yeni TCP+Transport aç, auth_fn çalıştır; başarısızsa transport'u kapat."""
     transport = None
     try:
-        transport = _open_transport(hostname, port, timeout)
+        transport = _open_transport(
+            hostname, port, timeout,
+            banner_timeout=banner_timeout,
+            auth_timeout=auth_timeout,
+        )
         auth_fn(transport)
         if not transport.is_authenticated():
             raise paramiko.AuthenticationException("Auth tamamlandı ama oturum authenticated değil")
@@ -197,7 +229,14 @@ def _auth_with_fresh_transport(hostname: str, port: int, timeout: float, auth_fn
         raise
 
 
-def _open_transport(hostname: str, port: int, timeout: float) -> paramiko.Transport:
+def _open_transport(
+    hostname: str,
+    port: int,
+    timeout: float,
+    *,
+    banner_timeout: float = BANNER_TIMEOUT,
+    auth_timeout: float = AUTH_TIMEOUT,
+) -> paramiko.Transport:
     """TCP + SSH handshake (henüz auth edilmemiş) Transport.
 
     Host key doğrulaması bilinçli atlanır: çağıranların tamamı AutoAddPolicy
@@ -205,8 +244,7 @@ def _open_transport(hostname: str, port: int, timeout: float) -> paramiko.Transp
     """
     sock = socket.create_connection((hostname, port), timeout=timeout)
     transport = paramiko.Transport(sock)
-    transport.banner_timeout = BANNER_TIMEOUT
-    transport.auth_timeout = AUTH_TIMEOUT
-    # Banner /etc/issue + Centrify bazen yavaş; kısa timeout EBADF / banner hatası üretir
-    transport.start_client(timeout=max(timeout, BANNER_TIMEOUT))
+    transport.banner_timeout = banner_timeout
+    transport.auth_timeout = auth_timeout
+    transport.start_client(timeout=max(timeout, banner_timeout))
     return transport
