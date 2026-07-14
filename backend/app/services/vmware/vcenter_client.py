@@ -1962,13 +1962,51 @@ class VCenterClient:
             return "warning"
         return "info"
 
+    def _parse_event_argument(self, child) -> Dict[str, Optional[str]]:
+        """VmEventArgument / HostEventArgument / ManagedEntityEventArgument veya düz MOR.
+
+        Tipik SOAP:
+          <vm><name>myvm</name><vm type="VirtualMachine">vm-123</vm></vm>
+          <entity><name>myvm</name><entity type="VirtualMachine">vm-123</entity></entity>
+          <host type="HostSystem">host-21</host>
+        """
+        result: Dict[str, Optional[str]] = {"type": None, "value": None, "name": None}
+        direct_type = child.get("type")
+        direct_text = (child.text or "").strip() if child.text else ""
+        if direct_type and direct_text:
+            result["type"] = direct_type
+            result["value"] = direct_text
+
+        for sub in list(child):
+            st = self._soap_tag(sub)
+            sub_text = (sub.text or "").strip() if sub.text else ""
+            if st == "name" and sub_text:
+                result["name"] = sub_text
+            elif sub.get("type") and sub_text:
+                result["type"] = sub.get("type")
+                result["value"] = sub_text
+            elif st in ("vm", "host", "entity", "computeResource", "datacenter", "ds", "net"):
+                nested = self._parse_event_argument(sub)
+                if nested.get("type"):
+                    result["type"] = nested["type"]
+                if nested.get("value"):
+                    result["value"] = nested["value"]
+                if nested.get("name") and not result.get("name"):
+                    result["name"] = nested["name"]
+        return result
+
     def _parse_vim_event_element(self, el) -> Optional[Dict]:
         """Tek bir SOAP Event returnval elementini normalize eder."""
         data: Dict[str, Any] = {}
+        entity_arg: Dict[str, Optional[str]] = {}
         for child in el:
             tag = self._soap_tag(child)
-            if tag in ("host", "vm", "computeResource", "datacenter", "ds", "net"):
-                data[tag] = {"type": child.get("type"), "value": child.text}
+            if tag in ("host", "vm", "computeResource", "datacenter", "ds", "net", "entity"):
+                parsed = self._parse_event_argument(child)
+                if tag == "entity":
+                    entity_arg = parsed
+                else:
+                    data[tag] = parsed
             elif tag in ("key", "chainId", "createdTime", "userName", "fullFormattedMessage",
                          "message", "eventTypeId", "changeTag"):
                 data[tag] = child.text or ""
@@ -2000,6 +2038,20 @@ class VCenterClient:
         )
         host_ref = (data.get("host") or {}).get("value")
         vm_ref = (data.get("vm") or {}).get("value")
+        entity_name = (
+            (data.get("vm") or {}).get("name")
+            or (data.get("host") or {}).get("name")
+            or entity_arg.get("name")
+        )
+        entity_type = entity_arg.get("type")
+        entity_ref = entity_arg.get("value")
+
+        # AlarmStatusChangedEvent: asıl hedef çoğu zaman 'entity' alanındadır
+        if not vm_ref and entity_type == "VirtualMachine" and entity_ref:
+            vm_ref = entity_ref
+        if not host_ref and entity_type == "HostSystem" and entity_ref:
+            host_ref = entity_ref
+
         severity = self._map_vim_event_severity(
             event_type,
             title,
@@ -2020,6 +2072,9 @@ class VCenterClient:
             "user_name": data.get("userName"),
             "host_ref": host_ref,
             "vm_ref": vm_ref,
+            "entity_type": entity_type,
+            "entity_ref": entity_ref,
+            "entity_name": entity_name,
             "timestamp": data.get("createdTime"),
             "change_tag": data.get("changeTag"),
         }
@@ -2254,6 +2309,8 @@ class VCenterClient:
             if status not in ("red", "yellow"):
                 continue
 
+            vm_ref = entity_val if entity_type == "VirtualMachine" else None
+            host_ref = entity_val if entity_type == "HostSystem" else None
             alarms.append({
                 "id": f"alarm-{alarm_val}-{entity_type}-{entity_val}",
                 "kind": "vcenter_alarm",
@@ -2263,6 +2320,9 @@ class VCenterClient:
                 "alarm_ref": alarm_val,
                 "entity_type": entity_type,
                 "entity_ref": entity_val,
+                "entity_name": None,
+                "vm_ref": vm_ref,
+                "host_ref": host_ref,
                 "overall_status": status,
                 "timestamp": time_val,
             })

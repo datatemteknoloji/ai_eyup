@@ -2,6 +2,7 @@
 Events API - AIOps Event Management
 """
 import logging
+import re as _re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -34,10 +35,39 @@ class BulkActionRequest(BaseModel):
     action: str  # "acknowledge", "resolve", "known", "unresolve"
 
 
+def _event_display_server_name(e: SystemEvent, server_map: Optional[dict] = None) -> Optional[str]:
+    """SUNUCU kolonu: bağlı sunucu → entity/host_name → başlıktan VM → platform/hypervisor."""
+    if e.server_id and server_map is not None:
+        name = server_map.get(e.server_id)
+        if name:
+            return name
+    raw = e.raw_data or {}
+    mor_re = _re.compile(r"^(vm|host|domain|alarm|group|resgroup|datastore|folder)-\d+$", _re.I)
+    for key in ("entity_name", "vm_name", "host_name"):
+        val = raw.get(key)
+        if val and str(val).strip() and not mor_re.match(str(val).strip()):
+            return str(val).strip()
+    title = e.title or ""
+    m = _re.search(r"Alarm\s+'[^']*'\s+on\s+(\S+)", title, _re.I)
+    if m:
+        return m.group(1).rstrip(".,;:")
+    m = _re.search(r"\bon\s+([A-Za-z0-9][\w.:\-]+)", title, _re.I)
+    if m:
+        cand = m.group(1).rstrip(".,;:")
+        if cand and not mor_re.match(cand):
+            return cand
+    for key in ("platform_label", "hypervisor_name"):
+        val = raw.get(key)
+        if val and str(val).strip():
+            return str(val).strip()
+    if (e.source or "").startswith("vcenter_") or (e.event_type or "").startswith("vcenter_"):
+        return "vCenter"
+    return None
+
+
 def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
-    if not server_name and not e.server_id:
-        raw = e.raw_data or {}
-        server_name = raw.get("host_name") or raw.get("platform_label")
+    if not server_name:
+        server_name = _event_display_server_name(e)
     return {
         "id": e.id,
         "server_id": e.server_id,
@@ -345,9 +375,6 @@ async def bulk_delete(data: BulkActionRequest, db: Session = Depends(get_db)):
     return {"success": True, "deleted": count}
 
 
-import re as _re
-
-
 def _normalize_title(title: str) -> str:
     """Log basligından timestamp ve syslog prefix soy (gruplama icin)."""
     t = (title or "").strip()
@@ -436,10 +463,7 @@ async def list_events_grouped(
                 "title": clean_title,
                 "severity": e.severity,
                 "server_id": e.server_id,
-                "server_name": (
-                    server_map.get(e.server_id) if e.server_id
-                    else (e.raw_data or {}).get("host_name") or (e.raw_data or {}).get("platform_label")
-                ),
+                "server_name": _event_display_server_name(e, server_map),
                 "event_ids": [],
                 "latest_created_at": last_seen_val.isoformat() if last_seen_val else None,
                 "resolved": e.resolved,

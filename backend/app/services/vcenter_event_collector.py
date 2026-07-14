@@ -4,10 +4,13 @@ vCenter event / alarm / task senkronizasyonu → SystemEvent (platform=virt).
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
@@ -18,12 +21,41 @@ logger = logging.getLogger(__name__)
 
 VCENTER_SOURCES = ("vcenter_event", "vcenter_alarm", "vcenter_task")
 
+# Alarm 'Virtual machine CPU usage' on myvm ...
+_TITLE_ENTITY_RE = re.compile(
+    r"(?:Alarm\s+'[^']*'\s+on\s+|[\s\"]on\s+)([A-Za-z0-9][A-Za-z0-9_.:\-]{0,120})",
+    re.IGNORECASE,
+)
+_MOR_RE = re.compile(r"^(vm|host|domain|alarm|group|resgroup|datastore|folder)-\d+$", re.I)
+
+
+def _entity_name_from_title(title: Optional[str]) -> Optional[str]:
+    if not title:
+        return None
+    m = _TITLE_ENTITY_RE.search(title)
+    if not m:
+        return None
+    name = (m.group(1) or "").strip().rstrip(".,;:")
+    if not name or _MOR_RE.match(name):
+        return None
+    return name
+
+
+def _friendly_label(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    s = str(value).strip()
+    if not s or _MOR_RE.match(s):
+        return None
+    return s
+
 
 def _resolve_server_id(
     db: Session,
     hypervisor_id: int,
     vm_ref: Optional[str],
     host_ref: Optional[str],
+    entity_name: Optional[str] = None,
 ) -> Optional[int]:
     if vm_ref:
         srv = (
@@ -33,7 +65,132 @@ def _resolve_server_id(
         )
         if srv:
             return srv.id
+
+    if host_ref:
+        srv = (
+            db.query(Server)
+            .filter(Server.hypervisor_id == hypervisor_id, Server.hypervisor_vm_id == host_ref)
+            .first()
+        )
+        if srv:
+            return srv.id
+
+    name = (entity_name or "").strip()
+    if name:
+        srv = (
+            db.query(Server)
+            .filter(
+                Server.hypervisor_id == hypervisor_id,
+                or_(
+                    Server.vm_name == name,
+                    Server.name == name,
+                    Server.hostname == name,
+                    Server.vm_guest_hostname == name,
+                ),
+            )
+            .first()
+        )
+        if srv:
+            return srv.id
     return None
+
+
+def _enrich_item_refs(item: Dict[str, Any]) -> Dict[str, Any]:
+    """entity_ref / title'dan vm_ref ve entity_name doldur."""
+    out = dict(item)
+    entity_type = out.get("entity_type")
+    entity_ref = out.get("entity_ref")
+    if not out.get("vm_ref") and entity_type == "VirtualMachine" and entity_ref:
+        out["vm_ref"] = entity_ref
+    if not out.get("host_ref") and entity_type == "HostSystem" and entity_ref:
+        out["host_ref"] = entity_ref
+    if not out.get("entity_name"):
+        out["entity_name"] = _entity_name_from_title(out.get("title"))
+    return out
+
+
+def _build_raw_data(hypervisor: Hypervisor, item: Dict[str, Any], event_type: str, ext_key: str) -> dict:
+    entity_name = _friendly_label(item.get("entity_name"))
+    host_name = (
+        entity_name
+        or _friendly_label(item.get("host_name"))
+        or _friendly_label(item.get("vm_name"))
+    )
+    return {
+        "platform": "virt",
+        "platform_label": "vCenter",
+        "external_key": ext_key,
+        "hypervisor_id": hypervisor.id,
+        "hypervisor_name": hypervisor.name,
+        "vcenter_host": hypervisor.ip_address or hypervisor.hostname,
+        "event_key": item.get("event_key"),
+        "chain_id": item.get("chain_id"),
+        "event_type_id": item.get("event_type_id"),
+        "vm_ref": item.get("vm_ref"),
+        "host_ref": item.get("host_ref"),
+        "host_name": host_name,
+        "entity_name": entity_name,
+        "user_name": item.get("user_name"),
+        "alarm_ref": item.get("alarm_ref"),
+        "entity_type": item.get("entity_type"),
+        "entity_ref": item.get("entity_ref"),
+        "overall_status": item.get("overall_status"),
+        "timestamp": item.get("timestamp"),
+        "category": event_type,
+        "action": item.get("event_type_id") or event_type,
+        "actor": item.get("user_name"),
+    }
+
+
+def _backfill_existing_event(
+    ev: SystemEvent,
+    db: Session,
+    hypervisor: Hypervisor,
+    item: Dict[str, Any],
+    now: datetime,
+) -> None:
+    """Mevcut satırlarda eksik server_id / display alanlarını iyileştir."""
+    item = _enrich_item_refs(item)
+    updated = False
+    if not ev.server_id:
+        sid = _resolve_server_id(
+            db,
+            hypervisor.id,
+            item.get("vm_ref"),
+            item.get("host_ref"),
+            item.get("entity_name"),
+        )
+        if sid:
+            ev.server_id = sid
+            updated = True
+
+    raw = dict(ev.raw_data or {})
+    entity_name = _friendly_label(item.get("entity_name")) or _friendly_label(raw.get("entity_name"))
+    if entity_name and raw.get("entity_name") != entity_name:
+        raw["entity_name"] = entity_name
+        updated = True
+    if not _friendly_label(raw.get("host_name")) and entity_name:
+        raw["host_name"] = entity_name
+        updated = True
+    if not raw.get("platform_label"):
+        raw["platform_label"] = "vCenter"
+        updated = True
+    if not raw.get("hypervisor_name") and hypervisor.name:
+        raw["hypervisor_name"] = hypervisor.name
+        updated = True
+    if item.get("vm_ref") and not raw.get("vm_ref"):
+        raw["vm_ref"] = item.get("vm_ref")
+        updated = True
+    if updated:
+        ev.raw_data = raw
+        flag_modified(ev, "raw_data")
+
+    ev.last_seen = now
+    ev.occurrence_count = (ev.occurrence_count or 1) + 1
+    if item.get("severity"):
+        ev.severity = item.get("severity") or ev.severity
+    if item.get("severity") in ("critical", "emergency"):
+        ev.resolved = False
 
 
 def _upsert_vcenter_event(
@@ -44,6 +201,7 @@ def _upsert_vcenter_event(
     event_type: str,
     now: datetime,
 ) -> bool:
+    item = _enrich_item_refs(item)
     ext_key = f"hv{hypervisor.id}-{item.get('id') or item.get('event_key')}"
     since = datetime.utcnow() - timedelta(days=7)
 
@@ -58,11 +216,7 @@ def _upsert_vcenter_event(
     for ev in existing_rows:
         raw = ev.raw_data or {}
         if raw.get("external_key") == ext_key:
-            ev.last_seen = now
-            ev.occurrence_count = (ev.occurrence_count or 1) + 1
-            ev.severity = item.get("severity") or ev.severity
-            if item.get("severity") in ("critical", "emergency"):
-                ev.resolved = False
+            _backfill_existing_event(ev, db, hypervisor, item, now)
             return False
 
     server_id = _resolve_server_id(
@@ -70,6 +224,7 @@ def _upsert_vcenter_event(
         hypervisor.id,
         item.get("vm_ref"),
         item.get("host_ref"),
+        item.get("entity_name"),
     )
 
     title = item.get("title") or "vCenter olayı"
@@ -80,28 +235,7 @@ def _upsert_vcenter_event(
         source=source,
         title=title[:500],
         description=item.get("title"),
-        raw_data={
-            "platform": "virt",
-            "external_key": ext_key,
-            "hypervisor_id": hypervisor.id,
-            "hypervisor_name": hypervisor.name,
-            "vcenter_host": hypervisor.ip_address or hypervisor.hostname,
-            "event_key": item.get("event_key"),
-            "chain_id": item.get("chain_id"),
-            "event_type_id": item.get("event_type_id"),
-            "vm_ref": item.get("vm_ref"),
-            "host_ref": item.get("host_ref"),
-            "host_name": item.get("host_ref"),
-            "user_name": item.get("user_name"),
-            "alarm_ref": item.get("alarm_ref"),
-            "entity_type": item.get("entity_type"),
-            "entity_ref": item.get("entity_ref"),
-            "overall_status": item.get("overall_status"),
-            "timestamp": item.get("timestamp"),
-            "category": event_type,
-            "action": item.get("event_type_id") or event_type,
-            "actor": item.get("user_name"),
-        },
+        raw_data=_build_raw_data(hypervisor, item, event_type, ext_key),
         is_acknowledged=False,
         resolved=False,
         last_seen=now,
