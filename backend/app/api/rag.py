@@ -1,5 +1,5 @@
 """
-RAG API: Runbook, Incident ve Metrik açıklamaları ingest + durum.
+RAG API: Runbook, Incident, Metrik + Bilgi Bankası ingest + durum.
 PDF runbook ingest dahil.
 """
 import logging
@@ -15,6 +15,7 @@ from app.services.rag_service import (
     ingest_incidents_from_db,
     ingest_events_from_db,
     ingest_metric_descriptions,
+    ingest_knowledge_from_db,
     get_rag_context_for_message,
 )
 from app.services.rag_store import (
@@ -24,6 +25,7 @@ from app.services.rag_store import (
     COLLECTION_RUNBOOK,
     COLLECTION_INCIDENTS,
     COLLECTION_METRICS,
+    COLLECTION_KNOWLEDGE,
 )
 from app.data.default_metric_descriptions import DEFAULT_METRIC_DESCRIPTIONS
 
@@ -136,6 +138,17 @@ async def rag_events_reindex(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/knowledge/reindex")
+async def rag_knowledge_reindex(db: Session = Depends(get_db)):
+    """Bilgi Bankası (learned_facts) → RAG knowledge_facts collection."""
+    try:
+        n = await ingest_knowledge_from_db(db)
+        return {"success": True, "chunks_added": n}
+    except Exception as e:
+        logger.exception("Knowledge reindex failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/metrics/seed")
 async def rag_metrics_seed(body: Optional[MetricDescriptionsSeedRequest] = None):
     """Metrik açıklamalarını RAG'e ekle. body boş veya items verilmezse varsayılan liste kullanılır."""
@@ -160,10 +173,16 @@ async def rag_status():
             "runbook": count_collection(COLLECTION_RUNBOOK),
             "incidents": count_collection(COLLECTION_INCIDENTS),
             "metrics": count_collection(COLLECTION_METRICS),
+            "knowledge": count_collection(COLLECTION_KNOWLEDGE),
         }
     except Exception as e:
         logger.warning(f"RAG status error: {e}")
-        return {"runbook": 0, "incidents": 0, "metrics": 0}
+        return {"runbook": 0, "incidents": 0, "metrics": 0, "knowledge": 0}
+
+
+def _preview_snip(text: str, n: int = 500) -> str:
+    text = text or ""
+    return text[:n] + "..." if len(text) > n else text
 
 
 @router.get("/preview")
@@ -173,9 +192,10 @@ async def rag_preview(message: str = "CPU kullanımı nedir?"):
         ctx = await get_rag_context_for_message(message)
         return {
             "message": message,
-            "runbook": ctx["runbook"][:500] + "..." if len(ctx["runbook"]) > 500 else ctx["runbook"],
-            "incidents": ctx["incidents"][:500] + "..." if len(ctx["incidents"]) > 500 else ctx["incidents"],
-            "metrics": ctx["metrics"][:500] + "..." if len(ctx["metrics"]) > 500 else ctx["metrics"],
+            "runbook": _preview_snip(ctx.get("runbook") or ""),
+            "incidents": _preview_snip(ctx.get("incidents") or ""),
+            "metrics": _preview_snip(ctx.get("metrics") or ""),
+            "knowledge": _preview_snip(ctx.get("knowledge") or ""),
         }
     except Exception as e:
         logger.exception("RAG preview failed")

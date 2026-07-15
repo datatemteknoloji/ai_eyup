@@ -394,8 +394,8 @@ class BackgroundTaskManager:
 
 
     async def _periodic_rag_reindex(self):
-        """Her 30 dakikada incident + event kayıtlarını RAG hafızasına indeksler.
-        Böylece AI Chat geçmiş olaylardan haberdar olur (kapalı döngü hafıza)."""
+        """Her 30 dakikada incident + event + Bilgi Bankası kayıtlarını RAG hafızasına indeksler.
+        Böylece AI Chat geçmiş olaylardan ve öğrenilmiş sunucu bilgilerinden haberdar olur."""
         logger.info("RAG reindex task started (1800s interval, first run in 300s)")
         await asyncio.sleep(300)
 
@@ -406,10 +406,14 @@ class BackgroundTaskManager:
                     from app.services.rag_service import (
                         ingest_incidents_from_db,
                         ingest_events_from_db,
+                        ingest_knowledge_from_db,
                     )
                     n_inc = await ingest_incidents_from_db(db)
                     n_evt = await ingest_events_from_db(db)
-                    logger.info(f"RAG reindex: {n_inc} incident, {n_evt} event indekslendi")
+                    n_kb = await ingest_knowledge_from_db(db)
+                    logger.info(
+                        f"RAG reindex: {n_inc} incident, {n_evt} event, {n_kb} knowledge chunk indekslendi"
+                    )
                 except Exception as e:
                     logger.error(f"RAG reindex error: {e}")
                 finally:

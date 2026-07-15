@@ -57,6 +57,7 @@ interface RagStatus {
   runbook: number
   incidents: number
   metrics: number
+  knowledge?: number
 }
 
 interface RunbookDocument {
@@ -97,7 +98,7 @@ const RagTab: React.FC = () => {
     queryKey: ['rag-status'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/status`)
-      if (!res.ok) return { runbook: 0, incidents: 0, metrics: 0 }
+      if (!res.ok) return { runbook: 0, incidents: 0, metrics: 0, knowledge: 0 }
       return res.json()
     }
   })
@@ -142,6 +143,15 @@ const RagTab: React.FC = () => {
     },
     onSuccess: (d) => { refetchStatus(); alert(`Event'ler eklendi: ${d.chunks_added} kayıt.`) }
   })
+  const reindexKnowledge = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/knowledge/reindex`, { method: 'POST' })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.detail || 'Hata')
+      return r
+    },
+    onSuccess: (d) => { refetchStatus(); alert(`Bilgi Bankası indexlendi: ${d.chunks_added} chunk.`) }
+  })
   const { data: runbookDocsData, refetch: refetchRunbookDocs } = useQuery<{ success: boolean; documents: RunbookDocument[] }>({
     queryKey: ['rag-runbook-documents'],
     queryFn: async () => {
@@ -164,7 +174,7 @@ const RagTab: React.FC = () => {
   return (
     <div>
       <h2 className="text-xl font-semibold text-white mb-2">RAG (Bilgi Tabanı)</h2>
-      <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
+      <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook PDF&apos;leri, Bilgi Bankası, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
 
       {/* PDF Ekle - en üstte, belirgin */}
       <div className="mb-6 p-5 bg-cyber-deep/70 rounded-xl border-2 border-emerald-500/40">
@@ -233,7 +243,7 @@ const RagTab: React.FC = () => {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Runbook</p>
           <p className="text-2xl font-semibold text-white">{status?.runbook ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
@@ -245,6 +255,10 @@ const RagTab: React.FC = () => {
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Metrik Açıklamaları</p>
           <p className="text-2xl font-semibold text-white">{status?.metrics ?? 0} <span className="text-sm font-normal text-slate-500">metrik</span></p>
+        </div>
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
+          <p className="text-slate-400 text-sm">Bilgi Bankası</p>
+          <p className="text-2xl font-semibold text-white">{status?.knowledge ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
         </div>
       </div>
       <div className="space-y-3">
@@ -260,6 +274,10 @@ const RagTab: React.FC = () => {
           className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {reindexEvents.isPending ? 'Indexleniyor...' : "Event'leri RAG'e Ekle"}
         </button>
+        <button onClick={() => reindexKnowledge.mutate()} disabled={reindexKnowledge.isPending}
+          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          {reindexKnowledge.isPending ? 'Indexleniyor...' : "Bilgi Bankası'nı RAG'e Ekle"}
+        </button>
       </div>
       <div className="mt-6 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
         <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl kullanılır?</h4>
@@ -267,6 +285,7 @@ const RagTab: React.FC = () => {
           <li>• <strong>Metrik açıklamaları:</strong> Chat’te “bu metrik ne?” sorularında kullanılır. Yukarıdan yükleyin.</li>
           <li>• <strong>Incident’lar:</strong> Veritabanındaki incident’lar RAG’e eklenir; benzer geçmiş olaylar yanıtta kullanılır.</li>
           <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-cyber-card px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-cyber-card px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
+          <li>• <strong>Bilgi Bankası:</strong> SSH/WinRM’den öğrenilen yapısal sunucu bilgileri indekslenir; Chat semantik aramada kullanır. Periyodik reindex + yukarıdaki düğme.</li>
         </ul>
       </div>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}

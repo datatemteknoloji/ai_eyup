@@ -133,10 +133,10 @@ const KnowledgeBase: React.FC = () => {
       <div>
         <h1 className="text-xl font-semibold text-white">Bilgi Bankası</h1>
         <p className="text-sm text-slate-400 mt-1">
-          AI'nin SSH/WinRM taramalarından öğrendiği kalıcı, yapısal sunucu bilgileri (OS/kernel sürümü,
-          disk-mount düzeni, güvenlik yapılandırması, donanım vb). Bu bilgiler tekrar SSH atmadan
-          hızlı yanıt vermek ve canlı bağlantı başarısız olduğunda geri düşüş (fallback) sağlamak için
-          kullanılır — anlık metrikler (CPU/RAM/disk kullanım %) burada tutulmaz, her zaman canlı okunur.
+          AI&apos;nin SSH/WinRM taramalarından öğrendiği kalıcı, yapısal sunucu bilgileri (OS/kernel sürümü,
+          disk-mount düzeni, güvenlik yapılandırması, donanım vb). Seçili sunucuda doğrudan prompt&apos;a
+          eklenir; ayrıca Ayarlar → RAG üzerinden indexlenerek Chat semantik aramasında kullanılır.
+          Anlık metrikler (CPU/RAM/disk kullanım %) burada tutulmaz.
         </p>
       </div>
 

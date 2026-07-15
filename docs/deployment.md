@@ -104,7 +104,19 @@ Create these directories before first run if they don't exist:
 
 ```bash
 sudo mkdir -p /var/lib/server_management/{postgres,redis,chroma,repos,uploads}
-sudo chown -R $USER:$USER /var/lib/server_management
+# Backend container appuser (uid 100 / gid 102) ile yazar; chroma/uploads/repos yazılabilir olmalı.
+# Not: entrypoint her başlangıçta sahipliği düzeltir; yine de ilk kurulumda chown önerilir.
+sudo chown -R 100:102 /var/lib/server_management/chroma \
+  /var/lib/server_management/uploads \
+  /var/lib/server_management/repos
+```
+
+Eski kurulumlarda chroma `root` sahipliğinde kaldıysa (RAG yazılamaz / reindex hata):
+
+```bash
+sudo chown -R 100:102 /var/lib/server_management/chroma
+# veya Docker ile:
+docker run --rm -v /var/lib/server_management/chroma:/chroma alpine chown -R 100:102 /chroma
 ```
 
 ---

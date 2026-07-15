@@ -534,6 +534,10 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 context_parts.append("RUNBOOK:\n" + rag_ctx["runbook"].strip())
             if rag_ctx.get("incidents"):
                 context_parts.append("BENZER OLAYLAR:\n" + rag_ctx["incidents"].strip())
+            if rag_ctx.get("metrics"):
+                context_parts.append("METRIK ACIKLAMALARI:\n" + rag_ctx["metrics"].strip())
+            if rag_ctx.get("knowledge"):
+                context_parts.append("BILGI BANKASI / RAG:\n" + rag_ctx["knowledge"].strip())
             context_str = "\n\n".join(context_parts)
 
             coll_lines = []

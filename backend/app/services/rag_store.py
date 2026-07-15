@@ -17,13 +17,54 @@ logger = logging.getLogger(__name__)
 COLLECTION_RUNBOOK = "runbook"
 COLLECTION_INCIDENTS = "incidents"
 COLLECTION_METRICS = "metric_descriptions"
+COLLECTION_KNOWLEDGE = "knowledge_facts"
 
 # nomic-embed-text
 EMBEDDING_DIM = 768
 
+# Bilgi Bankası için ayrı path: ana chroma çoğu kurulumda root-owned olup
+# appuser yazamaz; uploads yazılabilir. Runbook/incident ana path'te kalır.
+_KNOWLEDGE_CHROMA_FALLBACK = "/app/uploads/chroma_knowledge"
+_cached_knowledge_path: Optional[str] = None
 
-def _get_client():
-    path = settings.RAG_CHROMA_PATH
+
+def _path_is_writable(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write_probe")
+        with open(probe, "w") as f:
+            f.write("1")
+        os.remove(probe)
+        return True
+    except Exception:
+        return False
+
+
+def _knowledge_chroma_path() -> str:
+    global _cached_knowledge_path
+    if _cached_knowledge_path:
+        return _cached_knowledge_path
+    env = (os.getenv("RAG_KNOWLEDGE_CHROMA_PATH") or "").strip()
+    if env:
+        os.makedirs(env, exist_ok=True)
+        _cached_knowledge_path = env
+        return env
+    primary = settings.RAG_CHROMA_PATH
+    if _path_is_writable(primary):
+        _cached_knowledge_path = primary
+        return primary
+    os.makedirs(_KNOWLEDGE_CHROMA_FALLBACK, exist_ok=True)
+    logger.warning(
+        "RAG chroma primary path not writable (%s); knowledge store → %s",
+        primary,
+        _KNOWLEDGE_CHROMA_FALLBACK,
+    )
+    _cached_knowledge_path = _KNOWLEDGE_CHROMA_FALLBACK
+    return _cached_knowledge_path
+
+
+def _get_client(path: Optional[str] = None):
+    path = path or settings.RAG_CHROMA_PATH
     os.makedirs(path, exist_ok=True)
     return chromadb.PersistentClient(
         path=path,
@@ -31,9 +72,15 @@ def _get_client():
     )
 
 
+def _client_for_collection(name: str):
+    if name == COLLECTION_KNOWLEDGE:
+        return _get_client(_knowledge_chroma_path())
+    return _get_client()
+
+
 def get_collection(name: str):
     """Collection al veya oluştur. Embedding boyutu ilk add'da belirlenir."""
-    client = _get_client()
+    client = _client_for_collection(name)
     try:
         return client.get_collection(name=name)
     except Exception:
@@ -95,7 +142,7 @@ def query_collection(
 
 def clear_collection(collection_name: str) -> None:
     """Collection içeriğini sil (collection'ı silip yeniden oluşturur)."""
-    client = _get_client()
+    client = _client_for_collection(collection_name)
     try:
         client.delete_collection(name=collection_name)
     except Exception:

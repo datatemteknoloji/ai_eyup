@@ -19,6 +19,32 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _schedule_knowledge_rag_reindex() -> None:
+    """Bilgi Bankası değişince RAG indeksini arka planda güncelle (best-effort)."""
+    try:
+        import asyncio
+        from app.core.database import SessionLocal
+        from app.services.rag_service import ingest_knowledge_from_db
+
+        async def _run():
+            db = SessionLocal()
+            try:
+                n = await ingest_knowledge_from_db(db)
+                logger.info("Knowledge RAG reindex (after mutate): %s chunk", n)
+            except Exception as e:
+                logger.warning("Knowledge RAG reindex failed: %s", e)
+            finally:
+                db.close()
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_run())
+        except RuntimeError:
+            asyncio.run(_run())
+    except Exception as e:
+        logger.debug("Knowledge RAG schedule skipped: %s", e)
+
+
 class FactUpdate(BaseModel):
     value: str
 
@@ -107,6 +133,7 @@ def update_fact(fact_id: int, body: FactUpdate, db: Session = Depends(get_db)):
     from datetime import datetime, timezone
     fact.last_confirmed_at = datetime.now(timezone.utc)
     db.commit()
+    _schedule_knowledge_rag_reindex()
     return fact.to_dict()
 
 
@@ -117,6 +144,7 @@ def delete_fact(fact_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Kayit bulunamadi")
     db.delete(fact)
     db.commit()
+    _schedule_knowledge_rag_reindex()
     return {"status": "deleted", "id": fact_id}
 
 
@@ -125,4 +153,5 @@ def delete_server_facts(server_id: int, db: Session = Depends(get_db)):
     """Bir sunucuya ait tum ogrenilmis bilgileri temizle (yeniden ogrenilsin)."""
     count = db.query(LearnedFact).filter(LearnedFact.server_id == server_id).delete()
     db.commit()
+    _schedule_knowledge_rag_reindex()
     return {"status": "deleted", "count": count}

@@ -620,7 +620,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 except Exception:
                     pass
 
-            # RAG: Runbook, geçmiş incident/event ve metrik açıklamaları (use_rag=True ise)
+            # RAG: Runbook, incident/event, metrik + Bilgi Bankası (use_rag=True ise)
             if request.use_rag is not False:
                 try:
                     from app.services.rag_service import get_rag_context_for_message
@@ -631,6 +631,11 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                         context_parts.append("BENZER GEÇMİŞ OLAYLAR / INCIDENT'LAR:\n" + rag_ctx["incidents"].strip())
                     if rag_ctx.get("metrics"):
                         context_parts.append("METRİK AÇIKLAMALARI:\n" + rag_ctx["metrics"].strip())
+                    if rag_ctx.get("knowledge"):
+                        context_parts.append(
+                            "BİLGİ BANKASI / RAG (soruya ilgili öğrenilmiş sunucu bilgileri):\n"
+                            + rag_ctx["knowledge"].strip()
+                        )
                 except Exception as rag_err:
                     logger.debug(f"RAG context atlanıyor: {rag_err}")
 
@@ -1652,6 +1657,10 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 context_parts.append("BENZER OLAYLAR:\n" + rag_ctx["incidents"].strip())
             if rag_ctx.get("metrics"):
                 context_parts.append("METRIK ACIKLAMALARI:\n" + rag_ctx["metrics"].strip())
+            if rag_ctx.get("knowledge"):
+                context_parts.append(
+                    "BILGI BANKASI / RAG:\n" + rag_ctx["knowledge"].strip()
+                )
 
             # Hypervisor bağlamı (seçim varsa)
             selected_hypervisors = []

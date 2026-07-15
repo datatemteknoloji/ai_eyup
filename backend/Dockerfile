@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     openssh-client \
     sshpass \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -19,12 +20,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos
+RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos \
+    && mkdir -p /var/lib/server_management/chroma
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /app appuser \
-    && chown -R appuser:appgroup /app
-USER appuser
+    && chown -R appuser:appgroup /app /var/lib/server_management/chroma \
+    && chmod +x /app/docker-entrypoint.sh
 
+# root ile başla: entrypoint bind-mount sahipliğini düzeltir, sonra appuser'a düşer
+USER root
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 EXPOSE 8000
 
 # Production: no --reload; tarih-saat formatlı log (logging.yaml)

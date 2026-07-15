@@ -73,29 +73,32 @@ def rca_node(state: AIOpsState, config) -> AIOpsState:
 
 
 def memory_node(state: AIOpsState, config) -> AIOpsState:
-    """Değişiklik olduğunda incident/event kayıtlarını RAG hafızasına indeksler."""
+    """Değişiklik olduğunda incident/event/knowledge kayıtlarını RAG hafızasına indeksler."""
     db = _db_from_config(config)
     try:
         from app.services.rag_service import (
             ingest_incidents_from_db,
             ingest_events_from_db,
+            ingest_knowledge_from_db,
         )
 
         async def _run() -> Dict[str, int]:
             n_inc = await ingest_incidents_from_db(db)
             n_evt = await ingest_events_from_db(db)
-            return {"incidents": n_inc, "events": n_evt}
+            n_kb = await ingest_knowledge_from_db(db)
+            return {"incidents": n_inc, "events": n_evt, "knowledge": n_kb}
 
         # run_aiops_cycle executor thread'inde çalışır; burada yeni event loop güvenli.
         reindexed = asyncio.run(_run())
         logger.info(
             f"[AIOps graph] RAG hafıza güncellendi: "
-            f"{reindexed['incidents']} incident, {reindexed['events']} event"
+            f"{reindexed['incidents']} incident, {reindexed['events']} event, "
+            f"{reindexed['knowledge']} knowledge"
         )
         return {"reindexed": reindexed}
     except Exception as e:
         logger.error(f"[AIOps graph] RAG hafıza indeksleme hatası: {e}")
-        return {"reindexed": {"incidents": 0, "events": 0, "error": str(e)}}
+        return {"reindexed": {"incidents": 0, "events": 0, "knowledge": 0, "error": str(e)}}
 
 
 # ── Koşullu yönlendirme ─────────────────────────────────────────────────────
