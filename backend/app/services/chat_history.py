@@ -57,3 +57,51 @@ def format_history_block(
             content = content[:max_chars_per_msg] + " …(kisaltildi)"
         lines.append(f"{role_label}: {content}")
     return "\n".join(lines)
+
+
+# Placeholder titles used when "+ Yeni" creates an empty session
+_PLACEHOLDER_TITLES = frozenset({
+    "yeni chat",
+    "yeni sohbet",
+    "new chat",
+    "new conversation",
+})
+
+
+def title_from_message(text: str, max_len: int = 60) -> str:
+    """İlk kullanıcı mesajından sohbet listesi başlığı üret."""
+    q = " ".join((text or "").strip().split())
+    if not q:
+        return "Yeni Chat"
+    if len(q) > max_len:
+        return q[: max_len - 1].rstrip() + "…"
+    return q
+
+
+def is_placeholder_title(title: Optional[str]) -> bool:
+    t = (title or "").strip().lower()
+    return (not t) or t in _PLACEHOLDER_TITLES
+
+
+def maybe_set_session_title(session, message: str) -> bool:
+    """Placeholder başlığıysa ilk mesajla değiştir. True = güncellendi."""
+    if session is None or not is_placeholder_title(getattr(session, "title", None)):
+        return False
+    session.title = title_from_message(message)
+    return True
+
+
+def repair_session_title_from_first_user_message(db: Session, session) -> None:
+    """Liste/API sırasında hâlâ 'Yeni Chat' olan dolu oturumları düzelt."""
+    if session is None or not is_placeholder_title(getattr(session, "title", None)):
+        return
+    from app.models.chat_session import ChatMessage
+
+    first = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session.id, ChatMessage.role == "user")
+        .order_by(ChatMessage.id.asc())
+        .first()
+    )
+    if first and (first.content or "").strip():
+        session.title = title_from_message(first.content)

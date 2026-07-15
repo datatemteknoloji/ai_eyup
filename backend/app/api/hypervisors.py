@@ -622,8 +622,8 @@ HV_SESSION_CATEGORY = "hypervisor"
 
 
 def _hv_session_title(question: str) -> str:
-    q = question.strip()
-    return (q[:57] + "...") if len(q) > 60 else q
+    from app.services.chat_history import title_from_message
+    return title_from_message(question)
 
 
 def _hv_session_dict(session, message_count: int = 0) -> dict:
@@ -683,10 +683,18 @@ async def list_hypervisor_sessions(
         .limit(max(1, min(limit, 100)))
         .all()
     )
+    from app.services.chat_history import repair_session_title_from_first_user_message
     result = []
+    dirty = False
     for s in sessions:
+        before = s.title
+        repair_session_title_from_first_user_message(db, s)
+        if s.title != before:
+            dirty = True
         count = db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
         result.append(_hv_session_dict(s, message_count=count))
+    if dirty:
+        db.commit()
     return result
 
 
@@ -843,8 +851,8 @@ async def ask_hypervisor_question(
         ))
         session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if session:
-            if session.title == "Yeni Sohbet" or not session.title.strip():
-                session.title = _hv_session_title(question)
+            from app.services.chat_history import maybe_set_session_title
+            maybe_set_session_title(session, question)
             session.updated_at = datetime.now(timezone.utc)
         db.commit()
 

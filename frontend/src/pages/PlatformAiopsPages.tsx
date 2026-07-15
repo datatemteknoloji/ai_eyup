@@ -37,10 +37,14 @@ function PlatformChatShell({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col h-[calc(100vh-5.5rem)] min-h-[520px]">
-      <PlatformBanner platform={platform} hint={CHAT_HINT[platform]} />
-      <div className="flex-1 min-h-0 overflow-hidden rounded-xl border border-slate-700/50">
-        {children}
+    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
+      <div className="flex-none px-5 pt-4">
+        <PlatformBanner platform={platform} hint={CHAT_HINT[platform]} />
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden px-5 pb-4">
+        <div className="h-full min-h-0 overflow-hidden rounded-xl border border-slate-700/50">
+          {children}
+        </div>
       </div>
     </div>
   )

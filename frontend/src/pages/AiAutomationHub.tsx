@@ -50,7 +50,7 @@ export default function AiAutomationHub() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] min-h-0">
+    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
       <div className="flex-shrink-0 px-4 py-3 bg-cyber-deep/60 border-b border-white/[0.06]">
         <div className="flex items-center gap-2 mb-3">
           <Bot size={18} className="text-violet-400" />

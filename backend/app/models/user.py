@@ -1,7 +1,7 @@
 """
 Uygulama kullanıcıları — kimlik doğrulama ve yetkilendirme.
 """
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -18,5 +18,7 @@ class User(Base):
     # admin | operator | viewer
     role = Column(String(20), default="operator", nullable=False, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # NLQ RBAC: null/eksik = tüm tier'lar; örn. ["production","staging"]
+    allowed_tiers = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)

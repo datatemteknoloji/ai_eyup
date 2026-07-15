@@ -154,6 +154,24 @@ async def startup_tasks():
             _conn.execute(_sa_text(
                 "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'"
             ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_tiers JSONB"
+            ))
+            for _idx in [
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_uptime ON linux_inventory (uptime_seconds)",
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_boot ON linux_inventory (boot_time)",
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_time ON linux_inventory (collection_time)",
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_status ON linux_inventory (collection_status)",
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_cpu ON linux_inventory (cpu_usage_percent)",
+                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_mem ON linux_inventory (memory_usage_percent)",
+                "CREATE INDEX IF NOT EXISTS ix_fs_metrics_usage ON filesystem_metrics (usage_percent)",
+                "CREATE INDEX IF NOT EXISTS ix_service_status_name ON service_status (service_name)",
+                "CREATE INDEX IF NOT EXISTS ix_service_status_active ON service_status (active_state)",
+            ]:
+                try:
+                    _conn.execute(_sa_text(_idx))
+                except Exception:
+                    pass
     except Exception as _mig_e:
         logger.debug(f"schema migration skip: {_mig_e}")
     

@@ -116,15 +116,24 @@ def _session_to_dict(session: ChatSession, message_count: int = 0) -> dict:
 
 @router.get("/sessions")
 async def list_sessions(db: Session = Depends(get_db)):
+    from app.services.chat_history import repair_session_title_from_first_user_message
+
     sessions = db.query(ChatSession).filter(
         ChatSession.category == CATEGORY
     ).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
     result = []
+    dirty = False
     for s in sessions:
+        before = s.title
+        repair_session_title_from_first_user_message(db, s)
+        if s.title != before:
+            dirty = True
         count = db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
         result.append(_session_to_dict(s, message_count=count))
+    if dirty:
+        db.commit()
     return result
 
 
@@ -290,7 +299,8 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
             session_id = request.session_id
             if not session_id:
-                title = message[:50] + ("..." if len(message) > 50 else "")
+                from app.services.chat_history import title_from_message
+                title = title_from_message(message)
                 session = ChatSession(title=title, server_ids=[], category=CATEGORY)
                 db.add(session)
                 db.commit()
@@ -301,6 +311,9 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 if not session:
                     yield _sse({"error": "Session bulunamadı"})
                     return
+                from app.services.chat_history import maybe_set_session_title
+                if maybe_set_session_title(session, message):
+                    db.commit()
 
             yield _sse({"session_id": session_id, "start": True})
 

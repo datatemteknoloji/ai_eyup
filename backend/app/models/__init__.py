@@ -23,6 +23,10 @@ from app.models.workflow_run import WorkflowRun
 from app.models.module import Module, UserModule
 from app.models.learned_fact import LearnedFact
 from app.models.discovered_application import DiscoveredApplication
+from app.models.linux_inventory import (
+    LinuxInventory, FilesystemMetric, ServiceStatus,
+    PackageInventory, OpenPort, NlqQueryAudit,
+)
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatQACache",
@@ -40,4 +44,6 @@ __all__ = [
     "Module", "UserModule",
     "LearnedFact",
     "DiscoveredApplication",
+    "LinuxInventory", "FilesystemMetric", "ServiceStatus",
+    "PackageInventory", "OpenPort", "NlqQueryAudit",
 ]

@@ -118,6 +118,18 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Harici/UCMDB envanter senkronu (mevcut ayar anahtarı).",
         "env": "INVENTORY_SYNC_INTERVAL_MINUTES",
     },
+    "nlq_collector_interval_sec": {
+        "default": 900, "type": "int", "min": 120, "max": 7200,
+        "group": "background", "label": "Linux NL envanter toplama (sn)",
+        "help": "Linux inventory snapshot (SSH/Prom) periyodu — NLQ sorguları için.",
+        "env": "NLQ_COLLECTOR_INTERVAL_SEC",
+    },
+    "nlq_collector_workers": {
+        "default": 50, "type": "int", "min": 1, "max": 100,
+        "group": "background", "label": "Linux NL envanter worker sayısı",
+        "help": "Eşzamanlı SSH toplama üst sınırı (max 100).",
+        "env": "NLQ_COLLECTOR_WORKERS",
+    },
     "esx_metric_interval_sec": {
         "default": 900, "type": "int", "min": 120, "max": 7200,
         "group": "background", "label": "ESX metrik aralığı (sn)",

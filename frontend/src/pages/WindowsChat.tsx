@@ -101,7 +101,7 @@ const StreamingText = ({ text }: { text: string }) => (
       remarkPlugins={[remarkGfm]}
       components={{
         table: ({ children }) => (
-          <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
+          <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
             <table className="min-w-full text-left text-sm border-collapse">{children}</table>
           </div>
         ),
@@ -168,6 +168,7 @@ const WindowsChat: React.FC<{
     onConfirm: () => void
   }>({ open: false, message: '', onConfirm: () => {} })
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
   const serverBtnRef = useRef<HTMLButtonElement>(null)
   const serverMenuRef = useRef<HTMLDivElement>(null)
@@ -297,7 +298,10 @@ const WindowsChat: React.FC<{
     }
   })
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = () => {
+    const el = messagesContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
   useEffect(() => { scrollToBottom() }, [messages, streamingText])
 
   useEffect(() => {
@@ -441,9 +445,10 @@ const WindowsChat: React.FC<{
 
   const formatSessionDate = (dateString: string) => {
     const date = new Date(dateString)
+    if (Number.isNaN(date.getTime())) return '—'
     const now = new Date()
     const days = Math.floor((now.getTime() - date.getTime()) / 86400000)
-    if (days === 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    if (days <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
     if (days === 1) return 'Dün'
     if (days < 7) return `${days} gün önce`
     return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
@@ -462,7 +467,7 @@ const WindowsChat: React.FC<{
 
   return (
     <>
-    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : 'h-screen'}`}>
+    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
       {/* Üst bar */}
       <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
@@ -561,7 +566,7 @@ const WindowsChat: React.FC<{
         </div>
       </div>
 
-      <div className="flex flex-1 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
+      <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
         <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
           <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
@@ -610,9 +615,9 @@ const WindowsChat: React.FC<{
         </div>
 
         {/* Sağ Panel */}
-        <div className="flex-1 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
+        <div className="flex-1 min-h-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
           {/* Mesajlar */}
-          <div className="flex-1 overflow-y-auto p-8">
+          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-8">
             {selectedSessionId === null ? (
               <div className="h-full flex flex-col items-center justify-center">
                 <div className="w-20 h-20 bg-gradient-to-br from-sky-500 to-sky-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-sky-500/25">
@@ -649,7 +654,7 @@ const WindowsChat: React.FC<{
                         <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                             table: ({ children }) => (
-                              <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
+                              <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
                                 <table className="min-w-full text-left text-sm border-collapse">{children}</table>
                               </div>
                             ),

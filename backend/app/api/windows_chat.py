@@ -180,15 +180,24 @@ async def list_available_models(db: Session = Depends(get_db)):
 @router.get("/sessions")
 async def list_chat_sessions(db: Session = Depends(get_db)):
     """Windows AI chat session'larını listele (DB'den)"""
+    from app.services.chat_history import repair_session_title_from_first_user_message
+
     sessions = db.query(ChatSession).filter(
         ChatSession.category == CATEGORY
     ).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
     result = []
+    dirty = False
     for s in sessions:
+        before = s.title
+        repair_session_title_from_first_user_message(db, s)
+        if s.title != before:
+            dirty = True
         count = db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
         result.append(_session_to_dict(s, message_count=count))
+    if dirty:
+        db.commit()
     return result
 
 
@@ -372,7 +381,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
     session_id = request.session_id
     if not session_id:
-        title = message[:50] + ("..." if len(message) > 50 else "")
+        from app.services.chat_history import title_from_message
+        title = title_from_message(message)
         session = ChatSession(title=title, server_ids=request.server_ids or [], category=CATEGORY)
         db.add(session)
         db.commit()
@@ -382,6 +392,9 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        from app.services.chat_history import maybe_set_session_title
+        if maybe_set_session_title(session, message):
+            db.commit()
 
     from app.services.chat_history import fetch_recent_history, format_history_block
     history_block = format_history_block(fetch_recent_history(db, session_id, limit=8))
@@ -522,7 +535,8 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             session_id = request.session_id
             if not session_id:
-                title = message[:50] + ("..." if len(message) > 50 else "")
+                from app.services.chat_history import title_from_message
+                title = title_from_message(message)
                 session = ChatSession(title=title, server_ids=request.server_ids or [], category=CATEGORY)
                 db.add(session)
                 db.commit()
@@ -533,6 +547,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 if not session:
                     yield _sse({"error": "Session bulunamadı"})
                     return
+                from app.services.chat_history import maybe_set_session_title
+                if maybe_set_session_title(session, message):
+                    db.commit()
 
             yield _sse({"session_id": session_id, "start": True})
 

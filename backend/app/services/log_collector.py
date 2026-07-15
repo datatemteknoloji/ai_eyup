@@ -30,9 +30,10 @@ LOG_MIN_OCCURRENCES_WARNING  = 2   # warning için min 2x
 LOG_LEARNING_WINDOW_HOURS = 24
 
 def _build_journald_cmd(since_hours: int = 2) -> str:
+    # stderr'i gizleme: izin hatalarını loglamak için caller'a kalsın
     return (
         f"journalctl -p 4 --since '{since_hours} hours ago' --no-pager "
-        "--output=short-iso 2>/dev/null | tail -500"
+        "--output=short-iso | tail -500"
     )
 
 def _build_syslog_cmd(since_hours: int = 2) -> str:
@@ -218,13 +219,24 @@ def collect_server_logs(
     try:
         journald_cmd = _build_journald_cmd(since_hours)
         syslog_cmd = _build_syslog_cmd(since_hours)
+        # Önce kullanıcı yetkisiyle dene; journal ACL (adm/systemd-journal) yoksa sudo
         ok, out, err = ssh.execute_command(journald_cmd)
-        if ok and out.strip():
+        if (not ok or not (out or "").strip()) and sudo_password:
+            ok, out, err = ssh.execute_command(journald_cmd, use_sudo=True)
+        if ok and (out or "").strip():
             logs = _parse_log_lines(out)
         else:
             ok2, out2, _ = ssh.execute_command(syslog_cmd)
-            if ok2 and out2.strip():
+            if (not ok2 or not (out2 or "").strip()) and sudo_password:
+                ok2, out2, _ = ssh.execute_command(syslog_cmd, use_sudo=True)
+            if ok2 and (out2 or "").strip():
                 logs = _parse_log_lines(out2)
+            elif err:
+                logger.info(
+                    "Log collection empty %s (journal stderr neglected by redirect; "
+                    "likely ACL/sudo). sample_err=%s",
+                    server.name, (err or "")[:120],
+                )
     finally:
         ssh.close()
 

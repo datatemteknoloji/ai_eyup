@@ -272,3 +272,10 @@ try:
     api_router.include_router(applications.router, prefix="/applications", tags=["applications"])
 except Exception as e:
     logger.error(f"Could not load applications router: {e}", exc_info=True)
+
+# Linux NL Inventory Query (güvenli sorgu pipeline)
+try:
+    from app.api import nlq
+    api_router.include_router(nlq.router, tags=["nlq", "ai-inventory"])
+except Exception as e:
+    logger.error(f"Could not load nlq router: {e}", exc_info=True)

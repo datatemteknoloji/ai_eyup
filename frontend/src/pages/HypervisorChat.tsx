@@ -421,6 +421,7 @@ export default function HypervisorChat({
   const [historySearch, setHistorySearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initialHandled = useRef(false)
 
@@ -522,7 +523,8 @@ export default function HypervisorChat({
   })
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = messagesContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages, loading])
 
   const sendQuestion = useCallback(async (q: string, sessionId?: number | null) => {
@@ -667,7 +669,7 @@ export default function HypervisorChat({
 
       <QuickStatsBar />
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
         {isEmpty ? (
           <div className="max-w-2xl mx-auto mt-6 space-y-6">
             <div className="text-center space-y-2">
@@ -746,7 +748,7 @@ export default function HypervisorChat({
   )
 
   return (
-    <div className={`flex bg-slate-900 ${embedded ? 'h-full min-h-[520px]' : 'h-screen'}`}>
+    <div className={`flex bg-slate-900 min-h-0 overflow-hidden ${embedded ? 'h-full' : '-m-5 h-[calc(100vh-3.5rem)]'}`}>
       <HistorySidebar
         sessions={sessions}
         selectedId={selectedSessionId}

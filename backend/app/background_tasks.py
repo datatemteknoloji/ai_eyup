@@ -51,6 +51,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
+        self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
 
@@ -701,6 +702,47 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Auto-onboarding task error: {e}")
                 await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
+
+
+    async def _periodic_linux_inventory_nlq(self):
+        """Linux NL inventory snapshot collector (allowlisted SSH + metrics)."""
+        logger.info("Linux NL inventory collector task started")
+        await asyncio.sleep(180)
+        while self.running:
+            try:
+                from app.services.nlq.linux_inventory_collector import (
+                    get_collector_status,
+                    run_linux_inventory_collection,
+                )
+                if get_collector_status().get("running"):
+                    logger.info("NLQ collector already running — skip this tick")
+                else:
+                    workers = min(100, max(1, _rt_sec("nlq_collector_workers", 50)))
+
+                    def _run():
+                        db = SessionLocal()
+                        try:
+                            return run_linux_inventory_collection(
+                                db, workers=workers, only_ai_ready=True,
+                            )
+                        finally:
+                            db.close()
+
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, _run)
+                    logger.info(
+                        "NLQ linux inventory: success=%s failed=%s total=%s",
+                        (result or {}).get("success"),
+                        (result or {}).get("failed"),
+                        (result or {}).get("total"),
+                    )
+                await asyncio.sleep(_rt_sec("nlq_collector_interval_sec", 900))
+            except asyncio.CancelledError:
+                logger.info("Linux NL inventory collector cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Linux NL inventory collector error: {e}", exc_info=True)
+                await asyncio.sleep(_rt_sec("nlq_collector_interval_sec", 900))
 
 
 def _run_vm_sync_batch(db) -> None:

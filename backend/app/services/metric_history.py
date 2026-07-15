@@ -38,11 +38,16 @@ METRIC_GROUPS: Dict[str, List[tuple]] = {
         ("disk_read_bytes_per_sec", "Disk Okuma", "B/s"),
         ("disk_write_bytes_per_sec", "Disk Yazma", "B/s"),
     ],
+    "iops": [
+        ("disk_read_iops", "Disk Okuma IOPS", "IOPS"),
+        ("disk_write_iops", "Disk Yazma IOPS", "IOPS"),
+    ],
     "swap": [("swap_usage_percent", "Swap Kullanımı", "%")],
 }
 
 _GROUP_KEYWORDS: Dict[str, List[str]] = {
-    "disk_io": ["disk io", "diskio", "disk i/o", "iops", "disk okuma", "disk yazma"],
+    "iops": ["iops", "ıops", "disk iops"],
+    "disk_io": ["disk io", "diskio", "disk i/o", "disk okuma", "disk yazma"],
     "cpu": ["cpu", "işlemci", "islemci"],
     "memory": ["ram", "bellek", "memory", "hafıza", "hafiza"],
     "disk": ["disk"],
@@ -170,7 +175,7 @@ def _group_title(group: str, hours: float) -> str:
     names = {
         "cpu": "CPU Kullanımı", "memory": "RAM Kullanımı", "disk": "Disk Kullanımı",
         "network": "Network Trafiği", "load": "Load Average", "disk_io": "Disk I/O",
-        "swap": "Swap Kullanımı",
+        "iops": "Disk IOPS", "swap": "Swap Kullanımı",
     }
     return f"{names.get(group, group)} — Son {_format_duration_label(hours)}"
 

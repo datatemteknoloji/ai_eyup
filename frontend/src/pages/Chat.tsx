@@ -103,7 +103,7 @@ const StreamingText = ({ text }: { text: string }) => (
       remarkPlugins={[remarkGfm]}
       components={{
         table: ({ children }) => (
-          <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
+          <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
             <table className="min-w-full text-left text-sm border-collapse">{children}</table>
           </div>
         ),
@@ -114,7 +114,7 @@ const StreamingText = ({ text }: { text: string }) => (
         code: ({ className, children }) => className
           ? <code className={className}>{children}</code>
           : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-auto text-xs my-2 max-h-[min(50vh,28rem)]">{children}</pre>
       }}
     >{text}</ReactMarkdown>
     <span className="inline-block w-1.5 h-4 bg-blue-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
@@ -165,15 +165,29 @@ const Chat: React.FC<{
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [useRag, setUseRag] = useState<boolean>(true)
+  const [inventoryMode, setInventoryMode] = useState<boolean>(() => localStorage.getItem('chat_inventory_mode') === '1')
+  const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const inventoryMsgSeq = useRef(-1000)
+
+  const INVENTORY_CHIPS = [
+    { label: 'Uptime > 200 gün', q: '200 günden fazla uptime olan sunucuları listele' },
+    { label: 'Disk > %85 (prod)', q: 'production ortamında disk kullanımı %85 üzeri sunucular' },
+    { label: 'CPU > %90', q: 'CPU kullanımı yüzde 90 üzeri sunucular' },
+    { label: 'Son 30 günde reboot', q: 'Son 30 gün içinde reboot olan sunucular' },
+    { label: 'Veri alınamayan', q: 'Envanter verisi alınamayan veya unreachable sunucular' },
+    { label: 'Top 10 disk', q: 'İlk 10 en yüksek disk kullanımı olan sunucular' },
+  ] as const
+
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
     onConfirm: () => void
   }>({ open: false, message: '', onConfirm: () => {} })
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
   const hypervisorDropdownRef = useRef<HTMLDivElement>(null)
   const serverBtnRef = useRef<HTMLButtonElement>(null)
@@ -338,7 +352,10 @@ const Chat: React.FC<{
     }
   })
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = () => {
+    const el = messagesContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
   useEffect(() => { scrollToBottom() }, [messages, streamingText])
 
   useEffect(() => {
@@ -356,8 +373,71 @@ const Chat: React.FC<{
     }
   }, [sessionsFetched, sessions.length, selectedSessionId])
 
+  const sendInventoryQuery = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return
+    setIsLoading(true)
+    setPendingUserMessage(messageText)
+    setStreamingText('')
+    setThinkingPhase('streaming')
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    streamSessionRef.current = selectedSessionId
+    const ts = new Date().toISOString()
+    try {
+      const res = await fetch(`${API_BASE_URL}/ai/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: messageText, model: selectedModel }),
+        signal: ctrl.signal,
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data?.detail || `HTTP ${res.status}`)
+      }
+      let content = ''
+      if (data.status === 'success') {
+        content = data.answer_markdown || `_Sonuç yok._`
+      } else if (data.status === 'unsupported') {
+        content = `Bu soru mevcut envanter alanlarıyla cevaplanamıyor.\n\n${data.reason || ''}`
+      } else if (data.status === 'invalid_query') {
+        content = `Sorgu geçersiz: ${data.message || 'bilinmeyen hata'}${data.invalid_field ? ` (alan: ${data.invalid_field})` : ''}`
+      } else {
+        content = typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2)
+      }
+      const uid = inventoryMsgSeq.current--
+      const aid = inventoryMsgSeq.current--
+      setLocalInventoryMessages(prev => [
+        ...prev,
+        { id: uid, role: 'user', content: messageText, created_at: ts },
+        { id: aid, role: 'assistant', content, created_at: new Date().toISOString() },
+      ])
+      setPendingUserMessage(null)
+      setStreamingText('')
+      setInput('')
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        const uid = inventoryMsgSeq.current--
+        const aid = inventoryMsgSeq.current--
+        setLocalInventoryMessages(prev => [
+          ...prev,
+          { id: uid, role: 'user', content: messageText, created_at: ts },
+          { id: aid, role: 'assistant', content: `❌ Envanter sorgu hatası: ${err?.message || 'bilinmeyen'}`, created_at: new Date().toISOString() },
+        ])
+      }
+      setPendingUserMessage(null)
+    } finally {
+      setIsLoading(false)
+      setThinkingPhase('idle')
+      abortRef.current = null
+    }
+  }
+
   const sendMessage = async (messageText: string) => {
     if (!messageText.trim() || isLoading) return
+    if (inventoryMode) {
+      await sendInventoryQuery(messageText)
+      return
+    }
     // SSH: log/process/config + OS/kernel/sistem bilgisi sorularında tetiklenir
     const SSH_ONLY_KEYWORDS = ['log','journal','proses','process','config','konfigür',
       '/etc/','/var/','systemctl','servis restart','service restart','kurulu','paket','version',
@@ -491,9 +571,10 @@ const Chat: React.FC<{
 
   const formatSessionDate = (dateString: string) => {
     const date = new Date(dateString)
+    if (Number.isNaN(date.getTime())) return '—'
     const now = new Date()
     const days = Math.floor((now.getTime() - date.getTime()) / 86400000)
-    if (days === 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    if (days <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
     if (days === 1) return 'Dün'
     if (days < 7) return `${days} gün önce`
     return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
@@ -518,7 +599,7 @@ const Chat: React.FC<{
 
   return (
     <>
-    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : 'h-screen'}`}>
+    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
       {/* Üst bar */}
       <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
@@ -545,6 +626,20 @@ const Chat: React.FC<{
                 style={{ marginTop: 2 }} />
             </span>
             <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
+          </label>
+
+          <label className="flex items-center gap-2 cursor-pointer" title="LLM yalnızca filtre JSON üretir; cevaplar envanter snapshot'tan gelir">
+            <span className="text-slate-400 text-sm font-medium">Envanter sorgu:</span>
+            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${inventoryMode ? 'bg-emerald-600' : 'bg-white/[0.1]'}`}
+              onClick={() => setInventoryMode(v => {
+                const next = !v
+                localStorage.setItem('chat_inventory_mode', next ? '1' : '0')
+                return next
+              })} role="switch" aria-checked={inventoryMode}>
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${inventoryMode ? 'translate-x-5' : 'translate-x-1'}`}
+                style={{ marginTop: 2 }} />
+            </span>
+            <span className="text-slate-300 text-sm">{inventoryMode ? 'Açık' : 'Kapalı'}</span>
           </label>
 
           <div className="flex items-center gap-2">
@@ -672,9 +767,9 @@ const Chat: React.FC<{
         </div>
       </div>
 
-      <div className="flex flex-1 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
+      <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
-        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
+        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl min-h-0">
           <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
             <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
             <div className="flex items-center gap-1">
@@ -686,7 +781,7 @@ const Chat: React.FC<{
               )}
             </div>
           </div>
-          <div className="overflow-y-auto flex-1 p-2">
+          <div className="overflow-y-auto flex-1 min-h-0 p-2">
             {sessions.length === 0 ? (
               <div className="text-center py-6 text-slate-500 text-xs">Henüz chat yok</div>
             ) : sessions.map(session => (
@@ -701,6 +796,7 @@ const Chat: React.FC<{
                     setStreamingText('')
                     setPendingUserMessage(null)
                     setThinkingPhase('idle')
+                    setLocalInventoryMessages([])
                   }
                   setSelectedSessionId(session.id)
                   setInput('')
@@ -721,9 +817,9 @@ const Chat: React.FC<{
         </div>
 
         {/* Sağ Panel */}
-        <div className="flex-1 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
+        <div className="flex-1 min-h-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
           {/* Mesajlar */}
-          <div className="flex-1 overflow-y-auto p-8">
+          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-8">
             {selectedSessionId === null ? (
               <div className="h-full flex flex-col items-center justify-center">
                 <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
@@ -732,18 +828,38 @@ const Chat: React.FC<{
                 <h2 className="text-3xl font-bold text-white mb-2">Linux Asistanı</h2>
                 <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
-            ) : (messages.length === 0 && !pendingUserMessage) ? (
+            ) : (messages.length === 0 && localInventoryMessages.length === 0 && !pendingUserMessage) ? (
               <div className="h-full flex flex-col items-center justify-center">
                 <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
                   <span className="text-4xl">💬</span>
                 </div>
                 <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
-                <p className="text-slate-400 text-center max-w-md mb-8">Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.</p>
+                <p className="text-slate-400 text-center max-w-md mb-6">
+                  {inventoryMode
+                    ? 'Envanter sorgu açık: sonuçlar snapshot tablolarından gelir (LLM hostname/sayı uydurmaz).'
+                    : 'Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.'}
+                </p>
+                {inventoryMode && (
+                  <div className="flex flex-wrap gap-2 justify-center max-w-2xl px-4">
+                    {INVENTORY_CHIPS.map(chip => (
+                      <button
+                        key={chip.label}
+                        type="button"
+                        disabled={isLoading}
+                        onClick={() => sendInventoryQuery(chip.q)}
+                        className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-500/30 hover:bg-emerald-500/25 disabled:opacity-50"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
                 {[
                   ...messages,
+                  ...localInventoryMessages,
                   ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
@@ -760,7 +876,7 @@ const Chat: React.FC<{
                         <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                             table: ({ children }) => (
-                              <div className="overflow-x-auto my-3 rounded-lg border border-slate-500 shadow-sm">
+                              <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
                                 <table className="min-w-full text-left text-sm border-collapse">{children}</table>
                               </div>
                             ),
@@ -771,7 +887,7 @@ const Chat: React.FC<{
                             code: ({ className, children }) => className
                               ? <code className={className}>{children}</code>
                               : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-auto text-xs my-2 max-h-[min(50vh,28rem)]">{children}</pre>
                           }}>{msg.content}</ReactMarkdown>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {msg.content?.trim().length > 40 && (
@@ -846,6 +962,21 @@ const Chat: React.FC<{
 
           {/* Input */}
           <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
+            {inventoryMode && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {INVENTORY_CHIPS.map(chip => (
+                  <button
+                    key={chip.label}
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => sendInventoryQuery(chip.q)}
+                    className="px-2.5 py-1 rounded-md text-[11px] bg-emerald-500/10 text-emerald-200/90 border border-emerald-500/25 hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {selectedServers.length > 0 && (
               <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
@@ -879,7 +1010,11 @@ const Chat: React.FC<{
             <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-cyber-deep/80 border border-white/[0.08] rounded-2xl p-2">
               <div className="flex-1 relative">
                 <input type="text" value={input} onChange={e => setInput(e.target.value)}
-                  placeholder={isLoading ? 'AI düşünüyor...' : 'Mesajınızı yazın... (Enter ile gönder)'}
+                  placeholder={
+                    isLoading ? 'AI düşünüyor...' :
+                    inventoryMode ? 'Envanter sorusu yazın… (örn. uptime 200 günden fazla)' :
+                    'Mesajınızı yazın... (Enter ile gönder)'
+                  }
                   className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
                     isLoading ? 'border-blue-500/60' : 'border-white/[0.06]'
                   }`}
