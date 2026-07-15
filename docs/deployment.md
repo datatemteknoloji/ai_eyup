@@ -97,19 +97,22 @@ All persistent data is stored outside containers under `/var/lib/server_manageme
 ├── redis/       # Redis dump.rdb
 ├── chroma/      # ChromaDB vector store (RAG embeddings)
 ├── repos/       # Local RPM/DEB repository files
-└── uploads/     # Uploaded package files
+├── uploads/     # Uploaded package files
+└── updates/     # Platform self-update packages (GUI / SCP drop)
 ```
 
 Create these directories before first run if they don't exist:
 
 ```bash
-sudo mkdir -p /var/lib/server_management/{postgres,redis,chroma,repos,uploads}
-# Backend container appuser (uid 100 / gid 102) ile yazar; chroma/uploads/repos yazılabilir olmalı.
+sudo mkdir -p /var/lib/server_management/{postgres,redis,chroma,repos,uploads,updates}
+# Backend container appuser (uid 100 / gid 102) ile yazar; chroma/uploads/repos/updates yazılabilir olmalı.
 # Not: entrypoint her başlangıçta sahipliği düzeltir; yine de ilk kurulumda chown önerilir.
 sudo chown -R 100:102 /var/lib/server_management/chroma \
   /var/lib/server_management/uploads \
-  /var/lib/server_management/repos
+  /var/lib/server_management/repos \
+  /var/lib/server_management/updates
 ```
+
 
 Eski kurulumlarda chroma `root` sahipliğinde kaldıysa (RAG yazılamaz / reindex hata):
 
@@ -137,6 +140,8 @@ docker run --rm -v /var/lib/server_management/chroma:/chroma alpine chown -R 100
 
 ## Upgrading
 
+### Development stack (`docker-compose.yml`)
+
 ```bash
 # Pull latest code
 git pull
@@ -152,6 +157,37 @@ docker compose logs backend --tail=30
 ```
 
 Database schema changes are applied automatically on startup via SQLAlchemy `create_all()` and the idempotent `ALTER TABLE IF NOT EXISTS` blocks in `main.py`.
+
+### Production package (CLI)
+
+```bash
+tar xzf ainew-<version>-linux-amd64.tar.gz
+cd ainew-<version>-linux-amd64
+sudo ./update-rhel.sh --install-dir /opt/ainew
+# Geri alma:
+#   cd /opt/ainew && sudo ./rollback-rhel.sh
+```
+
+### Production package (GUI)
+
+Admin → **Ayarlar → Platform Güncelleme**:
+
+1. Paketi yükleyin **veya** sunucuya bırakın:
+   ```bash
+   scp ainew-<version>-linux-amd64.tar.gz root@host:/var/lib/server_management/updates/
+   ```
+2. **Hazırla** → hedef sürümü onay kutusuna yazın → **Güncellemeyi Uygula**.
+3. Overlay, `/api/v1/public/version` ile yeni sürümü bekler; ardından sayfa yenilenir.
+4. **Son yedekten geri al** imaj etiketlerini son `pre-update-*` yedeğine döndürür (DB dump restore etmez).
+
+Gereksinimler (prod compose’da varsayılan):
+
+- `PLATFORM_UPDATE_ENABLED=true`
+- `/var/run/docker.sock` backend’e mount
+- `AINEW_INSTALL_DIR` (ör. `/opt/ainew`) + `DATA_DIR/updates`
+- Updater için host’ta `alpine:3.20` (veya `PLATFORM_UPDATER_IMAGE`) yüklü olmalı — air-gap’te pakete ekleyin veya önceden `docker load` edin
+
+İşlem logları: `$DATA_DIR/updates/apply.log` ve `status.json`.
 
 ---
 

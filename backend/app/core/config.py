@@ -114,6 +114,17 @@ class Settings:
     BACKEND_HOST: str = os.getenv("BACKEND_HOST", "backend")  # Docker compose service name veya IP
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
 
+    # Platform self-update (GUI) — yalnızca paket/prod kurulumunda açın
+    PLATFORM_UPDATE_ENABLED: bool = os.getenv("PLATFORM_UPDATE_ENABLED", "false").lower() == "true"
+    AINEW_INSTALL_DIR: str = os.getenv("AINEW_INSTALL_DIR", "/opt/ainew")
+    AINEW_DATA_DIR: str = os.getenv("AINEW_DATA_DIR", "/var/lib/server_management")
+    AINEW_UPDATES_DIR: str = os.getenv("AINEW_UPDATES_DIR", "/app/updates")
+    DOCKER_SOCK: str = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
+    PLATFORM_UPDATE_MAX_UPLOAD_BYTES: int = int(
+        os.getenv("PLATFORM_UPDATE_MAX_UPLOAD_BYTES", str(8 * 1024 ** 3))
+    )
+    PLATFORM_UPDATER_IMAGE: str = os.getenv("PLATFORM_UPDATER_IMAGE", "alpine:3.20")
+
 settings = Settings()
 
 

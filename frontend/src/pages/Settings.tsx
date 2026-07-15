@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
 import { useBranding } from '../branding/BrandingContext'
+import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
 
 interface Credential {
   id: number
@@ -1107,7 +1108,10 @@ const Settings: React.FC = () => {
     { id: 'monitoring', name: 'Monitoring' },
     { id: 'advanced', name: 'Gelişmiş Ayarlar' },
     { id: 'about', name: 'Hakkında' },
-    ...(isAdmin ? [{ id: 'danger', name: 'Tehlikeli Bölge' }] : []),
+    ...(isAdmin ? [
+      { id: 'platform-update', name: 'Platform Güncelleme' },
+      { id: 'danger', name: 'Tehlikeli Bölge' },
+    ] : []),
   ]
 
   return (
@@ -1951,6 +1955,11 @@ const Settings: React.FC = () => {
           {/* ═══ Gelişmiş Ayarlar ═══ */}
           {activeTab === 'advanced' && (
             <AdvancedSettingsTab />
+          )}
+
+          {/* ═══ Platform Update ═══ */}
+          {activeTab === 'platform-update' && isAdmin && (
+            <PlatformUpdateTab />
           )}
 
           {/* ═══ About ═══ */}

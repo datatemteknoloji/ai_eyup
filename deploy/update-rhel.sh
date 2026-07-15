@@ -143,7 +143,14 @@ else
   cp -a "$NEW_PKG_DIR"/. "$INSTALL_DIR"/
   mv "/tmp/ainew-env-preserve-$$" "$INSTALL_DIR/$ENV_FILE"
 fi
-chmod +x "$INSTALL_DIR"/install-rhel.sh "$INSTALL_DIR"/update-rhel.sh "$INSTALL_DIR"/rollback-rhel.sh 2>/dev/null || true
+chmod +x "$INSTALL_DIR"/install-rhel.sh "$INSTALL_DIR"/update-rhel.sh "$INSTALL_DIR"/rollback-rhel.sh \
+  "$INSTALL_DIR"/ainew-apply-update.sh 2>/dev/null || true
+# GUI wrapper'ı DATA_DIR/updates/bin altına senkronla
+mkdir -p "$DATA_DIR/updates"/{incoming,prepared,bin}
+if [[ -f "$INSTALL_DIR/ainew-apply-update.sh" ]]; then
+  cp -a "$INSTALL_DIR/ainew-apply-update.sh" "$DATA_DIR/updates/bin/ainew-apply-update.sh"
+  chmod +x "$DATA_DIR/updates/bin/ainew-apply-update.sh" 2>/dev/null || true
+fi
 c_green "Paket dosyaları güncellendi ( .env ve data/ korundu )."
 
 # ── 3. İmaj etiketlerini .env'de güncelle ───────────────────────────────────

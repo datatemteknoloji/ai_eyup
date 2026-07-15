@@ -279,3 +279,12 @@ try:
     api_router.include_router(nlq.router, tags=["nlq", "ai-inventory"])
 except Exception as e:
     logger.error(f"Could not load nlq router: {e}", exc_info=True)
+
+# Platform self-update (GUI paket yükleme / apply / rollback)
+try:
+    from app.api import platform_update
+    api_router.include_router(
+        platform_update.router, prefix="/platform-update", tags=["platform-update"]
+    )
+except Exception as e:
+    logger.error(f"Could not load platform_update router: {e}", exc_info=True)

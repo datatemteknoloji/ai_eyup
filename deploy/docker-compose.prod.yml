@@ -98,6 +98,13 @@ services:
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD .env dosyasinda tanimli olmali}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - APP_VERSION=${APP_VERSION:-}
+      # Platform GUI güncelleme (admin): paket upload + update-rhel.sh host job
+      - PLATFORM_UPDATE_ENABLED=${PLATFORM_UPDATE_ENABLED:-true}
+      - AINEW_INSTALL_DIR=${AINEW_INSTALL_DIR:-/opt/ainew}
+      - AINEW_DATA_DIR=${DATA_DIR:-/var/lib/server_management}
+      - AINEW_UPDATES_DIR=/app/updates
+      - DOCKER_SOCK=/var/run/docker.sock
+      - PLATFORM_UPDATER_IMAGE=${PLATFORM_UPDATER_IMAGE:-alpine:3.20}
     volumes:
       - ./backend/static:/app/static:Z
       - ./VERSION:/app/VERSION:ro
@@ -106,6 +113,9 @@ services:
       - ${DATA_DIR:-/var/lib/server_management}/chroma:/var/lib/server_management/chroma:Z
       - ${DATA_DIR:-/var/lib/server_management}/repos:/app/repos:Z
       - ${DATA_DIR:-/var/lib/server_management}/uploads:/app/uploads:Z
+      - ${DATA_DIR:-/var/lib/server_management}/updates:/app/updates:Z
+      # GUI self-update: host Docker API (ayrık updater container başlatır)
+      - /var/run/docker.sock:/var/run/docker.sock
       # Opsiyonel: REMOTE_LLM_CA_BUNDLE için — self-signed/kurumsal CA PEM dosyanızı
       # ${DATA_DIR}/certs/ altına koyup .env'de REMOTE_LLM_CA_BUNDLE=/app/certs/<dosya>.pem
       # olarak belirtin (aynı dizin, install-rhel.sh'in ürettiği TLS sertifikasını da tutar).

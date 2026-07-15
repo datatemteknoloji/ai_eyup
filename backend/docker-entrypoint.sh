@@ -28,8 +28,25 @@ fix_data_dir /var/lib/server_management/chroma
 fix_data_dir /app/uploads
 fix_data_dir /app/repos
 fix_data_dir /app/uploads/chroma_knowledge
+fix_data_dir /app/updates
+
+# docker.sock (GUI platform update): appuser'ı sock grubuna ekle
+if [ "$(id -u)" -eq 0 ] && [ -S /var/run/docker.sock ]; then
+  SOCK_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+  if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
+    if ! getent group "$SOCK_GID" >/dev/null 2>&1; then
+      groupadd -g "$SOCK_GID" dockersock 2>/dev/null || true
+    fi
+    GRP_NAME="$(getent group "$SOCK_GID" | cut -d: -f1 || echo dockersock)"
+    usermod -aG "$GRP_NAME" appuser 2>/dev/null || true
+    echo "entrypoint: appuser → group $GRP_NAME (docker.sock gid=$SOCK_GID)"
+  fi
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
-  exec gosu appuser:appgroup "$@"
+  # appuser'ın tüm grupları (docker.sock dahil) korunsun — :appgroup zorlama
+  exec gosu appuser "$@"
 fi
 exec "$@"
+
+

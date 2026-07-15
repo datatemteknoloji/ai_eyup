@@ -116,7 +116,14 @@ fi
 
 # ── 2. Veri dizinleri ───────────────────────────────────────────────────────
 step "Veri dizinleri oluşturuluyor: $DATA_DIR"
-mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,prometheus,certs,ollama}
+mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,updates,prometheus,certs,ollama}
+mkdir -p "$DATA_DIR/updates"/{incoming,prepared,bin}
+# GUI platform güncelleme wrapper'ı
+if [[ -f "$SCRIPT_DIR/ainew-apply-update.sh" ]]; then
+  cp -a "$SCRIPT_DIR/ainew-apply-update.sh" "$DATA_DIR/updates/bin/ainew-apply-update.sh"
+  cp -a "$SCRIPT_DIR/ainew-apply-update.sh" "$INSTALL_DIR/ainew-apply-update.sh" 2>/dev/null || true
+  chmod +x "$DATA_DIR/updates/bin/ainew-apply-update.sh" "$INSTALL_DIR/ainew-apply-update.sh" 2>/dev/null || true
+fi
 # SELinux etiketleme docker-compose.prod.yml içindeki :Z bayrağı ile container
 # başlatılırken otomatik yapılır; burada sadece dizinlerin var olması yeterli.
 
@@ -127,7 +134,7 @@ mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,prometheus,certs,ollam
 # dizinlere yazamayıp "Permission denied" ile çöküyorlar (chroma, repos,
 # uploads, prometheus TSDB verisi). Ollama da genelde non-root çalışır.
 # Bu host tek-amaçlı bir uygulama sunucusu olduğu için 777 kabul edilebilir.
-chmod -R 777 "$DATA_DIR"/{chroma,repos,uploads,prometheus,ollama}
+chmod -R 777 "$DATA_DIR"/{chroma,repos,uploads,updates,prometheus,ollama}
 
 # prometheus/targets/*.json: backend (appuser) yazıyor, prometheus (nobody)
 # okuyor — ikisi de farklı non-root kullanıcı, ikisinin de erişebilmesi için

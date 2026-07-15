@@ -103,8 +103,9 @@ cp deploy/docker-compose.build.yml "$STAGE/docker-compose.build.yml"
 cp deploy/install-rhel.sh "$STAGE/install-rhel.sh"
 cp deploy/update-rhel.sh "$STAGE/update-rhel.sh"
 cp deploy/rollback-rhel.sh "$STAGE/rollback-rhel.sh"
+cp deploy/ainew-apply-update.sh "$STAGE/ainew-apply-update.sh"
 cp deploy/nginx.prod.conf "$STAGE/frontend/nginx.prod.conf"
-chmod +x "$STAGE/install-rhel.sh" "$STAGE/update-rhel.sh" "$STAGE/rollback-rhel.sh"
+chmod +x "$STAGE/install-rhel.sh" "$STAGE/update-rhel.sh" "$STAGE/rollback-rhel.sh" "$STAGE/ainew-apply-update.sh"
 
 # Müşteriye özel/gerçek sunucu verisi içeren dosyaları boş şablonla değiştir
 echo "[]" > "$STAGE/prometheus/targets/node_exporter_targets.json"
