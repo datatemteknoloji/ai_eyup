@@ -5,7 +5,7 @@ import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Shield, Cpu, MemoryStick, Download, Play, Square, RotateCcw,
   Search, X, CheckCircle, XCircle, Globe, CheckCircle2, BrainCircuit } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId } from '../components/BulkJobOverlay'
+import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -677,6 +677,7 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
       if (r.ok) {
         const d = await r.json()
         if (d.job_id) {
+          beginBulkJobModal(d.job_id)
           setBulkJobId(d.job_id)
         } else {
           setResult(d.message || `${d.ai_ready_count ?? 0} AI Ready`)

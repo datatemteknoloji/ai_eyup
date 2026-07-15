@@ -68,13 +68,23 @@ async def ingest_runbook(title: str, content: str) -> int:
     chunks = chunk_text(content.strip())
     if not chunks:
         return 0
-    from app.services.embedding import get_embeddings_batch
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
+    logger.info(
+        "RAG runbook ingest: title=%r chunks=%s (~%s chars)",
+        (title or "")[:80], len(chunks), len(content),
+    )
     embeddings = await get_embeddings_batch(chunks)
     ids = [str(__import__("uuid").uuid4()) for _ in chunks]
     metadatas = [{"title": title or "Runbook", "index": i} for i in range(len(chunks))]
     chunks, embeddings, metadatas, ids = _filter_valid_embeddings(chunks, embeddings, metadatas, ids)
     if not chunks:
-        raise RuntimeError("Embedding başarısız (Ollama/nomic-embed-text). Runbook eklenemedi.")
+        detail = get_last_embed_error() or "Ollama embedding sıfır vektör döndü"
+        model = getattr(settings, "OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        url = getattr(settings, "OLLAMA_URL", "")
+        raise RuntimeError(
+            f"Embedding başarısız ({url} / {model}). {detail}. "
+            f"Kontrol: `ollama pull {model}` ve OLLAMA_URL erişimi. Runbook eklenemedi."
+        )
     add_chunks(COLLECTION_RUNBOOK, ids=ids, documents=chunks, metadatas=metadatas, embeddings=embeddings)
     return len(chunks)
 

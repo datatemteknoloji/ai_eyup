@@ -102,11 +102,18 @@ async def rag_runbook_ingest_pdf(
         if not text or not text.strip():
             raise HTTPException(
                 status_code=400,
-                detail="PDF'den metin çıkarılamadı (boş veya korumalı olabilir).",
+                detail=(
+                    "PDF'den metin çıkarılamadı (taranmış görüntü PDF, korumalı veya boş olabilir). "
+                    "Metin seçilebilir PDF deneyin veya önce OCR uygulayın."
+                ),
             )
         doc_title = (title or file.filename or "PDF").strip()
         if doc_title.endswith(".pdf"):
             doc_title = doc_title[:-4]
+        logger.info(
+            "PDF runbook ingest start: file=%s title=%r bytes=%s text_chars=%s",
+            file.filename, doc_title, len(pdf_bytes), len(text),
+        )
         n = await ingest_runbook_append(title=doc_title, content=text)
         return {"success": True, "chunks_added": n, "title": doc_title, "pages_extracted": True}
     except HTTPException:

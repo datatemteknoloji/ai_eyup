@@ -143,6 +143,13 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_failed_logins_24h INTEGER",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS linux_security_last_check TIMESTAMPTZ",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS app_discovery_last_scan TIMESTAMPTZ",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS ai_ready_last_check TIMESTAMPTZ",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS swap_usage_percent NUMERIC(5,2)",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS cpu_iowait_percent NUMERIC(5,2)",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS disk_io_utilization_percent NUMERIC(5,2)",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS network_rx_bytes_per_sec NUMERIC(20,2)",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS network_tx_bytes_per_sec NUMERIC(20,2)",
+                "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS metrics_extra JSONB",
             ]:
                 _conn.execute(_sa_text(_col_sql))
             _conn.execute(_sa_text(

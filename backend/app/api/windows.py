@@ -226,9 +226,11 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     """
     Tüm Windows sunucularında WinRM bağlantısını arka planda test eder.
     İlerleme: GET /servers/bulk-jobs/{job_id}
+    body.throttled=true → not-ready 1g / ready interval (Gelişmiş ayarlar).
     """
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime, timezone
 
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -237,21 +239,59 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     from app.services.platform_scope import is_windows_server
     from app.services.bulk_concurrency import bulk_ssh_workers
     from app.services import bulk_job_tracker as jobs
+    from app.services.runtime_settings import get_int
+    from app.services.scan_throttle import should_recheck_ai_ready
 
-    server_ids = (body or {}).get("server_ids")
+    body = body or {}
+    server_ids = body.get("server_ids")
+    throttled = bool(body.get("throttled"))
+    ready_sec = get_int("ai_ready_ready_recheck_sec")
+    not_ready_sec = get_int("ai_ready_not_ready_recheck_sec")
+    now = datetime.now(timezone.utc)
+
     q = db.query(Server).filter(Server.ip_address != None, Server.ip_address != "")  # noqa: E711
     if server_ids:
         q = q.filter(Server.id.in_(server_ids))
     candidates = [s for s in q.all() if is_windows_server(s)]
+    if throttled:
+        before = len(candidates)
+        candidates = [
+            s for s in candidates
+            if should_recheck_ai_ready(
+                ai_ready=bool(s.ai_ready),
+                last_check=s.ai_ready_last_check,
+                ready_recheck_sec=ready_sec,
+                not_ready_recheck_sec=not_ready_sec,
+                now=now,
+            )
+        ]
+        logger.info(
+            "windows update-ai-ready throttle: %s/%s (ready=%ss not_ready=%ss)",
+            len(candidates), before, ready_sec, not_ready_sec,
+        )
 
     if not candidates:
         job_id = jobs.create_job("win_ai_ready", "Windows AI Ready", total=0, message="Windows sunucu yok")
-        jobs.finish(job_id, status="done", message="Windows olarak sınıflandırılmış, IP'si olan sunucu bulunamadı.", result={"tested": 0})
+        jobs.finish(
+            job_id,
+            status="done",
+            message=(
+                "Throttle: yeniden deneme aralığı dolmadı."
+                if throttled else
+                "Windows olarak sınıflandırılmış, IP'si olan sunucu bulunamadı."
+            ),
+            result={"tested": 0},
+        )
         return {
             "queued": True,
             "job_id": job_id,
             "tested": 0, "ai_ready_count": 0, "not_ready_count": 0, "results": [],
-            "message": "Windows olarak sınıflandırılmış, IP'si olan sunucu bulunamadı.",
+            "throttled": throttled,
+            "message": (
+                "Throttle: yeniden deneme aralığı dolmadı."
+                if throttled else
+                "Windows olarak sınıflandırılmış, IP'si olan sunucu bulunamadı."
+            ),
         }
 
     gcred = _get_global_winrm(db)  # şifresi çözülmüş — sadece ana thread'de oku
@@ -275,7 +315,7 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
         total=len(server_snapshots),
         message=f"{len(server_snapshots)} Windows sunucu kuyruğa alındı...",
     )
-    logger.info("windows update-ai-ready: %s sunucu, workers=%s job=%s", len(server_snapshots), workers, job_id)
+    logger.info("windows update-ai-ready: %s sunucu, workers=%s job=%s throttled=%s", len(server_snapshots), workers, job_id, throttled)
 
     def _bg() -> None:
         def _test_one(snap: dict):
@@ -340,11 +380,13 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
 
         thread_db = SessionLocal()
         try:
+            checked_at = datetime.now(timezone.utc)
             for r in results:
                 row = thread_db.query(Server).filter_by(id=r["id"]).first()
                 if not row:
                     continue
                 row.ai_ready = r["connected"]
+                row.ai_ready_last_check = checked_at
                 if r["connected"]:
                     row.status = "ONLINE"
                     if not (row.os_type or "").strip():

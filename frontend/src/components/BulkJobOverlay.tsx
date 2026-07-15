@@ -39,33 +39,31 @@ const kindLabel = (kind?: string) =>
           ? 'OS bilgisi yenileme'
           : kind || 'bulk'
 
-/** Sayfa yenileme / navigasyonda çalışan toplu işi geri yükle */
+/** Sayfa yenileme / navigasyonda — yalnızca bu sekmede kullanıcı başlatmış işi geri yükle.
+ *  Credential apply / auto-onboarding gibi arka plan turları modal açmaz. */
 export async function restoreActiveBulkJobId(): Promise<string | null> {
   const saved = sessionStorage.getItem(STORAGE_JOB)
-  if (saved) {
-    try {
-      const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs/${saved}`)
-      if (r.ok) {
-        const j: BulkJob = await r.json()
-        if (j.status === 'running' || j.status === 'done' || j.status === 'error') {
-          return saved
-        }
-      }
-    } catch {
-      /* fall through */
-    }
-    sessionStorage.removeItem(STORAGE_JOB)
-    sessionStorage.removeItem(STORAGE_MIN)
-  }
+  if (!saved) return null
   try {
-    const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs?active=true`)
-    if (!r.ok) return null
-    const d = await r.json()
-    const first = (d.jobs as BulkJob[] | undefined)?.[0]
-    return first?.id || null
+    const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs/${saved}`)
+    if (r.ok) {
+      const j: BulkJob = await r.json()
+      if (j.status === 'running' || j.status === 'done' || j.status === 'error') {
+        return saved
+      }
+    }
   } catch {
-    return null
+    /* fall through */
   }
+  sessionStorage.removeItem(STORAGE_JOB)
+  sessionStorage.removeItem(STORAGE_MIN)
+  return null
+}
+
+/** Kullanıcı manuel tetiklediğinde: tam ekran modal açılsın */
+export function beginBulkJobModal(jobId: string) {
+  sessionStorage.removeItem(STORAGE_MIN)
+  sessionStorage.setItem(STORAGE_JOB, jobId)
 }
 
 export function persistBulkJobId(jobId: string | null) {

@@ -61,12 +61,8 @@ function withPlatformPage(platform: PlatformKey, Page: React.ComponentType<Platf
 
 export const LinuxOpsPage = () => <OpsCenter platform="linux" />
 export const VirtOpsPage = () => <VirtOpsCenter />
-export const WindowsOpsPage = () => (
-  <>
-    <PlatformBanner platform="windows" />
-    <OpsCenter platform="windows" />
-  </>
-)
+export const WindowsOpsPage = () => <OpsCenter platform="windows" />
+export const ExadataOpsPage = () => <OpsCenter platform="exadata" />
 
 export const LinuxEventsPage = () => <EventsHub platform="linux" />
 export const VirtEventsPage = () => <EventsHub platform="virt" />
@@ -80,7 +76,6 @@ export const LinuxAnalysisPage = () => <AnalysisHub platform="linux" />
 export const VirtAnalysisPage = () => <AnalysisHub platform="virt" />
 export const WindowsAnalysisPage = () => <AnalysisHub platform="windows" />
 
-export const ExadataOpsPage = () => <OpsCenter platform="exadata" />
 export const ExadataEventsPage = () => <EventsHub platform="exadata" />
 export const ExadataIncidentsPage = withPlatformPage('exadata', Incidents)
 export const ExadataAnalysisPage = () => <AnalysisHub platform="exadata" />

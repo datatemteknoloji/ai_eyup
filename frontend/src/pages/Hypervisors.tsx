@@ -65,6 +65,27 @@ interface VmDetailsPayload {
   can_snapshot?: boolean
 }
 
+interface VmLiveMetrics {
+  server_id: number
+  source?: string | null
+  error?: string
+  power_state?: string | null
+  cpu_percent?: number | null
+  mem_percent?: number | null
+  disk_percent?: number | null
+  mem_total_gb?: number | null
+  mem_used_gb?: number | null
+  disk_total_gb?: number | null
+  disk_avail_gb?: number | null
+  cpu_num?: number | null
+  cpu_mhz?: number | null
+  uptime_seconds?: number | null
+  disk_read_iops?: number | null
+  disk_write_iops?: number | null
+  net_rx_kbps?: number | null
+  net_tx_kbps?: number | null
+}
+
 interface EsxHost {
   host_name: string; host_ref?: string; cpu_usage_pct: number; mem_usage_pct: number
   cpu_total_mhz: number; cpu_usage_mhz: number; cpu_cores: number
@@ -264,6 +285,24 @@ const VMDetailDrawer = ({
     staleTime: 30_000,
   })
 
+  const {
+    data: liveMetrics,
+    isLoading: metricsLoading,
+    isFetching: metricsFetching,
+    isError: metricsError,
+    refetch: refetchMetrics,
+  } = useQuery<VmLiveMetrics>({
+    queryKey: ['vm-live-metrics', vm.id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/servers/${vm.id}/vm-live-metrics`)
+      if (!r.ok) throw new Error('VM metrik alınamadı')
+      return r.json()
+    },
+    enabled: !!vm.id,
+    staleTime: 20_000,
+    refetchInterval: 60_000,
+  })
+
   const [syncing, setSyncing] = useState(false)
   const syncVm = async () => {
     setSyncing(true)
@@ -273,7 +312,7 @@ const VMDetailDrawer = ({
         const err = await r.json().catch(() => ({}))
         throw new Error(err.detail || `HTTP ${r.status}`)
       }
-      await refetch()
+      await Promise.all([refetch(), refetchMetrics()])
     } catch (e: any) {
       alert(e?.message || 'VM bilgisini yenilerken hata')
     } finally {
@@ -287,6 +326,16 @@ const VMDetailDrawer = ({
   const diskGb = details?.vm_disk_gb ?? vm.disk_gb
   const power = details?.vm_power_state || vm.vm_power_state || vm.status
   const powerOn = ['up', 'poweredon', 'running', 'online'].includes((power || '').toLowerCase()) || isOn
+
+  const pctColor = (v: number | null | undefined) =>
+    v == null ? 'text-slate-500' : v > 85 ? 'text-red-400' : v > 60 ? 'text-amber-400' : 'text-emerald-400'
+  const barColor = (v: number | null | undefined) =>
+    v == null ? 'bg-slate-700' : v > 85 ? 'bg-red-500' : v > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+  const fmtKbps = (v: number | null | undefined) => {
+    if (v == null) return '—'
+    if (v >= 1024) return `${(v / 1024).toFixed(1)} MB/s`
+    return `${v.toFixed(0)} KB/s`
+  }
 
   const fields: { label: string; val?: string | number | null }[] = [
     { label: 'VM ID', val: details?.hypervisor_vm_id || vm.hypervisor_vm_id },
@@ -343,6 +392,98 @@ const VMDetailDrawer = ({
               <div className="text-lg font-bold text-white">{diskGb ?? '—'}</div>
               <div className="text-[10px] text-slate-500">GB Disk</div>
             </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <BarChart3 className="w-3.5 h-3.5" /> Canlı metrikler (vCenter)
+              </h3>
+              <button
+                onClick={() => refetchMetrics()}
+                disabled={metricsLoading || metricsFetching}
+                className="text-[11px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-50 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${metricsFetching ? 'animate-spin' : ''}`} />
+                Yenile
+              </button>
+            </div>
+            {metricsLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <RefreshCw className="w-5 h-5 text-slate-500 animate-spin" />
+              </div>
+            ) : metricsError || !liveMetrics?.source ? (
+              <p className="text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                {liveMetrics?.error || 'vCenter metrik alınamadı. VM ID ve hypervisor bağlantısını kontrol edin.'}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">vCenter</span>
+                  {liveMetrics.uptime_seconds != null && (
+                    <span className="text-slate-500">
+                      Uptime: {Math.floor(liveMetrics.uptime_seconds / 86400)}g {Math.floor((liveMetrics.uptime_seconds % 86400) / 3600)}s
+                    </span>
+                  )}
+                </div>
+                {[
+                  {
+                    label: 'CPU',
+                    value: liveMetrics.cpu_percent,
+                    hint: liveMetrics.cpu_mhz != null ? `${liveMetrics.cpu_mhz} MHz` : (liveMetrics.cpu_num != null ? `${liveMetrics.cpu_num} vCPU` : undefined),
+                  },
+                  {
+                    label: 'RAM',
+                    value: liveMetrics.mem_percent,
+                    hint: liveMetrics.mem_used_gb != null && liveMetrics.mem_total_gb != null
+                      ? `${liveMetrics.mem_used_gb}/${liveMetrics.mem_total_gb} GB`
+                      : undefined,
+                  },
+                  {
+                    label: 'Disk',
+                    value: liveMetrics.disk_percent,
+                    hint: liveMetrics.disk_avail_gb != null && liveMetrics.disk_total_gb != null
+                      ? `${liveMetrics.disk_avail_gb} GB boş / ${liveMetrics.disk_total_gb} GB`
+                      : 'Guest Tools gerekir',
+                  },
+                ].map(m => (
+                  <div key={m.label}>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-slate-400">{m.label}{m.hint ? ` · ${m.hint}` : ''}</span>
+                      <span className={`font-semibold tabular-nums ${pctColor(m.value)}`}>
+                        {m.value != null ? `${m.value.toFixed(1)}%` : '—'}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${barColor(m.value)}`}
+                        style={{ width: `${Math.min(100, Math.max(0, m.value ?? 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                    <div className="text-[10px] text-slate-500 mb-0.5">Disk IOPS</div>
+                    <div className="text-sm text-slate-200 tabular-nums">
+                      R {liveMetrics.disk_read_iops != null ? liveMetrics.disk_read_iops.toFixed(0) : '—'}
+                      <span className="text-slate-600"> / </span>
+                      W {liveMetrics.disk_write_iops != null ? liveMetrics.disk_write_iops.toFixed(0) : '—'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                    <div className="text-[10px] text-slate-500 mb-0.5 flex items-center gap-1">
+                      <Network className="w-3 h-3" /> Ağ
+                    </div>
+                    <div className="text-sm text-slate-200 tabular-nums">
+                      ↓ {fmtKbps(liveMetrics.net_rx_kbps)}
+                      <span className="text-slate-600"> · </span>
+                      ↑ {fmtKbps(liveMetrics.net_tx_kbps)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

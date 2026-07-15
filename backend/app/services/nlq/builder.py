@@ -54,6 +54,16 @@ def _col_for_field(field: str):
         return LinuxInventory.memory_usage_percent
     if field == "disk_usage_percent":
         return LinuxInventory.disk_usage_percent
+    if field == "swap_usage_percent":
+        return LinuxInventory.swap_usage_percent
+    if field == "cpu_iowait_percent":
+        return LinuxInventory.cpu_iowait_percent
+    if field == "disk_io_utilization_percent":
+        return LinuxInventory.disk_io_utilization_percent
+    if field == "network_rx_bytes_per_sec":
+        return LinuxInventory.network_rx_bytes_per_sec
+    if field == "network_tx_bytes_per_sec":
+        return LinuxInventory.network_tx_bytes_per_sec
     if field == "last_patch_date":
         return LinuxInventory.last_patch_date
     if field == "last_reboot_date":

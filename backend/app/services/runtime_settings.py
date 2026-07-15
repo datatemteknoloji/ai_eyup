@@ -118,18 +118,6 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Harici/UCMDB envanter senkronu (mevcut ayar anahtarı).",
         "env": "INVENTORY_SYNC_INTERVAL_MINUTES",
     },
-    "nlq_collector_interval_sec": {
-        "default": 900, "type": "int", "min": 120, "max": 7200,
-        "group": "background", "label": "Linux NL envanter toplama (sn)",
-        "help": "Linux inventory snapshot (SSH/Prom) periyodu — NLQ sorguları için.",
-        "env": "NLQ_COLLECTOR_INTERVAL_SEC",
-    },
-    "nlq_collector_workers": {
-        "default": 50, "type": "int", "min": 1, "max": 100,
-        "group": "background", "label": "Linux NL envanter worker sayısı",
-        "help": "Eşzamanlı SSH toplama üst sınırı (max 100).",
-        "env": "NLQ_COLLECTOR_WORKERS",
-    },
     "esx_metric_interval_sec": {
         "default": 900, "type": "int", "min": 120, "max": 7200,
         "group": "background", "label": "ESX metrik aralığı (sn)",
@@ -175,14 +163,70 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "auto_onboarding_interval_sec": {
         "default": 600, "type": "int", "min": 120, "max": 7200,
         "group": "background", "label": "Auto-onboarding aralığı (sn)",
-        "help": "Yeni sunucu keşif / onboarding taraması.",
+        "help": "Yeni sunucu keşif / onboarding taraması (AI Ready, exporter vb. döngü).",
         "env": "AUTO_ONBOARDING_INTERVAL_SEC",
+    },
+    # ── AI Ready throttle ───────────────────────────────────────────
+    "ai_ready_ready_recheck_sec": {
+        "default": 3600, "type": "int", "min": 300, "max": 86400,
+        "group": "ai_ready", "label": "AI Ready sunucu yeniden kontrol (sn)",
+        "help": "Zaten AI Ready olan sunucular arka planda bu aralıktan daha sık SSH/WinRM ile denenmez. Manuel ‘AI Ready Güncelle’ tümünü test eder.",
+        "env": "AI_READY_READY_RECHECK_SEC",
+    },
+    "ai_ready_not_ready_recheck_sec": {
+        "default": 86400, "type": "int", "min": 3600, "max": 604800,
+        "group": "ai_ready", "label": "AI Ready olmayan yeniden kontrol (sn)",
+        "help": "AI Ready olmayan (SSH/WinRM başarısız) sunucular varsayılan 1 günde bir denenir — sürekli SSH gürültüsünü keser.",
+        "env": "AI_READY_NOT_READY_RECHECK_SEC",
     },
     "app_discovery_rescan_hours": {
         "default": 12, "type": "int", "min": 1, "max": 168,
         "group": "background", "label": "Uygulama keşif yeniden tarama (saat)",
         "help": "Aynı sunucunun uygulama envanteri bu aralıktan daha sık taranmaz.",
         "env": "APP_DISCOVERY_RESCAN_HOURS",
+    },
+    # ── NLQ / Linux envanter snapshot ───────────────────────────────
+    "nlq_collector_interval_sec": {
+        "default": 900, "type": "int", "min": 120, "max": 7200,
+        "group": "nlq", "label": "NLQ snapshot tur aralığı (sn)",
+        "help": "Arka plan Linux NL envanter snapshot collector döngü sıklığı.",
+        "env": "NLQ_COLLECTOR_INTERVAL_SEC",
+    },
+    "nlq_collector_workers": {
+        "default": 50, "type": "int", "min": 1, "max": 100,
+        "group": "nlq", "label": "NLQ snapshot worker sayısı",
+        "help": "Eşzamanlı SSH toplama üst sınırı (max 100).",
+        "env": "NLQ_COLLECTOR_WORKERS",
+    },
+    "nlq_success_recheck_sec": {
+        "default": 900, "type": "int", "min": 120, "max": 86400,
+        "group": "nlq", "label": "Başarılı snapshot yenileme (sn)",
+        "help": "collection_status=success olan sunucu bu süre dolmadan tekrar SSH ile toplanmaz.",
+        "env": "NLQ_SUCCESS_RECHECK_SEC",
+    },
+    "nlq_failed_recheck_sec": {
+        "default": 86400, "type": "int", "min": 3600, "max": 604800,
+        "group": "nlq", "label": "Başarısız snapshot yeniden deneme (sn)",
+        "help": "failed/unreachable snapshot’lar varsayılan 1 günde bir yeniden denenir.",
+        "env": "NLQ_FAILED_RECHECK_SEC",
+    },
+    "nlq_metric_enrich_enabled": {
+        "default": True, "type": "bool",
+        "group": "nlq", "label": "metric_data ile snapshot zenginleştir",
+        "help": "Açıksa collector Prometheus/metric_data değerlerini (CPU detay, swap, disk IO, ağ) envanter satırına yazar.",
+        "env": "NLQ_METRIC_ENRICH_ENABLED",
+    },
+    "nlq_metric_max_age_min": {
+        "default": 30, "type": "int", "min": 5, "max": 360,
+        "group": "nlq", "label": "metric_data max yaşı (dk)",
+        "help": "Bu dakikadan eski metric_data satırları enrich için kullanılmaz.",
+        "env": "NLQ_METRIC_MAX_AGE_MIN",
+    },
+    "nlq_prefer_metric_over_ssh": {
+        "default": True, "type": "bool",
+        "group": "nlq", "label": "CPU/RAM/disk için metric_data öncelikli",
+        "help": "Açıksa Prom/metric_data değerleri SSH df/mem bilgi üzerine yazar. Kapalıysa yalnızca boş alanlar doldurulur.",
+        "env": "NLQ_PREFER_METRIC_OVER_SSH",
     },
     # ── Proxy (uygulama notu; nginx restart ile uygulanır) ───────────
     "nginx_proxy_read_timeout_sec": {
@@ -199,6 +243,8 @@ GROUP_LABELS = {
     "ssh": "SSH timeout",
     "winrm": "WinRM",
     "background": "Arka plan görevleri",
+    "ai_ready": "AI Ready tarama",
+    "nlq": "Linux NL envanter snapshot",
     "proxy": "Proxy / Nginx",
 }
 
@@ -292,6 +338,10 @@ def get_int(key: str) -> int:
 
 def get_float(key: str) -> float:
     return float(get_setting(key))
+
+
+def get_bool(key: str) -> bool:
+    return bool(get_setting(key))
 
 
 def list_advanced_settings() -> List[dict]:

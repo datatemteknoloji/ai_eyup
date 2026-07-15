@@ -69,7 +69,7 @@ INTENT_PATTERNS = {
     "os_filter":       r"\b(rhel|oel|oracle|windows|win\s*sunucu|ubuntu|centos|rocky|linux)\b",
     "powered_off":     r"kapalı|powered.off|shut.*down|çalışmayan",
     "assessment":      r"değerlendirme|assessment|genel\s+durum|rapor|özet|nasıl.*ortam|sağlık",
-    "network":         r"network|ağ|10g|1g|bant\s*genişliği|interface",
+    "network":         r"network|ağ|10g|1g|bant\s*genişliği|interface|vlan|port\s*group|portgroup|vswitch|vds",
     "snapshot":        r"snapshot|anlık\s+görüntü",
     "report":          r"rapor|report|üret|oluştur|göster.*rapor",
 }
@@ -1055,9 +1055,71 @@ def h_guest_agent_down(db: Session, question: str = "") -> str:
 
 
 def h_network_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — per-VM network trafiği (inbound/outbound throughput), adapter connected/disconnected durumu ve "
-               f"VM bazlı VLAN ataması şu anda toplanmıyor. Sadece ESX HOST seviyesinde port group/VLAN envanteri mevcut "
-               f"('network' anahtar kelimesiyle sorabilirsiniz).")
+    return _na(
+        f"{topic} — per-VM network trafiği (inbound/outbound throughput) ve adapter connected/disconnected durumu "
+        f"şu anda toplanmıyor. VM bazlı VLAN/port-group için 'vlan' veya 'port group' diye sorun "
+        f"(vCenter'dan canlı çekilir)."
+    )
+
+
+def h_vm_vlans(db: Session, question: str = "") -> str:
+    """vCenter'dan canlı: VM → NIC → port-group → VLAN (standart + vDS)."""
+    from app.services import vcenter_vm_network as vnet
+
+    r = vnet.fetch_live_vm_vlans(db)
+    rows_raw = r.get("rows") or []
+    if not rows_raw:
+        err = "; ".join((r.get("errors") or [])[:3])
+        if err:
+            return _na(f"vCenter VLAN sorgusu sonuç döndürmedi: {err}")
+        return _na("vCenter'da VM ağ adaptörü / port-group bilgisi bulunamadı.")
+
+    q = _tr_lower(question or "")
+    # İsteğe bağlı: soruda geçen VM adına kaba filtre
+    name_hint = None
+    m = re.search(r"(?:vm|sanal\s*makine)\s*[:\-]?\s*[\"']?([a-z0-9][\w.\-]{2,})", q, re.I)
+    if m:
+        name_hint = m.group(1).lower()
+    if name_hint:
+        filtered = [x for x in rows_raw if name_hint in (x.get("vm_name") or "").lower()]
+        if filtered:
+            rows_raw = filtered
+
+    table_rows = []
+    for x in rows_raw[:200]:
+        vlan = x.get("vlan_label")
+        if vlan in (None, ""):
+            vlan = x.get("vlan_id")
+            vlan = "—" if vlan is None else str(vlan)
+        bt = x.get("backing_type") or ""
+        bt_tr = {"standard": "vSwitch", "distributed": "vDS", "opaque": "opaque"}.get(bt, bt)
+        table_rows.append([
+            x.get("vm_name") or "-",
+            x.get("nic") or "-",
+            x.get("portgroup") or "-",
+            vlan,
+            bt_tr,
+            x.get("hypervisor") or "-",
+        ])
+
+    extra = ""
+    if len(rows_raw) > 200:
+        extra = f"\n\n_Not: {len(rows_raw)} satırdan ilk 200 gösterildi._"
+    err_note = ""
+    if r.get("errors"):
+        err_note = f"\n\n_Uyarı: {'; '.join(r['errors'][:2])}_"
+
+    return (
+        "### VM Port-Group / VLAN ID'leri (vCenter canlı)\n\n"
+        f"**Satır:** {len(rows_raw)} | **Hypervisor:** {r.get('hypervisors', 0)}\n\n"
+        + _md_table(
+            ["VM", "NIC", "Port-Group", "VLAN", "Tip", "Hypervisor"],
+            table_rows,
+            "Kayıt yok.",
+        )
+        + extra
+        + err_note
+    )
 
 
 # ── Host Sağlığı ──────────────────────────────────────────────────────────────
@@ -1421,7 +1483,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"aynı\s*ip.yi\s*kullanan|aynı\s*ip'yi\s*kullanan", h_duplicate_ip),
     (r"ip\s*adresi\s*olmayan\s*çalışan", h_no_ip_running),
     (r"guest\s*agent\s*çalışmayan", h_guest_agent_down),
-    (r"vlan\s*bilgisi\s*eksik", lambda db, q: h_network_not_available(db, "VM bazlı VLAN ataması")),
+    (r"vlan\s*(id|ids|bilgi)|vm.*vlan|vlan.*vm|port\s*group|portgroup|hangi\s*vlan|vlan.?leri", h_vm_vlans),
     (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput|ağ\s*hatası|adapter\s*disconnected", lambda db, q: h_network_not_available(db, "Per-VM network trafiği/adapter durumu")),
 
     # Host Sağlığı

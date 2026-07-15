@@ -3,13 +3,17 @@ Settings API - Global Credentials CRUD + Apply to Servers
 """
 import logging
 import os
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import text
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from app.core.database import get_db
+from app.core.database import get_db, ThreadSessionLocal
 from app.core.auth import get_current_user, require_role
 from app.models.credential import GlobalCredential
 from app.models.server import Server
@@ -19,6 +23,11 @@ from app.core.encryption import encrypt_secret, decrypt_secret
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# SSH Test & Update — arka plan job + progress (poll)
+_ssh_test_jobs: Dict[str, Dict[str, Any]] = {}
+_ssh_test_lock = threading.Lock()
+_SSH_TEST_JOB_TTL_SEC = 3600
 
 
 # ─── Schemas ──────────────────────────────────────────
@@ -264,12 +273,15 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
 
             bg = SessionLocal()
             try:
+                from datetime import datetime, timezone
+                checked_at = datetime.now(timezone.utc)
                 ok_n = fail_n = 0
                 for sid, ok in results.items():
                     row = bg.query(Server).filter(Server.id == sid).first()
                     if row is None:
                         continue
                     row.ai_ready = ok
+                    row.ai_ready_last_check = checked_at
                     if ok:
                         ok_n += 1
                     else:
@@ -315,60 +327,42 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
     }
 
 
-@router.post("/credentials/test-all-ssh")
-async def test_all_servers_ssh(db: Session = Depends(get_db)):
-    """Linux sunucularda SSH test et (Windows hariç)."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from app.services.bulk_concurrency import bulk_ssh_workers
-    from app.services.ssh_credentials import resolve_ssh_creds
-    from app.services.platform_scope import is_linux_server
+def _ssh_test_job_snapshot(job: Dict[str, Any]) -> Dict[str, Any]:
+    total = int(job.get("total") or 0)
+    done = int(job.get("done") or 0)
+    pct = int(round((done / total) * 100)) if total > 0 else (100 if job.get("status") == "done" else 0)
+    out = {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "done": done,
+        "total": total,
+        "percent": pct,
+        "successful": job.get("successful", 0),
+        "failed": job.get("failed", 0),
+        "skipped": job.get("skipped", 0),
+        "key_deployed": job.get("key_deployed", 0),
+        "workers": job.get("workers", 0),
+        "current_server": job.get("current_server"),
+        "message": job.get("message") or "",
+        "error": job.get("error"),
+    }
+    if job.get("status") == "done" and job.get("result"):
+        out["result"] = job["result"]
+    return out
 
-    all_servers = db.query(Server).all()
-    servers = [s for s in all_servers if is_linux_server(s)]
-    if not servers:
-        raise HTTPException(status_code=404, detail="Hiç Linux sunucu bulunamadı")
 
-    global_cred = (
-        db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()  # noqa: E712
-        or db.query(GlobalCredential).first()
-    )
+def _run_ssh_test_job(job_id: str, test_targets: List[dict], skipped: List[str], workers: int) -> None:
+    """Arka planda SSH test; ilerlemeyi _ssh_test_jobs'a yazar."""
+    from app.services.ssh_manager import SSHManager
 
-    successful = []
-    failed = []
-    skipped = []
-    key_deployed = []
-
-    test_targets = []
-    for server in servers:
-        if not server.ip_address or not server.ip_address.strip():
-            server.ai_ready = False
-            skipped.append(server.name)
-            continue
-        creds = resolve_ssh_creds(server, global_cred=global_cred)
-        if not creds.get("username") or not creds.get("has_secret"):
-            server.ai_ready = False
-            skipped.append(server.name)
-            continue
-        cfg = server.connection_config or {}
-        test_targets.append({
-            "id": server.id,
-            "name": server.name,
-            "ip": creds["host"],
-            "username": creds["username"],
-            "password": creds["password"],
-            "private_key": creds["private_key"],
-            "port": creds["port"],
-            "enc_private_key": cfg.get("private_key") or (
-                getattr(global_cred, "private_key", None) if global_cred else None
-            ),
-        })
-
-    workers = bulk_ssh_workers()
-    logger.info("test-all-ssh: %s sunucu, workers=%s", len(test_targets), workers)
+    successful: List[str] = []
+    failed: List[str] = []
+    key_deployed: List[str] = []
+    done = 0
+    total = len(test_targets)
 
     def _test_one(snap: dict) -> dict:
         try:
-            from app.services.ssh_manager import SSHManager
             ssh = SSHManager(
                 host=snap["ip"],
                 username=snap["username"],
@@ -396,54 +390,217 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
             logger.debug("SSH test failed for %s: %s", snap["name"], e)
             return {"id": snap["id"], "name": snap["name"], "ok": False, "key_ok": False}
 
-    by_id = {s.id: s for s in servers}
-    done = 0
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="test-all-ssh") as pool:
-        futures = [pool.submit(_test_one, t) for t in test_targets]
-        for fut in as_completed(futures):
-            row = fut.result()
-            srv = by_id.get(row["id"])
-            if srv is not None:
-                srv.ai_ready = row["ok"]
-            if row["ok"]:
-                successful.append(row["name"])
-                if row.get("key_ok"):
-                    key_deployed.append(row["name"])
-            else:
-                failed.append(row["name"])
-            done += 1
-            if done % 100 == 0 or done == len(test_targets):
-                logger.info("test-all-ssh ilerlemesi %s/%s", done, len(test_targets))
+    db = ThreadSessionLocal()
+    try:
+        by_id = {
+            s.id: s
+            for s in db.query(Server).filter(Server.id.in_([t["id"] for t in test_targets] or [-1])).all()
+        }
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="test-all-ssh") as pool:
+            futures = {pool.submit(_test_one, t): t for t in test_targets}
+            from datetime import datetime, timezone
+            checked_at = datetime.now(timezone.utc)
+            for fut in as_completed(futures):
+                row = fut.result()
+                srv = by_id.get(row["id"])
+                if srv is not None:
+                    srv.ai_ready = row["ok"]
+                    srv.ai_ready_last_check = checked_at
+                if row["ok"]:
+                    successful.append(row["name"])
+                    if row.get("key_ok"):
+                        key_deployed.append(row["name"])
+                else:
+                    failed.append(row["name"])
+                done += 1
+                with _ssh_test_lock:
+                    job = _ssh_test_jobs.get(job_id)
+                    if job is not None:
+                        job["done"] = done
+                        job["successful"] = len(successful)
+                        job["failed"] = len(failed)
+                        job["key_deployed"] = len(key_deployed)
+                        job["current_server"] = row["name"]
+                        job["message"] = f"{done}/{total} sunucu test edildi"
+                if done % 25 == 0 or done == total:
+                    logger.info("test-all-ssh[%s] ilerlemesi %s/%s", job_id[:8], done, total)
 
+        db.commit()
+
+        msg = (
+            f"SSH Test tamamlandı. Başarılı: {len(successful)}, "
+            f"Başarısız: {len(failed)}, Atlandı: {len(skipped)}"
+        )
+        if key_deployed:
+            msg += f"\n\n🔑 SSH Key dağıtıldı ({len(key_deployed)}): {', '.join(key_deployed[:10])}"
+            if len(key_deployed) > 10:
+                msg += f" ve {len(key_deployed)-10} diğer"
+        if failed:
+            msg += f"\n\nBaşarısız: {', '.join(failed[:10])}"
+            if len(failed) > 10:
+                msg += f" ve {len(failed)-10} diğer"
+        if skipped:
+            msg += f"\n\nAtlandı (IP/credential yok): {', '.join(skipped[:10])}"
+            if len(skipped) > 10:
+                msg += f" ve {len(skipped)-10} diğer"
+
+        result = {
+            "success": True,
+            "message": msg,
+            "successful": len(successful),
+            "failed": len(failed),
+            "skipped": len(skipped),
+            "key_deployed": len(key_deployed),
+            "workers": workers,
+            "successful_servers": successful[:20],
+            "failed_servers": failed[:20],
+            "skipped_servers": skipped[:20],
+            "key_deployed_servers": key_deployed[:20],
+        }
+        with _ssh_test_lock:
+            job = _ssh_test_jobs.get(job_id)
+            if job is not None:
+                job["status"] = "done"
+                job["done"] = total
+                job["successful"] = len(successful)
+                job["failed"] = len(failed)
+                job["key_deployed"] = len(key_deployed)
+                job["current_server"] = None
+                job["message"] = msg
+                job["result"] = result
+    except Exception as e:
+        logger.exception("test-all-ssh[%s] failed: %s", job_id[:8], e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        with _ssh_test_lock:
+            job = _ssh_test_jobs.get(job_id)
+            if job is not None:
+                job["status"] = "error"
+                job["error"] = str(e)
+                job["message"] = f"SSH test hatası: {e}"
+    finally:
+        db.close()
+
+
+@router.post("/credentials/test-all-ssh")
+async def test_all_servers_ssh(db: Session = Depends(get_db)):
+    """Linux sunucularda SSH test başlat (Windows hariç). Progress için job_id poll edilir."""
+    from app.services.bulk_concurrency import bulk_ssh_workers
+    from app.services.ssh_credentials import resolve_ssh_creds
+    from app.services.platform_scope import is_linux_server
+
+    all_servers = db.query(Server).all()
+    servers = [s for s in all_servers if is_linux_server(s)]
+    if not servers:
+        raise HTTPException(status_code=404, detail="Hiç Linux sunucu bulunamadı")
+
+    global_cred = (
+        db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()  # noqa: E712
+        or db.query(GlobalCredential).first()
+    )
+
+    skipped: List[str] = []
+    test_targets: List[dict] = []
+    for server in servers:
+        if not server.ip_address or not server.ip_address.strip():
+            server.ai_ready = False
+            skipped.append(server.name)
+            continue
+        creds = resolve_ssh_creds(server, global_cred=global_cred)
+        if not creds.get("username") or not creds.get("has_secret"):
+            server.ai_ready = False
+            skipped.append(server.name)
+            continue
+        cfg = server.connection_config or {}
+        test_targets.append({
+            "id": server.id,
+            "name": server.name,
+            "ip": creds["host"],
+            "username": creds["username"],
+            "password": creds["password"],
+            "private_key": creds["private_key"],
+            "port": creds["port"],
+            "enc_private_key": cfg.get("private_key") or (
+                getattr(global_cred, "private_key", None) if global_cred else None
+            ),
+        })
+
+    # Atlananlar için ai_ready güncellemesini hemen kaydet
     db.commit()
 
-    msg = f"SSH Test tamamlandı. Başarılı: {len(successful)}, Başarısız: {len(failed)}, Atlandı: {len(skipped)}"
-    if key_deployed:
-        msg += f"\n\n🔑 SSH Key dağıtıldı ({len(key_deployed)}): {', '.join(key_deployed[:10])}"
-        if len(key_deployed) > 10:
-            msg += f" ve {len(key_deployed)-10} diğer"
-    if failed:
-        msg += f"\n\nBaşarısız: {', '.join(failed[:10])}"
-        if len(failed) > 10:
-            msg += f" ve {len(failed)-10} diğer"
-    if skipped:
-        msg += f"\n\nAtlandı (IP/credential yok): {', '.join(skipped[:10])}"
-        if len(skipped) > 10:
-            msg += f" ve {len(skipped)-10} diğer"
-
-    return {
-        "success": True,
-        "message": msg,
-        "successful": len(successful),
-        "failed": len(failed),
+    workers = bulk_ssh_workers()
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "running",
+        "done": 0,
+        "total": len(test_targets),
+        "successful": 0,
+        "failed": 0,
         "skipped": len(skipped),
-        "key_deployed": len(key_deployed),
+        "key_deployed": 0,
         "workers": workers,
-        "successful_servers": successful[:20],
-        "failed_servers": failed[:20],
-        "skipped_servers": skipped[:20],
-        "key_deployed_servers": key_deployed[:20],
+        "current_server": None,
+        "message": f"0/{len(test_targets)} sunucu test edildi" if test_targets else "Test edilecek sunucu yok",
+        "error": None,
+        "result": None,
     }
+    with _ssh_test_lock:
+        # Eski job'ları temizle (basit TTL)
+        now = time.time()
+        stale = [
+            jid for jid, j in _ssh_test_jobs.items()
+            if now - float(j.get("started_at") or 0) > _SSH_TEST_JOB_TTL_SEC
+        ]
+        for jid in stale:
+            _ssh_test_jobs.pop(jid, None)
+        job["started_at"] = now
+        _ssh_test_jobs[job_id] = job
+
+    logger.info("test-all-ssh started job=%s targets=%s workers=%s skipped=%s", job_id[:8], len(test_targets), workers, len(skipped))
+
+    if not test_targets:
+        msg = f"SSH Test tamamlandı. Başarılı: 0, Başarısız: 0, Atlandı: {len(skipped)}"
+        result = {
+            "success": True,
+            "message": msg,
+            "successful": 0,
+            "failed": 0,
+            "skipped": len(skipped),
+            "key_deployed": 0,
+            "workers": workers,
+            "successful_servers": [],
+            "failed_servers": [],
+            "skipped_servers": skipped[:20],
+            "key_deployed_servers": [],
+        }
+        with _ssh_test_lock:
+            job["status"] = "done"
+            job["message"] = msg
+            job["result"] = result
+        return _ssh_test_job_snapshot(job)
+
+    t = threading.Thread(
+        target=_run_ssh_test_job,
+        args=(job_id, test_targets, skipped, workers),
+        name=f"test-all-ssh-{job_id[:8]}",
+        daemon=True,
+    )
+    t.start()
+    return _ssh_test_job_snapshot(job)
+
+
+@router.get("/credentials/test-all-ssh/{job_id}")
+async def test_all_servers_ssh_status(job_id: str):
+    """SSH Test & Update progress."""
+    with _ssh_test_lock:
+        job = _ssh_test_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job bulunamadı veya süresi doldu")
+        snap = _ssh_test_job_snapshot(job)
+    return snap
 
 
 # ─── Gelişmiş ayarlar (timeout / interval / worker) ───

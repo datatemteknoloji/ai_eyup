@@ -58,6 +58,7 @@ class CollectorRunBody(BaseModel):
     workers: Optional[int] = None
     only_ai_ready: bool = True
     server_ids: Optional[List[int]] = None
+    force: bool = True  # True → throttle yok (manuel tur)
 
 
 @router.post("/ai/query")
@@ -119,11 +120,20 @@ def ai_live_check(body: LiveCheckBody, db: Session = Depends(get_db), user: User
     return {"status": "success", "live_diff": diffs, "checked": len(fake_rows)}
 
 
-def _run_collector_bg(workers: int, only_ai_ready: bool, server_ids: Optional[List[int]]):
+def _run_collector_bg(
+    workers: int,
+    only_ai_ready: bool,
+    server_ids: Optional[List[int]],
+    throttled: bool = True,
+):
     db = SessionLocal()
     try:
         run_linux_inventory_collection(
-            db, workers=workers, only_ai_ready=only_ai_ready, server_ids=server_ids,
+            db,
+            workers=workers,
+            only_ai_ready=only_ai_ready,
+            server_ids=server_ids,
+            throttled=throttled,
         )
     finally:
         db.close()
@@ -143,8 +153,9 @@ def collector_run(
         workers = int(body.workers) if body.workers else get_int("nlq_collector_workers")
     except Exception:
         workers = 50
-    background.add_task(_run_collector_bg, workers, body.only_ai_ready, body.server_ids)
-    return {"ok": True, "message": "Collector başlatıldı", "workers": workers}
+    throttled = not bool(body.force)
+    background.add_task(_run_collector_bg, workers, body.only_ai_ready, body.server_ids, throttled)
+    return {"ok": True, "message": "Collector başlatıldı", "workers": workers, "throttled": throttled}
 
 
 @router.get("/collectors/linux-inventory/status")

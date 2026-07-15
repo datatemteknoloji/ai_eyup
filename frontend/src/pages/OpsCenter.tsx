@@ -3,16 +3,21 @@
  * Grid layout · Slide-over detay · Aktivite zaman çizelgesi · Metrik widget'ları
  * Arama/filtre · Otomatik yenileme sayacı · Toplu aksiyon toolbar
  */
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   RefreshCw, X, Search, ChevronDown, Cpu, MemoryStick, HardDrive, Network,
-  Activity, Zap, AlertTriangle, ShieldAlert, CheckCircle2, Clock, Siren,
+  Activity, Zap, CheckCircle2, Clock, Siren,
   ScanSearch, ArrowRight, Eye, BellOff, BarChart3, Terminal,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import type { PlatformAiopsProps } from '../utils/platformApi'
+import { PLATFORM_AIOPS_PREFIX } from '../config/platformAiops'
+import {
+  OpsRefreshCountdown,
+  OpsShell,
+} from '../components/ops/OpsShell'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ServerInfo { id: number | null; name: string; hostname: string; ip: string; tier: string }
@@ -110,32 +115,6 @@ function metricCategory(metric: string): 'cpu' | 'memory' | 'disk' | 'network' |
   return 'other'
 }
 
-// ── Health Circle ─────────────────────────────────────────────────────────────
-function HealthCircle({ score, label }: { score: number; label: string }) {
-  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#60a5fa' :
-                score >= 55 ? '#facc15' : score >= 35 ? '#fb923c' : '#f87171'
-  const r = 22, circ = 2 * Math.PI * r
-  const dash = circ * (score / 100)
-  return (
-    <div className="flex items-center gap-3">
-      <div className="relative w-14 h-14 shrink-0">
-        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 52 52">
-          <circle cx="26" cy="26" r={r} fill="none" strokeWidth="4" stroke="#1e293b" />
-          <circle cx="26" cy="26" r={r} fill="none" strokeWidth="4"
-            stroke={color} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-sm font-bold" style={{ color }}>{score}</span>
-        </div>
-      </div>
-      <div>
-        <div className="text-sm font-semibold text-white">{label}</div>
-        <div className="text-xs text-slate-500 mt-0.5">Sistem Sağlığı</div>
-      </div>
-    </div>
-  )
-}
-
 // ── Metrik Kategori Widget ────────────────────────────────────────────────────
 function MetricWidget({ icon, label, count, critCount, color }: {
   icon: React.ReactNode; label: string; count: number; critCount: number; color: string
@@ -157,40 +136,6 @@ function MetricWidget({ icon, label, count, critCount, color }: {
       </div>
       {critCount > 0 && <div className="text-[10px] text-red-400 mt-1">{critCount} kritik</div>}
     </div>
-  )
-}
-
-// ── Auto-refresh countdown ────────────────────────────────────────────────────
-function RefreshCountdown({ onRefresh, interval = 30 }: { onRefresh: () => void; interval?: number }) {
-  const [remaining, setRemaining] = useState(interval)
-  const startRef = useRef(Date.now())
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startRef.current) / 1000)
-      const rem = interval - (elapsed % interval)
-      setRemaining(rem)
-      if (rem === interval) onRefresh()
-    }, 1000)
-    return () => clearInterval(id)
-  }, [onRefresh, interval])
-
-  const pct = (remaining / interval) * 100
-  return (
-    <button
-      onClick={() => { startRef.current = Date.now(); setRemaining(interval); onRefresh() }}
-      className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors group"
-    >
-      <div className="relative w-5 h-5">
-        <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="8" fill="none" strokeWidth="2" stroke="#334155" />
-          <circle cx="10" cy="10" r="8" fill="none" strokeWidth="2" stroke="#64748b"
-            strokeDasharray={`${50.3 * pct / 100} 50.3`} strokeLinecap="round" />
-        </svg>
-        <RefreshCw size={10} className="absolute inset-0 m-auto group-hover:text-cyan-400 transition-colors" />
-      </div>
-      <span className="text-xs">{remaining}s</span>
-    </button>
   )
 }
 
@@ -567,9 +512,10 @@ function ServerAlarmCard({
 }
 
 // ── Storm Card ────────────────────────────────────────────────────────────────
-function StormAlarmCard({ storm, selected, onSelect, onDone }: {
+function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
   storm: StormCard; selected: boolean
   onSelect: (ids: number[], checked: boolean) => void; onDone: () => void
+  platform: string
 }) {
   const [showServers, setShowServers] = useState(false)
   const [showRCA, setShowRCA] = useState(false)
@@ -627,7 +573,7 @@ function StormAlarmCard({ storm, selected, onSelect, onDone }: {
           )}
 
           <div className="flex flex-wrap items-center gap-2 mt-3">
-            <Link to="/incidents" onClick={e => e.stopPropagation()}
+            <Link to={`${PLATFORM_AIOPS_PREFIX[platform as keyof typeof PLATFORM_AIOPS_PREFIX] || '/linux'}/incidents`} onClick={e => e.stopPropagation()}
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-purple-500/40 text-purple-300 hover:bg-purple-500/10 transition-colors">
               <Siren size={11} /> #{storm.incident_id}
             </Link>
@@ -770,18 +716,6 @@ function ActivityTimeline({ platform }: { platform: string }) {
 // ── Ana Sayfa ─────────────────────────────────────────────────────────────────
 export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const qc = useQueryClient()
-  const eventsPath = platform === 'linux' ? '/linux/events'
-    : platform === 'windows' ? '/windows/aiops/events'
-    : platform === 'exadata' ? '/exadata/events'
-    : '/virt/events'
-  const incidentsPath = platform === 'linux' ? '/linux/incidents'
-    : platform === 'windows' ? '/windows/aiops/incidents'
-    : platform === 'exadata' ? '/exadata/incidents'
-    : '/virt/incidents'
-  const analysisPath = platform === 'linux' ? '/linux/analysis'
-    : platform === 'windows' ? '/windows/aiops/analysis'
-    : platform === 'exadata' ? '/exadata/analysis'
-    : '/virt/analysis'
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [tierFilter, setTierFilter] = useState<'all' | 'production' | 'staging' | 'development'>('all')
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning'>('all')
@@ -813,7 +747,6 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     })
   }
 
-  // Build metric category breakdown from current data
   const metricBreakdown = useMemo(() => {
     const all = [
       ...(data?.critical_servers ?? []).flatMap(s => s.metrics),
@@ -829,7 +762,6 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     return { counts, critCounts }
   }, [data])
 
-  // Filter servers
   const filterCards = useCallback((cards: ServerCard[]) =>
     cards.filter(c => {
       if (tierFilter !== 'all' && c.server.tier !== tierFilter) return false
@@ -846,240 +778,186 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const warnFiltered = useMemo(() => filterCards(data?.warning_servers ?? []), [data, filterCards])
   const allOk = !data?.critical_count && !data?.storm_count && !data?.warning_count
 
-  if (isLoading) return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center space-y-3">
-        <div className="w-10 h-10 rounded-full border-2 border-t-cyan-400 border-r-transparent animate-spin mx-auto" />
-        <p className="text-slate-400 text-sm">Alarm durumu yükleniyor…</p>
-      </div>
-    </div>
-  )
-
   return (
-    <div className="flex flex-col h-full min-h-0 bg-slate-950">
-
-      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
-      <div className="flex-none px-6 py-4 border-b border-slate-800/60 bg-slate-900/60">
-        <div className="flex items-center gap-6 flex-wrap">
-          {/* Health */}
-          {data?.health && (
-            <HealthCircle score={data.health.score} label={data.health.label} />
-          )}
-
-          {/* Counters */}
-          <div className="flex gap-3">
-            <div className={`px-4 py-2.5 rounded-xl border text-center min-w-[72px] transition-colors ${
-              (data?.critical_count ?? 0) + (data?.storm_count ?? 0) > 0
-                ? 'border-red-500/50 bg-red-500/10' : 'border-slate-700 bg-slate-800/40'
-            }`}>
-              <div className={`text-2xl font-bold ${(data?.critical_count ?? 0) > 0 ? 'text-red-400' : 'text-slate-600'}`}>
-                {(data?.critical_count ?? 0) + (data?.storm_count ?? 0)}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-center gap-1">
-                <ShieldAlert size={10} /> Kritik
-              </div>
-            </div>
-            <div className={`px-4 py-2.5 rounded-xl border text-center min-w-[72px] ${
-              (data?.warning_count ?? 0) > 0 ? 'border-amber-500/40 bg-amber-500/8' : 'border-slate-700 bg-slate-800/40'
-            }`}>
-              <div className={`text-2xl font-bold ${(data?.warning_count ?? 0) > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
-                {data?.warning_count ?? 0}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-center gap-1">
-                <AlertTriangle size={10} /> Uyarı
-              </div>
-            </div>
-            <div className="px-4 py-2.5 rounded-xl border border-green-500/20 bg-green-500/5 text-center min-w-[72px]">
-              <div className="text-2xl font-bold text-green-400">{data?.green_count ?? 0}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-center gap-1">
-                <CheckCircle2 size={10} /> Normal
-              </div>
-            </div>
-          </div>
-
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* Last updated + refresh */}
-          <div className="flex items-center gap-2">
+    <>
+      <OpsShell
+        platform={platform}
+        loading={isLoading}
+        health={data?.health ? { score: data.health.score, label: data.health.label } : null}
+        kpi={{
+          critical: (data?.critical_count ?? 0) + (data?.storm_count ?? 0),
+          warning: data?.warning_count ?? 0,
+          tertiaryValue: data?.green_count ?? 0,
+          tertiaryLabel: 'Normal',
+        }}
+        headerActions={(
+          <>
             <span className="text-xs text-slate-600 hidden sm:block">
               {relTime(data?.generated_at ?? null)} önce güncellendi
             </span>
-            <RefreshCountdown onRefresh={() => { refetch(); invalidate() }} interval={30} />
-          </div>
-        </div>
-
-        {/* Metric category widgets */}
-        <div className="flex gap-3 mt-4">
-          {[
-            { key: 'cpu',     icon: <Cpu size={14} />,       label: 'CPU',   color: 'text-orange-400' },
-            { key: 'memory',  icon: <MemoryStick size={14} />, label: 'RAM',  color: 'text-purple-400' },
-            { key: 'disk',    icon: <HardDrive size={14} />,  label: 'Disk',  color: 'text-blue-400' },
-            { key: 'network', icon: <Network size={14} />,    label: 'Ağ',    color: 'text-teal-400' },
-          ].map(({ key, icon, label, color }) => (
-            <MetricWidget key={key} icon={icon} label={label} color={color}
-              count={(metricBreakdown.counts as any)[key]}
-              critCount={(metricBreakdown.critCounts as any)[key]}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* ── Filter Bar ───────────────────────────────────────────────────── */}
-      <div className="flex-none px-6 py-3 border-b border-slate-800/60 flex items-center gap-3 flex-wrap">
-        {/* Search */}
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Sunucu, IP veya metrik ara…"
-            className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-4 py-2 w-64 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
-          />
-          {search && (
-            <button onClick={() => setSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-              <X size={13} />
-            </button>
-          )}
-        </div>
-
-        {/* Tier */}
-        <div className="flex gap-1">
-          {(['all', 'production', 'staging', 'development'] as const).map(t => (
-            <button key={t} onClick={() => setTierFilter(t)}
-              className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-                tierFilter === t
-                  ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
-                  : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-              }`}>
-              {t === 'all' ? 'Tümü' : TIER_SHORT[t]}
-            </button>
-          ))}
-        </div>
-
-        {/* Severity */}
-        <div className="flex gap-1">
-          {(['all', 'critical', 'warning'] as const).map(s => (
-            <button key={s} onClick={() => setSevFilter(s)}
-              className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-                sevFilter === s
-                  ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
-                  : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-              }`}>
-              {s === 'all' ? 'Tüm Seviye' : s === 'critical' ? 'Kritik' : 'Uyarı'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Main Grid ────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-
-        {/* Left: Alarm list */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          {/* Bulk toolbar */}
-          {selectedIds.size > 0 && (
-            <BulkToolbar selectedIds={[...selectedIds]} onClear={() => setSelectedIds(new Set())} onDone={invalidate} />
-          )}
-
-          {allOk && !search && sevFilter === 'all' && tierFilter === 'all' && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <CheckCircle2 size={48} className="text-green-400 mb-4" />
-              <h3 className="text-xl font-semibold text-green-400">Her şey yolunda</h3>
-              <p className="text-sm text-slate-400 mt-2">Son 24 saatte müdahale gerektiren alarm yok.</p>
-            </div>
-          )}
-
-          {/* Storms */}
-          {(data?.storms?.length ?? 0) > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <Zap size={14} className="text-amber-400" />
-                <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                  Alarm Fırtınaları — {data!.storms.length}
-                </h2>
-              </div>
-              <div className="space-y-3">
-                {data!.storms.map(s => (
-                  <StormAlarmCard key={s.incident_id} storm={s}
-                    selected={s.event_ids.every(id => selectedIds.has(id))}
-                    onSelect={toggleSelect} onDone={invalidate} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Critical */}
-          {critFiltered.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-                <h2 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                  Hemen Bak — {critFiltered.length} sunucu
-                </h2>
-              </div>
-              <div className="space-y-2">
-                {critFiltered.map(c => (
-                  <ServerAlarmCard key={`${c.server.id}-${c.last_seen}`} card={c}
-                    selected={c.event_ids.every(id => selectedIds.has(id))}
-                    onSelect={toggleSelect} onDone={invalidate}
-                    onClick={() => setDetailCard(c)} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Warning */}
-          {warnFiltered.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                  İzle — {warnFiltered.length} sunucu
-                </h2>
-              </div>
-              <div className="space-y-2">
-                {warnFiltered.map(c => (
-                  <ServerAlarmCard key={`${c.server.id}-${c.last_seen}`} card={c}
-                    selected={c.event_ids.every(id => selectedIds.has(id))}
-                    onSelect={toggleSelect} onDone={invalidate}
-                    onClick={() => setDetailCard(c)} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {(critFiltered.length === 0 && warnFiltered.length === 0 && (search || sevFilter !== 'all' || tierFilter !== 'all')) && (
-            <div className="text-center py-16 text-slate-600">
-              <Search size={32} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Filtre kriterlerine uyan alarm yok.</p>
-            </div>
-          )}
-
-          {/* Bottom nav */}
-          <div className="grid grid-cols-4 gap-2 pt-4 border-t border-slate-800/60">
+            <OpsRefreshCountdown onRefresh={() => { refetch(); invalidate() }} interval={30} />
+          </>
+        )}
+        metaRow={(
+          <div className="flex gap-3 w-full basis-full order-last">
             {[
-              { to: eventsPath, icon: <Activity size={13} />,    label: 'Events' },
-              { to: incidentsPath, icon: <Siren size={13} />,       label: 'Incidents' },
-              { to: `${analysisPath}?tab=baseline`,  icon: <BellOff size={13} />,     label: 'Baseline' },
-              { to: `${analysisPath}?tab=rca`,       icon: <ScanSearch size={13} />,  label: 'Kök Neden' },
-            ].map(({ to, icon, label }) => (
-              <Link key={to} to={to}
-                className="flex items-center justify-center gap-1.5 text-xs py-2.5 rounded-xl border border-slate-800 text-slate-500 hover:bg-slate-800 hover:text-slate-300 hover:border-slate-700 transition-colors">
-                {icon} {label}
-              </Link>
+              { key: 'cpu', icon: <Cpu size={14} />, label: 'CPU', color: 'text-orange-400' },
+              { key: 'memory', icon: <MemoryStick size={14} />, label: 'RAM', color: 'text-purple-400' },
+              { key: 'disk', icon: <HardDrive size={14} />, label: 'Disk', color: 'text-blue-400' },
+              { key: 'network', icon: <Network size={14} />, label: 'Ağ', color: 'text-teal-400' },
+            ].map(({ key, icon, label, color }) => (
+              <MetricWidget
+                key={key}
+                icon={icon}
+                label={label}
+                color={color}
+                count={(metricBreakdown.counts as any)[key]}
+                critCount={(metricBreakdown.critCounts as any)[key]}
+              />
             ))}
           </div>
-        </div>
+        )}
+        filterBar={(
+          <>
+            <div className="relative flex-1 min-w-[12rem] max-w-md">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Sunucu, IP veya metrik ara…"
+                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
+              />
+              {search && (
+                <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1">
+              {(['all', 'production', 'staging', 'development'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTierFilter(t)}
+                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                    tierFilter === t
+                      ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                      : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  {t === 'all' ? 'Tümü' : TIER_SHORT[t]}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              {(['all', 'critical', 'warning'] as const).map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSevFilter(s)}
+                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                    sevFilter === s
+                      ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                      : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  {s === 'all' ? 'Tüm Seviye' : s === 'critical' ? 'Kritik' : 'Uyarı'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        sideRail={<ActivityTimeline platform={platform} />}
+      >
+        {selectedIds.size > 0 && (
+          <BulkToolbar selectedIds={[...selectedIds]} onClear={() => setSelectedIds(new Set())} onDone={invalidate} />
+        )}
 
-        {/* Right: Activity Timeline */}
-        <div className="w-72 flex-none border-l border-slate-800/60 overflow-hidden">
-          <ActivityTimeline platform={platform} />
-        </div>
-      </div>
+        {allOk && !search && sevFilter === 'all' && tierFilter === 'all' && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <CheckCircle2 size={48} className="text-green-400 mb-4" />
+            <h3 className="text-xl font-semibold text-green-400">Her şey yolunda</h3>
+            <p className="text-sm text-slate-400 mt-2">Son 24 saatte müdahale gerektiren alarm yok.</p>
+          </div>
+        )}
 
-      {/* ── Slide-over Detail Panel ───────────────────────────────────────── */}
+        {(data?.storms?.length ?? 0) > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <Zap size={14} className="text-amber-400" />
+              <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+                Alarm Fırtınaları — {data!.storms.length}
+              </h2>
+            </div>
+            <div className="space-y-3">
+              {data!.storms.map(s => (
+                <StormAlarmCard
+                  key={s.incident_id}
+                  storm={s}
+                  platform={platform}
+                  selected={s.event_ids.every(id => selectedIds.has(id))}
+                  onSelect={toggleSelect}
+                  onDone={invalidate}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {critFiltered.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+              <h2 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
+                Hemen Bak — {critFiltered.length} sunucu
+              </h2>
+            </div>
+            <div className="space-y-2">
+              {critFiltered.map(c => (
+                <ServerAlarmCard
+                  key={`${c.server.id}-${c.last_seen}`}
+                  card={c}
+                  selected={c.event_ids.every(id => selectedIds.has(id))}
+                  onSelect={toggleSelect}
+                  onDone={invalidate}
+                  onClick={() => setDetailCard(c)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {warnFiltered.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+                İzle — {warnFiltered.length} sunucu
+              </h2>
+            </div>
+            <div className="space-y-2">
+              {warnFiltered.map(c => (
+                <ServerAlarmCard
+                  key={`${c.server.id}-${c.last_seen}`}
+                  card={c}
+                  selected={c.event_ids.every(id => selectedIds.has(id))}
+                  onSelect={toggleSelect}
+                  onDone={invalidate}
+                  onClick={() => setDetailCard(c)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {(critFiltered.length === 0 && warnFiltered.length === 0 && (search || sevFilter !== 'all' || tierFilter !== 'all')) && (
+          <div className="text-center py-16 text-slate-600">
+            <Search size={32} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Filtre kriterlerine uyan alarm yok.</p>
+          </div>
+        )}
+      </OpsShell>
+
       {detailCard && (
         <ServerDetailPanel
           card={detailCard}
@@ -1087,6 +965,6 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           onDone={invalidate}
         />
       )}
-    </div>
+    </>
   )
 }

@@ -820,13 +820,11 @@ class VCenterClient:
             # config.hardware.device → VirtualEthernetCard objects
             nics: list = []
             for device in root.iter():
-                if _tag(device) not in (
-                    "VirtualVmxnet3", "VirtualVmxnet", "VirtualE1000",
-                    "VirtualE1000e", "VirtualPCNet32", "VirtualSriovEthernetCard",
-                ):
+                if not self._is_ethernet_device(device):
                     continue
                 label = ""
                 mac = ""
+                portgroup = ""
                 for child in device:
                     ct = _tag(child)
                     if ct == "label":
@@ -837,13 +835,24 @@ class VCenterClient:
                         for sub in child:
                             if _tag(sub) == "label":
                                 label = sub.text or ""
+                    elif ct == "backing":
+                        for sub in child:
+                            if _tag(sub) == "deviceName" and (sub.text or "").strip():
+                                portgroup = sub.text.strip()
+                            elif _tag(sub) == "port":
+                                for p in sub:
+                                    if _tag(p) == "portgroupKey" and (p.text or "").strip():
+                                        portgroup = p.text.strip()
 
                 nic_ips = mac_ips.get((mac or "").lower(), [])
                 # Fallback: guest IP bilgisi varsa ilk NIC'e ekle
                 if not nic_ips and guest_ip and not nics:
                     nic_ips = [{"address": guest_ip, "version": "v4"}]
 
-                nics.append({"name": label or f"NIC {len(nics)+1}", "mac": mac, "ips": nic_ips})
+                entry = {"name": label or f"NIC {len(nics)+1}", "mac": mac, "ips": nic_ips}
+                if portgroup:
+                    entry["portgroup"] = portgroup
+                nics.append(entry)
 
             return nics
         except Exception as e:
@@ -1029,6 +1038,7 @@ class VCenterClient:
           <vim25:pathSet>summary.config.numCpu</vim25:pathSet>
           <vim25:pathSet>summary.config.memorySizeMB</vim25:pathSet>
           <vim25:pathSet>summary.runtime.powerState</vim25:pathSet>
+          <vim25:pathSet>guest.disk</vim25:pathSet>
         </vim25:propSet>
         <vim25:objectSet>
           <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
@@ -1050,12 +1060,24 @@ class VCenterClient:
 
             # Parse propSet elements: <propSet><name>X</name><val>Y</val></propSet>
             props: dict = {}
+            guest_disks: List[Dict] = []
             for ps in root.iter():
                 if ps.tag.split("}")[-1] == "propSet":
                     name_el = next((c for c in ps if c.tag.split("}")[-1] == "name"), None)
                     val_el  = next((c for c in ps if c.tag.split("}")[-1] == "val"),  None)
                     if name_el is not None and val_el is not None:
                         pname = name_el.text or ""
+                        if pname == "guest.disk":
+                            for gdi in val_el.iter():
+                                if gdi.tag.split("}")[-1] != "GuestDiskInfo":
+                                    continue
+                                flat_d = {
+                                    c.tag.split("}")[-1]: (c.text or "").strip()
+                                    for c in gdi
+                                }
+                                if flat_d.get("capacity"):
+                                    guest_disks.append(flat_d)
+                            continue
                         # collect sub-elements of val into props
                         for child in val_el:
                             props[child.tag.split("}")[-1]] = child.text
@@ -1078,12 +1100,35 @@ class VCenterClient:
                 cpu_percent = min(cpu_percent, 100.0)
             mem_percent = round((mem_used / mem_total) * 100, 1) if mem_total and mem_used else None
 
+            disk_percent = None
+            disk_total_gb = None
+            disk_avail_gb = None
+            if guest_disks:
+                total_cap = 0
+                total_free = 0
+                for d in guest_disks:
+                    try:
+                        cap = int(d.get("capacity") or 0)
+                        free = int(d.get("freeSpace") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if cap > 0:
+                        total_cap += cap
+                        total_free += max(0, free)
+                if total_cap > 0:
+                    disk_percent = round((1 - total_free / total_cap) * 100, 1)
+                    disk_total_gb = round(total_cap / (1024 ** 3), 1)
+                    disk_avail_gb = round(total_free / (1024 ** 3), 1)
+
             return {
                 "cpu_mhz": cpu_mhz,
                 "cpu_percent": cpu_percent,
                 "mem_used_mb": mem_used,
                 "mem_total_mb": mem_total,
                 "mem_percent": mem_percent,
+                "disk_percent": disk_percent,
+                "disk_total_gb": disk_total_gb,
+                "disk_avail_gb": disk_avail_gb,
                 "uptime_seconds": uptime,
                 "power_state": power_state,
                 "num_cpu": num_cpu,
@@ -1154,6 +1199,8 @@ class VCenterClient:
         wanted = {
             ("virtualDisk", "numberReadAveraged", "average"): "read",
             ("virtualDisk", "numberWriteAveraged", "average"): "write",
+            ("net", "bytesRx", "average"): "net_rx",
+            ("net", "bytesTx", "average"): "net_tx",
         }
         found: Dict[str, int] = {}
         # Each PerfCounterInfo is typically under val/*/ or PropSet children
@@ -1212,17 +1259,30 @@ class VCenterClient:
                 except (TypeError, ValueError):
                     pass
 
-        if "read" not in found and "write" not in found:
-            logger.debug("VMware perf counters for virtualDisk IOPS not found")
+        if not found:
+            logger.debug("VMware perf counters for VM disk/net not found")
             return None
 
         self._perf_cache = (perf_mgr, found)
         return self._perf_cache
 
     def get_vm_disk_iops(self, vm_id: str) -> Optional[Dict]:
+        """Geriye uyum: get_vm_perf_io yalnızca disk alanlarını döner."""
+        perf = self.get_vm_perf_io(vm_id)
+        if not perf:
+            return None
+        if perf.get("disk_read_iops") is None and perf.get("disk_write_iops") is None:
+            return None
+        return {
+            "disk_read_iops": perf.get("disk_read_iops"),
+            "disk_write_iops": perf.get("disk_write_iops"),
+            "source": "vcenter_perf",
+        }
+
+    def get_vm_perf_io(self, vm_id: str) -> Optional[Dict]:
         """
-        PerformanceManager QueryPerf — virtualDisk numberRead/WriteAveraged (≈ IOPS).
-        Guest filesystem % vermez; hypervisor düzeyinde VMDK IO ortalamasıdır.
+        PerformanceManager QueryPerf — virtualDisk IOPS + net bytesRx/Tx (KB/s civarı).
+        Guest filesystem % vermez; o get_vm_quick_stats(guest.disk) ile gelir.
         """
         import xml.etree.ElementTree as ET
 
@@ -1294,20 +1354,44 @@ class VCenterClient:
                 elif kind == "val" and current_cid is not None:
                     sums[current_cid].append(float(v))
 
-            read_id = found.get("read")
-            write_id = found.get("write")
-            read_iops = sum(sums.get(read_id, [0])) if read_id else None
-            write_iops = sum(sums.get(write_id, [0])) if write_id else None
-            if read_iops is None and write_iops is None:
+            def _sum_slot(slot: str) -> Optional[float]:
+                cid = found.get(slot)
+                if cid is None:
+                    return None
+                vals = sums.get(cid, [])
+                return sum(vals) if vals else 0.0
+
+            read_iops = _sum_slot("read")
+            write_iops = _sum_slot("write")
+            net_rx = _sum_slot("net_rx")
+            net_tx = _sum_slot("net_tx")
+            if all(v is None for v in (read_iops, write_iops, net_rx, net_tx)):
                 return None
             return {
                 "disk_read_iops": round(read_iops, 2) if read_iops is not None else None,
                 "disk_write_iops": round(write_iops, 2) if write_iops is not None else None,
+                # VMware net.bytesRx/Tx average ≈ KB/s (instance aggregate)
+                "net_rx_kbps": round(net_rx, 2) if net_rx is not None else None,
+                "net_tx_kbps": round(net_tx, 2) if net_tx is not None else None,
                 "source": "vcenter_perf",
             }
         except Exception as e:
-            logger.warning("get_vm_disk_iops error: %s", e)
+            logger.warning("get_vm_perf_io error: %s", e)
             return None
+
+    def get_vm_live_metrics(self, vm_id: str) -> Optional[Dict]:
+        """QuickStats (CPU/RAM/disk%) + PerformanceManager (disk IOPS + net)."""
+        stats = self.get_vm_quick_stats(vm_id)
+        if not stats:
+            return None
+        perf = self.get_vm_perf_io(vm_id) or {}
+        stats.update({
+            "disk_read_iops": perf.get("disk_read_iops"),
+            "disk_write_iops": perf.get("disk_write_iops"),
+            "net_rx_kbps": perf.get("net_rx_kbps"),
+            "net_tx_kbps": perf.get("net_tx_kbps"),
+        })
+        return stats
 
 
     # ── ESX Host İstatistikleri ──────────────────────────────────────────────
@@ -2109,6 +2193,378 @@ class VCenterClient:
         except Exception as e:
             logger.error(f"get_all_host_network_info error: {e}", exc_info=True)
             return {}
+
+    # Folder → Datacenter → networkFolder → (Folder | DistributedVirtualPortgroup)
+    _NETWORK_FOLDER_TRAVERSAL = """
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToNetF</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToNetF</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>networkFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>"""
+
+    _ETH_CARD_TAGS = frozenset({
+        "VirtualVmxnet3", "VirtualVmxnet", "VirtualE1000",
+        "VirtualE1000e", "VirtualPCNet32", "VirtualSriovEthernetCard",
+        "VirtualEthernetCard",
+    })
+    _ETH_XSI_EXACT = frozenset({
+        "VirtualEthernetCard",
+        "VirtualVmxnet3", "VirtualVmxnet2", "VirtualVmxnet",
+        "VirtualE1000", "VirtualE1000e", "VirtualPCNet32",
+        "VirtualSriovEthernetCard",
+    })
+
+    @staticmethod
+    def _soap_xsi_type(el) -> str:
+        for k, v in (el.attrib or {}).items():
+            if k.endswith("type") or k == "type":
+                return (v or "").split(":")[-1]
+        return ""
+
+    @classmethod
+    def _is_ethernet_device(cls, el) -> bool:
+        """SOAP'ta NIC çoğu zaman <VirtualDevice xsi:type=\"VirtualVmxnet3\"> gelir."""
+        tag = el.tag.split("}")[-1]
+        if tag in cls._ETH_CARD_TAGS:
+            return True
+        xt = cls._soap_xsi_type(el)
+        return xt in cls._ETH_XSI_EXACT
+
+    def get_dvs_portgroup_vlans(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Distributed Virtual Port Group → VLAN haritası.
+        Dönüş: {portgroup_key_or_name: {name, key, vlan_id, vlan_label}}
+        Hem MoRef (dvportgroup-N) hem görünen ad ile bakılabilir.
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("get_dvs_portgroup_vlans: SOAP login failed")
+            return {}
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>DistributedVirtualPortgroup</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>key</vim25:pathSet>
+          <vim25:pathSet>config.defaultPortConfig.vlan</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          {self._NETWORK_FOLDER_TRAVERSAL}
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        def _xsi_type(el) -> str:
+            for k, v in (el.attrib or {}).items():
+                if k.endswith("type") or k == "type":
+                    return (v or "").split(":")[-1]
+            return ""
+
+        def _parse_vlan(vlan_el) -> tuple:
+            """(vlan_id: Optional[int], vlan_label: str)"""
+            if vlan_el is None:
+                return None, ""
+            xt = _xsi_type(vlan_el)
+            if xt == "VmwareDistributedVirtualSwitchVlanIdSpec" or not xt:
+                for c in vlan_el:
+                    if _tag(c) == "vlanId" and (c.text or "").strip().isdigit():
+                        vid = int(c.text.strip())
+                        return vid, str(vid)
+            if xt == "VmwareDistributedVirtualSwitchTrunkVlanSpec":
+                ranges = []
+                for c in vlan_el:
+                    if _tag(c) != "vlanId":
+                        continue
+                    start = end = None
+                    for sub in c:
+                        st = _tag(sub)
+                        if st == "start" and (sub.text or "").strip().isdigit():
+                            start = int(sub.text.strip())
+                        elif st == "end" and (sub.text or "").strip().isdigit():
+                            end = int(sub.text.strip())
+                    if start is not None and end is not None:
+                        ranges.append(f"{start}-{end}" if start != end else str(start))
+                    elif (c.text or "").strip().isdigit():
+                        ranges.append(c.text.strip())
+                label = ",".join(ranges) if ranges else "trunk"
+                return None, f"trunk({label})"
+            if xt == "VmwareDistributedVirtualSwitchPvlanSpec":
+                for c in vlan_el:
+                    if _tag(c) == "pvlanId" and (c.text or "").strip().isdigit():
+                        vid = int(c.text.strip())
+                        return vid, f"pvlan({vid})"
+            return None, xt or "unknown"
+
+        try:
+            resp = soap_session.post(
+                soap_url, data=soap_body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=60,
+            )
+            if resp.status_code != 200:
+                # Bazı ortamlarda DVS tipi yok → InvalidType (standart vSwitch yeter)
+                if "InvalidType" in (resp.text or "") or "DistributedVirtualPortgroup" in (resp.text or ""):
+                    logger.info("get_dvs_portgroup_vlans: DVS tipi yok / desteklenmiyor (standart PG kullanılacak)")
+                else:
+                    logger.warning("get_dvs_portgroup_vlans HTTP %s: %s", resp.status_code, resp.text[:300])
+                return {}
+
+            root_xml = ET.fromstring(resp.text)
+            out: Dict[str, Dict[str, Any]] = {}
+
+            for rv in root_xml.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                pg_key = (obj_el.text or "").strip() if obj_el is not None else ""
+                name = ""
+                key_prop = ""
+                vlan_id = None
+                vlan_label = ""
+
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = (n_el.text or "").strip()
+                    if pname == "name":
+                        name = (v_el.text or "").strip()
+                    elif pname == "key":
+                        key_prop = (v_el.text or "").strip()
+                    elif pname == "config.defaultPortConfig.vlan":
+                        vlan_id, vlan_label = _parse_vlan(v_el)
+
+                keys = [k for k in (pg_key, key_prop, name) if k]
+                entry = {
+                    "name": name or pg_key,
+                    "key": key_prop or pg_key,
+                    "vlan_id": vlan_id,
+                    "vlan_label": vlan_label if vlan_label else (str(vlan_id) if vlan_id is not None else ""),
+                }
+                for k in keys:
+                    out[k] = entry
+
+            logger.info("get_dvs_portgroup_vlans: %s entries (%s)", len(out), self.host)
+            return out
+        except Exception as e:
+            logger.error("get_dvs_portgroup_vlans error: %s", e, exc_info=True)
+            return {}
+
+    def get_all_vm_network_vlans(self) -> List[Dict[str, Any]]:
+        """
+        Tüm VM'lerin NIC → port-group → VLAN eşlemesini tek/ iki SOAP çağrısıyla döner
+        (standart vSwitch + Distributed Switch).
+
+        Dönüş satırları:
+          {vm_ref, vm_name, nic, mac, portgroup, vlan_id, vlan_label, backing_type}
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("get_all_vm_network_vlans: SOAP login failed")
+            return []
+
+        # Standart port-group adı → VLAN (host envanteri)
+        std_vlan: Dict[str, Any] = {}
+        try:
+            for _href, info in (self.get_all_host_network_info() or {}).items():
+                for pg in info.get("portgroups") or []:
+                    pname = (pg.get("name") or "").strip()
+                    if pname and pname not in std_vlan:
+                        std_vlan[pname] = pg.get("vlan_id")
+        except Exception as exc:
+            logger.warning("get_all_vm_network_vlans: host PG map failed: %s", exc)
+
+        dvs_map = {}
+        try:
+            dvs_map = self.get_dvs_portgroup_vlans() or {}
+        except Exception as exc:
+            logger.warning("get_all_vm_network_vlans: DVS map failed: %s", exc)
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>config.hardware.device</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          {self._VM_TRAVERSAL}
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        def _xsi_type(el) -> str:
+            for k, v in (el.attrib or {}).items():
+                if k.endswith("type") or k == "type":
+                    return (v or "").split(":")[-1]
+            return ""
+
+        def _text_child(parent, name: str) -> str:
+            for c in parent:
+                if _tag(c) == name and (c.text or "").strip():
+                    return c.text.strip()
+            return ""
+
+        rows: List[Dict[str, Any]] = []
+        try:
+            resp = soap_session.post(
+                soap_url, data=soap_body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=90,
+            )
+            if resp.status_code != 200:
+                logger.warning("get_all_vm_network_vlans HTTP %s: %s", resp.status_code, resp.text[:300])
+                return []
+
+            root_xml = ET.fromstring(resp.text)
+            for rv in root_xml.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                vm_ref = (obj_el.text or "").strip() if obj_el is not None else ""
+                vm_name = ""
+                devices_el = None
+
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = (n_el.text or "").strip()
+                    if pname == "name":
+                        vm_name = (v_el.text or "").strip()
+                    elif pname == "config.hardware.device":
+                        devices_el = v_el
+
+                if devices_el is None:
+                    continue
+
+                for device in devices_el.iter():
+                    if not self._is_ethernet_device(device):
+                        continue
+                    # Cihaz ağacında iç içe tekrar etmeyi önle: yalnızca xsi/tag eth kökü
+                    # (Ethernet kartının çocuğunda eth tipi olmaz).
+                    label = ""
+                    mac = ""
+                    backing = None
+                    for child in device:
+                        ct = _tag(child)
+                        if ct == "macAddress":
+                            mac = (child.text or "").strip()
+                        elif ct == "deviceInfo":
+                            for sub in child:
+                                if _tag(sub) == "label":
+                                    label = (sub.text or "").strip()
+                        elif ct == "backing":
+                            backing = child
+
+                    portgroup = ""
+                    backing_type = "unknown"
+                    vlan_id = None
+                    vlan_label = ""
+
+                    if backing is not None:
+                        bt = self._soap_xsi_type(backing)
+                        if "DistributedVirtualPort" in bt:
+                            backing_type = "distributed"
+                            pg_key = ""
+                            for c in backing:
+                                if _tag(c) == "port":
+                                    pg_key = _text_child(c, "portgroupKey")
+                                    break
+                            portgroup = pg_key
+                            info = dvs_map.get(pg_key) or {}
+                            if info:
+                                portgroup = info.get("name") or pg_key
+                                vlan_id = info.get("vlan_id")
+                                vlan_label = info.get("vlan_label") or ""
+                        elif "OpaqueNetwork" in bt:
+                            backing_type = "opaque"
+                            portgroup = _text_child(backing, "opaqueNetworkId") or _text_child(backing, "deviceName")
+                        else:
+                            # VirtualEthernetCardNetworkBackingInfo (standart vSwitch)
+                            backing_type = "standard"
+                            portgroup = _text_child(backing, "deviceName")
+                            if portgroup in std_vlan:
+                                vlan_id = std_vlan[portgroup]
+                                # vlan_id bazen string gelir
+                                try:
+                                    vlan_id = int(vlan_id) if vlan_id is not None and str(vlan_id).strip() != "" else vlan_id
+                                except (TypeError, ValueError):
+                                    pass
+                                vlan_label = str(vlan_id) if vlan_id is not None else ""
+
+                    if vlan_id is not None and not vlan_label:
+                        vlan_label = str(vlan_id)
+
+                    rows.append({
+                        "vm_ref": vm_ref,
+                        "vm_name": vm_name or vm_ref or "unknown",
+                        "nic": label or "NIC",
+                        "mac": mac,
+                        "portgroup": portgroup or "-",
+                        "vlan_id": vlan_id,
+                        "vlan_label": vlan_label or ("—" if vlan_id is None else str(vlan_id)),
+                        "backing_type": backing_type,
+                    })
+
+            logger.info("get_all_vm_network_vlans: %s NIC satırı (%s)", len(rows), self.host)
+            return rows
+        except Exception as e:
+            logger.error("get_all_vm_network_vlans error: %s", e, exc_info=True)
+            return []
 
     # ── vCenter Event / Alarm / Task Toplama (SOAP EventManager) ───────────────
 

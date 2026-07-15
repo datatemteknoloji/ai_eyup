@@ -32,6 +32,15 @@ class LinuxInventory(Base):
     load_average_5m = Column(Numeric(10, 2), nullable=True)
     load_average_15m = Column(Numeric(10, 2), nullable=True)
 
+    # metric_data / Prometheus zenginleştirme (filtre edilebilir özet)
+    swap_usage_percent = Column(Numeric(5, 2), nullable=True, index=True)
+    cpu_iowait_percent = Column(Numeric(5, 2), nullable=True, index=True)
+    disk_io_utilization_percent = Column(Numeric(5, 2), nullable=True)
+    network_rx_bytes_per_sec = Column(Numeric(20, 2), nullable=True)
+    network_tx_bytes_per_sec = Column(Numeric(20, 2), nullable=True)
+    # Diğer Prom metrikleri (iops, steal, softirq, fd, procs...)
+    metrics_extra = Column(JSON, nullable=True)
+
     last_patch_date = Column(DateTime(timezone=True), nullable=True)
     last_reboot_date = Column(DateTime(timezone=True), nullable=True)
 

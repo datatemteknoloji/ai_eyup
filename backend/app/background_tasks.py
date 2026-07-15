@@ -651,11 +651,15 @@ class BackgroundTaskManager:
                         collect_linux_security_audit,
                     )
 
-                    ai_stats = await loop.run_in_executor(None, update_ai_ready, None, db)
+                    ai_stats = await loop.run_in_executor(
+                        None, lambda: update_ai_ready({"throttled": True}, db)
+                    )
                     if ai_stats.get("ai_ready"):
                         logger.info(f"Auto-onboarding: {ai_stats['ai_ready']} Linux sunucu AI Ready oldu")
 
-                    win_ai_stats = await loop.run_in_executor(None, update_windows_ai_ready, None, db)
+                    win_ai_stats = await loop.run_in_executor(
+                        None, lambda: update_windows_ai_ready({"throttled": True}, db)
+                    )
                     if win_ai_stats.get("ai_ready_count"):
                         logger.info(f"Auto-onboarding: {win_ai_stats['ai_ready_count']} Windows sunucu AI Ready oldu")
 

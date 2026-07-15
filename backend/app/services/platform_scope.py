@@ -235,6 +235,14 @@ def apply_platform_filter(q: Query, platform: Optional[str], db: Session) -> Que
 
 
 def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: Session) -> list:
+    """Incident listesini modüle göre ayırır.
+
+    Kural (Events filtresiyle uyumlu):
+    - İlgili event'lerin platform'u birincil kaynaktır.
+    - `auto_vcenter_*` / `auto_virt_*` kaynaklı incident'lar yalnızca Sanallaştırma'da görünür;
+      Linux guest `affected_servers` kesişimiyle Linux'a sızmaz.
+    - OS modülleri (linux/windows) hypervisor kaynaklı incident'ları göstermez.
+    """
     if not platform or platform not in VALID_PLATFORMS:
         return incidents
 
@@ -251,23 +259,50 @@ def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: 
         for ev in db.query(SystemEvent).filter(SystemEvent.id.in_(list(all_event_ids))).all():
             event_platform[ev.id] = infer_event_platform(ev, linux_module_ids, windows_ids, exadata_ids)
 
+    def _src_flags(src: str) -> tuple:
+        s = (src or "").lower()
+        virt = any(k in s for k in ("virt", "hypervisor", "vcenter"))
+        exa = "exadata" in s
+        win = "windows" in s
+        return virt, exa, win
+
     def matches(inc) -> bool:
-        for eid in inc.related_events or []:
-            if event_platform.get(eid) == platform:
-                return True
-        aff = set(inc.affected_servers or [])
-        if platform == "linux" and aff & linux_module_ids:
-            return True
-        if platform == "windows" and aff & windows_ids:
-            return True
+        src = inc.source or ""
+        is_virt_src, is_exa_src, is_win_src = _src_flags(src)
+        related_plats = {
+            event_platform[eid]
+            for eid in (inc.related_events or [])
+            if eid in event_platform
+        }
+
         if platform == "virt":
-            src = (inc.source or "").lower()
-            if "virt" in src or "hypervisor" in src or "vcenter" in src:
+            if is_virt_src:
                 return True
+            return "virt" in related_plats
+
         if platform == "exadata":
-            src = (inc.source or "").lower()
-            if "exadata" in src:
+            if is_exa_src:
                 return True
+            return "exadata" in related_plats
+
+        # OS görünümleri: hypervisor / diğer platform kaynaklarını gösterme
+        if is_virt_src:
+            return False
+        if platform == "linux" and (is_win_src or is_exa_src):
+            return False
+        if platform == "windows" and is_exa_src:
+            return False
+
+        if related_plats:
+            # İlişkili event'ler varsa yalnızca onların platform'una göre eşle
+            # (ör. vCenter olayı Linux guest'e bağlı olsa bile Linux'a düşmez)
+            return platform in related_plats
+
+        aff = set(inc.affected_servers or [])
+        if platform == "linux":
+            return bool(aff & linux_module_ids)
+        if platform == "windows":
+            return bool(aff & windows_ids)
         return False
 
     return [inc for inc in incidents if matches(inc)]
@@ -284,10 +319,22 @@ def infer_event_platform(
     if p in VALID_PLATFORMS:
         return p
     src = (ev.source or "").lower()
-    if src.startswith("vcenter_") or src in ("virt_collector", "virt_resource"):
+    if (
+        src.startswith("vcenter_")
+        or src in _VIRT_SOURCES
+        or src.startswith("virt_")
+        or "vcenter" in src
+        or src.startswith("auto_virt")
+        or src.startswith("auto_vcenter")
+    ):
         return "virt"
     if src in _EXADATA_SOURCES or "exadata" in src:
         return "exadata"
+    if src in _WINDOWS_SOURCES or src.startswith("windows_") or src.startswith("auto_windows"):
+        return "windows"
+    if src in _LINUX_SOURCES or src.startswith("auto_log") or src == "prometheus":
+        # prometheus anomalileri server_id üzerinden OS'a düşer; aşağıda devam
+        pass
     if ev.server_id:
         if exadata_ids is not None and ev.server_id in exadata_ids:
             return "exadata"
@@ -295,4 +342,6 @@ def infer_event_platform(
             return "windows"
         if linux_ids is not None and ev.server_id in linux_ids:
             return "linux"
+    if src in _LINUX_SOURCES or src.startswith("auto_log"):
+        return "linux"
     return "linux"

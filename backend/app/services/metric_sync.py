@@ -266,9 +266,25 @@ class MetricSyncService:
                                 "end": end_time.timestamp(), "step": "60s"}
                     )
                     if resp.status_code != 200:
+                        body = (resp.text or "")[:300]
+                        logger.warning(
+                            "Prometheus query_range HTTP %s for %s/%s: %s | query=%s",
+                            resp.status_code,
+                            server.name,
+                            db_metric_name,
+                            body,
+                            query[:180],
+                        )
                         continue
                     data = resp.json()
                     if data.get("status") != "success":
+                        logger.warning(
+                            "Prometheus query_range status=%s for %s/%s: %s",
+                            data.get("status"),
+                            server.name,
+                            db_metric_name,
+                            (data.get("error") or data.get("errorType") or "")[:300],
+                        )
                         continue
                     for result in data.get("data", {}).get("result", []):
                         for ts, val in result.get("values", []):

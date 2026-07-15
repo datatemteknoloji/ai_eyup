@@ -5,11 +5,12 @@ import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
-  RefreshCw, Search, X, Cpu, MemoryStick, HardDrive, Server, Cloud,
-  AlertTriangle, CheckCircle2, Zap, ScrollText, Database,
+  Search, X, Cpu, MemoryStick, HardDrive, Server, Cloud,
+  AlertTriangle, CheckCircle2, ScrollText, Database,
   Activity, ChevronRight, Layers,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { OpsRefreshCountdown, OpsShell } from '../components/ops/OpsShell'
 
 interface PlatformCard {
   id: number; name: string; type: string; platform: string
@@ -82,27 +83,6 @@ function relTime(iso: string | null): string {
   const h = Math.floor(m / 60)
   if (h < 24) return `${h}s`
   return `${Math.floor(h / 24)}g`
-}
-
-function HealthRing({ score, label }: { score: number; label: string }) {
-  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#60a5fa' : score >= 55 ? '#facc15' : score >= 35 ? '#fb923c' : '#f87171'
-  const r = 22, circ = 2 * Math.PI * r, dash = circ * (score / 100)
-  return (
-    <div className="flex items-center gap-3">
-      <div className="relative w-14 h-14">
-        <svg viewBox="0 0 56 56" className="w-full h-full -rotate-90">
-          <circle cx="28" cy="28" r={r} fill="none" stroke="#1e293b" strokeWidth="5" />
-          <circle cx="28" cy="28" r={r} fill="none" stroke={color} strokeWidth="5"
-            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white">{score}</div>
-      </div>
-      <div>
-        <div className="text-white font-semibold">{label}</div>
-        <div className="text-xs text-slate-500">Sanallaştırma sağlığı</div>
-      </div>
-    </div>
-  )
 }
 
 function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: React.ReactNode }) {
@@ -324,20 +304,29 @@ export default function VirtOpsCenter() {
   const allOk = (data?.critical_count ?? 0) === 0 && (data?.warning_count ?? 0) === 0
 
   return (
-    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 bg-slate-950 overflow-hidden">
-      {/* Header — daha kompakt */}
-      <div className="flex-none px-4 sm:px-6 py-3 border-b border-slate-800 bg-slate-900/80">
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-bold text-white flex items-center gap-2">
-              <Zap size={18} className="text-cyan-400 flex-shrink-0" />
-              <span className="truncate">Sanallaştırma Komuta Merkezi</span>
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5 hidden sm:block">
-              vCenter · OLVM · ESX kaynakları · platform logları
-            </p>
+    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden">
+      <OpsShell
+        platform="virt"
+        loading={isLoading}
+        loadingLabel="Sanallaştırma durumu yükleniyor…"
+        health={data?.health ? { score: data.health.score, label: data.health.label } : null}
+        healthSubtitle="Sanallaştırma sağlığı"
+        kpi={{
+          critical: data?.critical_count ?? 0,
+          warning: data?.warning_count ?? 0,
+          tertiaryValue: data?.totals.vm_running ?? 0,
+          tertiaryLabel: 'VM Aktif',
+        }}
+        metaRow={data ? (
+          <div className="flex gap-3 text-xs text-slate-400 flex-wrap">
+            <span><Database size={12} className="inline mr-1" />{data.totals.hypervisor_count} manager</span>
+            <span><Server size={12} className="inline mr-1" />{data.totals.host_count} host</span>
+            <span><Cpu size={12} className="inline mr-1" />CPU %{data.totals.avg_cpu_pct}</span>
+            <span><MemoryStick size={12} className="inline mr-1" />RAM %{data.totals.avg_mem_pct}</span>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+        ) : null}
+        headerActions={(
+          <>
             <Link to="/hypervisors" className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-1">
               <Layers size={12} /> Dashboard
             </Link>
@@ -345,6 +334,7 @@ export default function VirtOpsCenter() {
               <Activity size={12} /> Altyapı Raporları
             </Link>
             <button
+              type="button"
               onClick={async () => {
                 try {
                   const r = await fetch(`${API_BASE_URL}/hypervisors/sync-vcenter-events`, { method: 'POST' })
@@ -361,167 +351,118 @@ export default function VirtOpsCenter() {
               <ScrollText size={12} />
               vCenter Sync
             </button>
-            <button
-              onClick={() => { refetch(); invalidate() }}
-              disabled={isFetching}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
-              Yenile
-            </button>
-          </div>
-        </div>
-
-        {isLoading ? (
-          <div className="h-12 flex items-center justify-center">
-            <RefreshCw size={20} className="text-slate-500 animate-spin" />
-          </div>
-        ) : data && (
-          <div className="flex items-center gap-4 flex-wrap">
-            <HealthRing score={data.health.score} label={data.health.label} />
-            <div className="flex gap-2">
-              <div className={`px-3 py-1.5 rounded-xl border text-center min-w-[64px] ${
-                data.critical_count > 0 ? 'border-red-500/50 bg-red-500/10' : 'border-slate-700 bg-slate-800/40'
-              }`}>
-                <div className={`text-xl font-bold ${data.critical_count > 0 ? 'text-red-400' : 'text-slate-600'}`}>
-                  {data.critical_count}
-                </div>
-                <div className="text-[10px] text-slate-500">Kritik</div>
-              </div>
-              <div className={`px-3 py-1.5 rounded-xl border text-center min-w-[64px] ${
-                data.warning_count > 0 ? 'border-amber-500/40 bg-amber-500/8' : 'border-slate-700 bg-slate-800/40'
-              }`}>
-                <div className={`text-xl font-bold ${data.warning_count > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
-                  {data.warning_count}
-                </div>
-                <div className="text-[10px] text-slate-500">Uyarı</div>
-              </div>
-              <div className="px-3 py-1.5 rounded-xl border border-green-500/20 bg-green-500/5 text-center min-w-[64px]">
-                <div className="text-xl font-bold text-green-400">{data.totals.vm_running}</div>
-                <div className="text-[10px] text-slate-500">VM Aktif</div>
-              </div>
+            <OpsRefreshCountdown onRefresh={() => { refetch(); invalidate() }} interval={30} />
+          </>
+        )}
+        filterBar={(
+          <>
+            <div className="relative flex-1 min-w-[12rem] max-w-md">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Host, platform veya log ara…"
+                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              />
+              {search && (
+                <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                  <X size={13} />
+                </button>
+              )}
             </div>
-            <div className="flex gap-3 text-xs text-slate-400 flex-wrap">
-              <span><Database size={12} className="inline mr-1" />{data.totals.hypervisor_count} manager</span>
-              <span><Server size={12} className="inline mr-1" />{data.totals.host_count} host</span>
-              <span><Cpu size={12} className="inline mr-1" />CPU %{data.totals.avg_cpu_pct}</span>
-              <span><MemoryStick size={12} className="inline mr-1" />RAM %{data.totals.avg_mem_pct}</span>
-            </div>
+            {(['all', 'critical', 'warning'] as const).map(s => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSevFilter(s)}
+                className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                  sevFilter === s ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {s === 'all' ? 'Tümü' : s === 'critical' ? 'Kritik' : 'Uyarı'}
+              </button>
+            ))}
+          </>
+        )}
+        sideRail={(
+          <div className="h-full min-h-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/95 py-2 -mt-2 z-10">
+              <ScrollText size={13} className="flex-shrink-0" />
+              <span className="truncate">Platform Logları (24s)</span>
+            </h2>
+            <LogTimeline logs={filteredLogs} />
           </div>
         )}
-      </div>
+      >
+        {data && data.platforms.length > 0 && (
+          <section>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+              <Cloud size={13} /> Yönetim Platformları
+            </h2>
+            <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
+              {data.platforms.map(p => <PlatformManagerCard key={p.id} p={p} />)}
+            </div>
+          </section>
+        )}
 
-      {/* Platform managers — yatay kaydırma; barlar ezilmez */}
-      {data && data.platforms.length > 0 && (
-        <div className="flex-none px-4 sm:px-6 py-3 border-b border-slate-800/60">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <Cloud size={13} /> Yönetim Platformları
-          </h2>
-          <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
-            {data.platforms.map(p => <PlatformManagerCard key={p.id} p={p} />)}
+        {allOk && !search && sevFilter === 'all' ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <CheckCircle2 size={48} className="text-green-400 mb-4" />
+            <h3 className="text-lg font-semibold text-green-400">Sanallaştırma katmanı sağlıklı</h3>
+            <p className="text-sm text-slate-400 mt-2">Host kaynak ve platform uyarısı yok.</p>
           </div>
-        </div>
-      )}
-
-      {/* Filter bar */}
-      <div className="flex-none px-4 sm:px-6 py-2.5 border-b border-slate-800/60 flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[12rem] max-w-md">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Host, platform veya log ara…"
-            className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-              <X size={13} />
-            </button>
-          )}
-        </div>
-        {(['all', 'critical', 'warning'] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setSevFilter(s)}
-            className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-              sevFilter === s ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            {s === 'all' ? 'Tümü' : s === 'critical' ? 'Kritik' : 'Uyarı'}
-          </button>
-        ))}
-      </div>
-
-      {/* Main: uyarılar + loglar — geniş ekranda yan yana, dar ekranda alt alta */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)] overflow-hidden">
-        <div className="min-h-0 overflow-y-auto px-4 sm:px-6 py-4 border-b xl:border-b-0 xl:border-r border-slate-800/60">
-          {allOk && !search && sevFilter === 'all' ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <CheckCircle2 size={48} className="text-green-400 mb-4" />
-              <h3 className="text-lg font-semibold text-green-400">Sanallaştırma katmanı sağlıklı</h3>
-              <p className="text-sm text-slate-400 mt-2">Host kaynak ve platform uyarısı yok.</p>
+        ) : (
+          <>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Server size={13} /> Aktif Uyarılar ({filteredHosts.length})
+            </h2>
+            <div className="space-y-3 max-w-4xl">
+              {filteredHosts.map(h => (
+                <HostAlertCard
+                  key={`${h.alert_type || 'host'}-${h.hypervisor_id}-${h.host_name}`}
+                  host={h}
+                  selected={
+                    selectedHost?.host_name === h.host_name
+                    && selectedHost?.hypervisor_id === h.hypervisor_id
+                    && (selectedHost?.alert_type || 'host') === (h.alert_type || 'host')
+                  }
+                  onSelect={() => setSelectedHost(prev =>
+                    prev?.host_name === h.host_name
+                    && prev?.hypervisor_id === h.hypervisor_id
+                    && (prev?.alert_type || 'host') === (h.alert_type || 'host')
+                      ? null : h
+                  )}
+                />
+              ))}
+              {filteredHosts.length === 0 && (
+                <p className="text-sm text-slate-500 text-center py-8">Filtreye uygun host uyarısı yok</p>
+              )}
             </div>
-          ) : (
-            <>
-              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-950/95 py-1 z-10">
-                <Server size={13} /> Aktif Uyarılar ({filteredHosts.length})
-              </h2>
-              <div className="space-y-3 max-w-4xl">
-                {filteredHosts.map(h => (
-                  <HostAlertCard
-                    key={`${h.alert_type || 'host'}-${h.hypervisor_id}-${h.host_name}`}
-                    host={h}
-                    selected={
-                      selectedHost?.host_name === h.host_name
-                      && selectedHost?.hypervisor_id === h.hypervisor_id
-                      && (selectedHost?.alert_type || 'host') === (h.alert_type || 'host')
-                    }
-                    onSelect={() => setSelectedHost(prev =>
-                      prev?.host_name === h.host_name
-                      && prev?.hypervisor_id === h.hypervisor_id
-                      && (prev?.alert_type || 'host') === (h.alert_type || 'host')
-                        ? null : h
-                    )}
-                  />
-                ))}
-                {filteredHosts.length === 0 && (
-                  <p className="text-sm text-slate-500 text-center py-8">Filtreye uygun host uyarısı yok</p>
-                )}
-              </div>
-            </>
-          )}
+          </>
+        )}
 
-          {selectedHost && (
-            <div className="mt-6 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 max-w-4xl">
-              <h3 className="text-sm font-semibold text-cyan-300 mb-3 truncate">{selectedHost.host_name} — Detay</h3>
-              <div className="space-y-2 mb-4">
-                {selectedHost.issues.map((i, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-sm min-w-0">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
-                    <span className="text-slate-300 truncate">{i.title}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Önerilen Aksiyonlar</div>
-              <ul className="space-y-1">
-                {selectedHost.suggested_actions.map((a, i) => (
-                  <li key={i} className="text-xs text-slate-400 flex gap-2">
-                    <ChevronRight size={12} className="text-cyan-500 shrink-0 mt-0.5" /> {a}
-                  </li>
-                ))}
-              </ul>
+        {selectedHost && (
+          <div className="mt-2 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 max-w-4xl">
+            <h3 className="text-sm font-semibold text-cyan-300 mb-3 truncate">{selectedHost.host_name} — Detay</h3>
+            <div className="space-y-2 mb-4">
+              {selectedHost.issues.map((i, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-sm min-w-0">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
+                  <span className="text-slate-300 truncate">{i.title}</span>
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-
-        <div className="min-h-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/95 py-2 -mt-2 z-10">
-            <ScrollText size={13} className="flex-shrink-0" />
-            <span className="truncate">Platform Logları — vCenter Event / Alarm (24s)</span>
-          </h2>
-          <LogTimeline logs={filteredLogs} />
-        </div>
-      </div>
+            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Önerilen Aksiyonlar</div>
+            <ul className="space-y-1">
+              {selectedHost.suggested_actions.map((a, i) => (
+                <li key={i} className="text-xs text-slate-400 flex gap-2">
+                  <ChevronRight size={12} className="text-cyan-500 shrink-0 mt-0.5" /> {a}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </OpsShell>
     </div>
   )
 }

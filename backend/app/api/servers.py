@@ -49,16 +49,28 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     HTTP hemen döner — yüzlerce sunucuda nginx HTML timeout'u önlenir.
     WinRM için: POST /windows/update-ai-ready
     İlerleme: GET /servers/bulk-jobs/{job_id}
+
+    body.throttled=true → AI Ready olanlar ready_recheck, olmayanlar not_ready_recheck
+    aralığına göre atlanır (auto-onboarding). Manuel UI çağrısı throttle etmez.
     """
     import threading
+    from datetime import datetime, timezone
     from app.models.credential import GlobalCredential
     from app.core.database import ThreadSessionLocal as SessionLocal
     from app.services.platform_scope import is_windows_server
     from app.services.bulk_concurrency import bulk_ssh_workers
     from app.services.ssh_credentials import resolve_ssh_creds
     from app.services import bulk_job_tracker as jobs
+    from app.services.runtime_settings import get_int
+    from app.services.scan_throttle import should_recheck_ai_ready
 
-    server_ids = (body or {}).get("server_ids")
+    body = body or {}
+    server_ids = body.get("server_ids")
+    throttled = bool(body.get("throttled"))
+    ready_sec = get_int("ai_ready_ready_recheck_sec")
+    not_ready_sec = get_int("ai_ready_not_ready_recheck_sec")
+    now = datetime.now(timezone.utc)
+
     q = db.query(Server)
     if server_ids:
         q = q.filter(Server.id.in_(server_ids))
@@ -69,6 +81,22 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
         ).all()
         if not is_windows_server(s)
     ]
+    if throttled:
+        before = len(server_list)
+        server_list = [
+            s for s in server_list
+            if should_recheck_ai_ready(
+                ai_ready=bool(s.ai_ready),
+                last_check=s.ai_ready_last_check,
+                ready_recheck_sec=ready_sec,
+                not_ready_recheck_sec=not_ready_sec,
+                now=now,
+            )
+        ]
+        logger.info(
+            "update-ai-ready throttle: %s/%s sunucu teste alındı (ready=%ss not_ready=%ss)",
+            len(server_list), before, ready_sec, not_ready_sec,
+        )
 
     global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
                   or db.query(GlobalCredential).first()
@@ -96,7 +124,7 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
         total=queued,
         message=f"{queued} Linux sunucu kuyruğa alındı..." if queued else "Test edilecek sunucu yok",
     )
-    logger.info("update-ai-ready (arka plan kuyruk): %s sunucu, workers=%s job=%s", queued, workers, job_id)
+    logger.info("update-ai-ready (arka plan kuyruk): %s sunucu, workers=%s job=%s throttled=%s", queued, workers, job_id, throttled)
 
     def _bg() -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -144,8 +172,12 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
         thread_db = SessionLocal()
         try:
             ready_count = not_ready_count = 0
+            checked_at = datetime.now(timezone.utc)
             for srv_id, ok in results.items():
-                thread_db.query(Server).filter_by(id=srv_id).update({"ai_ready": ok})
+                thread_db.query(Server).filter_by(id=srv_id).update({
+                    "ai_ready": ok,
+                    "ai_ready_last_check": checked_at,
+                })
                 if ok:
                     ready_count += 1
                 else:
@@ -180,11 +212,13 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
         "ai_ready": None,
         "not_ready": None,
         "workers": workers,
+        "throttled": throttled,
         "message": (
             f"{queued} Linux sunucuda SSH AI Ready testi arka planda başladı. "
             "Birkaç dakika içinde liste güncellenir (Windows hariç)."
             if queued else
-            "Test edilecek Linux sunucu bulunamadı (credential/IP gerekli)."
+            ("Throttle: yeniden deneme aralığı dolmadı — test atlandı." if throttled else
+             "Test edilecek Linux sunucu bulunamadı (credential/IP gerekli).")
         ),
     }
 
@@ -832,10 +866,87 @@ async def check_server_health(server_id: int, db: Session = Depends(get_db)):
 # In-memory cache for vCenter metrics (avoids 3s SOAP calls on every refetch)
 _vcenter_cache: dict = {}  # server_id -> (result_dict, expires_at)
 
+
+def _fetch_vcenter_vm_metrics(server: Server, db: Session) -> dict:
+    """hypervisor_vm_id / name-ip ile vCenter'dan CPU/RAM/disk/net anlık metrik."""
+    import time as _time
+    from app.models.hypervisor import Hypervisor, HypervisorType
+    from app.services.vmware.vcenter_client import VCenterClient
+
+    cached = _vcenter_cache.get(server.id)
+    if cached and cached[1] > _time.time():
+        return cached[0]
+
+    hyps = []
+    if server.hypervisor_id:
+        hyp = db.query(Hypervisor).filter(
+            Hypervisor.id == server.hypervisor_id,
+            Hypervisor.hypervisor_type == HypervisorType.VMWARE,
+        ).first()
+        if hyp:
+            hyps = [hyp]
+    if not hyps:
+        hyps = db.query(Hypervisor).filter(
+            Hypervisor.hypervisor_type == HypervisorType.VMWARE
+        ).all()
+
+    vcenter_stats: dict = {}
+    for hyp in hyps:
+        vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
+        if not (hyp.hostname and hyp.username and vc_pass):
+            continue
+        try:
+            vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
+            if not vc.login():
+                continue
+            vm_id = server.hypervisor_vm_id
+            if not vm_id:
+                vm_id = vc.find_vm_by_name_or_ip(name=server.name, ip=server.ip_address or "")
+            if vm_id:
+                stats = vc.get_vm_live_metrics(str(vm_id))
+                if stats:
+                    vcenter_stats = stats
+            vc.logout()
+            if vcenter_stats:
+                break
+        except Exception as e:
+            logger.warning(f"vCenter metrics fallback error: {e}")
+
+    if vcenter_stats:
+        _vcenter_cache[server.id] = (vcenter_stats, _time.time() + 60)
+    return vcenter_stats
+
+
+def _vcenter_metrics_payload(server_id: int, vcenter_stats: dict) -> dict:
+    mtmb = vcenter_stats.get("mem_total_mb") or 0
+    mumb = vcenter_stats.get("mem_used_mb") or 0
+    return {
+        "server_id": server_id,
+        "has_node_exporter": False,
+        "source": "vcenter",
+        "power_state": vcenter_stats.get("power_state"),
+        "cpu_percent": vcenter_stats.get("cpu_percent"),
+        "mem_percent": vcenter_stats.get("mem_percent"),
+        "disk_percent": vcenter_stats.get("disk_percent"),
+        "load1": None,
+        "load5": None,
+        "uptime_seconds": vcenter_stats.get("uptime_seconds"),
+        "mem_total_gb": round(mtmb / 1024, 1) if mtmb else None,
+        "mem_used_gb": round(mumb / 1024, 1) if mumb else None,
+        "disk_total_gb": vcenter_stats.get("disk_total_gb"),
+        "disk_avail_gb": vcenter_stats.get("disk_avail_gb"),
+        "cpu_num": vcenter_stats.get("num_cpu"),
+        "cpu_mhz": vcenter_stats.get("cpu_mhz"),
+        "disk_read_iops": vcenter_stats.get("disk_read_iops"),
+        "disk_write_iops": vcenter_stats.get("disk_write_iops"),
+        "net_rx_kbps": vcenter_stats.get("net_rx_kbps"),
+        "net_tx_kbps": vcenter_stats.get("net_tx_kbps"),
+    }
+
+
 @router.get("/{server_id}/metrics-summary")
 async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_db)):
     """Prometheus/Node Exporter verisini doner. Veri yoksa ve sunucu VIRTUAL ise vCenter'dan alir."""
-    from app.models.hypervisor import Hypervisor, HypervisorType
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -869,66 +980,13 @@ async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_d
 
     has_prom = cpu is not None
 
-    # ── vCenter fallback: sanal sunucu, Prometheus verisi yok ──────────────
-    vcenter_stats: dict = {}
     if not has_prom and server.server_type == "VIRTUAL":
-        import asyncio, time as _time
-        # 60 saniye cache: vCenter SOAP 3s sürüyor, her 15s refetch'te çağrılmasin
-        cached = _vcenter_cache.get(server_id)
-        if cached and cached[1] > _time.time():
-            vcenter_stats = cached[0]
-        else:
-            hypervisors = db.query(Hypervisor).filter(
-                Hypervisor.hypervisor_type == HypervisorType.VMWARE
-            ).all()
-            for hyp in hypervisors:
-                vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
-                if not (hyp.hostname and hyp.username and vc_pass):
-                    continue
-                try:
-                    from app.services.vmware.vcenter_client import VCenterClient
-                    vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
-                    if not vc.login():
-                        continue
-                    _srv_name, _srv_ip = server.name, ip or ""
-                    vm_id = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: vc.find_vm_by_name_or_ip(name=_srv_name, ip=_srv_ip)
-                    )
-                    if vm_id:
-                        _vm_id = vm_id
-                        stats = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: vc.get_vm_quick_stats(_vm_id)
-                        )
-                        if stats:
-                            vcenter_stats = stats
-                    vc.logout()
-                    if vcenter_stats:
-                        break
-                except Exception as e:
-                    logger.warning(f"vCenter metrics fallback error: {e}")
-            if vcenter_stats:
-                _vcenter_cache[server_id] = (vcenter_stats, _time.time() + 60)
-
-    if vcenter_stats:
-        mtmb = vcenter_stats.get("mem_total_mb") or 0
-        mumb = vcenter_stats.get("mem_used_mb") or 0
-        return {
-            "server_id": server_id,
-            "has_node_exporter": False,
-            "source": "vcenter",
-            "power_state": vcenter_stats.get("power_state"),
-            "cpu_percent": vcenter_stats.get("cpu_percent"),
-            "mem_percent": vcenter_stats.get("mem_percent"),
-            "disk_percent": None,
-            "load1": None,
-            "load5": None,
-            "uptime_seconds": vcenter_stats.get("uptime_seconds"),
-            "mem_total_gb": round(mtmb / 1024, 1) if mtmb else None,
-            "mem_used_gb":  round(mumb / 1024, 1) if mumb else None,
-            "disk_total_gb": None,
-            "disk_avail_gb": None,
-            "cpu_num": vcenter_stats.get("num_cpu"),
-        }
+        import asyncio
+        vcenter_stats = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _fetch_vcenter_vm_metrics(server, db)
+        )
+        if vcenter_stats:
+            return _vcenter_metrics_payload(server_id, vcenter_stats)
 
     return {
         "server_id": server_id,
@@ -945,3 +1003,32 @@ async def get_server_metrics_summary(server_id: int, db: Session = Depends(get_d
         "disk_total_gb": round(disk_total / 1073741824, 1) if disk_total else None,
         "disk_avail_gb": round(disk_avail / 1073741824, 1) if disk_avail else None,
     }
+
+
+@router.get("/{server_id}/vm-live-metrics")
+async def get_vm_live_metrics(server_id: int, db: Session = Depends(get_db)):
+    """Sanallaştırma VM detayı — her zaman vCenter QuickStats + Perf (CPU/RAM/disk/net)."""
+    import asyncio
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    if server.server_type != "VIRTUAL":
+        raise HTTPException(status_code=400, detail="Yalnızca sanal makineler için")
+    vcenter_stats = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _fetch_vcenter_vm_metrics(server, db)
+    )
+    if not vcenter_stats:
+        return {
+            "server_id": server_id,
+            "source": None,
+            "error": "vCenter metrik alınamadı (VM ID / bağlantı / Tools)",
+            "cpu_percent": None,
+            "mem_percent": None,
+            "disk_percent": None,
+            "disk_read_iops": None,
+            "disk_write_iops": None,
+            "net_rx_kbps": None,
+            "net_tx_kbps": None,
+        }
+    return _vcenter_metrics_payload(server_id, vcenter_stats)
+

@@ -208,10 +208,15 @@ const RagTab: React.FC = () => {
             disabled={!pdfFile || uploadPdf.isPending}
             className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-lg shadow-emerald-500/20"
           >
-            {uploadPdf.isPending ? 'Ekleniyor...' : 'PDF\'i RAG\'e Ekle'}
+            {uploadPdf.isPending ? 'Ekleniyor (büyük PDF uzun sürebilir)...' : 'PDF\'i RAG\'e Ekle'}
           </button>
         </div>
         {pdfFile && <p className="text-emerald-400 text-xs mt-2">Seçili: {pdfFile.name}</p>}
+        {uploadPdf.isPending && (
+          <p className="text-amber-400/90 text-xs mt-2">
+            Embedding Ollama üzerinden yapılıyor; çok sayfalı PDF&apos;lerde birkaç dakika sürebilir. Sayfayı yenilemeyin.
+          </p>
+        )}
       </div>
 
       {/* Eklenen runbook dokümanları */}
@@ -672,6 +677,29 @@ const Settings: React.FC = () => {
   const [applyMode, setApplyMode] = useState<'all' | 'select'>('all')
   const [selectedServerIds, setSelectedServerIds] = useState<number[]>([])
   const [setAiReady, setSetAiReady] = useState(true)
+  const [sshTest, setSshTest] = useState<{
+    jobId: string | null
+    status: 'idle' | 'running' | 'done' | 'error'
+    done: number
+    total: number
+    percent: number
+    successful: number
+    failed: number
+    skipped: number
+    currentServer?: string | null
+    message?: string
+    error?: string | null
+  }>({
+    jobId: null,
+    status: 'idle',
+    done: 0,
+    total: 0,
+    percent: 0,
+    successful: 0,
+    failed: 0,
+    skipped: 0,
+  })
+  const sshTestRunning = sshTest.status === 'running'
   const queryClient = useQueryClient()
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
@@ -1037,10 +1065,25 @@ const Settings: React.FC = () => {
     }
   })
 
-  const checkAllServersSSH = useMutation({
-    mutationFn: async () => {
+  const startSshTest = async () => {
+    if (sshTestRunning) return
+    setSshTest({
+      jobId: null,
+      status: 'running',
+      done: 0,
+      total: 0,
+      percent: 0,
+      successful: 0,
+      failed: 0,
+      skipped: 0,
+      message: 'SSH testi başlatılıyor…',
+      currentServer: null,
+      error: null,
+    })
+    try {
       const res = await fetch(`${API_BASE_URL}/settings/credentials/test-all-ssh`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       })
       const text = await res.text()
       let r: any = null
@@ -1053,15 +1096,94 @@ const Settings: React.FC = () => {
             : `Sunucu HTML/beklenmeyen cevap döndü (HTTP ${res.status}).`
         )
       }
-      if (!res.ok) throw new Error(r?.detail || 'Hata')
-      return r
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${data.successful}\n❌ Başarısız: ${data.failed}\n\n${data.message}`)
-    },
-    onError: (e) => alert(e instanceof Error ? e.message : 'SSH test hatası')
-  })
+      if (!res.ok) throw new Error(typeof r?.detail === 'string' ? r.detail : 'SSH test başlatılamadı')
+
+      if (!r?.job_id) throw new Error('Job ID alınamadı')
+      setSshTest({
+        jobId: r.job_id,
+        status: r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running',
+        done: r.done || 0,
+        total: r.total || 0,
+        percent: r.percent || 0,
+        successful: r.successful || 0,
+        failed: r.failed || 0,
+        skipped: r.skipped || 0,
+        currentServer: r.current_server,
+        message: r.message || 'Test ediliyor…',
+        error: r.error || null,
+      })
+      if (r.status === 'done' && r.result) {
+        queryClient.invalidateQueries({ queryKey: ['servers'] })
+        alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${r.result.successful}\n❌ Başarısız: ${r.result.failed}\n\n${r.result.message}`)
+      } else if (r.status === 'error') {
+        alert(r.error || r.message || 'SSH test hatası')
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'SSH test hatası'
+      setSshTest(prev => ({ ...prev, status: 'error', error: msg, message: msg }))
+      alert(msg)
+    }
+  }
+
+  React.useEffect(() => {
+    if (!sshTest.jobId || sshTest.status !== 'running') return
+    let cancelled = false
+    let finished = false
+    const poll = async () => {
+      if (finished || cancelled) return
+      try {
+        const res = await fetch(`${API_BASE_URL}/settings/credentials/test-all-ssh/${sshTest.jobId}`)
+        if (!res.ok) {
+          if (res.status === 404 && !cancelled && !finished) {
+            finished = true
+            setSshTest(prev => ({
+              ...prev,
+              status: 'error',
+              error: 'Job bulunamadı',
+              message: 'SSH test job bulunamadı veya süresi doldu',
+            }))
+          }
+          return
+        }
+        const r = await res.json()
+        if (cancelled || finished) return
+        setSshTest(prev => ({
+          ...prev,
+          status: r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running',
+          done: r.done || 0,
+          total: r.total || prev.total,
+          percent: r.percent || 0,
+          successful: r.successful || 0,
+          failed: r.failed || 0,
+          skipped: r.skipped ?? prev.skipped,
+          currentServer: r.current_server,
+          message: r.message || prev.message,
+          error: r.error || null,
+        }))
+        if (r.status === 'done' || r.status === 'error') {
+          finished = true
+          if (r.status === 'done') {
+            queryClient.invalidateQueries({ queryKey: ['servers'] })
+            const result = r.result
+            const ok = result?.successful ?? r.successful ?? 0
+            const fail = result?.failed ?? r.failed ?? 0
+            const msg = result?.message || r.message || ''
+            alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${ok}\n❌ Başarısız: ${fail}\n\n${msg}`)
+          } else {
+            alert(r.error || r.message || 'SSH test hatası')
+          }
+        }
+      } catch {
+        // geçici ağ hatası — sonraki poll dener
+      }
+    }
+    poll()
+    const t = window.setInterval(poll, 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [sshTest.jobId, sshTest.status, queryClient])
 
   const saveMetricRetention = useMutation({
     mutationFn: async (days: number) => {
@@ -1148,10 +1270,10 @@ const Settings: React.FC = () => {
                   <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın — yalnızca Linux sunuculara uygulanır (Windows için WinRM sekmesi)</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => checkAllServersSSH.mutate()}
-                    disabled={checkAllServersSSH.isPending}
+                  <button onClick={startSshTest}
+                    disabled={sshTestRunning}
                     className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
-                    {checkAllServersSSH.isPending ? 'Test Ediliyor...' : 'SSH Test & Update'}
+                    {sshTestRunning ? 'Test Ediliyor...' : 'SSH Test & Update'}
                   </button>
                   <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
                     className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
@@ -1159,6 +1281,38 @@ const Settings: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {(sshTestRunning || sshTest.status === 'done' || sshTest.status === 'error') && (
+                <div className="mb-6 rounded-[10px] border border-emerald-500/30 bg-emerald-500/5 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div className="text-sm text-white font-medium">
+                      {sshTestRunning ? 'SSH Test & Update çalışıyor' : sshTest.status === 'error' ? 'SSH Test hatası' : 'SSH Test tamamlandı'}
+                    </div>
+                    <div className="text-xs text-emerald-300/90 font-mono">
+                      {sshTest.done}/{sshTest.total || '—'} · %{sshTest.percent}
+                    </div>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden border border-white/[0.06]">
+                    <div
+                      className={`h-full transition-all duration-500 ease-out ${
+                        sshTest.status === 'error' ? 'bg-red-500' : 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                      }`}
+                      style={{ width: `${Math.max(sshTestRunning && sshTest.percent === 0 ? 2 : 0, Math.min(100, sshTest.percent))}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                    <span>✅ {sshTest.successful}</span>
+                    <span>❌ {sshTest.failed}</span>
+                    {sshTest.skipped > 0 && <span>⏭ {sshTest.skipped} atlandı</span>}
+                    {sshTest.currentServer && sshTestRunning && (
+                      <span className="text-slate-300 truncate">Son: {sshTest.currentServer}</span>
+                    )}
+                  </div>
+                  {sshTest.message && (
+                    <p className="mt-2 text-xs text-slate-500 whitespace-pre-line line-clamp-3">{sshTest.message}</p>
+                  )}
+                </div>
+              )}
 
               {/* Form */}
               {(showForm || editingCred) && (

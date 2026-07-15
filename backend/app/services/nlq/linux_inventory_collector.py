@@ -121,28 +121,71 @@ def _parse_patch_date(s: str) -> Optional[datetime]:
             return None
 
 
+# metric_data → linux_inventory core field
+_METRIC_CORE_MAP = {
+    "cpu_usage_percent": "cpu_usage_percent",
+    "cpu_usage": "cpu_usage_percent",
+    "memory_usage_percent": "memory_usage_percent",
+    "memory_usage": "memory_usage_percent",
+    "disk_usage_percent": "disk_usage_percent",
+    "disk_usage": "disk_usage_percent",
+    "disk_root_usage_percent": "disk_usage_percent",
+    "load_average_1m": "load_average_1m",
+    "load_average_5m": "load_average_5m",
+    "load_average_15m": "load_average_15m",
+    "load1": "load_average_1m",
+    "load5": "load_average_5m",
+    "load15": "load_average_15m",
+}
+
+# metric_data → dedicated inventory columns
+_METRIC_COLUMN_MAP = {
+    "swap_usage_percent": "swap_usage_percent",
+    "cpu_iowait_percent": "cpu_iowait_percent",
+    "disk_io_utilization_percent": "disk_io_utilization_percent",
+    "network_rx_bytes_per_sec": "network_rx_bytes_per_sec",
+    "network_tx_bytes_per_sec": "network_tx_bytes_per_sec",
+}
+
+# Known Prom sync names stored in metrics_extra (not core/column)
+_METRIC_EXTRA_NAMES = frozenset({
+    "cpu_system_percent", "cpu_user_percent", "cpu_steal_percent", "cpu_softirq_percent",
+    "memory_available_bytes", "memory_total_bytes", "memory_cached_bytes", "memory_buffers_bytes",
+    "swap_total_bytes", "swap_free_bytes",
+    "disk_root_avail_bytes", "fd_allocated", "fd_maximum",
+    "disk_read_bytes_per_sec", "disk_write_bytes_per_sec",
+    "disk_read_iops", "disk_write_iops",
+    "network_rx_packets_per_sec", "network_tx_packets_per_sec",
+    "network_rx_errors_per_sec", "network_tx_errors_per_sec",
+    "network_rx_drops_per_sec", "network_tx_drops_per_sec",
+    "procs_running", "procs_blocked",
+    "context_switches_total", "context_switches_per_sec",
+})
+
+
 def _enrich_from_metric_data(db: Session, server_id: int, base: Dict[str, Any]) -> None:
-    """Prefer latest Timescale metric_data for cpu/mem/disk/load when present."""
+    """metric_data (Prometheus sync) → snapshot core/column/extra alanları."""
     try:
         from app.models.metric import MetricData
+        from app.services.runtime_settings import get_bool, get_int
     except Exception:
         return
-    wanted = {
-        "cpu_usage_percent": "cpu_usage_percent",
-        "memory_usage_percent": "memory_usage_percent",
-        "disk_usage_percent": "disk_usage_percent",
-        "load_average_1m": "load_average_1m",
-        "load_average_5m": "load_average_5m",
-        "load_average_15m": "load_average_15m",
-    }
-    # also accept short names
-    aliases = {
-        "cpu_usage": "cpu_usage_percent",
-        "memory_usage": "memory_usage_percent",
-        "disk_usage": "disk_usage_percent",
-    }
-    names = list(wanted.keys()) + list(aliases.keys())
-    cutoff = _now() - timedelta(minutes=30)
+
+    try:
+        if not get_bool("nlq_metric_enrich_enabled"):
+            return
+        max_age_min = max(5, int(get_int("nlq_metric_max_age_min")))
+        prefer = bool(get_bool("nlq_prefer_metric_over_ssh"))
+    except Exception:
+        max_age_min = 30
+        prefer = True
+
+    names = (
+        list(_METRIC_CORE_MAP.keys())
+        + list(_METRIC_COLUMN_MAP.keys())
+        + list(_METRIC_EXTRA_NAMES)
+    )
+    cutoff = _now() - timedelta(minutes=max_age_min)
     rows = (
         db.query(MetricData)
         .filter(
@@ -151,21 +194,38 @@ def _enrich_from_metric_data(db: Session, server_id: int, base: Dict[str, Any]) 
             MetricData.timestamp >= cutoff,
         )
         .order_by(MetricData.timestamp.desc())
-        .limit(40)
+        .limit(120)
         .all()
     )
-    seen = set()
+    seen: set = set()
+    extra: Dict[str, float] = {}
     for r in rows:
-        key = aliases.get(r.metric_name, r.metric_name)
-        if key in seen or key not in wanted:
+        name = r.metric_name or ""
+        if name in seen or r.value is None:
             continue
-        if r.value is None:
-            continue
-        seen.add(key)
+        seen.add(name)
         try:
-            base[key] = float(r.value)
+            val = float(r.value)
         except (TypeError, ValueError):
-            pass
+            continue
+
+        if name in _METRIC_CORE_MAP:
+            dest = _METRIC_CORE_MAP[name]
+            if prefer or base.get(dest) is None:
+                base[dest] = val
+            continue
+        if name in _METRIC_COLUMN_MAP:
+            dest = _METRIC_COLUMN_MAP[name]
+            if prefer or base.get(dest) is None:
+                base[dest] = val
+            continue
+        if name in _METRIC_EXTRA_NAMES:
+            extra[name] = val
+
+    if extra:
+        merged = dict(base.get("metrics_extra") or {})
+        merged.update(extra)
+        base["metrics_extra"] = merged
 
 
 def collect_one_server(
@@ -192,6 +252,12 @@ def collect_one_server(
         "load_average_1m": None,
         "load_average_5m": None,
         "load_average_15m": None,
+        "swap_usage_percent": None,
+        "cpu_iowait_percent": None,
+        "disk_io_utilization_percent": None,
+        "network_rx_bytes_per_sec": None,
+        "network_tx_bytes_per_sec": None,
+        "metrics_extra": {},
         "last_patch_date": None,
         "last_reboot_date": None,
         "collection_time": now.isoformat(),
@@ -385,6 +451,12 @@ def _upsert_snapshot(db: Session, snap: Dict[str, Any]) -> None:
     inv.load_average_1m = snap.get("load_average_1m")
     inv.load_average_5m = snap.get("load_average_5m")
     inv.load_average_15m = snap.get("load_average_15m")
+    inv.swap_usage_percent = snap.get("swap_usage_percent")
+    inv.cpu_iowait_percent = snap.get("cpu_iowait_percent")
+    inv.disk_io_utilization_percent = snap.get("disk_io_utilization_percent")
+    inv.network_rx_bytes_per_sec = snap.get("network_rx_bytes_per_sec")
+    inv.network_tx_bytes_per_sec = snap.get("network_tx_bytes_per_sec")
+    inv.metrics_extra = snap.get("metrics_extra") or None
     inv.collection_time = ct
     inv.collection_status = snap.get("collection_status")
     inv.collection_error = snap.get("collection_error")
@@ -445,10 +517,14 @@ def run_linux_inventory_collection(
     workers: int = 50,
     only_ai_ready: bool = True,
     server_ids: Optional[List[int]] = None,
+    throttled: bool = True,
 ) -> Dict[str, Any]:
     global _collector_status
     if _collector_status.get("running"):
         return {"ok": False, "message": "Collector zaten çalışıyor", **get_collector_status()}
+
+    from app.services.runtime_settings import get_int
+    from app.services.scan_throttle import should_recheck_nlq_snapshot
 
     linux_ids = get_linux_module_server_ids(db)
     q = db.query(Server)
@@ -459,6 +535,35 @@ def run_linux_inventory_collection(
     servers = [s for s in q.all() if is_linux_server(s)]
     if only_ai_ready:
         servers = [s for s in servers if s.ai_ready]
+
+    # Manuel server_ids veya throttled=False → tüm adaylar; aksi halde success/fail aralığı
+    if throttled and not server_ids:
+        success_sec = get_int("nlq_success_recheck_sec")
+        failed_sec = get_int("nlq_failed_recheck_sec")
+        now = _now()
+        inv_by_sid = {
+            inv.server_id: inv
+            for inv in db.query(LinuxInventory).filter(
+                LinuxInventory.server_id.in_([s.id for s in servers])
+            ).all()
+        } if servers else {}
+        before = len(servers)
+        kept = []
+        for s in servers:
+            inv = inv_by_sid.get(s.id)
+            if should_recheck_nlq_snapshot(
+                collection_status=inv.collection_status if inv else None,
+                collection_time=inv.collection_time if inv else None,
+                success_recheck_sec=success_sec,
+                failed_recheck_sec=failed_sec,
+                now=now,
+            ):
+                kept.append(s)
+        servers = kept
+        logger.info(
+            "NLQ collector throttle: %s/%s sunucu (success=%ss failed=%ss)",
+            len(servers), before, success_sec, failed_sec,
+        )
 
     global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()  # noqa: E712
     if not global_cred:
