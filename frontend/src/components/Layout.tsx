@@ -467,9 +467,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex">
-      {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'w-60' : 'w-16'} bg-slate-800 border-r border-slate-700 transition-all duration-300 flex flex-col flex-shrink-0`}>
+    <div className="h-screen bg-slate-900 flex overflow-hidden">
+      {/* Sidebar — viewport'a sabit; yalnızca iç menü kayar */}
+      <aside className={`${sidebarOpen ? 'w-60' : 'w-16'} h-full bg-slate-800 border-r border-slate-700 transition-all duration-300 flex flex-col flex-shrink-0`}>
         {/* Logo */}
         <div className={`${sidebarOpen ? 'min-h-[5.5rem] py-3' : 'h-14'} flex items-start justify-between px-3 border-b border-slate-700 flex-shrink-0 gap-1`}>
           {sidebarOpen && (
@@ -558,7 +558,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Top Bar */}
         <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-5 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -624,8 +624,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-auto p-5 bg-slate-900">
+        {/* Page Content — dikey kaydırma yalnızca burada */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-5 bg-slate-900">
           {children}
         </main>
       </div>
