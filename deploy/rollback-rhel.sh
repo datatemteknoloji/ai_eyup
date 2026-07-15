@@ -6,7 +6,7 @@
 # dönerek önceki Docker imaj etiketlerini yeniden aktif eder.
 #
 # Kullanım (kurulum dizininden):
-#   cd /opt/ainew
+#   cd /data
 #   sudo ./rollback-rhel.sh                  # sadece imajlar (hızlı)
 #   sudo ./rollback-rhel.sh --restore-db     # imajlar + Postgres dump
 #   sudo ./rollback-rhel.sh --backup /path/to/pre-update-...

@@ -10,7 +10,7 @@ Müşteri ortamlarında tekrarlanabilir kurulum için tasarlanmıştır.
 | İşletim sistemi | RHEL 9.x (x86_64) — Rocky/AlmaLinux 9 ile de uyumludur |
 | CPU | 4 çekirdek |
 | RAM | 8 GB (Ollama ile yerel LLM kullanılacaksa 16 GB+ önerilir) |
-| Disk | 50 GB boş alan (kurulumda seçeceğiniz kurulum dizini altında büyür, varsayılan `/opt/ainew`) |
+| Disk | 50 GB boş alan (kurulumda seçeceğiniz kurulum dizini altında büyür, varsayılan `/data`) |
 | Ağ | 80/443 (arayüz), 9090/9091 (Prometheus/Pushgateway) — dahili ağda açık olmalı |
 | Yetki | root / sudo |
 
@@ -75,7 +75,7 @@ Betik idempotent'tir — tekrar çalıştırıldığında mevcut kurulum dizinin
 dosyalarını bozmaz, sadece eksikleri tamamlar. Yaptıkları:
 
 1. Docker CE + Compose plugin kurulumu (yoksa, `dnf` ile resmi Docker reposundan)
-2. **Kurulum dizini seçimi** — sizden bir mutlak yol ister (varsayılan `/opt/ainew`).
+2. **Kurulum dizini seçimi** — sizden bir mutlak yol ister (varsayılan `/data`).
    Uygulama paketinin TAMAMI (kaynak/derleme dosyaları, imajlar, scriptler) VE tüm
    kalıcı veriler (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar,
    Ollama modelleri) bu **tek** kök dizin altında toplanır — `/var/lib` gibi sistem
@@ -96,8 +96,8 @@ Kurulum sonunda ekranda şu bilgiler görünür:
 Arayüz         : https://<sunucu-ip>
 Kullanıcı      : admin
 Parola         : <otomatik üretilen parola>
-Kurulum dizini : /opt/ainew  (paket + .env)
-Veri dizini    : /opt/ainew/data  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)
+Kurulum dizini : /data  (paket + .env)
+Veri dizini    : /data/data  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)
 ```
 
 **Tarayıcı "bağlantı güvenli değil" uyarısı verecektir** — bu normaldir, çünkü
@@ -179,8 +179,8 @@ ssh root@<sunucu>
 tar xzf ainew-1.0.1-linux-amd64.tar.gz
 cd ainew-1.0.1-linux-amd64
 
-# 2) Mevcut kurulumu güncelle (ör. /opt/ainew)
-sudo ./update-rhel.sh --install-dir /opt/ainew
+# 2) Mevcut kurulumu güncelle (ör. /data)
+sudo ./update-rhel.sh --install-dir /data
 ```
 
 `update-rhel.sh` sırasıyla:
@@ -195,7 +195,7 @@ sudo ./update-rhel.sh --install-dir /opt/ainew
 ### 7.2 Geri alma (rollback)
 
 ```bash
-cd /opt/ainew
+cd /data
 
 # A) Sadece uygulama imajı eski sürüme dönsün (hızlı — genelde yeterli)
 sudo ./rollback-rhel.sh
@@ -205,7 +205,7 @@ sudo ./rollback-rhel.sh
 sudo ./rollback-rhel.sh --restore-db
 
 # C) Belirli bir yedeğe dön
-sudo ./rollback-rhel.sh --backup /opt/ainew/data/backups/pre-update-1.0.0-to-1.0.1-20260713-153000
+sudo ./rollback-rhel.sh --backup /data/data/backups/pre-update-1.0.0-to-1.0.1-20260713-153000
 ```
 
 **Ne zaman `--restore-db`?** Yeni sürüm DB şemasını ileri taşıdıktan sonra
@@ -215,7 +215,7 @@ rollback yeterlidir (yeni eklenen sunucu kayıtları vb. korunur).
 ### 7.3 Manuel kontrol
 
 ```bash
-cd /opt/ainew
+cd /data
 cat VERSION
 grep -E 'BACKEND_IMAGE|FRONTEND_IMAGE' .env
 docker compose -f docker-compose.prod.yml ps

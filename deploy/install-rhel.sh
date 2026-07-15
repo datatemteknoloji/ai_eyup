@@ -36,7 +36,7 @@ cd "$SCRIPT_DIR"
 COMPOSE_FILE="docker-compose.prod.yml"
 ENV_FILE=".env"
 IMAGES_DIR="./images"
-DEFAULT_INSTALL_DIR="/opt/ainew"
+DEFAULT_INSTALL_DIR="/data"
 
 c_green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 c_yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }

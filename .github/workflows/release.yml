@@ -57,7 +57,7 @@ jobs:
             ```bash
             tar xzf ${{ steps.pkg.outputs.name }}.tar.gz
             cd ${{ steps.pkg.outputs.name }}
-            sudo ./update-rhel.sh --install-dir /opt/ainew
+            sudo ./update-rhel.sh --install-dir /data
             ```
 
             ### İlk kurulum

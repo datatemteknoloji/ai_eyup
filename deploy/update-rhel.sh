@@ -9,10 +9,10 @@
 # Kullanım (yeni paket dizininden):
 #   tar xzf ainew-1.0.1-linux-amd64.tar.gz
 #   cd ainew-1.0.1-linux-amd64
-#   sudo ./update-rhel.sh --install-dir /opt/ainew
+#   sudo ./update-rhel.sh --install-dir /data
 #
 # Ortam değişkenleri:
-#   INSTALL_DIR   Hedef kurulum (varsayılan: --install-dir veya /opt/ainew)
+#   INSTALL_DIR   Hedef kurulum (varsayılan: --install-dir veya /data)
 #   SKIP_DB_BACKUP=1  Postgres dump atlanır (hızlı ama rollback'te DB geri alınamaz)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 NEW_PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="docker-compose.prod.yml"
 ENV_FILE=".env"
-DEFAULT_INSTALL_DIR="/opt/ainew"
+DEFAULT_INSTALL_DIR="/data"
 
 c_green()  { printf '\033[0;32m%s\033[0m\n' "$1"; }
 c_yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }

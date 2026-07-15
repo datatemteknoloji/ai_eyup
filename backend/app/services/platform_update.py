@@ -53,11 +53,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def install_dir() -> Path:
-    return Path(os.getenv("AINEW_INSTALL_DIR", "/opt/ainew")).resolve()
+    return Path(os.getenv("AINEW_INSTALL_DIR", "/data")).resolve()
 
 
 def data_dir() -> Path:
-    return Path(os.getenv("AINEW_DATA_DIR", "/var/lib/server_management")).resolve()
+    return Path(os.getenv("AINEW_DATA_DIR", "/data/data")).resolve()
 
 
 def updates_dir() -> Path:
@@ -178,8 +178,8 @@ def ensure_wrapper_script() -> Path:
         dest.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
-            'INSTALL_DIR="${AINEW_INSTALL_DIR:-/opt/ainew}"\n'
-            'DATA_DIR="${AINEW_DATA_DIR:-/var/lib/server_management}"\n'
+            'INSTALL_DIR="${AINEW_INSTALL_DIR:-/data}"\n'
+            'DATA_DIR="${AINEW_DATA_DIR:-/data/data}"\n'
             'ACTION="$1"; shift\n'
             'case "$ACTION" in\n'
             "  apply) cd \"$1\"; exec ./update-rhel.sh --install-dir \"$INSTALL_DIR\" ;;\n"

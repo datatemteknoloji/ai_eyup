@@ -163,9 +163,9 @@ Database schema changes are applied automatically on startup via SQLAlchemy `cre
 ```bash
 tar xzf ainew-<version>-linux-amd64.tar.gz
 cd ainew-<version>-linux-amd64
-sudo ./update-rhel.sh --install-dir /opt/ainew
+sudo ./update-rhel.sh --install-dir /data
 # Geri alma:
-#   cd /opt/ainew && sudo ./rollback-rhel.sh
+#   cd /data && sudo ./rollback-rhel.sh
 ```
 
 ### Production package (GUI)
@@ -174,7 +174,7 @@ Admin → **Ayarlar → Platform Güncelleme**:
 
 1. Paketi yükleyin **veya** sunucuya bırakın:
    ```bash
-   scp ainew-<version>-linux-amd64.tar.gz root@host:/var/lib/server_management/updates/
+   scp ainew-<version>-linux-amd64.tar.gz root@host:/data/data/updates/
    ```
 2. **Hazırla** → hedef sürümü onay kutusuna yazın → **Güncellemeyi Uygula**.
 3. Overlay, `/api/v1/public/version` ile yeni sürümü bekler; ardından sayfa yenilenir.
@@ -184,7 +184,7 @@ Gereksinimler (prod compose’da varsayılan):
 
 - `PLATFORM_UPDATE_ENABLED=true`
 - `/var/run/docker.sock` backend’e mount
-- `AINEW_INSTALL_DIR` (ör. `/opt/ainew`) + `DATA_DIR/updates`
+- `AINEW_INSTALL_DIR` (ör. `/data`) + `DATA_DIR/updates` (ör. `/data/data/updates`)
 - Updater için host’ta `alpine:3.20` (veya `PLATFORM_UPDATER_IMAGE`) yüklü olmalı — air-gap’te pakete ekleyin veya önceden `docker load` edin
 
 İşlem logları: `$DATA_DIR/updates/apply.log` ve `status.json`.

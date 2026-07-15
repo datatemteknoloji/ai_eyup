@@ -116,8 +116,8 @@ class Settings:
 
     # Platform self-update (GUI) — yalnızca paket/prod kurulumunda açın
     PLATFORM_UPDATE_ENABLED: bool = os.getenv("PLATFORM_UPDATE_ENABLED", "false").lower() == "true"
-    AINEW_INSTALL_DIR: str = os.getenv("AINEW_INSTALL_DIR", "/opt/ainew")
-    AINEW_DATA_DIR: str = os.getenv("AINEW_DATA_DIR", "/var/lib/server_management")
+    AINEW_INSTALL_DIR: str = os.getenv("AINEW_INSTALL_DIR", "/data")
+    AINEW_DATA_DIR: str = os.getenv("AINEW_DATA_DIR", "/data/data")
     AINEW_UPDATES_DIR: str = os.getenv("AINEW_UPDATES_DIR", "/app/updates")
     DOCKER_SOCK: str = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
     PLATFORM_UPDATE_MAX_UPLOAD_BYTES: int = int(

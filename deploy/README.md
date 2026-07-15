@@ -35,10 +35,10 @@ sudo ./install-rhel.sh
 # Upgrade (run from the NEW package directory)
 tar xzf ainew-1.0.1-linux-amd64.tar.gz
 cd ainew-1.0.1-linux-amd64
-sudo ./update-rhel.sh --install-dir /opt/ainew
+sudo ./update-rhel.sh --install-dir /data
 
 # Roll back application images to the previous version
-cd /opt/ainew
+cd /data
 sudo ./rollback-rhel.sh
 
 # Roll back images + database to the pre-update snapshot

@@ -13,8 +13,8 @@ set -euo pipefail
 ACTION="${1:-}"
 shift || true
 
-INSTALL_DIR="${AINEW_INSTALL_DIR:-/opt/ainew}"
-DATA_DIR="${AINEW_DATA_DIR:-/var/lib/server_management}"
+INSTALL_DIR="${AINEW_INSTALL_DIR:-/data}"
+DATA_DIR="${AINEW_DATA_DIR:-/data/data}"
 UPDATES_DIR="${DATA_DIR}/updates"
 STATUS_FILE="${UPDATES_DIR}/status.json"
 LOG_FILE="${UPDATES_DIR}/apply.log"
