@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")"
 
 # Veri dizinleri (opsiyonel; Docker volume mount ile de oluşabilir)
-mkdir -p /var/lib/server_management/chroma /var/lib/server_management/redis /var/lib/server_management/prometheus 2>/dev/null || true
+mkdir -p /data/data/chroma /data/data/redis /data/data/prometheus 2>/dev/null || true
 
 COMPOSE="docker-compose"
 command -v docker-compose >/dev/null 2>&1 || COMPOSE="docker compose"

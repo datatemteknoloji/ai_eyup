@@ -91,6 +91,7 @@ fi
 
 # ── 1. Docker kurulumu ─────────────────────────────────────────────────────
 step "Docker kontrol ediliyor"
+DOCKER_JUST_INSTALLED=0
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   c_green "Docker ve Compose plugin zaten kurulu: $(docker --version)"
 else
@@ -99,11 +100,54 @@ else
   dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
   dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
+  DOCKER_JUST_INSTALLED=1
   c_green "Docker kuruldu: $(docker --version)"
 fi
 
+# Tüm uygulama + Docker image/volume verisi /data altında kalsın
+DOCKER_DATA_ROOT="/data/docker"
+mkdir -p "$DOCKER_DATA_ROOT/tmp"
+if [[ "$DOCKER_JUST_INSTALLED" == "1" ]]; then
+  step "Docker data-root → $DOCKER_DATA_ROOT (tek disk politikası)"
+  mkdir -p /etc/docker
+  if [[ ! -f /etc/docker/daemon.json ]]; then
+    cat > /etc/docker/daemon.json <<EOF
+{
+  "data-root": "${DOCKER_DATA_ROOT}",
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "50m", "max-file": "3" }
+}
+EOF
+  elif ! grep -q '"data-root"' /etc/docker/daemon.json 2>/dev/null; then
+    python3 - "$DOCKER_DATA_ROOT" <<'PY' || true
+import json, sys
+root = sys.argv[1]
+path = "/etc/docker/daemon.json"
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except Exception:
+    cfg = {}
+if not isinstance(cfg, dict):
+    cfg = {}
+cfg["data-root"] = root
+cfg.setdefault("log-driver", "json-file")
+cfg.setdefault("log-opts", {"max-size": "50m", "max-file": "3"})
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PY
+  fi
+  systemctl restart docker
+  c_green "Docker data-root: $DOCKER_DATA_ROOT"
+elif docker info >/dev/null 2>&1; then
+  CURRENT_ROOT="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)"
+  if [[ -n "$CURRENT_ROOT" && "$CURRENT_ROOT" != "$DOCKER_DATA_ROOT" ]]; then
+    c_yellow "Uyarı: Docker data-root şu an $CURRENT_ROOT — tek-disk için /etc/docker/daemon.json içinde \"data-root\": \"$DOCKER_DATA_ROOT\" önerilir (mevcut kurulumda otomatik taşınmadı)."
+  fi
+fi
+
 # Docker veri kökü (data-root) eksik tmp yüzünden `docker load` düşmesin
-# (ör. data-root=/data/docker iken /data/docker/tmp yok → "stat .../tmp: no such file")
 if docker info >/dev/null 2>&1; then
   DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)"
   if [[ -n "${DOCKER_ROOT:-}" ]]; then
@@ -172,6 +216,10 @@ fill_env_var "POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
 fill_env_var "ADMIN_DEFAULT_PASSWORD" "$(openssl rand -base64 12 | tr -d '=+/')"
 fill_env_var "CORS_ORIGINS" "https://${PRIMARY_IP},http://${PRIMARY_IP}"
 fill_env_var "DATA_DIR" "$DATA_DIR"
+fill_env_var "AINEW_INSTALL_DIR" "$INSTALL_DIR"
+fill_env_var "AINEW_DATA_DIR" "$DATA_DIR"
+fill_env_var "RAG_CHROMA_PATH" "/app/chroma"
+fill_env_var "PLATFORM_UPDATE_ENABLED" "true"
 
 # Paket VERSION dosyasından imaj etiketlerini sabitle (offline load ile uyumlu)
 APP_VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
@@ -352,7 +400,8 @@ echo " Kullanıcı  : admin"
 echo " Parola     : ${ADMIN_PW}"
 echo
 echo " Kurulum dizini : $INSTALL_DIR  (paket + $ENV_FILE)"
-echo " Veri dizini    : $DATA_DIR  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)"
+echo " Veri dizini    : $DATA_DIR  (DB, Redis, Chroma, uploads, updates, certs, Ollama)"
+echo " Docker data    : ${DOCKER_DATA_ROOT:-/data/docker}  (imajlar/volume'ler — tek disk)"
 echo
 c_yellow " ⚠ İlk girişten sonra Ayarlar > Kullanıcılar üzerinden admin parolasını değiştirin."
 c_yellow " ⚠ .env dosyasını güvenli bir yerde yedekleyin — SECRET_KEY ve DB parolasını içerir."

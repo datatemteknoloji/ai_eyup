@@ -110,7 +110,7 @@ services:
       - ./VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets:Z
       - ./prometheus/targets:/etc/prometheus/targets:Z
-      - ${DATA_DIR:-/data/data}/chroma:/var/lib/server_management/chroma:Z
+      - ${DATA_DIR:-/data/data}/chroma:/app/chroma:Z
       - ${DATA_DIR:-/data/data}/repos:/app/repos:Z
       - ${DATA_DIR:-/data/data}/uploads:/app/uploads:Z
       - ${DATA_DIR:-/data/data}/updates:/app/updates:Z

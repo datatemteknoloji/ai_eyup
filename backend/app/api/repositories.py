@@ -109,7 +109,7 @@ def _repo_summary(repo: RepoSource) -> dict:
         "mirror_host":          repo.mirror_host or "127.0.0.1",
         "mirror_port":          repo.mirror_port or 22,
         "mirror_username":      repo.mirror_username,
-        "mirror_download_path": repo.mirror_download_path or "/var/lib/server_management/repos",
+        "mirror_download_path": repo.mirror_download_path or "/app/repos",
     }
 
 

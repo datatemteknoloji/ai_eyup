@@ -201,7 +201,7 @@ def run_rhsm_sync(repo_id: int, job_id: int) -> None:
             return
 
         # ── 5. İndirme dizini hazırla ─────────────────────────────────────
-        download_base = repo.mirror_download_path or "/var/lib/server_management/repos"
+        download_base = repo.mirror_download_path or "/app/repos"
         repo_download_path = os.path.join(download_base, repo.name)
         _run(client, f"mkdir -p {repo_download_path}", sudo_pass=sudo, timeout=15)
 

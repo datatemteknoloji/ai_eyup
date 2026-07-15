@@ -24,7 +24,7 @@ fix_data_dir() {
   fi
 }
 
-fix_data_dir /var/lib/server_management/chroma
+fix_data_dir /app/chroma
 fix_data_dir /app/uploads
 fix_data_dir /app/repos
 fix_data_dir /app/uploads/chroma_knowledge

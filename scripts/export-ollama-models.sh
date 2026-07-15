@@ -10,13 +10,13 @@
 #
 # Varsayılanlar:
 #   çıktı-dosyası      : ollama-models.tar.gz
-#   ollama-veri-dizini : /var/lib/server_management/ollama
+#   ollama-veri-dizini : /data/data/ollama
 #                        (docker-compose.prod.yml'deki ollama servisinin volume'ü)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 OUT_FILE="${1:-ollama-models.tar.gz}"
-OLLAMA_DIR="${2:-/var/lib/server_management/ollama}"
+OLLAMA_DIR="${2:-/data/data/ollama}"
 
 if [[ ! -d "$OLLAMA_DIR" ]]; then
   echo "✗ Ollama veri dizini bulunamadı: $OLLAMA_DIR" >&2

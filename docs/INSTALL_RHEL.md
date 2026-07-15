@@ -75,13 +75,10 @@ Betik idempotent'tir — tekrar çalıştırıldığında mevcut kurulum dizinin
 dosyalarını bozmaz, sadece eksikleri tamamlar. Yaptıkları:
 
 1. Docker CE + Compose plugin kurulumu (yoksa, `dnf` ile resmi Docker reposundan)
-2. **Kurulum dizini seçimi** — sizden bir mutlak yol ister (varsayılan `/data`).
-   Uygulama paketinin TAMAMI (kaynak/derleme dosyaları, imajlar, scriptler) VE tüm
-   kalıcı veriler (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar,
-   Ollama modelleri) bu **tek** kök dizin altında toplanır — `/var/lib` gibi sistem
-   dizinlerine dağılmaz. Paket, çalıştığınız yerden bu dizine kopyalanır (`<dizin>/data/`
-   altında veriler). Yeniden çalıştırıldığında (bu dizinden) tekrar sorulmaz —
-   `DATA_DIR` ortam değişkeniyle de önceden belirtilebilir (interaktif olmayan kurulumlar için).
+2. **Kurulum dizini seçimi** — varsayılan `/data`.
+   Paket + kalıcı veri + (yeni Docker kurulumunda) Docker data-root hep `/data` altındadır.
+   Veriler `/data/data/` altında; Docker imajları `/data/docker/` altında.
+   `/opt` ve `/var/lib/server_management` kullanılmaz.
 3. `.env` dosyası: `SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`
    rastgele üretilir; `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır
 4. Self-signed TLS sertifikası (`<kurulum-dizini>/data/certs`) — 10 yıl geçerli

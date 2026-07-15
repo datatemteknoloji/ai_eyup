@@ -21,10 +21,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos \
-    && mkdir -p /var/lib/server_management/chroma
+    && mkdir -p /app/chroma
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /app appuser \
-    && chown -R appuser:appgroup /app /var/lib/server_management/chroma \
+    && chown -R appuser:appgroup /app \
     && chmod +x /app/docker-entrypoint.sh
 
 # root ile başla: entrypoint bind-mount sahipliğini düzeltir, sonra appuser'a düşer

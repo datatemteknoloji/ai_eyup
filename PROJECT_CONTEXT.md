@@ -32,7 +32,7 @@ docker compose build --no-cache frontend && docker compose up -d frontend
 - **Local Repo** — Satellite benzeri RPM mirror (RHEL/OEL/Rocky/Ubuntu)
 
 ## Local Repo Önemli Bilgiler
-- Repolar: `/var/lib/server_management/repos/` (bind mount → `/app/repos/`)
+- Repolar: `/data/data/repos/` (bind mount → `/app/repos/`)
 - HTTP serve: `http://host:8000/repos/{repo-slug}/`
 - RHEL SCA modu: `consumers/{uuid}/certificates` endpoint'i kullanılır
 - Backend restart → yarım kalan sync'ler otomatik devam eder

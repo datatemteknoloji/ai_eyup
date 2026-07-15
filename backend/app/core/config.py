@@ -71,7 +71,7 @@ class Settings:
     OPENROUTER_API_URL: str = "https://openrouter.ai/api/v1/chat/completions"
 
     # RAG (ChromaDB)
-    RAG_CHROMA_PATH: str = os.getenv("RAG_CHROMA_PATH", "/var/lib/server_management/chroma")
+    RAG_CHROMA_PATH: str = os.getenv("RAG_CHROMA_PATH", "/app/chroma")
     RAG_RUNBOOK_TOP_K: int = int(os.getenv("RAG_RUNBOOK_TOP_K", "5"))
     RAG_INCIDENTS_TOP_K: int = int(os.getenv("RAG_INCIDENTS_TOP_K", "3"))
     RAG_METRICS_TOP_K: int = int(os.getenv("RAG_METRICS_TOP_K", "5"))

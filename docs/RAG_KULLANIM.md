@@ -96,7 +96,7 @@ Her chat mesajında:
 
 Config (opsiyonel):
 
-- `RAG_CHROMA_PATH`: Chroma veri dizini (varsayılan: `/var/lib/server_management/chroma`)
+- `RAG_CHROMA_PATH`: Chroma veri dizini (varsayılan: `/app/chroma`)
 - `RAG_RUNBOOK_TOP_K`, `RAG_INCIDENTS_TOP_K`, `RAG_METRICS_TOP_K`: Her collection’dan kaç chunk alınacağı (varsayılan 3, 3, 5)
 - `OLLAMA_EMBED_MODEL`: Embedding modeli (varsayılan: `nomic-embed-text`)
 
@@ -106,7 +106,7 @@ Chroma kalıcılığı için backend volume’da dizin kullanılıyor:
 
 ```yaml
 volumes:
-  - /var/lib/server_management/chroma:/var/lib/server_management/chroma
+  - /app/chroma:/app/chroma
 ```
 
 Bu dizinin yazılabilir olduğundan emin olun.

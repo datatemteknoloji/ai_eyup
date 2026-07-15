@@ -1404,7 +1404,7 @@ const Settings: React.FC = () => {
                       />
                       <p className="text-xs text-slate-500 mt-1">
                         Gateway'in self-signed sertifikasını (veya onu imzalayan kurumsal CA'yı) PEM olarak
-                        sunucudaki <code>/var/lib/server_management/certs/</code> dizinine koyup buraya container
+                        sunucudaki <code>/data/data/certs/</code> (veya $DATA_DIR/certs) dizinine koyup buraya container
                         içi yolunu (<code>/app/certs/&lt;dosya&gt;.pem</code>) yazın — doğrulama açık kalır, sadece
                         bu ek sertifikaya da güvenilir. Doluysa yukarıdaki doğrulama anahtarından önceliklidir.
                       </p>

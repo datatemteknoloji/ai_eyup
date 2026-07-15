@@ -1057,7 +1057,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
     mirror_port:          String(repo.mirror_port || 22),
     mirror_username:      repo.mirror_username || 'root',
     mirror_password:      '',
-    mirror_download_path: repo.mirror_download_path || '/var/lib/server_management/repos',
+    mirror_download_path: repo.mirror_download_path || '/app/repos',
   })
   const [saving, setSaving]     = useState(false)
   const [testing, setTesting]   = useState(false)
@@ -1200,7 +1200,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
             <input
               value={form.mirror_download_path}
               onChange={e => setForm(p => ({...p, mirror_download_path: e.target.value}))}
-              placeholder="/var/lib/server_management/repos"
+              placeholder="/app/repos"
               className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
             />
           </div>

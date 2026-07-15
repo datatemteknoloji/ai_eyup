@@ -49,7 +49,7 @@ CORS_ORIGINS=https://infra.example.com
 
 - Image: `timescale/timescaledb:latest-pg15`
 - Port: `5432` (host-mapped)
-- Data: `/var/lib/server_management/postgres`
+- Data: `/data/data/postgres` (prod varsayılan; `DATA_DIR`)
 
 TimescaleDB is used for time-series metric storage. The backend auto-creates hypertables on startup via `init_timescaledb()`.
 
@@ -57,7 +57,7 @@ TimescaleDB is used for time-series metric storage. The backend auto-creates hyp
 
 - Image: `redis:7-alpine`
 - Port: `6379` (host-mapped)
-- Data: `/var/lib/server_management/redis`
+- Data: `/data/data/redis`
 
 Used as a task queue backend (Celery) and for ephemeral caching.
 
@@ -73,9 +73,10 @@ Used as a task queue backend (Celery) and for ephemeral caching.
 | `/app/app` | `./backend/app` | Live-reload in dev |
 | `/app/static` | `./backend/static` | Static file serving |
 | `/prometheus/targets` | `./prometheus/targets` | Prometheus target files |
-| `/var/lib/server_management/chroma` | same | ChromaDB vector store |
-| `/app/repos` | `/var/lib/server_management/repos` | Local RPM/DEB repo files |
-| `/app/uploads` | `/var/lib/server_management/uploads` | Uploaded package files |
+| `/app/chroma` | `/data/data/chroma` | ChromaDB vector store |
+| `/app/repos` | `/data/data/repos` | Local RPM/DEB repo files |
+| `/app/uploads` | `/data/data/uploads` | Uploaded package files |
+| `/app/updates` | `/data/data/updates` | Platform self-update packages (prod) |
 
 ### Frontend (`frontend`)
 
@@ -89,37 +90,42 @@ Nginx serves the React SPA and proxies `/api/` requests to the backend at `local
 
 ## Data persistence
 
-All persistent data is stored outside containers under `/var/lib/server_management/`:
+**Tek disk politikası:** sunucuda uygulama ve kalıcı veri `/data` altındadır (`/opt`, `/var/lib/server_management` kullanılmaz).
 
 ```
-/var/lib/server_management/
-├── postgres/    # PostgreSQL data files
-├── redis/       # Redis dump.rdb
-├── chroma/      # ChromaDB vector store (RAG embeddings)
-├── repos/       # Local RPM/DEB repository files
-├── uploads/     # Uploaded package files
-└── updates/     # Platform self-update packages (GUI / SCP drop)
+/data/                          # INSTALL_DIR — paket, compose, .env, images/
+├── docker-compose.prod.yml
+├── .env
+├── VERSION
+├── images/
+└── data/                       # DATA_DIR (= /data/data)
+    ├── postgres/
+    ├── redis/
+    ├── chroma/
+    ├── repos/
+    ├── uploads/
+    ├── updates/                # GUI / SCP platform paketleri
+    ├── prometheus/
+    ├── certs/
+    └── ollama/
+/data/docker/                   # Docker data-root (imaj + volume; yeni kurulumda)
 ```
 
 Create these directories before first run if they don't exist:
 
 ```bash
-sudo mkdir -p /var/lib/server_management/{postgres,redis,chroma,repos,uploads,updates}
-# Backend container appuser (uid 100 / gid 102) ile yazar; chroma/uploads/repos/updates yazılabilir olmalı.
-# Not: entrypoint her başlangıçta sahipliği düzeltir; yine de ilk kurulumda chown önerilir.
-sudo chown -R 100:102 /var/lib/server_management/chroma \
-  /var/lib/server_management/uploads \
-  /var/lib/server_management/repos \
-  /var/lib/server_management/updates
+sudo mkdir -p /data/data/{postgres,redis,chroma,repos,uploads,updates,prometheus,certs,ollama}
+sudo mkdir -p /data/docker/tmp
+# Backend container appuser (uid 100 / gid 102) ile yazar
+sudo chown -R 100:102 /data/data/chroma /data/data/uploads /data/data/repos /data/data/updates
 ```
 
-
-Eski kurulumlarda chroma `root` sahipliğinde kaldıysa (RAG yazılamaz / reindex hata):
+Eski kurulumlarda chroma `root` sahipliğinde kaldıysa:
 
 ```bash
-sudo chown -R 100:102 /var/lib/server_management/chroma
+sudo chown -R 100:102 /data/data/chroma
 # veya Docker ile:
-docker run --rm -v /var/lib/server_management/chroma:/chroma alpine chown -R 100:102 /chroma
+docker run --rm -v /data/data/chroma:/chroma alpine chown -R 100:102 /chroma
 ```
 
 ---
@@ -130,7 +136,7 @@ docker run --rm -v /var/lib/server_management/chroma:/chroma alpine chown -R 100
 - [ ] `POSTGRES_PASSWORD` changed from default
 - [ ] `ADMIN_DEFAULT_PASSWORD` changed and default password updated in UI
 - [ ] `CORS_ORIGINS` set to your actual frontend URL (not `localhost`)
-- [ ] `/var/lib/server_management` on a separate disk or volume with adequate space
+- [ ] `/data` (kurulum + veri + docker data-root) ayrı disk veya yeterli alan
 - [ ] Firewall: port 3000 open to users, port 8000 restricted to localhost only
 - [ ] Ollama running with an appropriate model pulled
 - [ ] Reverse proxy (Nginx/Caddy) with TLS in front of port 3000
@@ -198,10 +204,10 @@ Gereksinimler (prod compose’da varsayılan):
 docker exec server_management_db pg_dump -U postgres server_management > backup.sql
 
 # Backup ChromaDB (vector store)
-tar czf chroma-backup.tar.gz /var/lib/server_management/chroma
+tar czf chroma-backup.tar.gz /data/data/chroma
 
 # Backup repos
-tar czf repos-backup.tar.gz /var/lib/server_management/repos
+tar czf repos-backup.tar.gz /data/data/repos
 ```
 
 ---

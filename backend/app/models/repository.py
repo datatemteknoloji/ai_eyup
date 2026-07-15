@@ -47,7 +47,7 @@ class RepoSource(Base):
     mirror_password  = Column(String(512))
     mirror_key       = Column(Text)
     # Host'taki indirme dizini (container dışında)
-    mirror_download_path = Column(String(500), default="/var/lib/server_management/repos")
+    mirror_download_path = Column(String(500), default="/app/repos")
 
     # State
     enabled        = Column(Boolean, default=True)
