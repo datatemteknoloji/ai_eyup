@@ -1093,6 +1093,222 @@ class VCenterClient:
             logger.error(f"get_vm_quick_stats error: {e}")
             return None
 
+    def _perf_manager_and_counters(self, soap_session, soap_url: str):
+        """performanceManager MOR + virtualDisk read/write average counter ID'leri."""
+        import xml.etree.ElementTree as ET
+        if getattr(self, "_perf_cache", None):
+            return self._perf_cache
+
+        body = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveServiceContent>
+      <vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this>
+    </vim25:RetrieveServiceContent>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        resp = soap_session.post(
+            soap_url, data=body,
+            headers={"Content-Type": "text/xml; charset=utf-8"},
+            verify=self.verify_ssl, timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        root = ET.fromstring(resp.text)
+        perf_mgr = None
+        for el in root.iter():
+            if el.tag.split("}")[-1] == "perfManager" and (el.text or "").strip():
+                perf_mgr = el.text.strip()
+                break
+        if not perf_mgr:
+            return None
+
+        # Counter catalog
+        body2 = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>PerformanceManager</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>perfCounter</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="PerformanceManager">{perf_mgr}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        resp2 = soap_session.post(
+            soap_url, data=body2,
+            headers={"Content-Type": "text/xml; charset=utf-8"},
+            verify=self.verify_ssl, timeout=30,
+        )
+        if resp2.status_code != 200:
+            return None
+        root2 = ET.fromstring(resp2.text)
+        wanted = {
+            ("virtualDisk", "numberReadAveraged", "average"): "read",
+            ("virtualDisk", "numberWriteAveraged", "average"): "write",
+        }
+        found: Dict[str, int] = {}
+        # Each PerfCounterInfo is typically under val/*/ or PropSet children
+        current: Dict[str, str] = {}
+        for el in root2.iter():
+            tag = el.tag.split("}")[-1]
+            if tag == "key" and el.text and el.text.isdigit():
+                current = {"key": el.text}
+            elif tag in ("groupInfo", "nameInfo", "rollupType") and current is not None:
+                # nested name/key under groupInfo/nameInfo
+                pass
+            elif tag == "key" and current and "group" not in current:
+                # ambiguous — prefer structured walk below
+                pass
+
+        # Structured: find PerfCounterInfo elements
+        for pci in root2.iter():
+            if pci.tag.split("}")[-1] != "PerfCounterInfo" and not (
+                pci.tag.split("}")[-1] == "perfCounter"
+            ):
+                # counters often appear as ArrayOfPerfCounterInfo children named PerfCounterInfo
+                pass
+
+        counters_xml = []
+        for el in root2.iter():
+            if el.tag.split("}")[-1] in ("PerfCounterInfo",):
+                counters_xml.append(el)
+        # Fallback: any element with child key + groupInfo
+        if not counters_xml:
+            for el in root2.iter():
+                kids = {c.tag.split("}")[-1] for c in list(el)}
+                if "groupInfo" in kids and "nameInfo" in kids and "key" in kids:
+                    counters_xml.append(el)
+
+        for pci in counters_xml:
+            flat: Dict[str, str] = {}
+            key_el = next((c for c in pci if c.tag.split("}")[-1] == "key"), None)
+            rollup_el = next((c for c in pci if c.tag.split("}")[-1] == "rollupType"), None)
+            group_name = None
+            counter_name = None
+            for child in pci:
+                ct = child.tag.split("}")[-1]
+                if ct == "groupInfo":
+                    gn = next((c for c in child if c.tag.split("}")[-1] == "key"), None)
+                    group_name = gn.text if gn is not None else None
+                elif ct == "nameInfo":
+                    nn = next((c for c in child if c.tag.split("}")[-1] == "key"), None)
+                    counter_name = nn.text if nn is not None else None
+            if key_el is None or not group_name or not counter_name:
+                continue
+            rollup = (rollup_el.text or "").strip() if rollup_el is not None else ""
+            slot = wanted.get((group_name, counter_name, rollup))
+            if slot:
+                try:
+                    found[slot] = int(key_el.text)
+                except (TypeError, ValueError):
+                    pass
+
+        if "read" not in found and "write" not in found:
+            logger.debug("VMware perf counters for virtualDisk IOPS not found")
+            return None
+
+        self._perf_cache = (perf_mgr, found)
+        return self._perf_cache
+
+    def get_vm_disk_iops(self, vm_id: str) -> Optional[Dict]:
+        """
+        PerformanceManager QueryPerf — virtualDisk numberRead/WriteAveraged (≈ IOPS).
+        Guest filesystem % vermez; hypervisor düzeyinde VMDK IO ortalamasıdır.
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return None
+        try:
+            cache = self._perf_manager_and_counters(soap_session, soap_url)
+            if not cache:
+                return None
+            perf_mgr, found = cache
+            metric_xml = ""
+            for slot, cid in found.items():
+                metric_xml += (
+                    f"<vim25:metricId><vim25:counterId>{cid}</vim25:counterId>"
+                    f"<vim25:instance>*</vim25:instance></vim25:metricId>"
+                )
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      <vim25:querySpec>
+        <vim25:entity type="VirtualMachine">{vm_id}</vim25:entity>
+        <vim25:maxSample>1</vim25:maxSample>
+        {metric_xml}
+        <vim25:intervalId>20</vim25:intervalId>
+      </vim25:querySpec>
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            resp = soap_session.post(
+                soap_url, data=body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=20,
+            )
+            if resp.status_code != 200:
+                logger.debug("QueryPerf HTTP %s: %s", resp.status_code, resp.text[:200])
+                return None
+            root = ET.fromstring(resp.text)
+            series_vals: List[tuple] = []
+            for el in root.iter():
+                tag = el.tag.split("}")[-1]
+                if tag == "counterId" and el.text and el.text.isdigit():
+                    series_vals.append(("cid", int(el.text)))
+                elif tag == "value":
+                    nums: List[float] = []
+                    if el.text and el.text.strip():
+                        try:
+                            nums.append(float(el.text.strip()))
+                        except ValueError:
+                            pass
+                    for c in el:
+                        if c.text and c.text.strip():
+                            try:
+                                nums.append(float(c.text.strip()))
+                            except ValueError:
+                                pass
+                    if nums:
+                        series_vals.append(("val", nums[-1]))
+
+            current_cid = None
+            sums: Dict[int, List[float]] = {}
+            for kind, v in series_vals:
+                if kind == "cid":
+                    current_cid = int(v)
+                    sums.setdefault(current_cid, [])
+                elif kind == "val" and current_cid is not None:
+                    sums[current_cid].append(float(v))
+
+            read_id = found.get("read")
+            write_id = found.get("write")
+            read_iops = sum(sums.get(read_id, [0])) if read_id else None
+            write_iops = sum(sums.get(write_id, [0])) if write_id else None
+            if read_iops is None and write_iops is None:
+                return None
+            return {
+                "disk_read_iops": round(read_iops, 2) if read_iops is not None else None,
+                "disk_write_iops": round(write_iops, 2) if write_iops is not None else None,
+                "source": "vcenter_perf",
+            }
+        except Exception as e:
+            logger.warning("get_vm_disk_iops error: %s", e)
+            return None
+
 
     # ── ESX Host İstatistikleri ──────────────────────────────────────────────
 

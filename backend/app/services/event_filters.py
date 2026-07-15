@@ -9,18 +9,24 @@ from sqlalchemy.orm import Query
 
 from app.models.event import SystemEvent
 
-# log_entry: tek seferlik uyarı/kritik logları Komuta Merkezi'nde gizle
+# log_entry: müşteri adm/journal ile gelen warning/error/critical görünür olsun.
+# (Eski eşikler occurrence≥2/3 + error hariç → Ops boş görünüyordu.)
 LOG_ENTRY_ACTIONABLE = or_(
     SystemEvent.event_type != "log_entry",
     and_(
         SystemEvent.event_type == "log_entry",
-        SystemEvent.severity == "critical",
-        SystemEvent.occurrence_count >= 3,
+        SystemEvent.severity.in_(["critical", "emergency"]),
+        SystemEvent.occurrence_count >= 1,
     ),
     and_(
         SystemEvent.event_type == "log_entry",
         SystemEvent.severity == "warning",
-        SystemEvent.occurrence_count >= 2,
+        SystemEvent.occurrence_count >= 1,
+    ),
+    and_(
+        SystemEvent.event_type == "log_entry",
+        SystemEvent.severity == "error",
+        SystemEvent.occurrence_count >= 1,
     ),
 )
 
@@ -40,7 +46,7 @@ ROUTINE_VIRT_EXCLUDE = or_(
 
 
 def apply_actionable_event_filters(q: Query) -> Query:
-    """Komuta Merkezi ile aynı: çözülmemiş, bilinmeyen, onaysız, log occurrence eşiği."""
+    """Komuta Merkezi ile aynı: çözülmemiş, bilinmeyen, onaysız, actionable log_entry."""
     return q.filter(
         SystemEvent.resolved == False,  # noqa: E712
         SystemEvent.is_known == False,  # noqa: E712

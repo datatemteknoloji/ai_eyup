@@ -42,8 +42,15 @@ def format_answer(
         "",
     ]
 
+    if summary.get("unreachable_count") or summary.get("stale_data_count") or summary.get("failed_collection_count"):
+        lines.append(
+            "_Not: Eksik/eski satırlar collector turuna veya SSH erişimine bağlıdır; "
+            "hostname/sayı uydurulmaz. Collector: `/collectors/linux-inventory/run`._"
+        )
+        lines.append("")
+
     if not results:
-        lines.append("_Sonuç bulunamadı._")
+        lines.append("_Sonuç bulunamadı (filtreye uyan envanter satırı yok veya henüz toplanmadı)._")
         return "\n".join(lines)
 
     cols = validated.get("requested_columns") or [

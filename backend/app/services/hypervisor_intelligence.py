@@ -1020,8 +1020,12 @@ def h_old_snapshots(db: Session, question: str = "") -> str:
 
 
 def h_disk_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — vCenter'dan snapshot/disk boyutu, thin/thick provisioning tipi, disk IO ve latency sayaçları "
-               f"şu anda toplanmıyor (VMDK bazlı disk envanteri ve PerformanceManager disk metrikleri collector'ı gerekir).")
+    return _na(
+        f"{topic} — Guest içi disk doluluk (%) ve thin/thick hâlâ guest/node-exporter veya "
+        f"VMDK envanter collector gerektirir. VMDK düzeyinde IOPS için vCenter "
+        f"PerformanceManager (virtualDisk read/write averaged) metric_sync VMware "
+        f"yedeğinde yazılmaya çalışılır; değer yoksa collector/izin kontrol edin."
+    )
 
 
 # ── Network ──────────────────────────────────────────────────────────────────

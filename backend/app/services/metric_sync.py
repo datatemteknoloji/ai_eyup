@@ -174,6 +174,8 @@ def _write_vmware_metric_rows(
     mem_percent: Optional[float],
     mem_used_mb: Optional[float],
     mem_total_mb: Optional[float],
+    disk_read_iops: Optional[float] = None,
+    disk_write_iops: Optional[float] = None,
 ) -> int:
     now = datetime.utcnow()
     n = 0
@@ -191,6 +193,10 @@ def _write_vmware_metric_rows(
             free_mb = max(mem_total_mb - mem_used_mb, 0)
         if free_mb is not None:
             rows.append(("memory_available_bytes", free_mb * 1024 * 1024, "bytes"))
+    if disk_read_iops is not None:
+        rows.append(("disk_read_iops", disk_read_iops, "count"))
+    if disk_write_iops is not None:
+        rows.append(("disk_write_iops", disk_write_iops, "count"))
     for name, val, unit in rows:
         db.add(MetricData(
             server_id=server.id,
@@ -221,16 +227,37 @@ class MetricSyncService:
         if is_windows_server(server):
             instance = f"{server.ip_address}:{WINDOWS_EXPORTER_PORT}"
             metrics_list = WINDOWS_METRICS_TO_SYNC
+            kind = "windows"
         else:
-            instance = f"{server.ip_address}:9100"
             metrics_list = METRICS_TO_SYNC
+            kind = "linux"
+            # IP:9100 veya hostname:9100 — sadece IP aramak IOPS=0 üretebiliyordu
+            instance = f"{server.ip_address}:9100" if server.ip_address else None
+            try:
+                from app.services.monitoring.prometheus_metrics import (
+                    get_node_exporter_up_map,
+                    match_prometheus_instance,
+                )
+                up_map = get_node_exporter_up_map()
+                matched, _up = match_prometheus_instance(
+                    up_map,
+                    ip=server.ip_address,
+                    hostname=server.hostname,
+                    name=server.name,
+                )
+                if matched:
+                    instance = matched
+            except Exception as e:
+                logger.debug("prometheus instance match skip %s: %s", server.name, e)
+            if not instance:
+                return 0
+
         synced_count = 0
         end_time = datetime.utcnow()
         start_time = end_time - timedelta(minutes=minutes)
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             for query_tpl, db_metric_name, unit, category in metrics_list:
-                kind = "windows" if is_windows_server(server) else "linux"
                 query = apply_promql_job(query_tpl, kind=kind).replace("{instance}", instance)
                 try:
                     resp = await client.get(
@@ -343,12 +370,25 @@ class MetricSyncService:
                                 mu = mu if mu is not None else u2
                                 mt = mt if mt is not None else t2
 
+                        read_iops = write_iops = None
+                        perf_vm = srv.hypervisor_vm_id or (stats.get("vm_ref") if isinstance(stats, dict) else None)
+                        if perf_vm:
+                            try:
+                                io = vc.get_vm_disk_iops(str(perf_vm))
+                                if io:
+                                    read_iops = io.get("disk_read_iops")
+                                    write_iops = io.get("disk_write_iops")
+                            except Exception as ie:
+                                logger.debug("VMware disk iops skip %s: %s", srv.name, ie)
+
                         wrote = _write_vmware_metric_rows(
                             db, srv,
                             cpu_percent=cpu_p,
                             mem_percent=mem_p,
                             mem_used_mb=mu,
                             mem_total_mb=mt,
+                            disk_read_iops=read_iops,
+                            disk_write_iops=write_iops,
                         )
                         if wrote:
                             total_metrics += wrote
@@ -369,16 +409,24 @@ class MetricSyncService:
 
     @staticmethod
     async def sync_all_servers_metrics(db: Session, minutes: int = 12) -> Dict[str, Any]:
-        candidates = db.query(Server).filter(
-            Server.ai_ready == True,
-            Server.status == "ONLINE"
-        ).all()
-        # Windows sunucular sadece windows_exporter kuruluysa sorgulanır (gereksiz Prometheus
-        # sorgusu yapmamak için) — Linux tarafı geriye dönük uyumluluk için filtresiz kalır.
-        servers = [
-            s for s in candidates
-            if not is_windows_server(s) or s.windows_exporter_installed
-        ]
+        # ai_ready VEYA node_exporter_running — IOPS kaçmasın diye exporter'ı olan ONLINE Linux dahil
+        candidates = db.query(Server).filter(Server.status == "ONLINE").all()
+        servers = []
+        for s in candidates:
+            if is_windows_server(s):
+                if s.ai_ready and s.windows_exporter_installed:
+                    servers.append(s)
+            elif s.ai_ready or getattr(s, "node_exporter_running", False):
+                servers.append(s)
+        # dedupe by id
+        seen = set()
+        uniq = []
+        for s in servers:
+            if s.id in seen:
+                continue
+            seen.add(s.id)
+            uniq.append(s)
+        servers = uniq
         total, synced_servers = 0, 0
         need_vmware: List[Server] = []
         for srv in servers:

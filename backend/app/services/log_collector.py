@@ -30,10 +30,11 @@ LOG_MIN_OCCURRENCES_WARNING  = 2   # warning için min 2x
 LOG_LEARNING_WINDOW_HOURS = 24
 
 def _build_journald_cmd(since_hours: int = 2) -> str:
-    # stderr'i gizleme: izin hatalarını loglamak için caller'a kalsın
+    # Beklenen deploy: SSH kullanıcısı `adm` veya `systemd-journal` grubunda.
+    # Sudo gerekmez; izin hataları caller'a stderr ile döner.
     return (
         f"journalctl -p 4 --since '{since_hours} hours ago' --no-pager "
-        "--output=short-iso | tail -500"
+        "--output=short-iso | tail -800"
     )
 
 def _build_syslog_cmd(since_hours: int = 2) -> str:
@@ -219,23 +220,34 @@ def collect_server_logs(
     try:
         journald_cmd = _build_journald_cmd(since_hours)
         syslog_cmd = _build_syslog_cmd(since_hours)
-        # Önce kullanıcı yetkisiyle dene; journal ACL (adm/systemd-journal) yoksa sudo
+        # Birincil yol: adm/systemd-journal grubundaki kullanıcı (sudo yok).
         ok, out, err = ssh.execute_command(journald_cmd)
+        used_sudo = False
         if (not ok or not (out or "").strip()) and sudo_password:
+            # Yalnızca ACL yoksa son çare; müşteri deploy'da adm tercih edilir.
+            logger.info(
+                "Log collection %s: journal kullanıcı yetkisiyle boş — sudo deneniyor "
+                "(tercih: kullanıcıyı adm grubuna ekleyin)",
+                server.name,
+            )
             ok, out, err = ssh.execute_command(journald_cmd, use_sudo=True)
+            used_sudo = bool(ok and (out or "").strip())
         if ok and (out or "").strip():
             logs = _parse_log_lines(out)
+            if used_sudo:
+                logger.debug("Log collection %s: journal sudo ile alındı", server.name)
         else:
-            ok2, out2, _ = ssh.execute_command(syslog_cmd)
+            ok2, out2, err2 = ssh.execute_command(syslog_cmd)
             if (not ok2 or not (out2 or "").strip()) and sudo_password:
-                ok2, out2, _ = ssh.execute_command(syslog_cmd, use_sudo=True)
+                ok2, out2, err2 = ssh.execute_command(syslog_cmd, use_sudo=True)
             if ok2 and (out2 or "").strip():
                 logs = _parse_log_lines(out2)
-            elif err:
+            else:
+                sample = (err or err2 or "")[:160]
                 logger.info(
-                    "Log collection empty %s (journal stderr neglected by redirect; "
-                    "likely ACL/sudo). sample_err=%s",
-                    server.name, (err or "")[:120],
+                    "Log collection empty %s — journal/syslog yok veya yetki yok "
+                    "(SSH kullanıcısını adm grubuna ekleyin). sample=%s",
+                    server.name, sample,
                 )
     finally:
         ssh.close()
@@ -309,9 +321,8 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
                     f"(sadece {log_count_in_window} log var)"
                 )
 
-        # ── Minimum tekrar filtresi: ilk görüldüğünde sadece kaydedilir ──────
-        # occurrence_count 1 olarak başlar; tekrar görülünce yükselir.
-        # OpsCenter sadece yeterli tekrarı olan olayları gösterir.
+        # ── Minimum tekrar: occurrence 1 ile kaydedilir; Ops'ta warning/error/critical
+        # occurrence≥1 ile görünür (adm journal toplanınca ilk turda kaybolmaz).
         event = SystemEvent(
             server_id=server.id,
             event_type="log_entry",
