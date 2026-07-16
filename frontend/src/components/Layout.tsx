@@ -624,8 +624,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        {/* Page Content — dikey kaydırma yalnızca burada */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-5 bg-slate-900">
+        {/* Page Content — chat tam ekran iç scroll; diğer sayfalar main scroll */}
+        <main className={`flex-1 min-h-0 p-5 bg-slate-900 ${
+          (() => {
+            const p = location.pathname
+            const isChat = p.endsWith('/chat')
+              || p.includes('/chat/')
+              || p.includes('unified-chat')
+              || /\/(linux|windows|virt|exadata)\/.*chat/.test(p)
+            return isChat ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+          })()
+        }`}>
           {children}
         </main>
       </div>

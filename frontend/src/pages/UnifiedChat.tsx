@@ -256,9 +256,11 @@ const UnifiedChat: React.FC<{
     }
   })
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force = false) => {
     const el = messagesContainerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (force || nearBottom) el.scrollTop = el.scrollHeight
   }
   useEffect(() => { scrollToBottom() }, [messages, streamingText])
 
@@ -468,7 +470,7 @@ const UnifiedChat: React.FC<{
 
       <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
-        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
+        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl min-h-0">
           <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
             <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
             <div className="flex items-center gap-1">
@@ -480,7 +482,7 @@ const UnifiedChat: React.FC<{
               )}
             </div>
           </div>
-          <div className="overflow-y-auto flex-1 p-2">
+          <div className="overflow-y-auto flex-1 min-h-0 p-2">
             {sessions.length === 0 ? (
               <div className="text-center py-6 text-slate-500 text-xs">Henüz chat yok</div>
             ) : sessions.map(session => (

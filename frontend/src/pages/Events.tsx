@@ -155,6 +155,22 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     refetchInterval: 20000
   })
 
+  const { data: coverage } = useQuery<{
+    with_events: { id: number; name: string; ip: string; event_count: number }[]
+    without_events: { id: number; name: string; ip: string; event_count: number }[]
+    with_count: number; without_count: number; hours: number
+  }>({
+    queryKey: ['events-coverage', platform],
+    queryFn: async () => {
+      const params = appendPlatform(new URLSearchParams({ hours: '24' }), platform)
+      const res = await fetch(`${API_BASE_URL}/events/coverage?${params}`)
+      if (!res.ok) return { with_events: [], without_events: [], with_count: 0, without_count: 0, hours: 24 }
+      return res.json()
+    },
+    enabled: platform === 'linux' || platform === 'windows' || platform === 'exadata',
+    refetchInterval: 60000,
+  })
+
   const { data: eventTypes } = useQuery<string[]>({
     queryKey: ['eventTypes', platform],
     queryFn: async () => {
@@ -173,7 +189,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const handleScan = async () => {
     setScanning(true); setScanResult(null)
     try {
-      const res = await fetch(`${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`, { method: 'POST' })
+      const res = await fetch(`${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=true`, { method: 'POST' })
       const data = await res.json()
       // Arka plan job: EventsHub BulkJobOverlay gösterir; burada kısa bilgi
       if (data.job_id) {
@@ -403,6 +419,34 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           active={knownFilter === 'true'}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter('true'); setExcludeKnown(false); setPage(0) }} />
       </div>
+
+      {coverage && (platform === 'linux' || platform === 'windows' || platform === 'exadata') && (
+        <div className="cyber-card px-4 py-3 flex flex-wrap items-start gap-4 text-xs">
+          <div>
+            <p className="font-medium text-slate-300 mb-1">AI Ready kapsama (24s)</p>
+            <p style={{ color: 'rgba(148,163,184,0.65)' }}>
+              <span style={{ color: NEON.green }}>{coverage.with_count} event gelen</span>
+              {' · '}
+              <span style={{ color: NEON.orange }}>{coverage.without_count} event gelmeyen</span>
+            </p>
+          </div>
+          {coverage.without_events.length > 0 && (
+            <div className="flex-1 min-w-[12rem]">
+              <p className="mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Event gelmeyen (AI Ready):</p>
+              <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
+                {coverage.without_events.slice(0, 40).map(s => (
+                  <span key={s.id} className="px-2 py-0.5 rounded border text-[11px]"
+                    style={{ borderColor: 'rgba(251,191,36,0.25)', color: 'rgba(251,191,36,0.9)', background: 'rgba(251,191,36,0.06)' }}
+                    title={s.ip || ''}>{s.name}</span>
+                ))}
+                {coverage.without_events.length > 40 && (
+                  <span style={{ color: 'rgba(148,163,184,0.5)' }}>+{coverage.without_events.length - 40}</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {scanResult && (
         <div className="px-4 py-3 rounded-xl text-sm flex items-start justify-between gap-4 cyber-card"

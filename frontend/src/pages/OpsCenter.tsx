@@ -117,12 +117,19 @@ function metricCategory(metric: string): 'cpu' | 'memory' | 'disk' | 'network' |
 }
 
 // ── Metrik Kategori Widget ────────────────────────────────────────────────────
-function MetricWidget({ icon, label, count, critCount, color }: {
+function MetricWidget({ icon, label, count, critCount, color, active, onClick }: {
   icon: React.ReactNode; label: string; count: number; critCount: number; color: string
+  active?: boolean; onClick?: () => void
 }) {
   const pct = count === 0 ? 0 : Math.min(100, count * 12)
   return (
-    <div className="flex-1 bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-3">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 text-left bg-slate-800/60 border rounded-xl px-4 py-3 transition-all ${
+        onClick ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-slate-800' : ''
+      } ${active ? 'border-cyan-500/60 ring-1 ring-cyan-500/30' : 'border-slate-700/60'}`}
+    >
       <div className="flex items-center justify-between mb-2">
         <div className={`flex items-center gap-2 text-sm font-medium ${color}`}>
           {icon} {label}
@@ -136,7 +143,7 @@ function MetricWidget({ icon, label, count, critCount, color }: {
         }} />
       </div>
       {critCount > 0 && <div className="text-[10px] text-red-400 mt-1">{critCount} kritik</div>}
-    </div>
+    </button>
   )
 }
 
@@ -874,6 +881,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const [detailCard, setDetailCard] = useState<ServerCard | null>(null)
   const [viewMode, setViewMode] = useState<'active' | 'handled'>('active')
   const [handledStatus, setHandledStatus] = useState<'' | 'acknowledged' | 'known' | 'resolved'>('')
+  const [metricFilter, setMetricFilter] = useState<'all' | 'cpu' | 'memory' | 'disk' | 'network'>('all')
 
   const { data, isLoading, refetch } = useQuery<CommandCenterData>({
     queryKey: ['ops-command-center', platform],
@@ -920,12 +928,13 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     cards.filter(c => {
       if (tierFilter !== 'all' && c.server.tier !== tierFilter) return false
       if (sevFilter !== 'all' && c.max_severity !== sevFilter) return false
+      if (metricFilter !== 'all' && !c.metrics.some(m => metricCategory(m.metric) === metricFilter)) return false
       if (search && !c.server.name.toLowerCase().includes(search.toLowerCase())
         && !c.server.ip.includes(search)
         && !c.metrics.some(m => m.metric.toLowerCase().includes(search.toLowerCase()))) return false
       return true
     }),
-    [tierFilter, sevFilter, search]
+    [tierFilter, sevFilter, search, metricFilter]
   )
 
   const critFiltered = useMemo(() => filterCards(data?.critical_servers ?? []), [data, filterCards])
@@ -973,6 +982,11 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
                 color={color}
                 count={(metricBreakdown.counts as any)[key]}
                 critCount={(metricBreakdown.critCounts as any)[key]}
+                active={metricFilter === key}
+                onClick={() => {
+                  setViewMode('active')
+                  setMetricFilter(prev => prev === key ? 'all' : key as typeof metricFilter)
+                }}
               />
             ))}
           </div>

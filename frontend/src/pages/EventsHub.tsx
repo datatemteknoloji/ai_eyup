@@ -66,7 +66,7 @@ export default function EventsHub({ platform = 'linux' }: PlatformAiopsProps) {
     setScanMsg(null)
     try {
       const res = await fetch(
-        `${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`,
+        `${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=true`,
         { method: 'POST' },
       )
       const data = await res.json().catch(() => ({}))

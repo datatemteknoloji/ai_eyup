@@ -305,7 +305,7 @@ export function LogHeatmapPanel({
   const scanNowMutation = useMutation({
     mutationFn: async () => {
       const r = await fetch(
-        `${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`,
+        `${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=true`,
         { method: 'POST' },
       )
       const data = await r.json().catch(() => ({}))
@@ -342,21 +342,15 @@ export function LogHeatmapPanel({
     return [...f].sort((a, b) => b.total_score - a.total_score)
   }, [heatmapData, serverSearch])
 
-  if (platform === 'virt') {
-    return (
-      <EmptyState icon="☁" text="Sanallaştırma modülünde log ısı haritası vCenter olayları üzerinden Events sekmesinde görüntülenir." />
-    )
-  }
-
   return (
     <div className="space-y-3">
       {msg && (
         <div className="px-4 py-2 rounded-xl text-sm" style={{ color: msg.ok ? NEON.green : NEON.red }}>{msg.text}</div>
       )}
       <div className="flex items-center gap-2 flex-wrap">
-        <SearchInput value={serverSearch} onChange={setServerSearch} placeholder="Sunucu ara..." width="w-52" />
+        <SearchInput value={serverSearch} onChange={setServerSearch} placeholder={platform === 'virt' ? 'Host / cluster ara...' : 'Sunucu ara...'} width="w-52" />
       </div>
-      <Section title="30 Günlük Log Anomali Isı Haritası" accent={NEON.orange}
+      <Section title={platform === 'virt' ? '30 Günlük vCenter Olay Isı Haritası' : '30 Günlük Log Anomali Isı Haritası'} accent={NEON.orange}
         right={
           <div className="flex items-center gap-2">
             <GhostButton
@@ -364,14 +358,18 @@ export function LogHeatmapPanel({
               onClick={() => scanNowMutation.mutate()}
               disabled={scanNowMutation.isPending || backfillMutation.isPending}
             >
-              {scanNowMutation.isPending ? 'Taranıyor...' : 'Şimdi Tara'}
+              {scanNowMutation.isPending ? 'Taranıyor...' : platform === 'virt' ? 'vCenter Sync' : 'Şimdi Tara'}
             </GhostButton>
+            {platform !== 'virt' && (
+              <>
             <Select value={String(backfillDays)} onChange={v => setBackfillDays(Number(v))}>
               {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
             </Select>
             <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending || scanNowMutation.isPending}>
               {backfillMutation.isPending ? 'Yükleniyor...' : 'Geçmiş Veri'}
             </GhostButton>
+              </>
+            )}
           </div>
         }>
         <div className="px-5 py-2.5 flex flex-wrap items-center gap-3 text-xs" style={{ borderBottom: '1px solid rgba(99,130,194,0.08)' }}>
@@ -398,13 +396,13 @@ export function LogHeatmapPanel({
               <tbody>
                 {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>Veri bulunamadı.</td></tr>}
                 {filteredHeatmapRows.map(row => (
-                  <tr key={row.server_id} style={{ borderTop: '1px solid rgba(30,41,59,0.6)' }}>
+                  <tr key={row.server_id ?? row.server_name} style={{ borderTop: '1px solid rgba(30,41,59,0.6)' }}>
                     <td className="sticky left-0 z-10 px-3 py-2 whitespace-nowrap" style={{ background: 'var(--bg-card)' }}>
                       <div className="font-medium text-white">{row.server_name}</div>
                       <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{row.ip_address || '-'}</div>
                     </td>
                     {row.cells.map(cell => (
-                      <td key={`${row.server_id}-${cell.date}`} className="px-1 py-1">
+                      <td key={`${row.server_id ?? row.server_name}-${cell.date}`} className="px-1 py-1">
                         <div title={cell.score > 0 ? `${row.server_name} | ${cell.date} | skor: ${cell.score}` : `${row.server_name} | ${cell.date} | normal`}
                           className="w-6 h-6 rounded-md mx-auto transition-transform hover:scale-125 flex items-center justify-center"
                           style={{ background: heatColor(cell.score, heatmapData?.max_cell_score || 0), border: '1px solid rgba(99,130,194,0.12)' }}>

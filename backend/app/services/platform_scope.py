@@ -299,10 +299,22 @@ def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: 
             return platform in related_plats
 
         aff = set(inc.affected_servers or [])
+        src_l = (src or "").lower()
         if platform == "linux":
-            return bool(aff & linux_module_ids)
+            if aff & linux_module_ids:
+                return True
+            # Event/server bağı kopmuş Linux AIOps/log incident'ları kaybolmasın
+            if not aff and any(
+                k in src_l for k in ("log_collector", "aiops", "storm_detector", "manual", "metric_anomaly")
+            ):
+                return not is_virt_src and not is_win_src and not is_exa_src
+            return False
         if platform == "windows":
-            return bool(aff & windows_ids)
+            if aff & windows_ids:
+                return True
+            if not aff and "windows" in src_l:
+                return True
+            return False
         return False
 
     return [inc for inc in incidents if matches(inc)]

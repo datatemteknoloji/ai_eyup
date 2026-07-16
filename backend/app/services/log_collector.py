@@ -29,11 +29,18 @@ LOG_MIN_OCCURRENCES_WARNING  = 2   # warning için min 2x
 # Log event'lerini "öğrenme" için saydığımız pencere (saat)
 LOG_LEARNING_WINDOW_HOURS = 24
 
-def _build_journald_cmd(since_hours: int = 2) -> str:
+def _build_journald_cmd(since_hours: int = 2, priority: Optional[int] = None) -> str:
     # Beklenen deploy: SSH kullanıcısı `adm` veya `systemd-journal` grubunda.
     # Sudo gerekmez; izin hataları caller'a stderr ile döner.
+    if priority is None:
+        try:
+            from app.services.runtime_settings import get_int
+            priority = int(get_int("log_journal_priority") or 4)
+        except Exception:
+            priority = 4
+    priority = max(0, min(7, int(priority)))
     return (
-        f"journalctl -p 4 --since '{since_hours} hours ago' --no-pager "
+        f"journalctl -p {priority} --since '{since_hours} hours ago' --no-pager "
         "--output=short-iso | tail -800"
     )
 
@@ -211,7 +218,7 @@ def collect_server_logs(
         port=creds.get("port") or 22,
         sudo_password=creds.get("sudo_password") or creds.get("password"),
     )
-    if not ssh.connect():
+    if not ssh.connect(retries=1):
         return []
 
     logs = []
@@ -364,16 +371,24 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
 
 def collect_all_servers_logs(
     db: Session,
-    only_ai_ready: bool = False,
+    only_ai_ready: bool = True,
     since_hours: int = 2,
     progress_cb: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Tum ONLINE sunuculardan SSH ile log topla. since_hours=168 ile 7 gunluk backfill yapilabilir.
     progress_cb(done, total, server_name, saved) — opsiyonel ilerleme callback.
+    Varsayılan: yalnız AI Ready (Gelişmiş ayar log_scan_ai_ready_only).
     """
+    try:
+        from app.services.runtime_settings import get_bool
+        if get_bool("log_scan_ai_ready_only"):
+            only_ai_ready = True
+    except Exception:
+        only_ai_ready = True
+
     q = db.query(Server).filter(Server.status.in_(["ONLINE", "WARNING"]))
     if only_ai_ready:
-        q = q.filter(Server.ai_ready == True)
+        q = q.filter(Server.ai_ready == True)  # noqa: E712
     global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
     if not global_cred:
         global_cred = db.query(GlobalCredential).first()

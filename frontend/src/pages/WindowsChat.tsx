@@ -298,9 +298,11 @@ const WindowsChat: React.FC<{
     }
   })
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force = false) => {
     const el = messagesContainerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (force || nearBottom) el.scrollTop = el.scrollHeight
   }
   useEffect(() => { scrollToBottom() }, [messages, streamingText])
 

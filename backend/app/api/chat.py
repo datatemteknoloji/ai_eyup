@@ -138,6 +138,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = None  # Ollama model seçimi
     use_rag: Optional[bool] = True  # RAG (runbook, incident, metrik) kullanılsın mı
     skip_server_context: Optional[bool] = False  # SSH/Prometheus context toplama, event analizi için
+    ephemeral: Optional[bool] = False  # Gizli mod: mesajlar DB'ye yazılmaz
 
 
 class ChatResponse(BaseModel):
@@ -500,14 +501,15 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             except Exception as e:
                 logger.warning(f"Prometheus context hatası: {e}")
 
-        # User mesajını DB'ye kaydet
-        user_msg = ChatMessage(
-            session_id=session_id,
-            role="user",
-            content=message,
-        )
-        db.add(user_msg)
-        db.commit()
+        # User mesajını DB'ye kaydet (gizli modda atla)
+        if not request.ephemeral:
+            user_msg = ChatMessage(
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+            db.add(user_msg)
+            db.commit()
         
         # SSH ile gercek veri topla — sunucu keyword olmayan sohbet mesajlarında atla
         ssh_context = ""
@@ -547,7 +549,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                                 all_server_contexts.append(build_server_context(srv, info_result))
                                 try:
                                     from app.services.fact_learning import extract_and_store_facts
-                                    extract_and_store_facts(db, srv, info_result, platform="linux")
+                                    if not request.ephemeral:
+                                        extract_and_store_facts(db, srv, info_result, platform="linux")
                                 except Exception:
                                     pass
                             except Exception as e_srv:
@@ -671,16 +674,17 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 if not data.get("error"):
                     ai_response = data.get("response", "Yanıt alınamadı")
 
-                    assistant_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=ai_response,
-                    )
-                    db.add(assistant_msg)
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                    if session:
-                        session.updated_at = datetime.now(timezone.utc)
-                    db.commit()
+                    if not request.ephemeral:
+                        assistant_msg = ChatMessage(
+                            session_id=session_id,
+                            role="assistant",
+                            content=ai_response,
+                        )
+                        db.add(assistant_msg)
+                        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                        if session:
+                            session.updated_at = datetime.now(timezone.utc)
+                        db.commit()
 
                     return ChatResponse(
                         response=ai_response,
@@ -705,16 +709,17 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                             (request.model or get_active_model(db)).split(":")[0],
                             data.get("error"),
                         )
-                    err_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=error_response,
-                    )
-                    db.add(err_msg)
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                    if session:
-                        session.updated_at = datetime.now(timezone.utc)
-                    db.commit()
+                    if not request.ephemeral:
+                        err_msg = ChatMessage(
+                            session_id=session_id,
+                            role="assistant",
+                            content=error_response,
+                        )
+                        db.add(err_msg)
+                        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                        if session:
+                            session.updated_at = datetime.now(timezone.utc)
+                        db.commit()
                     return ChatResponse(
                         response=error_response,
                         commands=None,
@@ -724,16 +729,17 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         except httpx.TimeoutException:
             logger.error("Ollama timeout")
             error_response = "AI servisi zaman aşımına uğradı. Lütfen tekrar deneyin."
-            err_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=error_response,
-            )
-            db.add(err_msg)
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if session:
-                session.updated_at = datetime.now(timezone.utc)
-            db.commit()
+            if not request.ephemeral:
+                err_msg = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=error_response,
+                )
+                db.add(err_msg)
+                session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if session:
+                    session.updated_at = datetime.now(timezone.utc)
+                db.commit()
             return ChatResponse(
                 response=error_response,
                 commands=None,
@@ -743,16 +749,17 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         except httpx.ConnectError:
             logger.error("Ollama connection error")
             error_response = "AI servisine bağlanılamadı. Ollama servisinin çalıştığından emin olun."
-            err_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=error_response,
-            )
-            db.add(err_msg)
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if session:
-                session.updated_at = datetime.now(timezone.utc)
-            db.commit()
+            if not request.ephemeral:
+                err_msg = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=error_response,
+                )
+                db.add(err_msg)
+                session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if session:
+                    session.updated_at = datetime.now(timezone.utc)
+                db.commit()
             return ChatResponse(
                 response=error_response,
                 commands=None,
@@ -762,16 +769,17 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.error(f"Ollama error: {e}")
             error_response = f"AI servisi hatası: {str(e)}"
-            err_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=error_response,
-            )
-            db.add(err_msg)
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if session:
-                session.updated_at = datetime.now(timezone.utc)
-            db.commit()
+            if not request.ephemeral:
+                err_msg = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=error_response,
+                )
+                db.add(err_msg)
+                session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if session:
+                    session.updated_at = datetime.now(timezone.utc)
+                db.commit()
             return ChatResponse(
                 response=error_response,
                 commands=None,
@@ -791,7 +799,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         # session_id satır 206'da her zaman tanımlanır; NameError oluşamaz.
         # None ise oturum oluşturulmadan hata çıktı demektir — DB kaydı atlanır.
         try:
-            if session_id is not None:
+            if session_id is not None and not request.ephemeral:
                 err_assistant = ChatMessage(session_id=session_id, role="assistant", content=err_msg)
                 db.add(err_assistant)
                 sess = db.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -1091,6 +1099,32 @@ def _sse(obj: dict) -> str:
     return "data: " + _json.dumps(obj) + "\n\n"
 
 
+def _persist_chat_pair(
+    db: Session,
+    session_id: int,
+    *,
+    ephemeral: bool,
+    user: Optional[str] = None,
+    assistant: Optional[str] = None,
+    meta: Optional[dict] = None,
+) -> None:
+    """Gizli (ephemeral) modda ChatMessage yazma; aksi halde user/assistant kaydet."""
+    if ephemeral:
+        return
+    if user is not None:
+        db.add(ChatMessage(session_id=session_id, role="user", content=user))
+    if assistant is not None:
+        kwargs = {"session_id": session_id, "role": "assistant", "content": assistant}
+        if meta is not None:
+            kwargs["meta"] = meta
+        db.add(ChatMessage(**kwargs))
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if s:
+        from datetime import datetime, timezone
+        s.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 @router.post("/stream")
 async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
     """Streaming chat: cache → paralel context → Ollama SSE"""
@@ -1103,11 +1137,13 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 yield _sse({"error": "Mesaj boş"})
                 return
 
+            ephemeral = bool(request.ephemeral)
+
             # ── Session ──────────────────────────────────────────────────
             session_id = request.session_id
             if not session_id:
                 from app.services.chat_history import title_from_message
-                title = title_from_message(message)
+                title = "[Gizli]" if ephemeral else title_from_message(message)
                 session = ChatSession(title=title, server_ids=request.server_ids or [], category="linux")
                 db.add(session)
                 db.commit()
@@ -1118,15 +1154,16 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 if not session:
                     yield _sse({"error": "Session bulunamadı"})
                     return
-                from app.services.chat_history import maybe_set_session_title
-                if maybe_set_session_title(session, message):
-                    db.commit()
+                if not ephemeral:
+                    from app.services.chat_history import maybe_set_session_title
+                    if maybe_set_session_title(session, message):
+                        db.commit()
 
             yield _sse({"session_id": session_id, "start": True})
 
             # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
             from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
-            _is_followup = has_prior_messages(db, session_id)
+            _is_followup = (not ephemeral) and has_prior_messages(db, session_id)
             history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
             # ── 1. Cache kontrolü ─────────────────────────────────────────
@@ -1134,20 +1171,14 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # ("peki cpu?" gibi), session'i bilmeyen izole bir cache anahtariyla
             # eslesip baglamsiz/eski bir cevap donebilir (bkz. chat_cache_service.py
             # _context_key — session_id icermiyor).
+            # Gizli modda cache okuma/yazma yok (prompt sızıntısı önlemi).
             server_ids = request.server_ids or []
-            cached = None if _is_followup else get_cached_answer(db, message, server_ids)
+            cached = None if (_is_followup or ephemeral) else get_cached_answer(db, message, server_ids)
             if cached:
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                db.commit()
                 answer = cached["answer"]
                 for i in range(0, len(answer), 8):
                     yield _sse({"token": answer[i:i+8]})
-                db.add(ChatMessage(session_id=session_id, role="assistant", content=answer))
-                s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                if s:
-                    from datetime import datetime, timezone
-                    s.updated_at = datetime.now(timezone.utc)
-                db.commit()
+                _persist_chat_pair(db, session_id, ephemeral=ephemeral, user=message, assistant=answer)
                 yield _sse({"done": True, "session_id": session_id, "from_cache": True})
                 return
 
@@ -1349,13 +1380,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     full_resp = raw_output + "\n---\n## Analiz\n\n" + analysis_text
 
                 # Oturuma kaydet
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                db.add(ChatMessage(session_id=session_id, role="assistant", content=full_resp))
-                s_obj = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                if s_obj:
-                    from datetime import datetime, timezone as _tz
-                    s_obj.updated_at = datetime.now(_tz.utc)
-                db.commit()
+                _persist_chat_pair(
+                    db, session_id, ephemeral=ephemeral, user=message, assistant=full_resp,
+                )
                 yield _sse({"done": True, "session_id": session_id})
                 return
 
@@ -1419,22 +1446,16 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 target_server = selected_servers[0]
                 chart_result = build_chart_response(db, target_server, chart_req["hours"], chart_req["groups"])
                 if chart_result:
-                    db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                    db.commit()
                     answer_text = chart_result["summary_text"]
                     if len(selected_servers) > 1:
                         answer_text += f"\n\n_(Not: Birden fazla sunucu seçili, grafik sadece **{target_server.name}** için oluşturuldu.)_"
                     for i in range(0, len(answer_text), 8):
                         yield _sse({"token": answer_text[i:i+8]})
-                    db.add(ChatMessage(
-                        session_id=session_id, role="assistant", content=answer_text,
+                    _persist_chat_pair(
+                        db, session_id, ephemeral=ephemeral,
+                        user=message, assistant=answer_text,
                         meta={"charts": chart_result["charts"]},
-                    ))
-                    s_chart = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                    if s_chart:
-                        from datetime import datetime as _dt, timezone as _tz2
-                        s_chart.updated_at = _dt.now(_tz2.utc)
-                    db.commit()
+                    )
                     yield _sse({"done": True, "session_id": session_id})
                     return
 
@@ -1553,7 +1574,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                                 ctxs.append(_bsc(selected_servers[i], info))
                                 try:
                                     from app.services.fact_learning import extract_and_store_facts
-                                    extract_and_store_facts(db, selected_servers[i], info, platform="linux")
+                                    if not ephemeral:
+                                        extract_and_store_facts(db, selected_servers[i], info, platform="linux")
                                 except Exception:
                                     pass
                             except Exception:
@@ -1688,9 +1710,10 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 history_block=history_block,
             )
 
-            # Kullanıcı mesajını kaydet
-            db.add(ChatMessage(session_id=session_id, role="user", content=message))
-            db.commit()
+            # Kullanıcı mesajını kaydet (gizli modda atla — assistant ile birlikte sonda)
+            if not ephemeral:
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.commit()
 
             # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
             model = request.model or get_active_model(db)
@@ -1737,20 +1760,24 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             break
 
             # ── 7. Kaydet + Cache ─────────────────────────────────────────
-            db.add(ChatMessage(
-                session_id=session_id, role="assistant",
-                content=full_response or "(yanıt alınamadı)",
-            ))
-            s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if s:
-                from datetime import datetime, timezone
-                s.updated_at = datetime.now(timezone.utc)
-            db.commit()
+            if not ephemeral:
+                db.add(ChatMessage(
+                    session_id=session_id, role="assistant",
+                    content=full_response or "(yanıt alınamadı)",
+                ))
+                s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if s:
+                    from datetime import datetime, timezone
+                    s.updated_at = datetime.now(timezone.utc)
+                db.commit()
 
             # SSH verisi içeren yanıtlar canlı veri, takip soruları da bağlama bağımlı —
             # ikisi de cache'e kaydedilmez (aksi halde sonraki izole bir soru bu bağlama
             # bağımlı cevabı yanlışlıkla kullanabilir).
-            if full_response and not is_deep and not needs_ssh and not _is_followup:
+            if (
+                full_response and not is_deep and not needs_ssh and not _is_followup
+                and not ephemeral
+            ):
                 save_to_cache(db, message, full_response, server_ids)
 
             yield _sse({"done": True, "session_id": session_id})

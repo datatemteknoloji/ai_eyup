@@ -7,7 +7,7 @@ import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
 import * as XLSX from 'xlsx'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
-import { FileDown } from 'lucide-react'
+import { FileDown, EyeOff } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 
 function _cleanCell(raw: string): string {
@@ -165,6 +165,8 @@ const Chat: React.FC<{
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [useRag, setUseRag] = useState<boolean>(true)
+  const [incognito, setIncognito] = useState(false)
+  const incognitoSessionRef = useRef<number | null>(null)
   const [inventoryMode, setInventoryMode] = useState<boolean>(() => localStorage.getItem('chat_inventory_mode') === '1')
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
@@ -352,9 +354,11 @@ const Chat: React.FC<{
     }
   })
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force = false) => {
     const el = messagesContainerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (force || nearBottom) el.scrollTop = el.scrollHeight
   }
   useEffect(() => { scrollToBottom() }, [messages, streamingText])
 
@@ -468,7 +472,8 @@ const Chat: React.FC<{
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
           hypervisor_ids: selectedHypervisors.length > 0 ? selectedHypervisors : undefined,
           model: selectedModel,
-          use_rag: useRag
+          use_rag: useRag,
+          ephemeral: incognito,
         }),
         signal: ctrl.signal
       })
@@ -618,6 +623,50 @@ const Chat: React.FC<{
               <FileDown size={13} /> Sohbeti PDF
             </button>
           )}
+          <label className="flex items-center gap-2 cursor-pointer" title="Sohbet geçmişe yazılmaz; kapatınca silinir">
+            <EyeOff size={14} className={incognito ? 'text-amber-400' : 'text-slate-500'} />
+            <span className="text-slate-400 text-sm font-medium">Gizli:</span>
+            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${incognito ? 'bg-amber-600' : 'bg-white/[0.1]'}`}
+              onClick={async () => {
+                const next = !incognito
+                if (next) {
+                  setLocalInventoryMessages([])
+                  setPendingUserMessage(null)
+                  setStreamingText('')
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({}),
+                    })
+                    if (res.ok) {
+                      const s = await res.json()
+                      await fetch(`${API_BASE_URL}/chat/sessions/${s.id}?title=${encodeURIComponent('[Gizli] geçici oturum')}`, {
+                        method: 'PUT',
+                      }).catch(() => null)
+                      incognitoSessionRef.current = s.id
+                      setSelectedSessionId(s.id)
+                      queryClient.setQueryData(['chat-messages', s.id], [])
+                    }
+                  } catch { /* ignore */ }
+                } else {
+                  const sid = incognitoSessionRef.current
+                  if (sid) {
+                    try { await fetch(`${API_BASE_URL}/chat/sessions/${sid}`, { method: 'DELETE' }) } catch { /* ignore */ }
+                    if (selectedSessionId === sid) setSelectedSessionId(null)
+                  }
+                  incognitoSessionRef.current = null
+                  setLocalInventoryMessages([])
+                  queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
+                }
+                setIncognito(next)
+              }}
+              role="switch" aria-checked={incognito}>
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${incognito ? 'translate-x-5' : 'translate-x-1'}`}
+                style={{ marginTop: 2 }} />
+            </span>
+            <span className={`text-sm ${incognito ? 'text-amber-300' : 'text-slate-300'}`}>{incognito ? 'Açık' : 'Kapalı'}</span>
+          </label>
+
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-slate-400 text-sm font-medium">RAG:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-white/[0.1]'}`}

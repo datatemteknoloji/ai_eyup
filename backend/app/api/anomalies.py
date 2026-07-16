@@ -4,7 +4,7 @@ Anomaly Detection API endpoints
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app.core.database import get_db
 from app.models.server import Server
 from app.models.metric import MetricData
@@ -399,8 +399,90 @@ async def get_log_anomaly_heatmap(
     since = now - timedelta(days=days - 1)
 
     if platform == "virt":
-        # bkz. /logs/list — sanallaştırma için OS log tabanlı ısı haritası yok.
-        return {"days": days, "dates": [], "rows": [], "max_cell_score": 0, "total_count": 0, "total_score": 0, "generated_at": now.isoformat()}
+        # vCenter / hypervisor olaylarından ısı haritası (OS log_entry değil)
+        from app.services.event_filters import apply_hide_routine_virt
+        day_labels = [
+            (since + timedelta(days=i)).date().isoformat()
+            for i in range(days)
+        ]
+        q = db.query(SystemEvent).filter(
+            SystemEvent.created_at >= since,
+            func.lower(SystemEvent.severity).in_(["warning", "warn", "error", "critical", "emergency"]),
+            or_(
+                SystemEvent.source.in_(["vcenter", "virt", "hypervisor", "vcenter_event", "vcenter_alarm"]),
+                func.lower(SystemEvent.event_type).in_([
+                    "vcenter_alarm", "vcenter_event", "virt_log", "virt_resource", "vcenter_task",
+                ]),
+            ),
+        )
+        q = apply_platform_filter(q, "virt", db)
+        if not show_routine:
+            q = apply_hide_routine_virt(q, show_routine=False)
+        if actionable_only:
+            q = q.filter(
+                SystemEvent.resolved == False,  # noqa: E712
+                SystemEvent.is_known == False,  # noqa: E712
+                SystemEvent.is_acknowledged == False,  # noqa: E712
+            )
+        events = q.order_by(SystemEvent.created_at.desc()).limit(5000).all()
+
+        # Satırlar: host_name / platform_label veya server adı
+        host_keys: dict = {}  # key -> display name
+        matrix: dict = {}  # key -> {day -> {count, score}}
+        sev_weight = {"warning": 1, "error": 2, "critical": 3, "emergency": 4}
+
+        for ev in events:
+            day = (ev.created_at.date().isoformat() if ev.created_at else None)
+            if not day or day not in day_labels:
+                continue
+            raw = ev.raw_data or {}
+            key = (
+                (raw.get("host_name") or raw.get("platform_label") or "").strip()
+                or (ev.server.name if ev.server else None)
+                or f"event#{ev.id}"
+            )
+            if key not in host_keys:
+                host_keys[key] = key
+                matrix[key] = {d: {"count": 0, "score": 0} for d in day_labels}
+            cell = matrix[key][day]
+            cell["count"] += 1
+            cell["score"] += sev_weight.get((ev.severity or "").lower(), 1)
+
+        rows = []
+        total_score = 0
+        total_count = 0
+        max_cell = 0
+        for key, name in sorted(host_keys.items(), key=lambda x: x[1].lower()):
+            cells = []
+            row_score = 0
+            row_count = 0
+            for d in day_labels:
+                c = matrix[key][d]
+                row_score += c["score"]
+                row_count += c["count"]
+                max_cell = max(max_cell, c["score"])
+                cells.append({"date": d, "count": c["count"], "score": c["score"]})
+            total_score += row_score
+            total_count += row_count
+            rows.append({
+                "server_id": None,
+                "server_name": name,
+                "ip_address": "",
+                "total_score": row_score,
+                "total_count": row_count,
+                "cells": cells,
+            })
+        rows.sort(key=lambda r: -r["total_score"])
+        return {
+            "days": days,
+            "dates": day_labels,
+            "rows": rows,
+            "max_cell_score": max_cell,
+            "total_count": total_count,
+            "total_score": total_score,
+            "generated_at": now.isoformat(),
+            "source": "vcenter",
+        }
 
     # Sadece AI Ready sunucular AIOps ısı haritasında gösterilir.
     servers_q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712

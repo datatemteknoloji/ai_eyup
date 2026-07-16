@@ -74,6 +74,25 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "execute_command varsayılan timeout (info collect, kısa komutlar).",
         "env": "SSH_DEFAULT_CMD_TIMEOUT_SEC",
     },
+    "ssh_connect_retries": {
+        "default": 1, "type": "int", "min": 1, "max": 3,
+        "group": "ssh", "label": "SSH bağlanma denemesi",
+        "help": "Başarısız bağlantıda kaç kez denensin. Log taraması ve toplu işlerde 1 önerilir (tekrar deneme yok).",
+        "env": "SSH_CONNECT_RETRIES",
+    },
+    # ── Log / Events ────────────────────────────────────────────────
+    "log_journal_priority": {
+        "default": 4, "type": "int", "min": 0, "max": 7,
+        "group": "logs", "label": "journalctl öncelik eşiği (-p)",
+        "help": "0=emerg … 3=err, 4=warning, 5=notice, 6=info, 7=debug. Seçilen seviye VE daha kritikleri toplanır (örn. 4 → warning+error+crit).",
+        "env": "LOG_JOURNAL_PRIORITY",
+    },
+    "log_scan_ai_ready_only": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "logs", "label": "Log taraması yalnız AI Ready",
+        "help": "Şimdi Tara / periyodik Linux log taraması yalnızca AI Ready sunucularda SSH açar.",
+        "env": "LOG_SCAN_AI_READY_ONLY",
+    },
     # ── WinRM ───────────────────────────────────────────────────────
     "winrm_timeout_sec": {
         "default": 30, "type": "int", "min": 5, "max": 300,

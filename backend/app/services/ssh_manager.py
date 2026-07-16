@@ -25,10 +25,16 @@ class SSHManager:
         self.sudo_password = sudo_password or password
         self.client = None
     
-    def connect(self) -> bool:
-        """SSH bağlantısı kur (banner/EBADF için bir kez yeniden dener)."""
+    def connect(self, retries: Optional[int] = None) -> bool:
+        """SSH bağlantısı kur.
+
+        retries: None → runtime ayarı ssh_connect_retries (varsayılan 1).
+        Log taraması gibi işlerde 1 bırakın; gereksiz tekrar deneme olmasın.
+        """
+        from app.services.runtime_settings import get_int
+        max_attempts = int(retries) if retries is not None else max(1, int(get_int("ssh_connect_retries") or 1))
         last_exc: Optional[Exception] = None
-        for attempt in range(2):
+        for attempt in range(max_attempts):
             try:
                 self.client = paramiko.SSHClient()
                 self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -70,7 +76,7 @@ class SSHManager:
                 except Exception:
                     pass
                 self.client = None
-                if attempt == 0 and retryable:
+                if attempt + 1 < max_attempts and retryable:
                     logger.warning(
                         "SSH geçici hata, yeniden deneniyor (%s): %s",
                         self.host,

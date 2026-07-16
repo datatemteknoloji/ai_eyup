@@ -61,7 +61,9 @@ async def list_metric_servers(
             live = False
 
         # Listede tut: canlı Prometheus hedefi VEYA daha önce kurulu işaretli
-        if not live and not s.node_exporter_installed and not s.node_exporter_running:
+        # VEYA ONLINE Linux sunucu (kurulum bayrağı gecikmeli olsa bile seçicide görünsün)
+        status_up = (s.status or "").upper() in ("ONLINE", "WARNING")
+        if not live and not s.node_exporter_installed and not s.node_exporter_running and not status_up:
             continue
 
         matched_instances.add(instance)

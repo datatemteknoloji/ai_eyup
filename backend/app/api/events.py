@@ -5,10 +5,10 @@ import logging
 import re as _re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel
-from datetime import datetime
+from sqlalchemy import desc, func
 from app.core.database import get_db
 from app.models.event import SystemEvent
 from app.models.server import Server
@@ -567,21 +567,27 @@ async def list_event_occurrences(
 
 @router.post("/scan")
 async def scan_all_servers(
-    only_ai_ready: bool = False,
+    only_ai_ready: bool = True,
     platform: Optional[str] = Query(default="linux"),
     db: Session = Depends(get_db),
 ):
     """Platforma göre log taraması (arka plan + ilerleme).
 
+    Linux/Exadata: varsayılan yalnız AI Ready (only_ai_ready=True).
     HTTP hemen ``job_id`` döner; UI ``GET /servers/bulk-jobs/{job_id}`` ile poll eder.
     """
     import threading
     from app.core.database import ThreadSessionLocal as SessionLocal
     from app.services import bulk_job_tracker as jobs
+    from app.services.runtime_settings import get_bool
 
     plat = (platform or "linux").lower()
     if plat not in VALID_PLATFORMS:
         raise HTTPException(status_code=400, detail=f"Geçersiz platform: {platform}")
+
+    # Güvenlik ağı: ayar açıksa Linux/Exadata tarama AI Ready'e zorlanır
+    if plat in ("linux", "exadata") and get_bool("log_scan_ai_ready_only"):
+        only_ai_ready = True
 
     titles = {
         "linux": "Linux log taraması",
@@ -664,6 +670,76 @@ async def scan_all_servers(
         "success": True,
         "platform": plat,
         "message": "Log taraması arka planda başladı",
+    }
+
+
+@router.get("/coverage")
+async def event_server_coverage(
+    platform: Optional[str] = Query(default="linux"),
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+):
+    """AI Ready sunucularda son N saatte event gelen / gelmeyen ayrımı."""
+    from app.services.platform_scope import (
+        get_linux_module_server_ids,
+        get_windows_server_ids,
+        get_exadata_server_ids,
+    )
+
+    plat = (platform or "linux").lower()
+    if plat == "linux":
+        ids = set(get_linux_module_server_ids(db))
+    elif plat == "windows":
+        ids = set(get_windows_server_ids(db))
+    elif plat == "exadata":
+        ids = set(get_exadata_server_ids(db))
+    else:
+        return {"with_events": [], "without_events": [], "hours": hours, "platform": plat}
+
+    servers = []
+    if ids:
+        servers = (
+            db.query(Server)
+            .filter(Server.id.in_(list(ids)), Server.ai_ready == True)  # noqa: E712
+            .order_by(Server.name)
+            .all()
+        )
+
+    since = datetime.utcnow() - timedelta(hours=hours)
+    counts: dict = {}
+    if servers:
+        counts = dict(
+            db.query(SystemEvent.server_id, func.count(SystemEvent.id))
+            .filter(
+                SystemEvent.server_id.in_([s.id for s in servers]),
+                SystemEvent.last_seen >= since,
+            )
+            .group_by(SystemEvent.server_id)
+            .all()
+        )
+
+    with_events = []
+    without_events = []
+    for s in servers:
+        row = {
+            "id": s.id,
+            "name": s.name,
+            "ip": s.ip_address,
+            "status": s.status,
+            "event_count": int(counts.get(s.id) or 0),
+        }
+        if row["event_count"] > 0:
+            with_events.append(row)
+        else:
+            without_events.append(row)
+
+    return {
+        "platform": plat,
+        "hours": hours,
+        "with_events": with_events,
+        "without_events": without_events,
+        "with_count": len(with_events),
+        "without_count": len(without_events),
     }
 
 
