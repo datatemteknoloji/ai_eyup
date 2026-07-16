@@ -487,8 +487,8 @@ interface AIModel { name: string; size: number; parameter_size: string; family: 
 
 interface AdvancedSettingItem {
   key: string
-  value: number | boolean
-  default: number | boolean
+  value: number | boolean | string
+  default: number | boolean | string
   type: string
   min?: number
   max?: number
@@ -497,6 +497,7 @@ interface AdvancedSettingItem {
   label: string
   help: string
   env?: string
+  choices?: string[]
 }
 
 interface AdvancedGroup {
@@ -531,7 +532,7 @@ const AdvancedSettingsTab: React.FC = () => {
   }, [data])
 
   const saveMutation = useMutation({
-    mutationFn: async (settings: Record<string, number | boolean>) => {
+    mutationFn: async (settings: Record<string, number | boolean | string>) => {
       const res = await fetch(`${API_BASE_URL}/settings/advanced`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -552,12 +553,14 @@ const AdvancedSettingsTab: React.FC = () => {
 
   const onSave = () => {
     if (!data?.settings) return
-    const payload: Record<string, number | boolean> = {}
+    const payload: Record<string, number | boolean | string> = {}
     for (const s of data.settings) {
       const raw = draft[s.key]
       if (raw === undefined || raw === '') continue
       if (s.type === 'bool') {
         payload[s.key] = ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase())
+      } else if (s.type === 'str') {
+        payload[s.key] = String(raw)
       } else if (s.type === 'float') {
         payload[s.key] = Number(raw)
       } else {
@@ -641,19 +644,50 @@ const AdvancedSettingsTab: React.FC = () => {
               {group.settings.map(s => (
                 <div key={s.key} className="min-w-0">
                   <label className="block text-sm text-slate-300 mb-1">{s.label}</label>
-                  <input
-                    type="number"
-                    step={s.type === 'float' ? '0.1' : '1'}
-                    min={s.min}
-                    max={s.max}
-                    value={draft[s.key] ?? ''}
-                    disabled={!isAdmin}
-                    onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
-                    className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
-                  />
+                  {s.type === 'bool' ? (
+                    <select
+                      value={['1', 'true', 'yes', 'on'].includes(String(draft[s.key] ?? '').toLowerCase()) ? 'true' : 'false'}
+                      disabled={!isAdmin}
+                      onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    >
+                      <option value="true">Açık</option>
+                      <option value="false">Kapalı</option>
+                    </select>
+                  ) : s.type === 'str' && s.choices && s.choices.length > 0 ? (
+                    <select
+                      value={draft[s.key] ?? ''}
+                      disabled={!isAdmin}
+                      onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    >
+                      {s.choices.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  ) : s.type === 'str' ? (
+                    <input
+                      type="text"
+                      value={draft[s.key] ?? ''}
+                      disabled={!isAdmin}
+                      onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      step={s.type === 'float' ? '0.1' : '1'}
+                      min={s.min}
+                      max={s.max}
+                      value={draft[s.key] ?? ''}
+                      disabled={!isAdmin}
+                      onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    />
+                  )}
                   <p className="text-xs text-slate-500 mt-1">
                     {s.help}
-                    {s.min != null && s.max != null ? ` (${s.min}–${s.max})` : ''}
+                    {s.type !== 'str' && s.type !== 'bool' && s.min != null && s.max != null ? ` (${s.min}–${s.max})` : ''}
                     {s.env ? ` · env: ${s.env}` : ''}
                   </p>
                 </div>

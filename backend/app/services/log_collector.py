@@ -242,36 +242,54 @@ def collect_server_logs(
 
     logs = []
     try:
+        from app.services.runtime_settings import get_str
+        mode = (get_str("log_source_mode") or "auto").strip().lower()
+        if mode not in ("auto", "journal", "syslog"):
+            mode = "auto"
+
         journald_cmd = _build_journald_cmd(since_hours)
         syslog_cmd = _build_syslog_cmd(since_hours)
-        ok, out, err = ssh.execute_command(journald_cmd, cmd_timeout=cmd_t)
-        used_sudo = False
         sudo_password = creds.get("sudo_password") or creds.get("password")
-        if (not ok or not (out or "").strip()) and sudo_password:
-            logger.info(
-                "Log collection %s: journal kullanıcı yetkisiyle boş — sudo deneniyor "
-                "(tercih: kullanıcıyı adm grubuna ekleyin)",
-                server.name,
-            )
-            ok, out, err = ssh.execute_command(journald_cmd, use_sudo=True, cmd_timeout=cmd_t)
-            used_sudo = bool(ok and (out or "").strip())
-        if ok and (out or "").strip():
-            logs = _parse_log_lines(out)
-            if used_sudo:
-                logger.debug("Log collection %s: journal sudo ile alındı", server.name)
-        else:
+
+        def _try_journal() -> List[Dict[str, Any]]:
+            ok, out, err = ssh.execute_command(journald_cmd, cmd_timeout=cmd_t)
+            used_sudo = False
+            if (not ok or not (out or "").strip()) and sudo_password:
+                logger.info(
+                    "Log collection %s: journal kullanıcı yetkisiyle boş — sudo deneniyor "
+                    "(tercih: kullanıcıyı adm grubuna ekleyin)",
+                    server.name,
+                )
+                ok, out, err = ssh.execute_command(journald_cmd, use_sudo=True, cmd_timeout=cmd_t)
+                used_sudo = bool(ok and (out or "").strip())
+            if ok and (out or "").strip():
+                if used_sudo:
+                    logger.debug("Log collection %s: journal sudo ile alındı", server.name)
+                return _parse_log_lines(out)
+            return []
+
+        def _try_syslog() -> List[Dict[str, Any]]:
             ok2, out2, err2 = ssh.execute_command(syslog_cmd, cmd_timeout=cmd_t)
             if (not ok2 or not (out2 or "").strip()) and sudo_password:
                 ok2, out2, err2 = ssh.execute_command(syslog_cmd, use_sudo=True, cmd_timeout=cmd_t)
             if ok2 and (out2 or "").strip():
-                logs = _parse_log_lines(out2)
-            else:
-                sample = (err or err2 or "")[:160]
-                logger.info(
-                    "Log collection empty %s — journal/syslog yok veya yetki yok "
-                    "(SSH kullanıcısını adm grubuna ekleyin). sample=%s",
-                    server.name, sample,
-                )
+                return _parse_log_lines(out2)
+            sample = (err2 or "")[:160]
+            logger.info(
+                "Log collection empty %s — syslog dosyası yok veya yetki yok "
+                "(SSH kullanıcısını adm grubuna ekleyin). sample=%s",
+                server.name, sample,
+            )
+            return []
+
+        if mode == "journal":
+            logs = _try_journal()
+        elif mode == "syslog":
+            logs = _try_syslog()
+        else:
+            logs = _try_journal()
+            if not logs:
+                logs = _try_syslog()
     finally:
         ssh.close()
 

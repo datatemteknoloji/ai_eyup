@@ -52,6 +52,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
         self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
+        self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
 
@@ -70,7 +71,17 @@ class BackgroundTaskManager:
                 pass
 
         self.tasks.clear()
+        try:
+            from app.services.syslog_receiver import syslog_receiver_manager
+            await syslog_receiver_manager.stop()
+        except Exception:
+            pass
         logger.info("Background tasks stopped")
+
+    async def _syslog_receiver_supervisor(self):
+        """UDP syslog alıcı — Ayarlar → syslog_receiver_enabled."""
+        from app.services.syslog_receiver import syslog_receiver_manager
+        await syslog_receiver_manager.start_supervisor()
 
     async def _periodic_health_check(self):
         """Ilk 30s bekle, sonra periyodik sunucu durumu (TCP). Tam SSH/WinRM burada yok."""

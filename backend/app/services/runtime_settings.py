@@ -118,6 +118,31 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Şimdi Tara / periyodik Linux log taraması yalnızca AI Ready sunucularda SSH açar.",
         "env": "LOG_SCAN_AI_READY_ONLY",
     },
+    "log_source_mode": {
+        "default": "auto", "type": "str", "min": 0, "max": 16,
+        "group": "logs", "label": "SSH log kaynağı",
+        "help": "auto = önce journalctl, boşsa syslog dosyası. journal = yalnız journalctl. syslog = yalnız /var/log/syslog|messages|secure (SSH ile).",
+        "env": "LOG_SOURCE_MODE",
+        "choices": ["auto", "journal", "syslog"],
+    },
+    "syslog_receiver_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "logs", "label": "Syslog alıcı (UDP)",
+        "help": "Açıkken sunucular rsyslog/syslog-ng ile ainew'e UDP syslog gönderebilir (15k+ için SSH çekmeye alternatif). Hostname/IP eşleşen Server'a event yazar.",
+        "env": "SYSLOG_RECEIVER_ENABLED",
+    },
+    "syslog_receiver_port": {
+        "default": 5514, "type": "int", "min": 1024, "max": 65535,
+        "group": "logs", "label": "Syslog alıcı UDP port",
+        "help": "Varsayılan 5514 (root gerektirmez). Docker'da port yayınlanmalı. Klasik 514 için host'ta iptables/redirect veya root container gerekir.",
+        "env": "SYSLOG_RECEIVER_PORT",
+    },
+    "syslog_receiver_min_severity": {
+        "default": 4, "type": "int", "min": 0, "max": 7,
+        "group": "logs", "label": "Syslog alıcı min öncelik",
+        "help": "0=emerg … 4=warning. Bu seviye ve daha kritikleri kaydeder (RFC3164 facility.severity).",
+        "env": "SYSLOG_RECEIVER_MIN_SEVERITY",
+    },
     "log_collection_batch_size": {
         "default": 500, "type": "int", "min": 50, "max": 5000,
         "group": "logs", "label": "Log tarama batch boyutu",
@@ -320,6 +345,15 @@ def _coerce(raw: Any, meta: dict) -> Any:
             if isinstance(raw, bool):
                 return raw
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
+        if t == "str":
+            val = str(raw).strip()
+            choices = meta.get("choices")
+            if choices and val not in choices:
+                return default
+            max_len = meta.get("max")
+            if max_len and len(val) > int(max_len):
+                val = val[: int(max_len)]
+            return val or default
         if t == "float":
             val = float(raw)
         else:
@@ -415,6 +449,7 @@ def list_advanced_settings() -> List[dict]:
             "label": meta["label"],
             "help": meta["help"],
             "env": meta.get("env"),
+            "choices": meta.get("choices"),
         })
     return out
 
