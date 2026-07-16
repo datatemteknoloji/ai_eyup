@@ -42,19 +42,30 @@ def connect_ssh(
     password: Optional[str] = None,
     pkey: Optional[paramiko.PKey] = None,
     timeout: Optional[float] = None,
+    auth_prefer: str = "auto",
+    banner_timeout: Optional[float] = None,
+    auth_timeout: Optional[float] = None,
 ) -> bool:
     """paramiko SSHClient ile bağlan: önce key (varsa), olmazsa şifre.
 
-    Şifreyle bağlanırken ÖNCE keyboard-interactive (PAM / Centrify), olmazsa
-    düz password denenir. Her auth denemesi AYRI bir TCP+Transport açar —
-    bir metod reddedilince aynı transport üzerinde ikinci deneme Centrify /
-    sıkı sshd'de "No existing session" üretir.
+    auth_prefer:
+      - ``auto`` — Centrify/PAM: KI → password → client.connect (her biri ayrı TCP).
+        Hedef sshd'de LoginGraceTime kısa ise "Timeout before authentication" üretebilir.
+      - ``password`` — tek TCP: doğrudan password (log tarama / toplu iş için).
+        KI yok; client tarafında yarım oturum gürültüsünü keser.
 
     Dönüş: True (bağlandı). Bağlanılamazsa paramiko.AuthenticationException fırlatır.
     """
     connect_t, banner_t, auth_t = _ssh_timeouts()
     if timeout is None:
         timeout = connect_t
+    if banner_timeout is not None:
+        banner_t = float(banner_timeout)
+    if auth_timeout is not None:
+        auth_t = float(auth_timeout)
+    prefer = (auth_prefer or "auto").strip().lower()
+    if prefer not in ("auto", "password"):
+        prefer = "auto"
 
     connected = False
     last_err: Optional[BaseException] = None
@@ -84,7 +95,26 @@ def connect_ssh(
                 pass
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    if not connected and password:
+    if not connected and password and prefer == "password":
+        # Tek TCP — log tarama / AI Ready / toplu SSH (client sshd gürültüsünü azaltır)
+        try:
+            client.connect(
+                hostname=hostname,
+                port=port,
+                username=username,
+                password=password,
+                timeout=timeout,
+                banner_timeout=banner_t,
+                auth_timeout=auth_t,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            connected = True
+        except Exception as conn_err:
+            last_err = conn_err
+            logger.warning("password (tek deneme) başarısız: %s (%s)", hostname, conn_err)
+
+    elif not connected and password:
         # 1) keyboard-interactive (Centrify ChallengeResponse / PAM)
         try:
             transport = _auth_with_fresh_transport(

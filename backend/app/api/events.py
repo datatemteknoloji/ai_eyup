@@ -630,12 +630,18 @@ async def scan_all_servers(
             elif plat == "exadata":
                 from app.services.log_collector import collect_exadata_servers_logs
                 result = collect_exadata_servers_logs(
-                    thread_db, only_ai_ready=only_ai_ready, progress_cb=_progress,
+                    thread_db,
+                    only_ai_ready=only_ai_ready,
+                    progress_cb=_progress,
+                    batch_mode=False,
                 )
             else:
                 from app.services.log_collector import collect_all_servers_logs
                 result = collect_all_servers_logs(
-                    thread_db, only_ai_ready=only_ai_ready, progress_cb=_progress,
+                    thread_db,
+                    only_ai_ready=only_ai_ready,
+                    progress_cb=_progress,
+                    batch_mode=False,
                 )
 
             saved = int((result or {}).get("total_saved") or 0)

@@ -10,8 +10,10 @@ from typing import Optional
 
 DEFAULT_BULK_SSH_WORKERS = 25
 DEFAULT_BULK_TCP_WORKERS = 100
+DEFAULT_LOG_SSH_WORKERS = 32
 _MAX_SSH = 128
 _MAX_TCP = 256
+_MAX_LOG_SSH = 64
 
 
 def _parse_workers(raw: str, default: int, lo: int, hi: int) -> int:
@@ -34,6 +36,22 @@ def bulk_ssh_workers(requested: Optional[int] = None) -> int:
             DEFAULT_BULK_SSH_WORKERS,
             1,
             _MAX_SSH,
+        )
+
+
+def log_ssh_workers(requested: Optional[int] = None) -> int:
+    """Linux journalctl log toplama paralelliği (15k+ ölçek)."""
+    if requested is not None and requested > 0:
+        return max(1, min(int(requested), _MAX_LOG_SSH))
+    try:
+        from app.services.runtime_settings import get_int
+        return max(1, min(get_int("log_ssh_workers"), _MAX_LOG_SSH))
+    except Exception:
+        return _parse_workers(
+            os.environ.get("LOG_SSH_WORKERS", ""),
+            DEFAULT_LOG_SSH_WORKERS,
+            1,
+            _MAX_LOG_SSH,
         )
 
 

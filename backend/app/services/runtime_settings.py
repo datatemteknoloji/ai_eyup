@@ -37,6 +37,12 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "AI Ready, credential apply, OS yenileme paralel bağlantı sayısı. Centrify için 25 önerilir.",
         "env": "BULK_SSH_WORKERS",
     },
+    "log_ssh_workers": {
+        "default": 32, "type": "int", "min": 1, "max": 64,
+        "group": "workers", "label": "Log tarama SSH worker",
+        "help": "Linux journalctl log toplama paralelliği. 15k+ ortamda 24–40 önerilir; çok yüksek LoginGraceTime / MaxStartups baskısı yaratır.",
+        "env": "LOG_SSH_WORKERS",
+    },
     "bulk_tcp_workers": {
         "default": 100, "type": "int", "min": 1, "max": 256,
         "group": "workers", "label": "Toplu TCP health worker",
@@ -74,11 +80,30 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "execute_command varsayılan timeout (info collect, kısa komutlar).",
         "env": "SSH_DEFAULT_CMD_TIMEOUT_SEC",
     },
+    "log_ssh_connect_timeout_sec": {
+        "default": 12, "type": "float", "min": 3, "max": 60,
+        "group": "ssh", "label": "Log tarama SSH connect timeout (sn)",
+        "help": "Journalctl toplama için kısa connect; yavaş host'u çabuk atlar (15k ölçek).",
+        "env": "LOG_SSH_CONNECT_TIMEOUT_SEC",
+    },
+    "log_ssh_cmd_timeout_sec": {
+        "default": 25, "type": "int", "min": 5, "max": 120,
+        "group": "ssh", "label": "Log tarama komut timeout (sn)",
+        "help": "journalctl/syslog komutu için timeout.",
+        "env": "LOG_SSH_CMD_TIMEOUT_SEC",
+    },
     "ssh_connect_retries": {
         "default": 1, "type": "int", "min": 1, "max": 3,
         "group": "ssh", "label": "SSH bağlanma denemesi",
         "help": "Başarısız bağlantıda kaç kez denensin. Log taraması ve toplu işlerde 1 önerilir (tekrar deneme yok).",
         "env": "SSH_CONNECT_RETRIES",
+    },
+    "ssh_auth_prefer": {
+        "default": "auto", "type": "str", "min": 0, "max": 16,
+        "group": "ssh", "label": "SSH auth tercihi",
+        "help": "auto = Centrify/PAM (KI→password, birden fazla TCP). password = tek TCP (client sshd'de Timeout before authentication gürültüsünü azaltır). Log taraması her zaman password kullanır.",
+        "env": "SSH_AUTH_PREFER",
+        "choices": ["auto", "password"],
     },
     # ── Log / Events ────────────────────────────────────────────────
     "log_journal_priority": {
@@ -93,6 +118,12 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Şimdi Tara / periyodik Linux log taraması yalnızca AI Ready sunucularda SSH açar.",
         "env": "LOG_SCAN_AI_READY_ONLY",
     },
+    "log_collection_batch_size": {
+        "default": 500, "type": "int", "min": 50, "max": 5000,
+        "group": "logs", "label": "Log tarama batch boyutu",
+        "help": "Periyodik turda en fazla N sunucu (round-robin). 15k host'ta 400–800 önerilir; Şimdi Tara tüm AI Ready'i worker ile tarar.",
+        "env": "LOG_COLLECTION_BATCH_SIZE",
+    },
     # ── WinRM ───────────────────────────────────────────────────────
     "winrm_timeout_sec": {
         "default": 30, "type": "int", "min": 5, "max": 300,
@@ -102,9 +133,9 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     },
     # ── Background intervals ────────────────────────────────────────
     "log_collection_interval_sec": {
-        "default": 900, "type": "int", "min": 120, "max": 7200,
+        "default": 300, "type": "int", "min": 60, "max": 7200,
         "group": "background", "label": "Linux log toplama aralığı (sn)",
-        "help": "ONLINE Linux sunuculardan log çekme.",
+        "help": "Bir sonraki batch turu. 15k ortamda 300sn + batch 500 ≈ ~2.5 saatte tüm filoyu döner.",
         "env": "LOG_COLLECTION_INTERVAL_SEC",
     },
     "windows_log_interval_sec": {
@@ -361,6 +392,11 @@ def get_float(key: str) -> float:
 
 def get_bool(key: str) -> bool:
     return bool(get_setting(key))
+
+
+def get_str(key: str) -> str:
+    v = get_setting(key)
+    return "" if v is None else str(v)
 
 
 def list_advanced_settings() -> List[dict]:

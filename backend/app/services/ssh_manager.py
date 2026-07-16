@@ -25,14 +25,27 @@ class SSHManager:
         self.sudo_password = sudo_password or password
         self.client = None
     
-    def connect(self, retries: Optional[int] = None) -> bool:
+    def connect(
+        self,
+        retries: Optional[int] = None,
+        auth_prefer: Optional[str] = None,
+        timeout: Optional[float] = None,
+        banner_timeout: Optional[float] = None,
+        auth_timeout: Optional[float] = None,
+    ) -> bool:
         """SSH bağlantısı kur.
 
         retries: None → runtime ayarı ssh_connect_retries (varsayılan 1).
         Log taraması gibi işlerde 1 bırakın; gereksiz tekrar deneme olmasın.
+        auth_prefer: None → runtime ssh_auth_prefer; log tarama için \"password\" önerilir.
         """
-        from app.services.runtime_settings import get_int
+        from app.services.runtime_settings import get_int, get_str
         max_attempts = int(retries) if retries is not None else max(1, int(get_int("ssh_connect_retries") or 1))
+        if auth_prefer is None:
+            try:
+                auth_prefer = get_str("ssh_auth_prefer") or "auto"
+            except Exception:
+                auth_prefer = "auto"
         last_exc: Optional[Exception] = None
         for attempt in range(max_attempts):
             try:
@@ -58,6 +71,10 @@ class SSHManager:
                     port=self.port,
                     password=self.password,
                     pkey=pkey,
+                    auth_prefer=auth_prefer,
+                    timeout=timeout,
+                    banner_timeout=banner_timeout,
+                    auth_timeout=auth_timeout,
                 )
 
                 if not connected:
@@ -142,7 +159,8 @@ class SSHManager:
     
     def test_connection(self) -> Dict:
         """Bağlantıyı test et ve sistem bilgisi al"""
-        if not self.connect():
+        # Toplu AI Ready taramalarında KI zinciri client sshd'de timeout spam üretir
+        if not self.connect(auth_prefer="password"):
             return {
                 "success": False,
                 "message": "SSH bağlantısı kurulamadı",

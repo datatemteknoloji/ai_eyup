@@ -112,9 +112,8 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("health_check_interval_sec", 600))
 
     async def _periodic_log_collection(self):
-        """Her 15 dakikada ONLINE sunuculardan log toplar.
-        SSH cagrilan blocking -> thread pool da calistir."""
-        logger.info("Log collection task started (900s interval, executor)")
+        """Periyodik Linux log toplama — batch + paralel worker (15k ölçek)."""
+        logger.info("Log collection task started (batch/workers, executor)")
         await asyncio.sleep(90)
 
         while self.running:
@@ -127,12 +126,16 @@ class BackgroundTaskManager:
                     loop = asyncio.get_event_loop()
 
                     result = await loop.run_in_executor(
-                        None, collect_all_servers_logs, db
+                        None,
+                        lambda: collect_all_servers_logs(db, batch_mode=True),
                     )
-                    if result["total_saved"] > 0:
+                    if result.get("total_saved", 0) > 0 or result.get("total_servers", 0) > 0:
                         logger.warning(
-                            f"Log collection: {result['total_saved']} yeni log, "
-                            f"{result['servers_with_logs']} sunucu"
+                            "Log collection: saved=%s batch=%s/%s workers=%s",
+                            result.get("total_saved"),
+                            result.get("total_servers"),
+                            result.get("fleet_total"),
+                            result.get("workers"),
                         )
 
                     anomalies = await loop.run_in_executor(
@@ -148,13 +151,13 @@ class BackgroundTaskManager:
                 finally:
                     db.close()
 
-                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 900))
+                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 300))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Log collection task error: {e}")
-                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 900))
+                await asyncio.sleep(_rt_sec("log_collection_interval_sec", 300))
 
     async def _periodic_windows_log_collection(self):
         """Windows sunuculardan WinRM ile event log toplama."""
