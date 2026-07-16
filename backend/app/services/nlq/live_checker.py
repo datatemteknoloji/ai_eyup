@@ -35,6 +35,14 @@ def live_check_servers(
         srv = db.query(Server).filter(Server.id == sid).first()
         if not srv:
             continue
+        if not bool(getattr(srv, "ai_ready", False)):
+            diffs.append({
+                "hostname": row.get("hostname"),
+                "field": "collection_status",
+                "inventory": row.get("collection_status"),
+                "live": "skipped_not_ai_ready",
+            })
+            continue
         live = collect_one_server(srv, global_cred)
         if live.get("collection_status") != "success":
             diffs.append({

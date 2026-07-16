@@ -183,7 +183,10 @@ def save_windows_logs_to_db(db: Session, server: Server, logs: List[Dict[str, An
     return saved
 
 
-def collect_all_windows_logs(db: Session) -> Dict[str, Any]:
+def collect_all_windows_logs(
+    db: Session,
+    progress_cb: Optional[Any] = None,
+) -> Dict[str, Any]:
     servers = (
         db.query(Server)
         .filter(Server.status.in_(["ONLINE", "WARNING"]))
@@ -193,7 +196,9 @@ def collect_all_windows_logs(db: Session) -> Dict[str, Any]:
 
     total_saved = 0
     details = []
-    for srv in servers:
+    total = len(servers)
+    for idx, srv in enumerate(servers, start=1):
+        saved = 0
         try:
             logs = collect_windows_server_logs(srv, db)
             if logs:
@@ -203,6 +208,11 @@ def collect_all_windows_logs(db: Session) -> Dict[str, Any]:
                     details.append({"server": srv.name, "saved": saved})
         except Exception as exc:
             logger.error("Windows log collection failed %s: %s", srv.name, exc)
+        if progress_cb:
+            try:
+                progress_cb(idx, total, srv.name, saved)
+            except Exception:
+                pass
 
     return {
         "total_servers": len(servers),

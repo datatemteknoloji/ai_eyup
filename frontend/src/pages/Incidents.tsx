@@ -9,6 +9,7 @@ import {
 } from '../components/aiops/ui'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
+import { exportMarkdownToPrintWindow, exportMultipleRcaToPrintWindow } from '../utils/pdfExport'
 
 interface Server { id: number; name: string; ip: string; status?: string }
 interface RelatedEvent {
@@ -117,7 +118,35 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     onSuccess: (data) => { invalidate(); if (selectedIncident) setSelectedIncident({ ...selectedIncident, rca_result: data.rca, root_cause: data.rca?.analysis?.slice(0, 500) }) }
   })
 
+  const downloadRcaPdf = (inc: Incident, analysis?: string, meta?: { model?: string; analyzed_at?: string }, suffix = '') => {
+    const text = analysis || inc.rca_result?.analysis
+    if (!text) return
+    const model = meta?.model || inc.rca_result?.model
+    const at = meta?.analyzed_at || inc.rca_result?.analyzed_at
+    exportMarkdownToPrintWindow(text, {
+      title: `RCA #${inc.id}: ${inc.title}`,
+      subtitle: [model, at ? fmt(at, false) : null].filter(Boolean).join(' · '),
+      filename: `rca_incident_${inc.id}${suffix}_${new Date().toISOString().slice(0, 10)}`,
+    })
+  }
+
+  const downloadAllRcaPdf = () => {
+    const reports = incidents
+      .filter(inc => inc.rca_result?.analysis)
+      .map(inc => ({
+        title: `#${inc.id} — ${inc.title}`,
+        subtitle: [inc.severity, inc.rca_result?.model, inc.rca_result?.analyzed_at ? fmt(inc.rca_result.analyzed_at, false) : null]
+          .filter(Boolean).join(' · '),
+        markdown: String(inc.rca_result.analysis),
+      }))
+    exportMultipleRcaToPrintWindow(reports, {
+      title: 'Tüm Incident RCA Raporları',
+      filename: `rca_tum_incident_${new Date().toISOString().slice(0, 10)}`,
+    })
+  }
+
   const incidents = incidentsData?.incidents || []
+  const rcaCount = incidents.filter(i => i.rca_result?.analysis).length
   const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
   const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
 
@@ -131,7 +160,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   }
 
   return (
-    <div className="flex gap-4 animate-fade-in">
+    <div className="flex gap-4 animate-fade-in items-start min-h-0">
       {/* Left: list */}
       <div className={`flex-1 min-w-0 space-y-4 ${selectedIncident ? 'max-w-2xl' : ''}`}>
         <PageHeader title="Incidents" subtitle="Incident yönetimi ve AI kök neden analizi"
@@ -185,6 +214,11 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
           <Select value={severityFilter} onChange={setSeverityFilter}>
             <option value="">Tüm Önem</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
           </Select>
+          {rcaCount > 0 && (
+            <GhostButton accent={NEON.blue} onClick={downloadAllRcaPdf}>
+              Tüm RCA PDF ({rcaCount})
+            </GhostButton>
+          )}
           <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{incidentsData?.total ?? 0} sonuç</span>
         </div>
 
@@ -228,11 +262,11 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
         )}
       </div>
 
-      {/* Right: detail */}
+      {/* Right: detail — kaydırılabilir (cyber-card overflow:hidden engelini aşar) */}
       {selectedIncident && (
-        <div className="flex-1 max-w-[540px]">
-          <div className="cyber-card overflow-y-auto max-h-[calc(100vh-110px)] sticky top-0">
-            <div className="px-5 py-4 flex items-start justify-between" style={{ borderBottom: '1px solid rgba(99,130,194,0.12)' }}>
+        <div className="flex-1 max-w-[540px] sticky top-0 self-start h-[calc(100vh-7rem)] min-h-0">
+          <div className="cyber-card h-full flex flex-col !overflow-hidden">
+            <div className="px-5 py-4 flex items-start justify-between shrink-0" style={{ borderBottom: '1px solid rgba(99,130,194,0.12)' }}>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1.5">
                   <SeverityBadge severity={selectedIncident.severity} />
@@ -247,7 +281,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
             {detailLoading ? (
               <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
             ) : (
-              <div className="p-5 space-y-5 text-sm">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 space-y-5 text-sm">
                 {selectedIncident.description && (
                   <div>
                     <p className="text-xs font-medium mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</p>
@@ -323,10 +357,13 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                 {/* RCA */}
                 {selectedIncident.rca_result?.analysis && (
                   <div>
-                    <p className="text-xs font-medium mb-1.5 flex items-center gap-1.5" style={{ color: NEON.blue }}>
-                      AI Kök Neden Analizi
-                      {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>OTOMATİK</span>}
-                    </p>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1.5" style={{ color: NEON.blue }}>
+                        AI Kök Neden Analizi
+                        {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>OTOMATİK</span>}
+                      </p>
+                      <GhostButton accent={NEON.blue} onClick={() => downloadRcaPdf(selectedIncident)}>PDF İndir</GhostButton>
+                    </div>
                     <div className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: `1px solid rgba(${rgb(NEON.blue)},0.2)` }}>
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, false)}
@@ -335,6 +372,34 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
                       </div>
                     </div>
+                    {Array.isArray(selectedIncident.rca_result.history) && selectedIncident.rca_result.history.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-[11px] font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                          Önceki analizler ({selectedIncident.rca_result.history.length})
+                        </p>
+                        {[...selectedIncident.rca_result.history].reverse().map((h: any, idx: number) => (
+                          <div key={idx} className="rounded-lg p-2.5 flex items-start justify-between gap-2"
+                            style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.12)' }}>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>
+                                {h.model || '—'} · {fmt(h.analyzed_at, false)}
+                                {h.auto ? ' · otomatik' : ''}
+                              </p>
+                              <p className="text-[11px] line-clamp-2" style={{ color: 'rgba(226,232,240,0.75)' }}>
+                                {String(h.analysis || '').slice(0, 180)}
+                                {String(h.analysis || '').length > 180 ? '…' : ''}
+                              </p>
+                            </div>
+                            <GhostButton
+                              accent={NEON.slate}
+                              onClick={() => downloadRcaPdf(selectedIncident, h.analysis, h, `_onceki_${idx + 1}`)}
+                            >
+                              PDF
+                            </GhostButton>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

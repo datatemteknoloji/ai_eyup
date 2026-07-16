@@ -251,6 +251,56 @@ export function exportMarkdownToPrintWindow(
   printWindow.document.close()
 }
 
+/** Yapılandırılmış RCA bölümlerini markdown’a çevirip yazdırma/PDF penceresi açar. */
+export function exportRcaSectionsToPrintWindow(
+  sections: Array<{ heading?: string; body?: string; items?: string[] }>,
+  options: PdfExportOptions = {},
+): void {
+  const parts: string[] = []
+  for (const s of sections) {
+    if (s.heading) parts.push(`## ${s.heading}\n`)
+    if (s.body?.trim()) parts.push(`${s.body.trim()}\n`)
+    if (s.items?.length) {
+      parts.push(s.items.map((it) => `- ${it}`).join('\n') + '\n')
+    }
+    parts.push('')
+  }
+  const md = parts.join('\n').trim()
+  if (!md) {
+    alert('Dışa aktarılacak analiz yok')
+    return
+  }
+  exportMarkdownToPrintWindow(md, {
+    title: options.title || 'Kök Neden Analizi (RCA)',
+    subtitle: options.subtitle,
+    filename: options.filename || `rca_${new Date().toISOString().slice(0, 10)}`,
+  })
+}
+
+/** Birden fazla RCA metnini tek PDF’de birleştirir. */
+export function exportMultipleRcaToPrintWindow(
+  reports: Array<{ title: string; subtitle?: string; markdown: string }>,
+  options: PdfExportOptions = {},
+): void {
+  const usable = reports.filter((r) => r.markdown?.trim())
+  if (usable.length === 0) {
+    alert('Dışa aktarılacak RCA yok')
+    return
+  }
+  const md = usable
+    .map((r, i) => {
+      const head = `# ${i + 1}. ${r.title}`
+      const sub = r.subtitle ? `\n*${r.subtitle}*\n` : '\n'
+      return `${head}${sub}\n${r.markdown.trim()}`
+    })
+    .join('\n\n---\n\n')
+  exportMarkdownToPrintWindow(md, {
+    title: options.title || `RCA Raporları (${usable.length})`,
+    subtitle: options.subtitle || new Date().toLocaleString('tr-TR'),
+    filename: options.filename || `rca_toplu_${new Date().toISOString().slice(0, 10)}`,
+  })
+}
+
 /** Chat geçmişini (soru-cevap) tek PDF / yazdırma penceresinde açar. */
 export function exportChatMessagesToPrintWindow(
   messages: Array<{ role: string; content: string; created_at?: string }>,

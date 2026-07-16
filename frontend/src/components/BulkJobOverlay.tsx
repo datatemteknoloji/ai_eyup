@@ -37,7 +37,9 @@ const kindLabel = (kind?: string) =>
         ? 'Sunucu durum kontrolü'
         : kind === 'os_refresh'
           ? 'OS bilgisi yenileme'
-          : kind || 'bulk'
+          : kind?.startsWith('events_scan_')
+            ? 'Log / event taraması'
+            : kind || 'bulk'
 
 /** Sayfa yenileme / navigasyonda — yalnızca bu sekmede kullanıcı başlatmış işi geri yükle.
  *  Credential apply / auto-onboarding gibi arka plan turları modal açmaz. */

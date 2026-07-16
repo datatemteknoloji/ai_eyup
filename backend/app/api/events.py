@@ -131,11 +131,17 @@ async def event_stats(
 
 
 @router.get("/types")
-async def event_types(db: Session = Depends(get_db)):
-    """Mevcut event tiplerini listele"""
+async def event_types(
+    platform: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Mevcut event tiplerini listele (platform verilirse yalnızca o platformdaki eventlerden)."""
     from sqlalchemy import distinct
-    types = db.query(distinct(SystemEvent.event_type)).all()
-    return [t[0] for t in types if t[0]]
+    q = db.query(distinct(SystemEvent.event_type))
+    # distinct + filter: SystemEvent üzerinden platform kapsamı
+    q = apply_platform_filter(q, platform, db)
+    types = q.all()
+    return sorted(t[0] for t in types if t[0])
 
 
 @router.get("/")
@@ -146,6 +152,7 @@ async def list_events(
     resolved: Optional[bool] = None,
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
+    known: Optional[bool] = None,
     online_only: Optional[bool] = None,
     platform: Optional[str] = None,
     show_routine: bool = Query(default=False),
@@ -168,6 +175,8 @@ async def list_events(
         q = q.filter(SystemEvent.resolved == resolved)
     if acknowledged is not None:
         q = q.filter(SystemEvent.is_acknowledged == acknowledged)
+    if known is not None:
+        q = q.filter(SystemEvent.is_known == known)
     if search:
         # Başlık VEYA sunucu adında ara
         from sqlalchemy import or_
@@ -270,6 +279,14 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
             event.resolved = False
             event.resolved_at = None
             count += 1
+        elif data.action == "unacknowledge" and event.is_acknowledged:
+            event.is_acknowledged = False
+            event.acknowledged_at = None
+            count += 1
+        elif data.action == "unknown" and getattr(event, "is_known", False):
+            event.is_known = False
+            event.known_at = None
+            count += 1
     db.commit()
     return {"success": True, "affected": count, "message": f"{count} event güncellendi"}
 
@@ -330,6 +347,30 @@ async def acknowledge_event(event_id: int, db: Session = Depends(get_db)):
     event.acknowledged_at = datetime.utcnow()
     db.commit()
     return {"success": True, "message": "Event onaylandı"}
+
+
+@router.post("/{event_id}/unacknowledge")
+async def unacknowledge_event(event_id: int, db: Session = Depends(get_db)):
+    """Onayı kaldır — event tekrar Komuta Merkezi actionable listesine döner."""
+    event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event bulunamadı")
+    event.is_acknowledged = False
+    event.acknowledged_at = None
+    db.commit()
+    return {"success": True, "message": "Onay kaldırıldı — event yeniden aktif"}
+
+
+@router.post("/{event_id}/unknown")
+async def unmark_event_known(event_id: int, db: Session = Depends(get_db)):
+    """Bilinen işaretini kaldır."""
+    event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event bulunamadı")
+    event.is_known = False
+    event.known_at = None
+    db.commit()
+    return {"success": True, "message": "Bilinen işareti kaldırıldı"}
 
 
 @router.post("/{event_id}/resolve")
@@ -414,6 +455,7 @@ async def list_events_grouped(
     resolved: Optional[bool] = None,
     search: Optional[str] = None,
     acknowledged: Optional[bool] = None,
+    known: Optional[bool] = None,
     exclude_known: bool = Query(default=True),  # Bilinen eventleri varsayılan olarak gizle
     platform: Optional[str] = None,
     show_routine: bool = Query(default=False),
@@ -439,6 +481,9 @@ async def list_events_grouped(
         q = q.filter(SystemEvent.resolved == resolved)
     if acknowledged is not None:
         q = q.filter(SystemEvent.is_acknowledged == acknowledged)
+    if known is not None:
+        q = q.filter(SystemEvent.is_known == known)
+        exclude_known = False
     if exclude_known:
         q = q.filter(SystemEvent.is_known == False)  # noqa: E712
     if search:
@@ -526,32 +571,100 @@ async def scan_all_servers(
     platform: Optional[str] = Query(default="linux"),
     db: Session = Depends(get_db),
 ):
-    """Platforma göre log taraması — linux: SSH, windows: WinRM, virt: hypervisor sync."""
-    import asyncio as _aio
+    """Platforma göre log taraması (arka plan + ilerleme).
+
+    HTTP hemen ``job_id`` döner; UI ``GET /servers/bulk-jobs/{job_id}`` ile poll eder.
+    """
+    import threading
+    from app.core.database import ThreadSessionLocal as SessionLocal
+    from app.services import bulk_job_tracker as jobs
 
     plat = (platform or "linux").lower()
     if plat not in VALID_PLATFORMS:
         raise HTTPException(status_code=400, detail=f"Geçersiz platform: {platform}")
 
-    try:
-        if plat == "windows":
-            from app.services.windows_log_collector import collect_all_windows_logs
-            fn = lambda: collect_all_windows_logs(db)
-        elif plat == "virt":
-            from app.services.virt_log_collector import sync_virt_logs_to_db
-            fn = lambda: sync_virt_logs_to_db(db)
-        elif plat == "exadata":
-            from app.services.log_collector import collect_exadata_servers_logs
-            fn = lambda: collect_exadata_servers_logs(db, only_ai_ready=only_ai_ready)
-        else:
-            from app.services.log_collector import collect_all_servers_logs
-            fn = lambda: collect_all_servers_logs(db, only_ai_ready=only_ai_ready)
+    titles = {
+        "linux": "Linux log taraması",
+        "windows": "Windows Event Log taraması",
+        "virt": "Sanallaştırma olay sync",
+        "exadata": "Exadata log taraması",
+    }
+    job_id = jobs.create_job(
+        f"events_scan_{plat}",
+        titles.get(plat, "Log taraması"),
+        total=0,
+        message="Tarama kuyruğa alındı...",
+    )
 
-        result = await _aio.get_event_loop().run_in_executor(None, fn)
-        return {"success": True, "platform": plat, **result}
-    except Exception as e:
-        logger.error(f"Manual scan error ({plat}): {e}", exc_info=True)
-        return {"success": False, "platform": plat, "error": str(e)}
+    def _progress(done: int, total: int, name: str, saved: int) -> None:
+        jobs.tick(
+            job_id,
+            done=done,
+            total=total,
+            ok_delta=1 if saved > 0 else 0,
+            fail_delta=0,
+            message=f"{done}/{total} — {name}" + (f" (+{saved})" if saved else ""),
+        )
+
+    def _bg() -> None:
+        thread_db = SessionLocal()
+        try:
+            jobs.update_job(job_id, message="Sunucular taranıyor...")
+            if plat == "windows":
+                from app.services.windows_log_collector import collect_all_windows_logs
+                result = collect_all_windows_logs(thread_db, progress_cb=_progress)
+            elif plat == "virt":
+                from app.services.virt_log_collector import sync_virt_logs_to_db
+                jobs.update_job(job_id, percent=20, message="vCenter / hypervisor olayları alınıyor...")
+                result = sync_virt_logs_to_db(thread_db)
+                # virt sync often returns counts without per-host ticks
+                if isinstance(result, dict):
+                    tot = int(result.get("total_servers") or result.get("synced") or 1)
+                    jobs.tick(job_id, done=tot, total=tot, message="Sync tamamlandı")
+            elif plat == "exadata":
+                from app.services.log_collector import collect_exadata_servers_logs
+                result = collect_exadata_servers_logs(
+                    thread_db, only_ai_ready=only_ai_ready, progress_cb=_progress,
+                )
+            else:
+                from app.services.log_collector import collect_all_servers_logs
+                result = collect_all_servers_logs(
+                    thread_db, only_ai_ready=only_ai_ready, progress_cb=_progress,
+                )
+
+            saved = int((result or {}).get("total_saved") or 0)
+            servers = int((result or {}).get("total_servers") or 0)
+            with_logs = int((result or {}).get("servers_with_logs") or 0)
+            jobs.finish(
+                job_id,
+                status="done",
+                message=(
+                    f"Tamamlandı: {saved} yeni event · {with_logs}/{servers} sunucuda log"
+                    if servers
+                    else "Tarama tamamlandı (adet yok)"
+                ),
+                result={"success": True, "platform": plat, **(result or {})},
+            )
+        except Exception as e:
+            logger.error(f"Manual scan error ({plat}): {e}", exc_info=True)
+            jobs.finish(
+                job_id,
+                status="error",
+                message="Tarama hatası",
+                error=str(e),
+                result={"success": False, "platform": plat, "error": str(e)},
+            )
+        finally:
+            thread_db.close()
+
+    threading.Thread(target=_bg, daemon=True, name=f"events-scan-{plat}").start()
+    return {
+        "queued": True,
+        "job_id": job_id,
+        "success": True,
+        "platform": plat,
+        "message": "Log taraması arka planda başladı",
+    }
 
 
 # ── Log AI Analizi ───────────────────────────────────────────────────────────

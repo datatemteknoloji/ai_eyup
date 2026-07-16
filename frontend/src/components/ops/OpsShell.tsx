@@ -82,46 +82,52 @@ export function OpsKpiChip({
   label,
   tone,
   icon,
+  onClick,
+  active,
 }: {
   value: number | string
   label: string
   tone: KpiTone
   icon?: React.ReactNode
+  onClick?: () => void
+  active?: boolean
 }) {
-  const active =
+  const isActive =
     typeof value === 'number' ? value > 0 : String(value) !== '0' && String(value) !== '—'
   const toneClass =
     tone === 'critical'
-      ? active
+      ? isActive
         ? 'border-red-500/50 bg-red-500/10'
         : 'border-slate-700 bg-slate-800/40'
       : tone === 'warning'
-        ? active
+        ? isActive
           ? 'border-amber-500/40 bg-amber-500/8'
           : 'border-slate-700 bg-slate-800/40'
         : tone === 'ok'
-          ? 'border-green-500/20 bg-green-500/5'
+          ? isActive
+            ? 'border-green-500/40 bg-green-500/8'
+            : 'border-slate-700 bg-slate-800/40'
           : 'border-slate-700 bg-slate-800/40'
-  const valueClass =
-    tone === 'critical'
-      ? active
-        ? 'text-red-400'
-        : 'text-slate-600'
-      : tone === 'warning'
-        ? active
-          ? 'text-amber-400'
-          : 'text-slate-600'
-        : tone === 'ok'
-          ? 'text-green-400'
-          : 'text-slate-300'
+
+  const Tag = onClick ? 'button' : 'div'
   return (
-    <div className={`px-4 py-2.5 rounded-xl border text-center min-w-[72px] transition-colors ${toneClass}`}>
-      <div className={`text-2xl font-bold ${valueClass}`}>{value}</div>
-      <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-center gap-1">
-        {icon}
-        {label}
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={`px-3 py-2 rounded-xl border min-w-[4.5rem] ${toneClass} ${
+        onClick ? 'cursor-pointer hover:brightness-110 transition-all' : ''
+      } ${active ? 'ring-2 ring-cyan-400/50' : ''}`}
+    >
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
+        {icon} {label}
       </div>
-    </div>
+      <div className={`text-lg font-bold tabular-nums ${
+        tone === 'critical' && isActive ? 'text-red-300'
+          : tone === 'warning' && isActive ? 'text-amber-300'
+            : tone === 'ok' && isActive ? 'text-green-300'
+              : 'text-slate-300'
+      }`}>{value}</div>
+    </Tag>
   )
 }
 
@@ -206,6 +212,12 @@ export type OpsShellKpi = {
   /** Üçüncü kart: Linux green / Virt VM aktif vb. */
   tertiaryValue: number | string
   tertiaryLabel: string
+  onCriticalClick?: () => void
+  onWarningClick?: () => void
+  onTertiaryClick?: () => void
+  criticalActive?: boolean
+  warningActive?: boolean
+  tertiaryActive?: boolean
 }
 
 export function OpsShell({
@@ -265,18 +277,24 @@ export function OpsShell({
               label="Kritik"
               tone="critical"
               icon={<ShieldAlert size={10} />}
+              onClick={kpi.onCriticalClick}
+              active={kpi.criticalActive}
             />
             <OpsKpiChip
               value={kpi.warning}
               label="Uyarı"
               tone="warning"
               icon={<AlertTriangle size={10} />}
+              onClick={kpi.onWarningClick}
+              active={kpi.warningActive}
             />
             <OpsKpiChip
               value={kpi.tertiaryValue}
               label={kpi.tertiaryLabel}
               tone="ok"
               icon={<CheckCircle2 size={10} />}
+              onClick={kpi.onTertiaryClick}
+              active={kpi.tertiaryActive}
             />
           </div>
           {metaRow}

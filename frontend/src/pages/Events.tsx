@@ -47,6 +47,8 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
+  const [ackFilter, setAckFilter] = useState<string>('') // '' | 'true' | 'false'
+  const [knownFilter, setKnownFilter] = useState<string>('') // '' | 'true'
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -96,6 +98,8 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     if (severityFilter) p.set('severity', severityFilter)
     if (typeFilter) p.set('event_type', typeFilter)
     if (resolvedFilter !== '') p.set('resolved', resolvedFilter)
+    if (ackFilter !== '') p.set('acknowledged', ackFilter)
+    if (knownFilter !== '') p.set('known', knownFilter)
     if (search) p.set('search', search)
     appendPlatform(p, platform)
     if (platform === 'virt') p.set('show_routine', String(showRoutine))
@@ -103,7 +107,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   }
 
   const { data: eventsData, isLoading } = useQuery<{ total: number; events: SystemEvent[] }>({
-    queryKey: ['events', 'list', platform, severityFilter, typeFilter, resolvedFilter, search, page, showRoutine],
+    queryKey: ['events', 'list', platform, severityFilter, typeFilter, resolvedFilter, ackFilter, knownFilter, search, page, showRoutine],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
@@ -115,12 +119,12 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
-    queryKey: ['events', 'grouped', platform, severityFilter, typeFilter, resolvedFilter, search, page, sortBy, sortDir, excludeKnown, showRoutine],
+    queryKey: ['events', 'grouped', platform, severityFilter, typeFilter, resolvedFilter, ackFilter, knownFilter, search, page, sortBy, sortDir, excludeKnown, showRoutine],
     queryFn: async () => {
       const params = paramsBase()
       params.set('limit', String(PAGE_SIZE)); params.set('offset', String(page * PAGE_SIZE))
       params.set('sort_by', sortBy as string); params.set('sort_dir', sortDir)
-      params.set('exclude_known', String(excludeKnown))
+      params.set('exclude_known', String(knownFilter === 'true' ? false : excludeKnown))
       const res = await fetch(`${API_BASE_URL}/events/grouped?${params}`)
       if (!res.ok) return { total: 0, groups: [] }
       return res.json()
@@ -152,9 +156,10 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   })
 
   const { data: eventTypes } = useQuery<string[]>({
-    queryKey: ['eventTypes'],
+    queryKey: ['eventTypes', platform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/events/types`)
+      const params = appendPlatform(new URLSearchParams(), platform)
+      const res = await fetch(`${API_BASE_URL}/events/types?${params}`)
       if (!res.ok) return []
       return res.json()
     }
@@ -169,7 +174,21 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     setScanning(true); setScanResult(null)
     try {
       const res = await fetch(`${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`, { method: 'POST' })
-      setScanResult(await res.json()); invalidate()
+      const data = await res.json()
+      // Arka plan job: EventsHub BulkJobOverlay gösterir; burada kısa bilgi
+      if (data.job_id) {
+        setScanResult({
+          total_servers: 0,
+          servers_with_logs: 0,
+          total_saved: 0,
+          details: [],
+          job_id: data.job_id,
+          message: data.message || 'Tarama arka planda başladı',
+        } as any)
+      } else {
+        setScanResult(data)
+      }
+      invalidate()
     } catch { setScanResult(null) } finally { setScanning(false) }
   }
 
@@ -185,7 +204,9 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   })
 
   const ackEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/acknowledge`, { method: 'POST' }) }, onSuccess: invalidate })
+  const unackEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/unacknowledge`, { method: 'POST' }) }, onSuccess: invalidate })
   const knownEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/known`, { method: 'POST' }) }, onSuccess: invalidate })
+  const unknownEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/unknown`, { method: 'POST' }) }, onSuccess: invalidate })
   const resolveEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/resolve`, { method: 'POST' }) }, onSuccess: invalidate })
   const unresolveEvent = useMutation({ mutationFn: async (id: number) => { await fetch(`${API_BASE_URL}/events/${id}/unresolve`, { method: 'POST' }) }, onSuccess: invalidate })
   const deleteEvent = useMutation({ mutationFn: async (id: number) => { const r = await fetch(`${API_BASE_URL}/events/${id}`, { method: 'DELETE' }); if (!r.ok) throw new Error() }, onSuccess: invalidate })
@@ -309,7 +330,9 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const groupMenu = (grp: EventGroup): MenuItem[] => [
     { label: 'Tümünü gör', icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
     { label: 'İncelemeye al', icon: '👁', onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
+    { label: 'Onayı kaldır', icon: '↩', hidden: !grp.is_acknowledged, onClick: () => bulkAction.mutate({ action: 'unacknowledge', ids: grp.event_ids }) },
     { label: 'Bilinen olay', icon: '', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
+    { label: 'Bilineni kaldır', icon: '↩', hidden: !grp.is_known, onClick: () => bulkAction.mutate({ action: 'unknown', ids: grp.event_ids }) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
     { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
     { label: 'Incident oluştur', icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
@@ -323,7 +346,9 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const flatMenu = (e: SystemEvent): MenuItem[] => [
     { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
     { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
+    { label: 'Onayı kaldır', icon: '↩', hidden: !e.is_acknowledged || e.resolved, onClick: () => unackEvent.mutate(e.id) },
     { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
+    { label: 'Bilineni kaldır', icon: '↩', hidden: !e.is_known, onClick: () => unknownEvent.mutate(e.id) },
     { label: 'Bu sunucu için normal', icon: '📊', hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
     { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
@@ -358,18 +383,25 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       )}
 
       {/* KPI row — tıklayınca filtreler */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
         <Kpi label="Toplam" value={stats?.total ?? 0} accent={NEON.cyan}
-          active={!severityFilter && resolvedFilter === ''} onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setPage(0) }} />
-        <Kpi label="Çözülmemiş" value={stats?.unresolved ?? 0} accent={NEON.orange}
-          active={resolvedFilter === 'false' && !severityFilter} onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setPage(0) }} />
+          active={!severityFilter && resolvedFilter === '' && !ackFilter && !knownFilter}
+          onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />
+        <Kpi label="Aktif" value={stats?.unresolved ?? 0} accent={NEON.orange}
+          active={resolvedFilter === 'false' && !severityFilter && !ackFilter && !knownFilter}
+          onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setExcludeKnown(true); setPage(0) }} />
         <Kpi label="Kritik" value={stats?.critical ?? 0} accent={NEON.red}
-          active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setResolvedFilter('false'); setPage(0) }} />
+          active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
         <Kpi label="Acil" value={stats?.emergency ?? 0} accent={NEON.pink}
-          active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setPage(0) }} />
+          active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
         <Kpi label="Uyarı" value={stats?.warning ?? 0} accent={NEON.orange}
-          active={severityFilter === 'warning'} onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setPage(0) }} />
-        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.blue} />
+          active={severityFilter === 'warning' && !ackFilter} onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
+        <Kpi label="Onaylanan" value={stats?.acknowledged ?? 0} accent={NEON.blue}
+          active={ackFilter === 'true'}
+          onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter('true'); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />
+        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.cyan}
+          active={knownFilter === 'true'}
+          onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter('true'); setExcludeKnown(false); setPage(0) }} />
       </div>
 
       {scanResult && (
@@ -431,7 +463,10 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           {(eventTypes || []).map(t => <option key={t} value={t}>{t}</option>)}
         </Select>
         <Select value={resolvedFilter} onChange={v => { setResolvedFilter(v); setPage(0) }}>
-          <option value="">Tüm Durumlar</option><option value="false">Aktif</option><option value="true">Çözülmüş</option>
+          <option value="">Tüm Durumlar</option><option value="false">Aktif (çözülmemiş)</option><option value="true">Çözülmüş / Kapatılan</option>
+        </Select>
+        <Select value={ackFilter} onChange={v => { setAckFilter(v); if (v === 'true') { setResolvedFilter(''); setExcludeKnown(false) }; setPage(0) }}>
+          <option value="">Onay: hepsi</option><option value="true">Onaylanan</option><option value="false">Onaysız</option>
         </Select>
         <label className="flex items-center gap-2 cursor-pointer select-none ml-1">
           <div onClick={() => { setGroupedView(v => !v); setPage(0) }}

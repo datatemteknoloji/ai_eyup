@@ -290,11 +290,16 @@ Lütfen şu formatta analiz yap:
             data = await llm_gateway.generate_async(client, model=get_active_model(db), prompt=prompt)
             if not data.get("error"):
                 rca_text = data.get("response", "Analiz yapılamadı")
-                inc.rca_result = {
-                    "analysis": rca_text,
-                    "model": get_active_model(db),
-                    "analyzed_at": datetime.utcnow().isoformat()
-                }
+                from app.services.rca_store import store_incident_rca
+                store_incident_rca(
+                    inc,
+                    {
+                        "analysis": rca_text,
+                        "model": get_active_model(db),
+                        "analyzed_at": datetime.utcnow().isoformat(),
+                        "auto": False,
+                    },
+                )
                 inc.root_cause = rca_text[:500]  # İlk 500 karakter özet
                 db.commit()
                 return {"success": True, "rca": inc.rca_result}

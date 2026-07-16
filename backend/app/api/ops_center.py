@@ -386,6 +386,97 @@ async def command_center(
     }
 
 
+def _handle_status(ev: SystemEvent) -> str:
+    """Öncelik: çözüldü > bilinen > onaylandı."""
+    if ev.resolved:
+        return "resolved"
+    if getattr(ev, "is_known", False):
+        return "known"
+    if ev.is_acknowledged:
+        return "acknowledged"
+    return "other"
+
+
+@router.get("/handled-events")
+async def handled_events(
+    platform: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(
+        default=None,
+        description="acknowledged | known | resolved — boşsa hepsi",
+    ),
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, le=300),
+    db: Session = Depends(get_db),
+):
+    """
+    Son 24 saatte işlenen (onaylanan / bilinen / çözülen) eventler.
+    Komuta Merkezi'nden düşen alarmların kaybolmaması için.
+    """
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    smap = _server_map(db)
+
+    q = db.query(SystemEvent).filter(
+        SystemEvent.last_seen >= since,
+        or_(
+            SystemEvent.resolved == True,  # noqa: E712
+            SystemEvent.is_known == True,  # noqa: E712
+            SystemEvent.is_acknowledged == True,  # noqa: E712
+        ),
+    )
+    q = apply_platform_filter(q, platform, db)
+    if platform == "virt":
+        q = apply_hide_routine_virt(q, show_routine=False)
+    if search:
+        matching_ids = [
+            s.id for s in db.query(Server.id).filter(Server.name.ilike(f"%{search}%")).all()
+        ]
+        conds = [SystemEvent.title.ilike(f"%{search}%")]
+        if matching_ids:
+            conds.append(SystemEvent.server_id.in_(matching_ids))
+        q = q.filter(or_(*conds))
+
+    rows: List[SystemEvent] = q.order_by(SystemEvent.last_seen.desc()).limit(800).all()
+
+    items: List[Dict[str, Any]] = []
+    counts = {"acknowledged": 0, "known": 0, "resolved": 0, "total": 0}
+    for ev in rows:
+        hs = _handle_status(ev)
+        if hs == "other":
+            continue
+        counts[hs] = counts.get(hs, 0) + 1
+        counts["total"] += 1
+        if status and hs != status:
+            continue
+        si = smap.get(ev.server_id) if ev.server_id else None
+        raw = ev.raw_data or {}
+        items.append({
+            "id": ev.id,
+            "title": ev.title,
+            "severity": ev.severity,
+            "event_type": ev.event_type,
+            "handle_status": hs,
+            "is_acknowledged": bool(ev.is_acknowledged),
+            "is_known": bool(getattr(ev, "is_known", False)),
+            "resolved": bool(ev.resolved),
+            "server_id": ev.server_id,
+            "server_name": (si or {}).get("name") or raw.get("host_name") or "—",
+            "server_ip": (si or {}).get("ip") or "",
+            "occurrence_count": ev.occurrence_count or 1,
+            "last_seen": ev.last_seen.isoformat() if ev.last_seen else None,
+            "acknowledged_at": ev.acknowledged_at.isoformat() if getattr(ev, "acknowledged_at", None) else None,
+            "known_at": ev.known_at.isoformat() if getattr(ev, "known_at", None) else None,
+            "resolved_at": ev.resolved_at.isoformat() if ev.resolved_at else None,
+        })
+
+    return {
+        "counts": counts,
+        "events": items[:limit],
+        "total": len(items),
+        "window_hours": ACTIVE_WINDOW_HOURS,
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/summary")
 async def ops_summary(
     platform: Optional[str] = Query(default=None),

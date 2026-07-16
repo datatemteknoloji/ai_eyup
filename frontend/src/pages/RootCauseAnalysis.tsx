@@ -8,6 +8,7 @@ import {
   NEON, PageHeader, GhostButton, PrimaryButton, SeverityBadge,
   SearchInput, Select, Section, EmptyState,
 } from '../components/aiops/ui'
+import { exportRcaSectionsToPrintWindow } from '../utils/pdfExport'
 
 // ── Tipler ────────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,23 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
         <span>{result.log_lines_used} log satırı</span>
         <span>·</span><span>{result.model}</span>
         <span>·</span><span>{new Date(result.analyzed_at).toLocaleTimeString('tr-TR')}</span>
+        <GhostButton
+          accent={NEON.cyan}
+          onClick={() => exportRcaSectionsToPrintWindow(
+            [
+              { heading: 'Kök Neden', body: result.root_cause },
+              { heading: 'Etki Analizi', body: result.impact },
+              { heading: 'Önerilen Aksiyonlar', items: result.recommendations },
+            ],
+            {
+              title: 'Log RCA Analizi',
+              subtitle: `${result.model} · ${result.log_lines_used} log · ${new Date(result.analyzed_at).toLocaleString('tr-TR')}`,
+              filename: `rca_log_${new Date().toISOString().slice(0, 10)}`,
+            },
+          )}
+        >
+          PDF İndir
+        </GhostButton>
       </div>
       <div className="p-3 rounded-[8px]" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.14)' }}>
         <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: NEON.cyan }}>Kök Neden</div>
@@ -444,6 +462,35 @@ function CompareResultCard({ result }: { result: CompareResult }) {
           <div className="flex items-center gap-2">
             <ConfidenceBadge confidence={llm_analysis.confidence} />
             <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{result.model}</span>
+            <GhostButton
+              accent={NEON.cyan}
+              onClick={() => exportRcaSectionsToPrintWindow(
+                [
+                  { heading: 'Özet', body: llm_analysis.summary },
+                  { heading: 'Temel Farklar', items: llm_analysis.key_differences },
+                  { heading: 'Regresyon Göstergeleri', items: llm_analysis.regression_indicators },
+                  { heading: 'Öneriler', items: llm_analysis.recommendations },
+                  {
+                    heading: 'Delta Özeti',
+                    body: [
+                      `Event değişimi: ${delta.total_events_change} (${delta.total_events_pct ?? '—'}%)`,
+                      `Hata değişimi: ${delta.error_events_change} (${delta.error_events_pct ?? '—'}%)`,
+                      `Pencere A: ${window_a.total_events} event`,
+                      `Pencere B: ${window_b.total_events} event`,
+                      delta.new_event_types?.length ? `Yeni tipler: ${delta.new_event_types.join(', ')}` : '',
+                      delta.disappeared_event_types?.length ? `Kaybolan tipler: ${delta.disappeared_event_types.join(', ')}` : '',
+                    ].filter(Boolean).join('\n'),
+                  },
+                ],
+                {
+                  title: 'Zaman Penceresi Karşılaştırma RCA',
+                  subtitle: result.model || undefined,
+                  filename: `rca_compare_${new Date().toISOString().slice(0, 10)}`,
+                },
+              )}
+            >
+              PDF İndir
+            </GhostButton>
           </div>
         </div>
         {llm_analysis.summary && (
@@ -662,6 +709,44 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
               )}
               <ConfidenceBadge confidence={llm.confidence} />
               <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{result.model}</span>
+              <GhostButton
+                accent={NEON.cyan}
+                onClick={() => {
+                  const sections: Array<{ heading?: string; body?: string; items?: string[] }> = [
+                    {
+                      heading: 'Rapor Bilgisi',
+                      body: [
+                        `DB: ${r.db_name} (${r.db_id})`,
+                        `Instance: ${r.instance_name || '—'}`,
+                        `Host: ${r.host_name || '—'}`,
+                        `Süre: ${r.elapsed_minutes.toFixed(1)} dk · DB Time: ${r.db_time_minutes.toFixed(1)} dk`,
+                        `Buffer Hit: ${r.buffer_cache_hit_pct.toFixed(1)}% · Library Hit: ${r.library_cache_hit_pct.toFixed(1)}%`,
+                      ].join('\n'),
+                    },
+                  ]
+                  if (llm.summary) sections.push({ heading: 'Özet', body: llm.summary })
+                  if (llm.bottlenecks?.length) sections.push({ heading: 'Darboğazlar', items: llm.bottlenecks })
+                  if (llm.top_sql_findings?.length) sections.push({ heading: 'Problematik SQL', items: llm.top_sql_findings })
+                  if (llm.wait_event_analysis?.length) sections.push({ heading: 'Wait Event Analizi', items: llm.wait_event_analysis })
+                  if (llm.recommendations?.length) sections.push({ heading: 'Öneriler', items: llm.recommendations })
+                  if (llm.baseline_comparison) sections.push({ heading: 'Baseline Karşılaştırması', body: llm.baseline_comparison })
+                  if (r.top_wait_events?.length) {
+                    sections.push({
+                      heading: 'Top Wait Events',
+                      items: r.top_wait_events.slice(0, 8).map(
+                        (e) => `${e.event} [${e.wait_class}] — ${e.pct_db_time.toFixed(1)}% / ${e.time_s.toFixed(1)}s`,
+                      ),
+                    })
+                  }
+                  exportRcaSectionsToPrintWindow(sections, {
+                    title: `AWR RCA — ${r.db_name}`,
+                    subtitle: result.model || undefined,
+                    filename: `rca_awr_${(r.db_name || 'rapor').replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
+                  })
+                }}
+              >
+                PDF İndir
+              </GhostButton>
             </div>
           </div>
           {llm.summary && <p className="text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.88)' }}>{llm.summary}</p>}

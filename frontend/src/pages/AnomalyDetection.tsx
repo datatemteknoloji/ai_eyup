@@ -270,7 +270,10 @@ export function CorrelationTab() {
   )
 }
 
-export function LogHeatmapPanel({ platform = 'linux' }: PlatformAiopsProps) {
+export function LogHeatmapPanel({
+  platform = 'linux',
+  onScanJobStarted,
+}: PlatformAiopsProps & { onScanJobStarted?: (jobId: string) => void }) {
   const [serverSearch, setServerSearch] = useState('')
   const [backfillDays, setBackfillDays] = useState(7)
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
@@ -299,6 +302,39 @@ export function LogHeatmapPanel({ platform = 'linux' }: PlatformAiopsProps) {
     onError: () => setMsg({ ok: false, text: 'Backfill sırasında hata oluştu.' }),
   })
 
+  const scanNowMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API_BASE_URL}/events/scan?platform=${platform}&only_ai_ready=false`,
+        { method: 'POST' },
+      )
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Tarama başarısız')
+      return data as { job_id?: string; message?: string; total_saved?: number; total_servers?: number }
+    },
+    onSuccess: (data) => {
+      if (data.job_id && onScanJobStarted) {
+        onScanJobStarted(data.job_id)
+        setMsg({ ok: true, text: 'Tarama başlatıldı — ilerleme penceresini izleyin.' })
+        return
+      }
+      const saved = data.total_saved ?? 0
+      setMsg({
+        ok: true,
+        text: saved > 0
+          ? `Şimdi Tara: ${saved} yeni event (${data.total_servers ?? 0} sunucu)`
+          : (data.message || `Şimdi Tara: yeni event yok`),
+      })
+      queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d', platform] })
+      queryClient.invalidateQueries({ queryKey: ['events'] })
+      queryClient.invalidateQueries({ queryKey: ['eventStats'] })
+    },
+    onError: (e) => setMsg({
+      ok: false,
+      text: e instanceof Error ? e.message : 'Tarama sırasında hata oluştu.',
+    }),
+  })
+
   const filteredHeatmapRows = useMemo(() => {
     const rows = heatmapData?.rows || []
     const q = serverSearch.trim().toLowerCase()
@@ -323,10 +359,17 @@ export function LogHeatmapPanel({ platform = 'linux' }: PlatformAiopsProps) {
       <Section title="30 Günlük Log Anomali Isı Haritası" accent={NEON.orange}
         right={
           <div className="flex items-center gap-2">
+            <GhostButton
+              accent={NEON.green}
+              onClick={() => scanNowMutation.mutate()}
+              disabled={scanNowMutation.isPending || backfillMutation.isPending}
+            >
+              {scanNowMutation.isPending ? 'Taranıyor...' : 'Şimdi Tara'}
+            </GhostButton>
             <Select value={String(backfillDays)} onChange={v => setBackfillDays(Number(v))}>
               {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
             </Select>
-            <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending}>
+            <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending || scanNowMutation.isPending}>
               {backfillMutation.isPending ? 'Yükleniyor...' : 'Geçmiş Veri'}
             </GhostButton>
           </div>

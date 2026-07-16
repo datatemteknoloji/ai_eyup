@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom'
 import {
   RefreshCw, X, Search, ChevronDown, Cpu, MemoryStick, HardDrive, Network,
   Activity, Zap, CheckCircle2, Clock, Siren,
-  ScanSearch, ArrowRight, Eye, BellOff, BarChart3, Terminal,
+  ScanSearch, ArrowRight, Eye, BellOff, BarChart3, Terminal, FileDown,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import type { PlatformAiopsProps } from '../utils/platformApi'
@@ -18,6 +18,7 @@ import {
   OpsRefreshCountdown,
   OpsShell,
 } from '../components/ops/OpsShell'
+import { exportRcaSectionsToPrintWindow } from '../utils/pdfExport'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ServerInfo { id: number | null; name: string; hostname: string; ip: string; tier: string }
@@ -223,6 +224,29 @@ function RCAPanel({ eventIds, metric, isStorm, onClose }: {
           <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50 text-xs text-slate-500">
             <span className={confCol}>Güven: {conf}</span>
             <span>{result.event_count} event</span>
+            <button
+              type="button"
+              onClick={() => {
+                const a = result.analysis
+                const sections: Array<{ heading?: string; body?: string; items?: string[] }> = []
+                if (a.root_cause) sections.push({ heading: 'Kök Neden', body: a.root_cause })
+                if (a.likely_cause) sections.push({ heading: 'Olası Sebep', body: a.likely_cause })
+                if (a.impact) sections.push({ heading: 'Etki', body: a.impact })
+                if ((a.actions || []).length) sections.push({ heading: 'Önerilen Aksiyonlar', items: a.actions })
+                if (a.affected_summary) sections.push({ heading: 'Etkilenen Özet', body: a.affected_summary })
+                if (a.severity_assessment) sections.push({ heading: 'Önem', body: a.severity_assessment })
+                if (a.confidence) sections.push({ heading: 'Güven', body: String(a.confidence) })
+                exportRcaSectionsToPrintWindow(sections, {
+                  title: isStorm ? `Fırtına RCA — ${metric}` : `OpsCenter RCA — ${metric}`,
+                  subtitle: `${result.model || ''} · ${result.event_count} event · ${result.analyzed_at || ''}`,
+                  filename: `rca_ops_${(metric || 'analiz').replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
+                })
+              }}
+              className="inline-flex items-center gap-1 hover:text-cyan-300 transition-colors"
+              title="PDF olarak kaydet"
+            >
+              <FileDown size={12} /> PDF
+            </button>
             <button onClick={run} className="ml-auto hover:text-slate-300 transition-colors">
               <RefreshCw size={11} />
             </button>
@@ -713,6 +737,133 @@ function ActivityTimeline({ platform }: { platform: string }) {
   )
 }
 
+// ── İşlenen (onaylı / bilinen / çözülen) alarm listesi ────────────────────────
+interface HandledEvent {
+  id: number; title: string; severity: string; event_type: string
+  handle_status: 'acknowledged' | 'known' | 'resolved'
+  server_name: string; server_ip: string
+  occurrence_count: number; last_seen: string | null
+}
+
+const HANDLE_LABEL: Record<string, { text: string; cls: string }> = {
+  acknowledged: { text: 'Onaylandı', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+  known: { text: 'Bilinen', cls: 'bg-slate-500/20 text-slate-300 border-slate-500/40' },
+  resolved: { text: 'Kapatıldı', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+}
+
+function HandledEventsPanel({
+  platform, statusFilter, search, onDone,
+}: {
+  platform: string
+  statusFilter: '' | 'acknowledged' | 'known' | 'resolved'
+  search: string
+  onDone: () => void
+}) {
+  const [busyId, setBusyId] = useState<number | null>(null)
+
+  const { data, isLoading, refetch } = useQuery<{
+    counts: { acknowledged: number; known: number; resolved: number; total: number }
+    events: HandledEvent[]
+    total: number
+  }>({
+    queryKey: ['ops-handled', platform, statusFilter, search],
+    queryFn: async () => {
+      const p = new URLSearchParams({ platform, limit: '150' })
+      if (statusFilter) p.set('status', statusFilter)
+      if (search) p.set('search', search)
+      const r = await fetch(`${API_BASE_URL}/ops/handled-events?${p}`)
+      if (!r.ok) throw new Error('handled-events error')
+      return r.json()
+    },
+    refetchInterval: 30_000,
+  })
+
+  async function reopen(ev: HandledEvent) {
+    setBusyId(ev.id)
+    try {
+      if (ev.handle_status === 'acknowledged') {
+        await fetch(`${API_BASE_URL}/events/${ev.id}/unacknowledge`, { method: 'POST' })
+      } else if (ev.handle_status === 'known') {
+        await fetch(`${API_BASE_URL}/events/${ev.id}/unknown`, { method: 'POST' })
+      } else if (ev.handle_status === 'resolved') {
+        await fetch(`${API_BASE_URL}/events/${ev.id}/unresolve`, { method: 'POST' })
+      }
+      await refetch()
+      onDone()
+    } finally { setBusyId(null) }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <div className="w-8 h-8 rounded-full border-2 border-t-cyan-400 border-r-transparent animate-spin" />
+      </div>
+    )
+  }
+
+  const events = data?.events ?? []
+  const counts = data?.counts
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap text-xs text-slate-400">
+        <span>Son 24 saatte işlenen alarmlar</span>
+        {counts && (
+          <span className="text-slate-600">
+            · Onay {counts.acknowledged} · Bilinen {counts.known} · Kapatılan {counts.resolved}
+          </span>
+        )}
+      </div>
+      {events.length === 0 ? (
+        <div className="flex flex-col items-center py-16 text-center text-slate-500">
+          <CheckCircle2 size={40} className="text-slate-600 mb-3" />
+          <p className="text-sm">Bu filtrede işlenen alarm yok.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {events.map(ev => {
+            const badge = HANDLE_LABEL[ev.handle_status] || HANDLE_LABEL.acknowledged
+            return (
+              <div key={ev.id}
+                className="rounded-xl border border-slate-700/60 bg-slate-900/50 px-4 py-3 flex items-start gap-3">
+                <span className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
+                  ev.severity === 'critical' || ev.severity === 'emergency' ? 'bg-red-400'
+                    : ev.severity === 'warning' ? 'bg-amber-400' : 'bg-slate-500'
+                }`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${badge.cls}`}>
+                      {badge.text}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">{ev.event_type}</span>
+                    {ev.occurrence_count > 1 && (
+                      <span className="text-[10px] text-slate-500">×{ev.occurrence_count}</span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-200 truncate" title={ev.title}>{ev.title}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {ev.server_name}{ev.server_ip ? ` · ${ev.server_ip}` : ''}
+                    {ev.last_seen ? ` · ${relTime(ev.last_seen)} önce` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busyId === ev.id}
+                  onClick={() => reopen(ev)}
+                  className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-50"
+                  title="Aktif alarmlara geri al"
+                >
+                  {busyId === ev.id ? '…' : 'Yeniden aç'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Ana Sayfa ─────────────────────────────────────────────────────────────────
 export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const qc = useQueryClient()
@@ -721,6 +872,8 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning'>('all')
   const [search, setSearch] = useState('')
   const [detailCard, setDetailCard] = useState<ServerCard | null>(null)
+  const [viewMode, setViewMode] = useState<'active' | 'handled'>('active')
+  const [handledStatus, setHandledStatus] = useState<'' | 'acknowledged' | 'known' | 'resolved'>('')
 
   const { data, isLoading, refetch } = useQuery<CommandCenterData>({
     queryKey: ['ops-command-center', platform],
@@ -737,6 +890,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     setSelectedIds(new Set())
     qc.invalidateQueries({ queryKey: ['ops-command-center'] })
     qc.invalidateQueries({ queryKey: ['ops-timeline', platform] })
+    qc.invalidateQueries({ queryKey: ['ops-handled'] })
   }
 
   function toggleSelect(ids: number[], checked: boolean) {
@@ -788,7 +942,13 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           critical: (data?.critical_count ?? 0) + (data?.storm_count ?? 0),
           warning: data?.warning_count ?? 0,
           tertiaryValue: data?.green_count ?? 0,
-          tertiaryLabel: 'Normal',
+          tertiaryLabel: 'İşlenen',
+          onCriticalClick: () => { setViewMode('active'); setSevFilter('critical') },
+          onWarningClick: () => { setViewMode('active'); setSevFilter('warning') },
+          onTertiaryClick: () => { setViewMode(v => v === 'handled' ? 'active' : 'handled'); setHandledStatus('') },
+          criticalActive: viewMode === 'active' && sevFilter === 'critical',
+          warningActive: viewMode === 'active' && sevFilter === 'warning',
+          tertiaryActive: viewMode === 'handled',
         }}
         headerActions={(
           <>
@@ -819,12 +979,31 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
         )}
         filterBar={(
           <>
+            <div className="flex gap-1 mr-1">
+              {([
+                ['active', 'Aktif'],
+                ['handled', 'İşlenen'],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                    viewMode === mode
+                      ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                      : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="relative flex-1 min-w-[12rem] max-w-md">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Sunucu, IP veya metrik ara…"
+                placeholder={viewMode === 'handled' ? 'İşlenen alarm veya sunucu ara…' : 'Sunucu, IP veya metrik ara…'}
                 className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
               />
               {search && (
@@ -833,42 +1012,77 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
                 </button>
               )}
             </div>
-            <div className="flex gap-1">
-              {(['all', 'production', 'staging', 'development'] as const).map(t => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTierFilter(t)}
-                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-                    tierFilter === t
-                      ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
-                      : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-                  }`}
-                >
-                  {t === 'all' ? 'Tümü' : TIER_SHORT[t]}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-1">
-              {(['all', 'critical', 'warning'] as const).map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setSevFilter(s)}
-                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-                    sevFilter === s
-                      ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
-                      : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-                  }`}
-                >
-                  {s === 'all' ? 'Tüm Seviye' : s === 'critical' ? 'Kritik' : 'Uyarı'}
-                </button>
-              ))}
-            </div>
+            {viewMode === 'handled' ? (
+              <div className="flex gap-1">
+                {([
+                  ['', 'Tümü'],
+                  ['acknowledged', 'Onaylanan'],
+                  ['known', 'Bilinen'],
+                  ['resolved', 'Kapatılan'],
+                ] as const).map(([st, label]) => (
+                  <button
+                    key={st || 'all'}
+                    type="button"
+                    onClick={() => setHandledStatus(st)}
+                    className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                      handledStatus === st
+                        ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                        : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-1">
+                  {(['all', 'production', 'staging', 'development'] as const).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTierFilter(t)}
+                      className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                        tierFilter === t
+                          ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                          : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      {t === 'all' ? 'Tümü' : TIER_SHORT[t]}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-1">
+                  {(['all', 'critical', 'warning'] as const).map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSevFilter(s)}
+                      className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
+                        sevFilter === s
+                          ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                          : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      {s === 'all' ? 'Tüm Seviye' : s === 'critical' ? 'Kritik' : 'Uyarı'}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
         sideRail={<ActivityTimeline platform={platform} />}
       >
+        {viewMode === 'handled' ? (
+          <HandledEventsPanel
+            platform={platform}
+            statusFilter={handledStatus}
+            search={search}
+            onDone={invalidate}
+          />
+        ) : (
+          <>
         {selectedIds.size > 0 && (
           <BulkToolbar selectedIds={[...selectedIds]} onClear={() => setSelectedIds(new Set())} onDone={invalidate} />
         )}
@@ -878,6 +1092,15 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             <CheckCircle2 size={48} className="text-green-400 mb-4" />
             <h3 className="text-xl font-semibold text-green-400">Her şey yolunda</h3>
             <p className="text-sm text-slate-400 mt-2">Son 24 saatte müdahale gerektiren alarm yok.</p>
+            {(data?.green_count ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => setViewMode('handled')}
+                className="mt-4 text-sm text-cyan-400 hover:underline"
+              >
+                {data!.green_count} işlenen alarmı gör →
+              </button>
+            )}
           </div>
         )}
 
@@ -955,6 +1178,8 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             <Search size={32} className="mx-auto mb-3 opacity-30" />
             <p className="text-sm">Filtre kriterlerine uyan alarm yok.</p>
           </div>
+        )}
+          </>
         )}
       </OpsShell>
 

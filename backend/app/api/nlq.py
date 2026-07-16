@@ -56,7 +56,7 @@ class LiveCheckBody(BaseModel):
 
 class CollectorRunBody(BaseModel):
     workers: Optional[int] = None
-    only_ai_ready: bool = True
+    only_ai_ready: bool = True  # her zaman True uygulanır; AI Ready olmayanlara SSH yok
     server_ids: Optional[List[int]] = None
     force: bool = True  # True → throttle yok (manuel tur)
 
@@ -154,8 +154,15 @@ def collector_run(
     except Exception:
         workers = 50
     throttled = not bool(body.force)
-    background.add_task(_run_collector_bg, workers, body.only_ai_ready, body.server_ids, throttled)
-    return {"ok": True, "message": "Collector başlatıldı", "workers": workers, "throttled": throttled}
+    # Snapshot yalnızca AI Ready — istemci False gönderse bile True
+    background.add_task(_run_collector_bg, workers, True, body.server_ids, throttled)
+    return {
+        "ok": True,
+        "message": "Collector başlatıldı (yalnızca AI Ready sunucular)",
+        "workers": workers,
+        "throttled": throttled,
+        "only_ai_ready": True,
+    }
 
 
 @router.get("/collectors/linux-inventory/status")

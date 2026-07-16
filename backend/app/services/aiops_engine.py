@@ -307,12 +307,16 @@ Lütfen şu formatta analiz yap:
         rca_text = (data.get("response") or "").strip()
         if not rca_text:
             return False
-        incident.rca_result = {
-            "analysis": rca_text,
-            "model": model,
-            "analyzed_at": datetime.utcnow().isoformat(),
-            "auto": True,
-        }
+        from app.services.rca_store import store_incident_rca
+        store_incident_rca(
+            incident,
+            {
+                "analysis": rca_text,
+                "model": model,
+                "analyzed_at": datetime.utcnow().isoformat(),
+                "auto": True,
+            },
+        )
         incident.root_cause = rca_text[:500]
         db.commit()
         logger.info(f"[AIOps] Otomatik RCA tamamlandı: incident #{incident.id} ({model})")

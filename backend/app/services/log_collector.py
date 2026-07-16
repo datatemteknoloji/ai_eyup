@@ -197,21 +197,19 @@ def collect_server_logs(
     since_hours: int = 2,
 ) -> List[Dict[str, Any]]:
     """Bir sunucudan SSH ile log topla. since_hours: kac saatlik gecmis log."""
-    conn = server.connection_config or {}
-    username = conn.get("username") or (global_cred.username if global_cred else None)
-    password = conn.get("password") or (global_cred.password if global_cred else None)
-    private_key = conn.get("private_key") or (global_cred.private_key if global_cred else None)
-    port = conn.get("port", 22) or 22
-    sudo_password = conn.get("sudo_password") or password
+    from app.services.ssh_credentials import resolve_ssh_creds
 
-    if not username or not (server.ip_address or server.hostname):
+    creds = resolve_ssh_creds(server, global_cred=global_cred)
+    if not creds.get("username") or not creds.get("host") or not creds.get("has_secret"):
         return []
 
     ssh = SSHManager(
-        host=server.ip_address or server.hostname,
-        username=username, password=password,
-        private_key=private_key, port=port,
-        sudo_password=sudo_password,
+        host=creds["host"],
+        username=creds["username"],
+        password=creds.get("password"),
+        private_key=creds.get("private_key"),
+        port=creds.get("port") or 22,
+        sudo_password=creds.get("sudo_password") or creds.get("password"),
     )
     if not ssh.connect():
         return []
@@ -223,6 +221,7 @@ def collect_server_logs(
         # Birincil yol: adm/systemd-journal grubundaki kullanıcı (sudo yok).
         ok, out, err = ssh.execute_command(journald_cmd)
         used_sudo = False
+        sudo_password = creds.get("sudo_password") or creds.get("password")
         if (not ok or not (out or "").strip()) and sudo_password:
             # Yalnızca ACL yoksa son çare; müşteri deploy'da adm tercih edilir.
             logger.info(
@@ -363,8 +362,15 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
     return saved
 
 
-def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hours: int = 2) -> Dict[str, Any]:
-    """Tum ONLINE sunuculardan SSH ile log topla. since_hours=168 ile 7 gunluk backfill yapilabilir."""
+def collect_all_servers_logs(
+    db: Session,
+    only_ai_ready: bool = False,
+    since_hours: int = 2,
+    progress_cb: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Tum ONLINE sunuculardan SSH ile log topla. since_hours=168 ile 7 gunluk backfill yapilabilir.
+    progress_cb(done, total, server_name, saved) — opsiyonel ilerleme callback.
+    """
     q = db.query(Server).filter(Server.status.in_(["ONLINE", "WARNING"]))
     if only_ai_ready:
         q = q.filter(Server.ai_ready == True)
@@ -377,8 +383,10 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
 
     total_saved = 0
     server_results = []
+    total = len(servers)
 
-    for srv in servers:
+    for idx, srv in enumerate(servers, start=1):
+        saved = 0
         try:
             logs = collect_server_logs(srv, global_cred, since_hours=since_hours)
             if logs:
@@ -401,6 +409,11 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
                     })
         except Exception as e:
             logger.error(f"Log collection failed {srv.name}: {e}")
+        if progress_cb:
+            try:
+                progress_cb(idx, total, srv.name, saved)
+            except Exception:
+                pass
 
     return {
         "total_servers": len(servers),
@@ -410,7 +423,12 @@ def collect_all_servers_logs(db: Session, only_ai_ready: bool = False, since_hou
     }
 
 
-def collect_exadata_servers_logs(db: Session, only_ai_ready: bool = False, since_hours: int = 2) -> Dict[str, Any]:
+def collect_exadata_servers_logs(
+    db: Session,
+    only_ai_ready: bool = False,
+    since_hours: int = 2,
+    progress_cb: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Exadata node'larına bağlı sunuculardan log topla — Linux modülünden ayrı."""
     exadata_ids = get_exadata_server_id_set(db)
     if not exadata_ids:
@@ -429,8 +447,10 @@ def collect_exadata_servers_logs(db: Session, only_ai_ready: bool = False, since
     servers = q.all()
     total_saved = 0
     server_results = []
+    total = len(servers)
 
-    for srv in servers:
+    for idx, srv in enumerate(servers, start=1):
+        saved = 0
         try:
             logs = collect_server_logs(srv, global_cred, since_hours=since_hours)
             if logs:
@@ -440,6 +460,11 @@ def collect_exadata_servers_logs(db: Session, only_ai_ready: bool = False, since
                     server_results.append({"server": srv.name, "saved": saved})
         except Exception as e:
             logger.error(f"Exadata log collection failed {srv.name}: {e}")
+        if progress_cb:
+            try:
+                progress_cb(idx, total, srv.name, saved)
+            except Exception:
+                pass
 
     return {
         "total_servers": len(servers),

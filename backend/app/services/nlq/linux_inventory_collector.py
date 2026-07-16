@@ -269,6 +269,12 @@ def collect_one_server(
         "packages": [],
     }
 
+    # NL envanter snapshot yalnızca AI Ready sunuculardan — SSH denemesi yok
+    if not bool(getattr(server, "ai_ready", False)):
+        base["collection_status"] = "skipped"
+        base["collection_error"] = "AI Ready değil — snapshot atlandı"
+        return base
+
     ssh = None
     try:
         ssh = _ssh_for(server, global_cred)
@@ -533,8 +539,18 @@ def run_linux_inventory_collection(
     elif linux_ids:
         q = q.filter(Server.id.in_(linux_ids))
     servers = [s for s in q.all() if is_linux_server(s)]
-    if only_ai_ready:
-        servers = [s for s in servers if s.ai_ready]
+    # Snapshot her zaman AI Ready zorunlu (API only_ai_ready=False bile olsa SSH yok)
+    before_ready = len(servers)
+    servers = [s for s in servers if bool(getattr(s, "ai_ready", False))]
+    if before_ready != len(servers):
+        logger.info(
+            "NLQ collector: AI Ready olmayan %s sunucu atlandı (only_ai_ready=%s)",
+            before_ready - len(servers), only_ai_ready,
+        )
+    if not only_ai_ready:
+        logger.warning(
+            "NLQ collector: only_ai_ready=False istendi; yine de AI Ready şartı uygulandı"
+        )
 
     # Manuel server_ids veya throttled=False → tüm adaylar; aksi halde success/fail aralığı
     if throttled and not server_ids:
@@ -578,6 +594,7 @@ def run_linux_inventory_collection(
         "done": 0,
         "success": 0,
         "failed": 0,
+        "skipped": 0,
         "message": "running",
     }
 
@@ -597,13 +614,20 @@ def run_linux_inventory_collection(
                 }
             snaps.append(snap)
             _collector_status["done"] += 1
-            if snap.get("collection_status") == "success":
+            st = snap.get("collection_status")
+            if st == "success":
                 _collector_status["success"] += 1
+            elif st == "skipped":
+                _collector_status.setdefault("skipped", 0)
+                _collector_status["skipped"] += 1
             else:
                 _collector_status["failed"] += 1
 
     for snap in snaps:
         try:
+            # AI Ready değil / skipped → mevcut başarılı snapshot'ı bozma
+            if snap.get("collection_status") == "skipped":
+                continue
             sid = snap.get("server_id")
             if sid:
                 _enrich_from_metric_data(db, int(sid), snap)
