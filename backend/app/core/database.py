@@ -9,11 +9,15 @@ from typing import Generator
 from app.core.config import settings
 
 # Ana engine — FastAPI request/response için (async-safe pool)
+# 5000 sunucu ölçeği: pool_size/max_overflow, Postgres max_connections=400
+# (bkz. docker-compose.yml) ile birlikte yeterli tavan bırakacak şekilde
+# yükseltildi — arka plan NullPool thread'lerine (toplu SSH/TCP/log işleri)
+# de bağlantı payı kalıyor.
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=40,
+    pool_size=40,
+    max_overflow=80,
     pool_timeout=30,
     pool_recycle=1800,
     echo=False

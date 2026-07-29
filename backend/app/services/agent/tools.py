@@ -21,6 +21,8 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.server import Server
+from app.models.hypervisor import Hypervisor, HypervisorType
+from app.models.openshift import OpenShiftCluster
 from app.services.agent.policy import RiskLevel
 from app.services.agent.executor import run_ssh_command
 
@@ -45,6 +47,68 @@ def resolve_server(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Op
     return None
 
 
+def resolve_hypervisor(
+    db: Session, args: Dict[str, Any], type_filter: Optional[HypervisorType] = None,
+) -> Optional[Hypervisor]:
+    """args['hypervisor'] (ad/ip) ile bir Hypervisor bulur; verilmezse (type_filter'a uyan) ilkini döner."""
+    q = db.query(Hypervisor)
+    if type_filter:
+        q = q.filter(Hypervisor.hypervisor_type == type_filter)
+    name = (args.get("hypervisor") or args.get("server") or "").strip().lower()
+    if name:
+        for hv in q.all():
+            if (hv.name and hv.name.lower() == name) or (hv.ip_address and hv.ip_address == name):
+                return hv
+    return q.first()
+
+
+def resolve_openshift_cluster(db: Session, args: Dict[str, Any]) -> Optional[OpenShiftCluster]:
+    """args['cluster']/args['hypervisor'] (ad) ile bir OpenShiftCluster bulur; yoksa ilkini döner."""
+    q = db.query(OpenShiftCluster)
+    name = (args.get("cluster") or args.get("hypervisor") or "").strip().lower()
+    if name:
+        for c in q.all():
+            if c.name and c.name.lower() == name:
+                return c
+    return q.first()
+
+
+def _build_vcenter_client(hv: Hypervisor):
+    from app.services.vmware.vcenter_client import VCenterClient
+    return VCenterClient(
+        host=hv.ip_address or hv.hostname,
+        username=hv.username or (hv.connection_config or {}).get("username", ""),
+        password=hv.password or (hv.connection_config or {}).get("password", ""),
+        port=hv.port or 443,
+    )
+
+
+def _build_kubevirt_client(hv: Hypervisor):
+    from app.services.openshift.kubevirt_client import KubeVirtClient
+    cc = hv.connection_config or {}
+    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+    return KubeVirtClient(
+        api_url=cc.get("api_url") or hv.hostname or hv.ip_address,
+        token="" if use_creds else (cc.get("token") or hv.password or ""),
+        username=cc.get("username") or "",
+        password=cc.get("password") or "",
+        verify_ssl=bool(cc.get("verify_ssl", False)),
+    )
+
+
+def _build_ocp_client(cluster: OpenShiftCluster):
+    from app.services.openshift.ocp_client import OpenShiftClient
+    cc = cluster.connection_config or {}
+    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+    return OpenShiftClient(
+        api_url=cc.get("api_url") or cluster.api_url,
+        token="" if use_creds else (cc.get("token") or ""),
+        username=cc.get("username") or "",
+        password=cc.get("password") or "",
+        verify_ssl=bool(cc.get("verify_ssl", False)),
+    )
+
+
 def _service_arg_ok(service: str) -> bool:
     """Servis adı basit doğrulama (enjeksiyon önleme)."""
     import re
@@ -64,6 +128,9 @@ class Tool:
     # toplu envanter özeti). Set edilirse preview/execute SSH akışını atlar.
     direct_handler: Optional[Callable[[Session, Dict[str, Any], Dict[str, Any]], Dict[str, Any]]] = None
     direct_label: str = ""
+    # Platform kapsamı — Linux sohbetinde OpenShift araçları (ve tersi) karışmasın.
+    # Örn. {"linux"}, {"openshift"}, {"vcenter"}, {"infra"}
+    domains: frozenset = frozenset({"linux"})
 
     def preview(self, db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         if self.direct_handler:
@@ -203,6 +270,200 @@ def _infra_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, An
     try:
         return {"ok": True, "summary": build_infra_overview_text(db)}
     except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    question = (args.get("question") or "").strip()
+    if not question:
+        return {"ok": False, "error": "question zorunlu"}
+    try:
+        from app.services.hypervisor_intelligence import answer_hypervisor_question
+        result = answer_hypervisor_question(db, question)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+        return {"ok": True, "answer": result.get("answer"), "source": "hypervisor_intelligence"}
+    except Exception as e:
+        logger.error(f"[Tool] vcenter_ask hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _vcenter_live_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    hv = resolve_hypervisor(db, args, type_filter=HypervisorType.VMWARE)
+    if not hv:
+        return {"ok": False, "error": "Tanımlı VMware vCenter bulunamadı"}
+    hours = max(1, min(int(args.get("hours") or 48), 168))
+    try:
+        client = _build_vcenter_client(hv)
+        data = client.collect_platform_logs(hours=hours, max_events=300)
+        return {
+            "ok": True,
+            "hypervisor": hv.name,
+            "hours": hours,
+            "alarms": (data.get("alarms") or [])[:50],
+            "errors": data.get("errors") or [],
+            "collected_at": data.get("collected_at"),
+        }
+    except Exception as e:
+        logger.error(f"[Tool] vcenter_live_alarms hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _vcenter_live_tasks_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    hv = resolve_hypervisor(db, args, type_filter=HypervisorType.VMWARE)
+    if not hv:
+        return {"ok": False, "error": "Tanımlı VMware vCenter bulunamadı"}
+    hours = max(1, min(int(args.get("hours") or 48), 168))
+    try:
+        client = _build_vcenter_client(hv)
+        data = client.collect_platform_logs(hours=hours, max_events=500)
+        return {
+            "ok": True,
+            "hypervisor": hv.name,
+            "hours": hours,
+            "task_events": (data.get("task_events") or [])[:80],
+            "errors": data.get("errors") or [],
+            "collected_at": data.get("collected_at"),
+        }
+    except Exception as e:
+        logger.error(f"[Tool] vcenter_live_tasks hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    question = (args.get("question") or "").strip()
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    try:
+        from collections import Counter
+        client = _build_ocp_client(cluster)
+        nodes = client.list_nodes()
+        projects = client.list_projects()
+        pods = client.list_pods()
+        by_status = dict(Counter((p.get("status") or "Unknown") for p in pods))
+        problems = [
+            p for p in pods
+            if (p.get("status") or "").lower() not in ("running", "succeeded")
+            or int(p.get("restart_count") or 0) >= 5
+            or p.get("reason")
+        ]
+        summary = {
+            "cluster": cluster.name,
+            "version": cluster.version,
+            "node_count": len(nodes),
+            "nodes": [{"name": n.get("name"), "role": n.get("role"), "status": n.get("status")} for n in nodes[:50]],
+            "project_count": len(projects),
+            "pod_count": len(pods),
+            "pods_by_status": by_status,
+            "problem_pod_count": len(problems),
+            "problem_pods_sample": problems[:30],
+            "question_hint": question or None,
+            "hint": "Detaylı pod listesi için list_ocp_pods aracını çağır (namespace filtreli veya tümü).",
+        }
+        return {"ok": True, **summary}
+    except Exception as e:
+        logger.error(f"[Tool] openshift_ask hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _list_kubevirt_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    hv = resolve_hypervisor(db, args, type_filter=HypervisorType.OPENSHIFT_VIRT)
+    if not hv:
+        return {"ok": False, "error": "Tanımlı OpenShift Virtualization (KubeVirt) hypervisor bulunamadı"}
+    try:
+        client = _build_kubevirt_client(hv)
+        vms = client.list_vms()
+        return {"ok": True, "hypervisor": hv.name, "count": len(vms), "vms": vms[:100]}
+    except Exception as e:
+        logger.error(f"[Tool] list_kubevirt_vms hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    namespace = (args.get("namespace") or "").strip() or None
+    try:
+        from collections import Counter
+        client = _build_ocp_client(cluster)
+        pods = client.list_pods(namespace=namespace)
+        by_status = dict(Counter((p.get("status") or "Unknown") for p in pods))
+        by_ns = Counter((p.get("namespace") or "") for p in pods)
+
+        def _is_problem(p: Dict[str, Any]) -> bool:
+            st = (p.get("status") or "").lower()
+            reason = (p.get("reason") or "").lower()
+            if st not in ("running", "succeeded"):
+                return True
+            if reason and reason not in ("completed",):
+                return True
+            if int(p.get("restart_count") or 0) >= 5:
+                return True
+            return False
+
+        problems = [p for p in pods if _is_problem(p)]
+        problems.sort(key=lambda p: (-int(p.get("restart_count") or 0), p.get("namespace") or "", p.get("name") or ""))
+        # Kompakt tek satır — JSON object şişmesini önler
+        problem_lines = [
+            f"{p.get('namespace')}/{p.get('name')} status={p.get('status')} "
+            f"reason={p.get('reason') or '-'} restarts={p.get('restart_count', 0)} "
+            f"ready={p.get('ready')} node={p.get('node_name') or '-'}"
+            for p in problems[:50]
+        ]
+
+        _FULL_LIMIT = 120
+        result: Dict[str, Any] = {
+            "ok": True,
+            "cluster": cluster.name,
+            "namespace": namespace,
+            "count": len(pods),
+            "by_status": by_status,
+            "by_namespace": [
+                {"namespace": ns, "count": n}
+                for ns, n in by_ns.most_common(60)
+            ],
+            "problem_count": len(problems),
+            "problem_pods": problem_lines,
+        }
+
+        if namespace or len(pods) <= _FULL_LIMIT:
+            result["pods"] = pods
+            result["list_complete"] = True
+        else:
+            lines = ["namespace\tname\tstatus\treason\tnode\trestarts\tready"]
+            for p in pods:
+                lines.append(
+                    f"{p.get('namespace','')}\t{p.get('name','')}\t{p.get('status','')}\t"
+                    f"{p.get('reason') or ''}\t{p.get('node_name') or ''}\t"
+                    f"{p.get('restart_count', 0)}\t{p.get('ready') or ''}"
+                )
+            result["pods_tsv"] = "\n".join(lines)
+            result["pods_listed"] = len(pods)
+            result["list_complete"] = True
+            result["hint"] = (
+                "Tüm pod'lar pods_tsv içinde (TSV, satır başına 1 pod). "
+                "Belirli proje için list_ocp_pods(namespace=...) çağır."
+            )
+        return result
+    except Exception as e:
+        logger.error(f"[Tool] list_ocp_pods hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _list_ocp_events_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    hours = max(1, min(int(args.get("hours") or 48), 168))
+    try:
+        client = _build_ocp_client(cluster)
+        events = client.list_events(hours=hours)
+        return {"ok": True, "cluster": cluster.name, "hours": hours,
+                "count": len(events), "events": events[:100]}
+    except Exception as e:
+        logger.error(f"[Tool] list_ocp_events hata: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -443,6 +704,143 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_infra_overview_handler,
         direct_label="Altyapı genel envanter özeti",
+    ),
+    "vcenter_ask": Tool(
+        name="vcenter_ask",
+        description=(
+            "vCenter/hypervisor ile ilgili doğal dil sorusunu CANLI veriyle yanıtlar (VM listesi, "
+            "host/VM durumu, kaynak kullanımı, snapshot, event/alarm vb.) — mevcut hypervisor "
+            "zeka katmanını (deterministik + gerekirse canlı vCenter sorgusu) kullanır. "
+            "Sanallaştırma/hypervisor/VM ile ilgili SPESİFİK bir soru geldiğinde önce bunu dene."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Sorulacak doğal dil sorusu"},
+            },
+            "required": ["question"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_ask_handler,
+        direct_label="vCenter/Hypervisor canlı soru-cevap",
+    ),
+    "vcenter_live_alarms": Tool(
+        name="vcenter_live_alarms",
+        description=(
+            "vCenter'dan TETİKLENMİŞ (aktif) alarmları CANLI olarak (DB'yi atlayıp doğrudan "
+            "vCenter SOAP API'sinden) çeker. 'Şu an aktif alarm var mı', 'kırmızı/sarı alarm var mı' "
+            "gibi güncel durum sorularında DB özetine değil bu araca güven."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter/hypervisor adı (opsiyonel, tek tanımlıysa gerekmez)"},
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılsın (varsayılan 48)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_live_alarms_handler,
+        direct_label="vCenter canlı alarm sorgusu",
+    ),
+    "vcenter_live_tasks": Tool(
+        name="vcenter_live_tasks",
+        description=(
+            "vCenter'daki son görev (task) olaylarını CANLI olarak (DB'yi atlayıp doğrudan vCenter "
+            "SOAP API'sinden) çeker — VM oluşturma/silme/migrate/snapshot gibi işlemler ve hataları. "
+            "'Son ne işlemler yapıldı', 'hangi görev başarısız oldu' gibi sorularda kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter/hypervisor adı (opsiyonel)"},
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılsın (varsayılan 48)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_live_tasks_handler,
+        direct_label="vCenter canlı task sorgusu",
+    ),
+    "openshift_ask": Tool(
+        name="openshift_ask",
+        description=(
+            "OpenShift/Kubernetes cluster CANLI genel durumu (node, namespace/proje, sürüm). "
+            "YALNIZCA OpenShift/OCP/pod/namespace sorularında kullan — Linux sunucu SSH/"
+            "systemd durumuna bakmak için KULLANMA. Detay için list_ocp_pods/list_ocp_events."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "question": {"type": "string", "description": "Sorulan soru (bağlam için, opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_openshift_ask_handler,
+        direct_label="OpenShift canlı genel durum",
+    ),
+    "list_kubevirt_vms": Tool(
+        name="list_kubevirt_vms",
+        description=(
+            "OpenShift Virtualization (KubeVirt) üzerindeki VM'leri CANLI olarak listeler "
+            "(DB senkronizasyonunu beklemeden anlık durum)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "KubeVirt hypervisor adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_list_kubevirt_vms_handler,
+        direct_label="KubeVirt canlı VM listesi",
+    ),
+    "list_ocp_pods": Tool(
+        name="list_ocp_pods",
+        description=(
+            "OpenShift/Kubernetes POD listesi (durum, restart, node). "
+            "Linux systemd servisi / process listesi DEĞİL — pod/namespace/CrashLoop sorularında kullan. "
+            "namespace verilirse yalnızca o proje."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "Belirli bir namespace/proje (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_list_ocp_pods_handler,
+        direct_label="OpenShift canlı pod listesi",
+    ),
+    "list_ocp_events": Tool(
+        name="list_ocp_events",
+        description=(
+            "OpenShift cluster olayları (Node NotReady, CrashLoopBackOff, OOMKilled, PVC, "
+            "Deployment). Linux journalctl/syslog DEĞİL — yalnızca OCP/K8s olay sorularında."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılsın (varsayılan 48)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_list_ocp_events_handler,
+        direct_label="OpenShift canlı olay listesi",
     ),
     "run_diagnostic": Tool(
         name="run_diagnostic",
@@ -755,9 +1153,9 @@ TOOLS: Dict[str, Tool] = {
     "get_failed_services": Tool(
         name="get_failed_services",
         description=(
-            "Başarısız (failed) durumdaki systemd servislerini ve takılı kalmış "
-            "(activating/deactivating) unit'leri SALT-OKUNUR listeler. "
-            "'Hangi servis durmuş', 'systemd failed servisleri göster' gibi sorularda kullan."
+            "Linux sunucuda başarısız systemd unit'leri (systemctl --failed). "
+            "OpenShift/Kubernetes pod durumu DEĞİL — pod/CrashLoop için list_ocp_pods kullan. "
+            "'Hangi servis durmuş', 'systemd failed' gibi Linux sorularında kullan."
         ),
         parameters={
             "type": "object",
@@ -889,6 +1287,43 @@ TOOLS: Dict[str, Tool] = {
 }
 
 
+# Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
+_TOOL_DOMAIN_OVERRIDE = {
+    "infra_overview": frozenset({"infra"}),
+    "vcenter_ask": frozenset({"vcenter"}),
+    "vcenter_live_alarms": frozenset({"vcenter"}),
+    "vcenter_live_tasks": frozenset({"vcenter"}),
+    "openshift_ask": frozenset({"openshift"}),
+    "list_kubevirt_vms": frozenset({"openshift", "vcenter"}),
+    "list_ocp_pods": frozenset({"openshift"}),
+    "list_ocp_events": frozenset({"openshift"}),
+}
+for _tool_name, _tool in TOOLS.items():
+    if _tool_name in _TOOL_DOMAIN_OVERRIDE:
+        _tool.domains = _TOOL_DOMAIN_OVERRIDE[_tool_name]
+
+
+# Platform sohbeti → izinli tool domain setleri (None = tümü).
+PLATFORM_TOOL_DOMAINS = {
+    "linux": frozenset({"linux", "infra"}),
+    "openshift": frozenset({"openshift", "infra"}),
+    "windows": frozenset({"windows", "infra"}),
+    "virt": frozenset({"vcenter", "infra"}),
+    "exadata": frozenset({"linux", "infra"}),
+    "unified": None,
+}
+
+
+def domains_for_platform(platform: Optional[str]) -> Optional[frozenset]:
+    """Sohbet platformuna göre tool domain filtresi; bilinmeyen → linux."""
+    if not platform:
+        return PLATFORM_TOOL_DOMAINS["linux"]
+    key = platform.strip().lower()
+    if key in PLATFORM_TOOL_DOMAINS:
+        return PLATFORM_TOOL_DOMAINS[key]
+    return PLATFORM_TOOL_DOMAINS["linux"]
+
+
 def get_tool(name: str) -> Optional[Tool]:
     return TOOLS.get(name)
 
@@ -943,4 +1378,34 @@ def tool_specs() -> List[Dict[str, Any]]:
     except Exception:
         pass
     specs.append(ASK_USER_SPEC)
+    return specs
+
+
+def tool_specs_read_only(domains: Optional[frozenset] = None) -> List[Dict[str, Any]]:
+    """Yalnızca READ_ONLY araçların şemalarını döner (mutating araçlar ve ask_user HARİÇ).
+
+    Onay akışı barındırmayan salt-okunur sohbet döngüleri (örn. Unified Chat'in
+    agentic modu) için kullanılır — LLM burada asla bir değişiklik yapan aracı
+    çağıramaz, sadece bilgi toplayabilir.
+
+    domains verilirse yalnızca o platform kümesiyle kesişen araçlar döner
+    (Linux sohbetinde OpenShift araçlarının karışmasını önlemek için).
+    """
+    specs = [
+        {
+            "type": "function",
+            "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+        }
+        for t in TOOLS.values()
+        if t.risk_level == RiskLevel.READ_ONLY
+        and (domains is None or (t.domains & domains))
+    ]
+    try:
+        from app.services.agent.tools_windows import WINDOWS_TOOLS, MUTATING_WIN_TOOLS
+        if domains is None or ("windows" in domains):
+            for wt in WINDOWS_TOOLS:
+                if wt["name"] not in MUTATING_WIN_TOOLS:
+                    specs.append({"type": "function", "function": wt})
+    except Exception:
+        pass
     return specs

@@ -495,26 +495,44 @@ async def ops_summary(
     critical = critical + emergency event adedi
     warning  = warning event adedi
     total    = critical + warning
+
+    Kısa TTL önbellek: Layout her ~60 sn'de 5 platform için çağırır; aynı
+    process içinde tekrarlayan ağır sorguları önler.
     """
+    import time as _time
+    cache_key = f"ops_summary:{platform or 'all'}"
+    cache = getattr(ops_summary, "_cache", None)
+    if cache is None:
+        ops_summary._cache = {}
+        cache = ops_summary._cache
+    hit = cache.get(cache_key)
+    now = _time.monotonic()
+    if hit and hit[0] > now:
+        return hit[1]
+
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = _active_events(db, since, platform=platform)
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
     from app.services.platform_scope import filter_incidents_for_platform
+    # Yalnızca açık incident'lar — .all() + Python filtre yerine önce status filtresi
     open_incidents_q = (
         db.query(Incident)
         .filter(Incident.status.in_(["open", "investigating"]))
+        .limit(500)
         .all()
     )
     open_incidents = len(filter_incidents_for_platform(open_incidents_q, platform, db))
     total = critical + warning
-    return {
+    result = {
         "critical": critical,
         "warning": warning,
         "total": total,
         "open_incidents": open_incidents,
         "action_needed": total > 0,
     }
+    cache[cache_key] = (now + 20.0, result)  # 20 sn TTL
+    return result
 
 
 # ── Snooze ────────────────────────────────────────────────────────────────────

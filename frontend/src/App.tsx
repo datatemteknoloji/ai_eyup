@@ -253,8 +253,8 @@ function App() {
                       <Route path="/packages" element={<RequireModule moduleId="linux"><ErrorBoundary><PackageManager /></ErrorBoundary></RequireModule>} />
                       <Route path="/repositories" element={<RequireModule moduleId="linux"><ErrorBoundary><Repositories /></ErrorBoundary></RequireModule>} />
                       <Route path="/system-update" element={<RequireModule moduleId="linux"><ErrorBoundary><SystemUpdate /></ErrorBoundary></RequireModule>} />
-                      <Route path="/knowledge-base" element={<ErrorBoundary><KnowledgeBase /></ErrorBoundary>} />
-                      <Route path="/applications" element={<ErrorBoundary><Applications /></ErrorBoundary>} />
+                      <Route path="/knowledge-base" element={<RequireModule moduleId="knowledge"><ErrorBoundary><KnowledgeBase /></ErrorBoundary></RequireModule>} />
+                      <Route path="/applications" element={<RequireModule moduleId="applications"><ErrorBoundary><Applications /></ErrorBoundary></RequireModule>} />
                       <Route path="/audit" element={<RequireAdmin><ErrorBoundary><AuditLog /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>

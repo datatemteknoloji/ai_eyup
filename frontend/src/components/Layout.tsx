@@ -170,8 +170,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
     enabled: canLinuxAiops,
   })
 
@@ -182,8 +182,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
     enabled: hasModule('windows'),
   })
 
@@ -194,8 +194,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
     enabled: hasModule('virtualization'),
   })
 
@@ -206,8 +206,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
     enabled: hasModule('exadata'),
   })
 
@@ -218,8 +218,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
     enabled: hasModule('openshift'),
   })
 
@@ -362,8 +362,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
 
     // ── System ────────────────────────────────────────────────────────────
-    { type: 'link', path: '/applications', name: 'Uygulamalar', icon: <Package size={18} /> },
-    { type: 'link', path: '/knowledge-base', name: 'Bilgi Bankası', icon: <Brain size={18} /> },
+    { type: 'link', path: '/applications', name: 'Uygulamalar', icon: <Package size={18} />, moduleId: 'applications' },
+    { type: 'link', path: '/knowledge-base', name: 'Bilgi Bankası', icon: <Brain size={18} />, moduleId: 'knowledge' },
     { type: 'link', path: '/audit',    name: 'Audit Log',          icon: <ScrollText size={18} /> },
     { type: 'link', path: '/users',    name: 'Kullanıcı Yönetimi', icon: <Users size={18} /> },
     { type: 'link', path: '/settings', name: 'Ayarlar',            icon: <Settings size={18} /> },

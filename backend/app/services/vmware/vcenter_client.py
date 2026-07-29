@@ -1393,6 +1393,117 @@ class VCenterClient:
         })
         return stats
 
+    def get_all_vm_perf_io(self, vm_refs: List[str]) -> Dict[str, Dict]:
+        """
+        TÜM verilen VM'ler için disk IOPS + network throughput'u az sayıda (chunk'lı)
+        SOAP QueryPerf çağrısıyla toplu getirir — VM başına ayrı çağrı yapmaz.
+        Dönen: vm_ref -> {disk_read_iops, disk_write_iops, net_rx_kbps, net_tx_kbps}
+        """
+        import xml.etree.ElementTree as ET
+
+        if not vm_refs:
+            return {}
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+
+        cache = self._perf_manager_and_counters(soap_session, soap_url)
+        if not cache:
+            return {}
+        perf_mgr, found = cache
+        if not found:
+            return {}
+
+        metric_xml = "".join(
+            f"<vim25:metricId><vim25:counterId>{cid}</vim25:counterId>"
+            f"<vim25:instance>*</vim25:instance></vim25:metricId>"
+            for cid in found.values()
+        )
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        results: Dict[str, Dict] = {}
+        chunk_size = 100
+        for i in range(0, len(vm_refs), chunk_size):
+            chunk = vm_refs[i:i + chunk_size]
+            query_specs = "".join(
+                f'<vim25:querySpec><vim25:entity type="VirtualMachine">{ref}</vim25:entity>'
+                f"<vim25:maxSample>1</vim25:maxSample>{metric_xml}"
+                f"<vim25:intervalId>20</vim25:intervalId></vim25:querySpec>"
+                for ref in chunk
+            )
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      {query_specs}
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(
+                    soap_url, data=body,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=45,
+                )
+                if resp.status_code != 200:
+                    logger.debug("get_all_vm_perf_io HTTP %s: %s", resp.status_code, resp.text[:200])
+                    continue
+                root = ET.fromstring(resp.text)
+                for rv in root.iter():
+                    if _tag(rv) != "returnval":
+                        continue
+                    entity_el = next((c for c in rv if _tag(c) == "entity"), None)
+                    if entity_el is None or not entity_el.text:
+                        continue
+                    vm_ref = entity_el.text
+
+                    sums: Dict[int, List[float]] = {}
+                    for val_el in rv:
+                        if _tag(val_el) != "value":
+                            continue
+                        id_el = next((c for c in val_el if _tag(c) == "id"), None)
+                        cid = None
+                        if id_el is not None:
+                            cid_el = next((c for c in id_el if _tag(c) == "counterId"), None)
+                            if cid_el is not None and cid_el.text:
+                                try:
+                                    cid = int(cid_el.text)
+                                except ValueError:
+                                    cid = None
+                        if cid is None:
+                            continue
+                        nums = []
+                        for c in val_el:
+                            if _tag(c) == "value" and c.text and c.text.strip():
+                                try:
+                                    nums.append(float(c.text.strip()))
+                                except ValueError:
+                                    pass
+                        if nums:
+                            sums.setdefault(cid, []).extend(nums)
+
+                    def _sum_slot(slot: str) -> Optional[float]:
+                        cid = found.get(slot)
+                        if cid is None:
+                            return None
+                        vals = sums.get(cid, [])
+                        return round(sum(vals), 2) if vals else 0.0
+
+                    results[vm_ref] = {
+                        "disk_read_iops": _sum_slot("read"),
+                        "disk_write_iops": _sum_slot("write"),
+                        "net_rx_kbps": _sum_slot("net_rx"),
+                        "net_tx_kbps": _sum_slot("net_tx"),
+                    }
+            except Exception as e:
+                logger.warning("get_all_vm_perf_io chunk error: %s", e)
+
+        return results
+
 
     # ── ESX Host İstatistikleri ──────────────────────────────────────────────
 
@@ -1668,6 +1779,13 @@ class VCenterClient:
           <vim25:pathSet>summary.quickStats</vim25:pathSet>
           <vim25:pathSet>snapshot</vim25:pathSet>
           <vim25:pathSet>config.hardware.numCPU</vim25:pathSet>
+          <vim25:pathSet>guest.disk</vim25:pathSet>
+          <vim25:pathSet>guest.toolsVersionStatus2</vim25:pathSet>
+          <vim25:pathSet>config.cpuHotAddEnabled</vim25:pathSet>
+          <vim25:pathSet>config.memoryHotAddEnabled</vim25:pathSet>
+          <vim25:pathSet>config.cpuAllocation</vim25:pathSet>
+          <vim25:pathSet>config.memoryAllocation</vim25:pathSet>
+          <vim25:pathSet>config.hardware.device</vim25:pathSet>
         </vim25:propSet>
         <vim25:objectSet>
           <vim25:obj type="Folder">{root_folder}</vim25:obj>
@@ -1682,7 +1800,7 @@ class VCenterClient:
         try:
             resp = soap_session.post(soap_url, data=soap_body,
                                      headers={"Content-Type": "text/xml; charset=utf-8"},
-                                     verify=self.verify_ssl, timeout=60)
+                                     verify=self.verify_ssl, timeout=90)
             if resp.status_code != 200:
                 logger.warning(f"get_all_vm_live_stats HTTP {resp.status_code}: {resp.text[:300]}")
                 return []
@@ -1720,7 +1838,53 @@ class VCenterClient:
                         for child in v_el:
                             flat[_tag(child)] = child.text
                         continue
-                    # skaler değerler (name, runtime.powerState, runtime.bootTime, config.hardware.numCPU)
+                    if pname == "guest.disk":
+                        guest_disks = []
+                        for gdi in v_el:
+                            if _tag(gdi) != "GuestDiskInfo":
+                                continue
+                            d = {_tag(c): (c.text or "").strip() for c in gdi}
+                            if d.get("capacity"):
+                                guest_disks.append(d)
+                        flat["_guest_disks"] = guest_disks
+                        continue
+                    if pname == "config.cpuAllocation":
+                        for child in v_el:
+                            flat[f"cpuAlloc_{_tag(child)}"] = child.text
+                        continue
+                    if pname == "config.memoryAllocation":
+                        for child in v_el:
+                            flat[f"memAlloc_{_tag(child)}"] = child.text
+                        continue
+                    if pname == "config.hardware.device":
+                        # Polimorfik dizi: her <VirtualDevice> elemanının GERÇEK alt tipi
+                        # tag adında değil xsi:type özniteliğinde gelir (ör.
+                        # <VirtualDevice xsi:type="VirtualDisk">) — bu yüzden _tag()
+                        # yerine xsi:type öznitelik değerine bakılır.
+                        _XSI_NS = "{http://www.w3.org/2001/XMLSchema-instance}type"
+                        disks: List[Dict[str, Any]] = []
+                        nics: List[Dict[str, Any]] = []
+                        for dev in v_el:
+                            dtype = dev.attrib.get(_XSI_NS) or _tag(dev)
+                            if dtype == "VirtualDisk":
+                                backing = next((c for c in dev if _tag(c) == "backing"), None)
+                                thin = None
+                                if backing is not None:
+                                    thin_el = next((c for c in backing if _tag(c) == "thinProvisioned"), None)
+                                    thin = thin_el.text if thin_el is not None else None
+                                disks.append({"thin_provisioned": thin})
+                            elif "Ethernet" in dtype:
+                                conn = next((c for c in dev if _tag(c) == "connectable"), None)
+                                connected = None
+                                if conn is not None:
+                                    c_el = next((c for c in conn if _tag(c) == "connected"), None)
+                                    connected = c_el.text if c_el is not None else None
+                                nics.append({"connected": connected})
+                        flat["_disk_devices"] = disks
+                        flat["_nic_devices"] = nics
+                        continue
+                    # skaler değerler (name, runtime.powerState, runtime.bootTime, config.hardware.numCPU,
+                    # guest.toolsVersionStatus2, config.cpuHotAddEnabled, config.memoryHotAddEnabled)
                     if v_el.text and v_el.text.strip():
                         flat[pname] = v_el.text.strip()
 
@@ -1737,6 +1901,35 @@ class VCenterClient:
                         return int(float(v)) if v is not None else default
                     except Exception:
                         return default
+
+                # Guest içi disk doluluk % (VMware Tools guest.disk — Tools çalışmıyorsa boş kalır)
+                guest_disks = flat.get("_guest_disks") or []
+                guest_disk_pct = guest_disk_total_gb = guest_disk_avail_gb = None
+                if guest_disks:
+                    try:
+                        total_cap = sum(int(d.get("capacity") or 0) for d in guest_disks)
+                        total_free = sum(max(0, int(d.get("freeSpace") or 0)) for d in guest_disks)
+                        if total_cap > 0:
+                            guest_disk_pct = round((1 - total_free / total_cap) * 100, 1)
+                            guest_disk_total_gb = round(total_cap / (1024 ** 3), 1)
+                            guest_disk_avail_gb = round(total_free / (1024 ** 3), 1)
+                    except Exception:
+                        pass
+
+                # Thin/Thick provisioning (VM'in tüm diskleri aynı tipteyse net sonuç, karışıksa "mixed")
+                disk_devices = flat.get("_disk_devices") or []
+                thin_flags = [d.get("thin_provisioned") for d in disk_devices if d.get("thin_provisioned") is not None]
+                disk_provisioning = None
+                if thin_flags:
+                    if all(t == "true" for t in thin_flags):
+                        disk_provisioning = "thin"
+                    elif all(t == "false" for t in thin_flags):
+                        disk_provisioning = "thick"
+                    else:
+                        disk_provisioning = "mixed"
+
+                nic_devices = flat.get("_nic_devices") or []
+                nic_disconnected = sum(1 for n in nic_devices if n.get("connected") == "false")
 
                 results.append({
                     "vm_ref": vm_ref,
@@ -1755,6 +1948,19 @@ class VCenterClient:
                     "uptime_seconds": _i("uptimeSeconds"),
                     "snapshot_count": flat.get("snapshot_count", 0),
                     "snapshot_oldest": flat.get("snapshot_oldest"),
+                    "guest_disk_pct": guest_disk_pct,
+                    "guest_disk_total_gb": guest_disk_total_gb,
+                    "guest_disk_avail_gb": guest_disk_avail_gb,
+                    "disk_provisioning": disk_provisioning,
+                    "nic_total": len(nic_devices),
+                    "nic_disconnected": nic_disconnected,
+                    "cpu_hot_add": flat.get("config.cpuHotAddEnabled"),
+                    "memory_hot_add": flat.get("config.memoryHotAddEnabled"),
+                    "cpu_reservation_mhz": _i("cpuAlloc_reservation"),
+                    "cpu_limit_mhz": _i("cpuAlloc_limit"),
+                    "memory_reservation_mb": _i("memAlloc_reservation"),
+                    "memory_limit_mb": _i("memAlloc_limit"),
+                    "tools_version_status": flat.get("guest.toolsVersionStatus2"),
                 })
 
             logger.info(f"get_all_vm_live_stats: {len(results)} VM ({self.host})")
@@ -1905,6 +2111,121 @@ class VCenterClient:
 
         except Exception as e:
             logger.warning(f"_enrich_datastores error: {e}")
+
+    def list_datastores_status(self) -> List[Dict[str, Any]]:
+        """
+        Tüm datastore'ları TEK TEK (host bazlı toplama yapmadan) isim/kapasite/
+        erişilebilirlik/bağlı host sayısıyla listeler. 'Datastore'a erişemeyen var mı',
+        'hangi datastore erişilemez durumda' gibi sorularda kullanılır.
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("list_datastores_status: SOAP login failed")
+            return []
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>Datastore</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>summary.name</vim25:pathSet>
+          <vim25:pathSet>summary.type</vim25:pathSet>
+          <vim25:pathSet>summary.capacity</vim25:pathSet>
+          <vim25:pathSet>summary.freeSpace</vim25:pathSet>
+          <vim25:pathSet>summary.accessible</vim25:pathSet>
+          <vim25:pathSet>host</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToDF</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToDF</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>datastoreFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=soap_body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code != 200:
+                logger.warning("list_datastores_status HTTP %s: %s", resp.status_code, resp.text[:200])
+                return []
+
+            root = ET.fromstring(resp.text)
+
+            def _tag(el):
+                return el.tag.split("}")[-1]
+
+            results: List[Dict[str, Any]] = []
+            for rv in root.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                ds_ref = obj_el.text if obj_el is not None else None
+
+                flat: Dict[str, str] = {}
+                host_count = 0
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = n_el.text or ""
+                    if pname == "host":
+                        host_count = sum(1 for c in v_el if _tag(c) == "DatastoreHostMount")
+                        continue
+                    if v_el.text and v_el.text.strip():
+                        flat[pname] = v_el.text.strip()
+
+                try:
+                    cap = float(flat.get("summary.capacity", 0) or 0)
+                    free = float(flat.get("summary.freeSpace", 0) or 0)
+                except (TypeError, ValueError):
+                    cap = free = 0.0
+
+                results.append({
+                    "ref": ds_ref,
+                    "name": flat.get("summary.name", ds_ref),
+                    "type": flat.get("summary.type"),
+                    "capacity_gb": round(cap / (1024 ** 3), 1) if cap > 0 else None,
+                    "free_gb": round(free / (1024 ** 3), 1) if cap > 0 else None,
+                    "used_gb": round((cap - free) / (1024 ** 3), 1) if cap > 0 else None,
+                    "usage_pct": round((cap - free) / cap * 100, 1) if cap > 0 else None,
+                    "accessible": flat.get("summary.accessible", "true").lower() != "false",
+                    "host_count": host_count,
+                })
+            return results
+        except Exception as e:
+            logger.error("list_datastores_status error: %s", e, exc_info=True)
+            return []
 
     def _enrich_vms_running(self, soap_session, soap_url: str,
                             root_folder: str, results: List[Dict]):

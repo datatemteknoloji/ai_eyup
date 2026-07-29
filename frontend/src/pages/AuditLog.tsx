@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 
@@ -81,11 +81,15 @@ const STATUS_TR: Record<string, string> = {
 const CAT_LABEL: Record<string, string> = {
   auth: 'Kimlik', agent: 'Agent', system_update: 'OS Güncelleme',
   ssh: 'SSH', rca: 'RCA', snapshot: 'Snapshot', package: 'Paket',
+  knowledge: 'Bilgi Bankası', applications: 'Uygulamalar',
+  modules: 'Modüller', settings: 'Ayarlar', nlq: 'NLQ',
 }
 
 const CAT_COLOR: Record<string, string> = {
   auth: 'text-sky-300', agent: 'text-blue-300', system_update: 'text-blue-300',
   ssh: 'text-emerald-300', rca: 'text-cyan-300', snapshot: 'text-pink-300', package: 'text-orange-300',
+  knowledge: 'text-pink-300', applications: 'text-violet-300',
+  modules: 'text-amber-300', settings: 'text-slate-300', nlq: 'text-teal-300',
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -343,12 +347,13 @@ const AuditPanel = () => {
   const [status, setStatus]     = useState('')
   const [actor, setActor]       = useState('')
   const [q, setQ]               = useState('')
-  const [days, setDays]         = useState('7')
+  const [days, setDays]         = useState('30')
   const [offset, setOffset]     = useState(0)
   const [expanded, setExpanded] = useState<number | null>(null)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const limit = 100
 
-  const { data, refetch, isFetching } = useQuery<{ total: number; logs: AuditRow[] }>({
+  const { data, refetch, isFetching, isError, error } = useQuery<{ total: number; logs: AuditRow[] }>({
     queryKey: ['audit', category, status, actor, q, days, offset],
     queryFn: async () => {
       const p = new URLSearchParams()
@@ -360,11 +365,21 @@ const AuditPanel = () => {
       p.set('limit', String(limit))
       p.set('offset', String(offset))
       const r = await fetch(`${API_BASE_URL}/audit/?${p}`)
-      if (!r.ok) return { total: 0, logs: [] }
+      if (!r.ok) {
+        const detail = await r.text().catch(() => '')
+        throw new Error(r.status === 403 ? 'Yetkiniz yok (yalnızca admin)' : `API hatası ${r.status}${detail ? `: ${detail.slice(0, 120)}` : ''}`)
+      }
+      setFetchError(null)
       return r.json()
     },
     refetchInterval: 30000,
+    retry: 1,
   })
+
+  // query error → kullanıcıya göster
+  useEffect(() => {
+    if (isError && error) setFetchError((error as Error).message || 'Audit log yüklenemedi')
+  }, [isError, error])
 
   const { data: stats } = useQuery<any>({
     queryKey: ['audit-stats', days],
@@ -379,6 +394,11 @@ const AuditPanel = () => {
 
   return (
     <div className="space-y-4">
+      {fetchError && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          Audit log yüklenemedi: {fetchError}
+        </div>
+      )}
       {/* Stats */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -508,7 +528,7 @@ const AuditPanel = () => {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const ActivityCenter: React.FC = () => {
-  const [tab, setTab] = useState<'tasks' | 'audit'>('tasks')
+  const [tab, setTab] = useState<'tasks' | 'audit'>('audit')
 
   const { data: badge } = useQuery<{ count: number; snap: number; agent: number }>({
     queryKey: ['active-task-count'],
@@ -523,7 +543,7 @@ const ActivityCenter: React.FC = () => {
     <div className="space-y-4">
       {/* Başlık */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white">Aktivite Merkezi</h1>
+        <h1 className="text-xl font-bold text-white">Audit Log</h1>
         <div className="text-xs text-slate-500">
           {badge && badge.count > 0 && (
             <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
@@ -536,6 +556,16 @@ const ActivityCenter: React.FC = () => {
 
       {/* Tab bar */}
       <div className="flex border-b border-white/[0.07]">
+        <button
+          onClick={() => setTab('audit')}
+          className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'audit'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          Audit Log
+        </button>
         <button
           onClick={() => setTab('tasks')}
           className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
@@ -551,19 +581,9 @@ const ActivityCenter: React.FC = () => {
             </span>
           )}
         </button>
-        <button
-          onClick={() => setTab('audit')}
-          className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            tab === 'audit'
-              ? 'border-blue-500 text-white'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          Audit Log
-        </button>
       </div>
 
-      {tab === 'tasks' ? <TasksPanel /> : <AuditPanel />}
+      {tab === 'audit' ? <AuditPanel /> : <TasksPanel />}
     </div>
   )
 }

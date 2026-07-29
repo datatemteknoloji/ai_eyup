@@ -219,6 +219,8 @@ async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = De
     vb.) eşleşir — hem Linux (node_exporter) hem Windows (windows_exporter) için aynı
     şemaya senkronlanır, bu yüzden aynı sorgu her iki platformda da çalışır.
     """
+    from sqlalchemy import and_
+
     query = db.query(Server).filter(Server.ai_ready == True)
     if platform == "linux":
         from app.services.platform_scope import get_linux_module_server_id_set
@@ -229,25 +231,49 @@ async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = De
         windows_ids = get_windows_server_ids(db)
         query = query.filter(Server.id.in_(windows_ids)) if windows_ids else query.filter(False)
     servers = query.all()
+    if not servers:
+        return {"total_servers": 0, "servers": []}
+
+    server_ids = [s.id for s in servers]
+    metric_names = ("cpu_usage_percent", "memory_usage_percent", "disk_root_usage_percent")
+
+    # Tek toplu sorgu: sunucu+metrik başına en son değer (eski N+1 döngüsü yerine)
+    latest_subq = (
+        db.query(
+            MetricData.server_id.label("sid"),
+            MetricData.metric_name.label("mname"),
+            func.max(MetricData.timestamp).label("max_ts"),
+        )
+        .filter(
+            MetricData.server_id.in_(server_ids),
+            MetricData.metric_name.in_(metric_names),
+        )
+        .group_by(MetricData.server_id, MetricData.metric_name)
+        .subquery()
+    )
+    latest_rows = (
+        db.query(MetricData)
+        .join(
+            latest_subq,
+            and_(
+                MetricData.server_id == latest_subq.c.sid,
+                MetricData.metric_name == latest_subq.c.mname,
+                MetricData.timestamp == latest_subq.c.max_ts,
+            ),
+        )
+        .all()
+    )
+    by_server: dict = {}
+    for row in latest_rows:
+        bucket = by_server.setdefault(row.server_id, {})
+        bucket[row.metric_name] = row
 
     dashboard_data = []
     for server in servers:
-        # Get latest metrics
-        cpu = db.query(MetricData).filter(
-            MetricData.server_id == server.id,
-            MetricData.metric_name == "cpu_usage_percent"
-        ).order_by(desc(MetricData.timestamp)).first()
-
-        memory = db.query(MetricData).filter(
-            MetricData.server_id == server.id,
-            MetricData.metric_name == "memory_usage_percent"
-        ).order_by(desc(MetricData.timestamp)).first()
-
-        disk = db.query(MetricData).filter(
-            MetricData.server_id == server.id,
-            MetricData.metric_name == "disk_root_usage_percent"
-        ).order_by(desc(MetricData.timestamp)).first()
-
+        m = by_server.get(server.id) or {}
+        cpu = m.get("cpu_usage_percent")
+        memory = m.get("memory_usage_percent")
+        disk = m.get("disk_root_usage_percent")
         dashboard_data.append({
             "server_id": server.id,
             "hostname": server.hostname,
@@ -255,12 +281,12 @@ async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = De
             "cpu_usage": cpu.value if cpu else None,
             "memory_usage": memory.value if memory else None,
             "disk_usage": disk.value if disk else None,
-            "last_update": cpu.timestamp.isoformat() if cpu else None
+            "last_update": cpu.timestamp.isoformat() if cpu else None,
         })
-    
+
     return {
         "total_servers": len(servers),
-        "servers": dashboard_data
+        "servers": dashboard_data,
     }
 
 

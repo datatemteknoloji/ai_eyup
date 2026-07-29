@@ -198,6 +198,12 @@ _WINDOWS_TRIGGER = [
     'windows', 'winrm', 'powershell', 'defender', 'event log', 'olay günlüğü', 'wsus',
     'active directory', 'iis', 'kb', 'domain',
 ]
+_OPENSHIFT_TRIGGER = [
+    'openshift', 'ocp', 'kubernetes', 'k8s', 'kube', 'pod', 'pods', 'namespace',
+    'crashloop', 'crashloopbackoff', 'imagepull', 'deployment', 'statefulset',
+    'route', 'scc', 'operator', 'etcd', 'oc get', 'kubectl', 'kubevirt',
+    'proje', 'project', 'clusterversion', 'machineconfig',
+]
 _GENERAL_TRIGGER = [
     'cpu', 'ram', 'memory', 'bellek', 'disk', 'performans', 'performance', 'kullanım',
     'usage', 'yük', 'load', 'durum', 'status', 'genel', 'özet', 'rapor', 'servis', 'service',
@@ -229,11 +235,14 @@ def _build_prompt(message: str, context_str: str, collection_summary: str, histo
         "- 'WINDOWS SUNUCULARDAN ALINAN GERCEK VERILER' bölümünü değerlendirirken kıdemli bir",
         "  Windows Server Yöneticisi gibi düşün: Active Directory, GPO, PowerShell, WSUS/yama",
         "  yönetimi, Event Viewer/Event Log analizi, IIS, Windows Firewall/Defender.",
+        "- OpenShift/pod/namespace araç sonuçlarını değerlendirirken kıdemli bir OpenShift",
+        "  Platform Yöneticisi gibi düşün — Linux systemd ile karıştırma.",
         "- Sanallaştırma/VM/hypervisor envanteri sorulduğunda kıdemli bir Sanallaştırma",
         "  Yöneticisi gibi düşün: cluster/HA/DRS, datastore/storage kapasite planlama, VM",
         "  migration/snapshot stratejisi, kaynak overcommit riskleri.",
         "Platformlar arası bir soruda (ör. 'tüm sunucular') her platformun kendi uzmanlık",
         "perspektifinden bulgularını üret, SONRA bunları tek bir mimar özetinde birleştir.",
+        "Aynı yanıtta Linux SSH çıktısını OpenShift pod listesi gibi sunma.",
         "",
         "SISTEM YETENEKLERI:",
         "- Linux AI Ready sunuculara SSH ile bağlanıp gerçek komut/metrik toplayabiliyorsun",
@@ -263,14 +272,26 @@ def _build_prompt(message: str, context_str: str, collection_summary: str, histo
         "    '(onceden ogrenilmis, X once dogrulandi)' diye belirt. Celiski varsa canli veri kazanir.",
         "1c. 'Hangi uygulamalar/veritabanlari calisiyor' gibi sorularda TESPIT EDILEN UYGULAMALAR",
         "    bolumunu kullan (otomatik periyodik tarama) — bos ise 'uygulama taramasi henuz yapilmadi' de.",
+        "1d. GENEL bir teknik/kavramsal soruysa (BU ORTAMDAKİ belirli bir sunucu/VM/metriğe "
+        "    bağlı olmayan, ör. 'RAID5 nedir', 'TCP handshake nasıl işler', 'X ne işe yarar') "
+        "    kendi mühendislik bilgini SERBESTÇE kullan — BAĞLAM'da bu konuda veri olmaması "
+        "    sorun değildir, 'bu bilgi mevcut değil' DEME.",
         "2. Platformlar arası soruda (ör. 'tüm sunucular') Linux ve Windows verilerini AYRI",
         "   bölümler halinde, yukarıdaki ROL DEĞİŞİMİ kuralına göre değerlendirip TEK bir",
         "   yanıt/tablo içinde birleştir",
         "3. Tablo istenirse Markdown tablo kullan, mümkünse 'Platform' kolonu ekle (Linux/Windows)",
         "4. Türkçe yanıtla — net ve açıklayıcı yaz",
-        "5. Veri eksikse hangi platform/sunucu için eksik olduğunu açıkça belirt",
-        "6. Her soruyu ilgili platformun kıdemli yöneticisi gibi ele al: kök neden, tanı komutu, "
-        "çözüm adımları, risk uyarısı",
+        "5. Veri eksikse (ve soru BU ORTAMA özgüyse) hangi platform/sunucu için eksik olduğunu",
+        "   açıkça belirt",
+        "6. YANIT UZUNLUĞU — VARSAYILAN KISA: Varsayılan olarak KISA, SADE ve NET cevap ver.",
+        "   Basit/doğrudan bir soruya ('kaç VM var?', 'hangi sürüm?', 'CPU kullanımı ne kadar?'",
+        "   gibi) 1-3 cümlelik doğrudan cevap ya da küçük bir tablo yeterlidir — gereksiz giriş",
+        "   cümlesi, arka plan bilgisi veya istenmeyen ek yorum ekleme. SADECE kullanıcı açıkça",
+        "   'detaylı anlat', 'derinlemesine incele', 'kök neden analizi yap', 'tüm detaylarıyla",
+        "   açıkla' derse ya da soru gerçekten arıza/performans/güvenlik gibi kök-neden",
+        "   gerektiren bir konuysa somut kanıt, olası neden ve risk uyarısı ekleyerek genişlet.",
+        "   HER cevaba aynı sabit şablonu (kök neden → tanı komutu → numaralı adım → risk)",
+        "   zorla uygulama.",
     ])
 
     parts = [identity]
@@ -345,10 +366,20 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             # _LINUX_TRIGGER/_GENERAL_TRIGGER listelerinde olmayan ama spesifik bir sysctl/kernel
             # parametresine işaret eden sorgular da Linux context toplamayı tetiklemeli.
             from app.services.linux_info_collector import has_recognized_topic as _has_topic_u
+            wants_openshift = any(k in ml for k in _OPENSHIFT_TRIGGER) and not skip_ctx
+            linux_specific = any(k in ml for k in _LINUX_TRIGGER) or _has_topic_u(message)
+            windows_specific = any(k in ml for k in _WINDOWS_TRIGGER)
             wants_linux = (
-                any(k in ml for k in _LINUX_TRIGGER) or any(k in ml for k in _GENERAL_TRIGGER) or _has_topic_u(message)
+                linux_specific or any(k in ml for k in _GENERAL_TRIGGER)
             ) and not skip_ctx
-            wants_windows = (any(k in ml for k in _WINDOWS_TRIGGER) or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
+            wants_windows = (windows_specific or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
+            # OpenShift odaklı soruda genel kelimeler (durum/servis) yüzünden Linux SSH
+            # taraması yapılmasın — karışıklığın ana kaynağı buydu.
+            if wants_openshift and not linux_specific:
+                wants_linux = False
+            if wants_openshift and not windows_specific:
+                wants_windows = False
+            # Saf Linux sorusunda OCP araçları yine agentic katmanda durur ama SSH öncelikli.
 
             linux_servers = _linux_ai_ready_servers(db)
             windows_servers = _windows_ai_ready_servers(db)
@@ -384,6 +415,9 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
             if not global_cred:
                 global_cred = db.query(GlobalCredential).first()
+
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
 
             async def _collect_linux():
                 if not (wants_linux and linux_targets):
@@ -551,13 +585,95 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 coll_lines.append("WINDOWS: Bu sorgu için canlı veri toplanamadı (zaman aşımı/bağlantı).")
             collection_summary = "\n".join(coll_lines)
 
+            # ── Agentic READ_ONLY tool-calling (opsiyonel, öncesindeki sabit-context
+            # toplamayı KALDIRMAZ — yalnızca ek bir bağlam bloğu olarak üstüne ekler).
+            # Yalnızca yerel Ollama / uzak OpenAI-uyumlu gateway (llm_gateway) yolunda
+            # çalışır — groq/openai/openrouter doğrudan entegrasyonları bu döngüyü
+            # desteklemez, sessizce atlanır.
+            from app.services import runtime_settings
+            # NOT: _detect_provider ada göre tahmin eder ve "gpt-oss:20b" gibi yerel Ollama
+            # modellerini adındaki "gpt-" öneki yüzünden yanlışlıkla "openai" sanabilir. Asıl
+            # akışta bu, ilgili API key tanımlı DEĞİLSE zaten llm_gateway (Ollama) yoluna
+            # düşüyor (bkz. aşağıdaki provider dispatch) — buradaki kontrolü de AYNI mantıkla
+            # (gerçekten harici bir API key'i olan sağlayıcılar HARİÇ) hizalıyoruz.
+            _uses_external_api = (
+                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
+                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
+                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
+            )
+            if not _uses_external_api and not skip_ctx and runtime_settings.get_bool("unified_chat_agentic_mode"):
+                try:
+                    from app.services.unified_tool_chat import run_read_only_tool_loop
+                    from app.services.agent.tools import domains_for_platform
+                    max_tool_steps = runtime_settings.get_int("unified_chat_max_tool_steps")
+                    tool_server_lines = []
+                    for _s in linux_targets:
+                        tool_server_lines.append(f"- {_s.name} ({_s.ip_address}) OS={_s.os_type or _s.os_version or 'Linux'} bağlantı=SSH")
+                    for _s in windows_targets:
+                        tool_server_lines.append(f"- {_s.name} ({_s.ip_address}) OS={_s.os_type or 'Windows'} bağlantı=WinRM")
+                    try:
+                        from app.models.openshift import OpenShiftCluster
+                        for _c in db.query(OpenShiftCluster).all():
+                            tool_server_lines.append(f"- OpenShift cluster: {_c.name}")
+                    except Exception:
+                        pass
+                    tool_server_summary = "\n".join(tool_server_lines)
+                    # Saf OCP sorusunda Linux/Windows araçlarını gizle; saf Linux'ta OCP gizle.
+                    tool_domains = None
+                    if wants_openshift and not linux_specific and not windows_specific:
+                        tool_domains = domains_for_platform("openshift")
+                    elif (wants_linux or wants_windows) and not wants_openshift:
+                        # Linux+Windows SSH/WinRM; OCP araçları kapalı
+                        dom = set()
+                        if wants_linux:
+                            dom |= {"linux", "infra"}
+                        if wants_windows:
+                            dom |= {"windows", "infra"}
+                        # Sanallaştırma anahtar kelimesi yoksa vcenter da kapalı kalsın
+                        tool_domains = frozenset(dom) if dom else None
+
+                    loop = _asyncio.get_event_loop()
+                    gen = run_read_only_tool_loop(
+                        db, model, message, context_str, tool_server_summary,
+                        max_steps=max_tool_steps,
+                        domains=tool_domains,
+                        platform="unified",
+                    )
+
+                    def _next_item(g):
+                        try:
+                            return next(g)
+                        except StopIteration:
+                            return None
+
+                    tool_context_text = ""
+                    while True:
+                        item = await loop.run_in_executor(None, _next_item, gen)
+                        if item is None:
+                            break
+                        itype = item.get("type")
+                        if itype == "tool_call":
+                            yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
+                        elif itype == "tool_result":
+                            yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                        elif itype == "final":
+                            tool_context_text = item.get("tool_text") or ""
+                            break
+                        elif itype in ("skipped", "error"):
+                            if itype == "error":
+                                logger.warning(f"[UnifiedChat] agentic tool loop hatası: {item.get('detail')}")
+                            break
+
+                    if tool_context_text:
+                        context_str = context_str + "\n\nARAÇ SONUÇLARI (bu turda modelin kendi kararıyla çalıştırdığı ek SSH/canlı sorgular):\n" + tool_context_text
+                except Exception as e:
+                    logger.warning(f"[UnifiedChat] agentic tool loop devre dışı bırakıldı: {e}")
+
             prompt = _build_prompt(message, context_str, collection_summary, history_block)
 
             db.add(ChatMessage(session_id=session_id, role="user", content=message))
             db.commit()
 
-            model = request.model or get_active_model(db)
-            provider = _detect_provider(model)
             full_response = ""
 
             async with httpx.AsyncClient(timeout=180.0) as client:

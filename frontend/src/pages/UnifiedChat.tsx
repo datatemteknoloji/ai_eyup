@@ -157,6 +157,7 @@ const UnifiedChat: React.FC<{
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -288,6 +289,7 @@ const UnifiedChat: React.FC<{
     setIsLoading(true)
     setPendingUserMessage(messageText)
     setStreamingText('')
+    setToolCalls([])
     setThinkingPhase(needsContext ? 'context' : 'streaming')
 
     const ctrl = new AbortController()
@@ -340,6 +342,22 @@ const UnifiedChat: React.FC<{
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
+            }
+            if (chunk.type === 'tool_call') {
+              const tool = chunk.tool || ''
+              const label = chunk.label || tool
+              setToolCalls(prev => [...prev, { tool, label, done: false }])
+            }
+            if (chunk.type === 'tool_result') {
+              const tool = chunk.tool || ''
+              setToolCalls(prev => {
+                const idx = [...prev].reverse().findIndex(t => t.tool === tool && !t.done)
+                if (idx === -1) return prev
+                const realIdx = prev.length - 1 - idx
+                const next = [...prev]
+                next[realIdx] = { ...next[realIdx], done: true }
+                return next
+              })
             }
             if (chunk.error) {
               setStreamingText(`❌ Hata: ${chunk.error}`)
@@ -619,6 +637,17 @@ const UnifiedChat: React.FC<{
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start">
                     <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
+                      {toolCalls.length > 0 && (
+                        <div className="space-y-1 mb-2">
+                          {toolCalls.map((tc, i) => (
+                            <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
+                              <span className={tc.done ? 'opacity-60' : 'animate-pulse'}>
+                                🔧 {tc.label}{tc.done ? '' : '…'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">

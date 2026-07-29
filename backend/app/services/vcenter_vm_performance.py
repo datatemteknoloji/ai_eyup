@@ -72,6 +72,14 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
         except Exception as exc:
             logger.warning("get_all_host_stats (VM cpu%% için) başarısız: %s", exc)
 
+        # Disk IOPS + network throughput — tüm VM'ler için TEK toplu QueryPerf çağrısı
+        vm_refs = [r.get("vm_ref") for r in raw_stats if r.get("vm_ref")]
+        perf_io: Dict[str, Dict[str, Any]] = {}
+        try:
+            perf_io = client.get_all_vm_perf_io(vm_refs)
+        except Exception as exc:
+            logger.warning("get_all_vm_perf_io başarısız (%s): %s", hv.name, exc)
+
         for r in raw_stats:
             srv = server_by_ref.get(r.get("vm_ref"))
             num_cpu = r.get("num_cpu") or (srv.vm_cpu_count if srv else None) or 1
@@ -95,6 +103,8 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
             if cpu_mhz is not None and mhz_per_core and num_cpu:
                 cpu_pct = round(cpu_mhz / (num_cpu * mhz_per_core) * 100, 1)
 
+            io = perf_io.get(r.get("vm_ref")) or {}
+
             vms.append({
                 "vm_ref": r.get("vm_ref"),
                 "name": r.get("name"),
@@ -113,6 +123,45 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
                 "swapped_mb": r.get("swapped_mb") or 0,
                 "snapshot_count": r.get("snapshot_count") or 0,
                 "snapshot_oldest": r.get("snapshot_oldest"),
+                # ── Yeni: guest içi disk, provisioning, hot-add, reservation/limit, IOPS/network, tools ──
+                "guest_disk_pct": r.get("guest_disk_pct"),
+                "guest_disk_total_gb": r.get("guest_disk_total_gb"),
+                "guest_disk_avail_gb": r.get("guest_disk_avail_gb"),
+                "disk_provisioning": r.get("disk_provisioning"),
+                "nic_total": r.get("nic_total") or 0,
+                "nic_disconnected": r.get("nic_disconnected") or 0,
+                "cpu_hot_add": r.get("cpu_hot_add"),
+                "memory_hot_add": r.get("memory_hot_add"),
+                "cpu_reservation_mhz": r.get("cpu_reservation_mhz") or 0,
+                "cpu_limit_mhz": r.get("cpu_limit_mhz"),
+                "memory_reservation_mb": r.get("memory_reservation_mb") or 0,
+                "memory_limit_mb": r.get("memory_limit_mb"),
+                "tools_version_status": r.get("tools_version_status"),
+                "disk_read_iops": io.get("disk_read_iops"),
+                "disk_write_iops": io.get("disk_write_iops"),
+                "net_rx_kbps": io.get("net_rx_kbps"),
+                "net_tx_kbps": io.get("net_tx_kbps"),
             })
 
     return {"vms": vms, "errors": errors, "hypervisors": len(hvs)}
+
+
+def fetch_datastore_status(db: Session) -> Dict[str, Any]:
+    """Tüm VMware hypervisor'lardaki datastore'ların erişilebilirlik/kapasite durumunu toplar."""
+    hvs = _vmware_hypervisors(db)
+    if not hvs:
+        return {"datastores": [], "errors": ["Tanımlı VMware hypervisor yok"]}
+
+    datastores: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for hv in hvs:
+        client = _build_client(hv)
+        try:
+            for ds in client.list_datastores_status():
+                ds["hypervisor"] = hv.name
+                datastores.append(ds)
+        except Exception as exc:
+            logger.error("list_datastores_status failed for %s: %s", hv.name, exc, exc_info=True)
+            errors.append(f"{hv.name}: {exc}")
+
+    return {"datastores": datastores, "errors": errors, "hypervisors": len(hvs)}

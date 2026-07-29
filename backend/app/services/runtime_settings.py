@@ -303,6 +303,67 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Açıksa Prom/metric_data değerleri SSH df/mem bilgi üzerine yazar. Kapalıysa yalnızca boş alanlar doldurulur.",
         "env": "NLQ_PREFER_METRIC_OVER_SSH",
     },
+    # ── Unified Chat (agentic tool-calling) ──────────────────────────
+    "unified_chat_agentic_mode": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "unified_chat", "label": "Unified Chat agentic mod",
+        "help": "Açıkken model, sabit context yerine gerekirse kendi karar verip READ_ONLY "
+                "SSH tanı komutları / canlı vCenter-OpenShift sorguları çağırabilir. Sorun "
+                "yaşanırsa kapatın; sistem otomatik olarak eski sabit-context akışına döner.",
+        "env": "UNIFIED_CHAT_AGENTIC_MODE",
+    },
+    "unified_chat_max_tool_steps": {
+        "default": 6, "type": "int", "min": 1, "max": 12,
+        "group": "unified_chat", "label": "Unified Chat maks. araç adımı",
+        "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla "
+                "araç (tool) sayısı.",
+        "env": "UNIFIED_CHAT_MAX_TOOL_STEPS",
+    },
+    # ── Linux Chat (agentic tool-calling) ────────────────────────────
+    "linux_chat_agentic_mode": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "linux_chat", "label": "Linux Chat agentic mod",
+        "help": "Açıkken model, sabit SSH taramasıyla yetinmeyip gerekirse kendi karar verip "
+                "ek READ_ONLY SSH tanı komutları çağırabilir (aynı mekanizma Unified Chat'te "
+                "de kullanılıyor). Sorun yaşanırsa kapatın; sistem otomatik olarak eski "
+                "sabit-context akışına döner.",
+        "env": "LINUX_CHAT_AGENTIC_MODE",
+    },
+    "linux_chat_max_tool_steps": {
+        "default": 6, "type": "int", "min": 1, "max": 12,
+        "group": "linux_chat", "label": "Linux Chat maks. araç adımı",
+        "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla "
+                "araç (tool) sayısı.",
+        "env": "LINUX_CHAT_MAX_TOOL_STEPS",
+    },
+    # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
+    "rag_reranker_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "rag_reranker", "label": "RAG reranker aktif",
+        "help": "Açıkken embedding aramasından gelen aday sonuçlar bir HuggingFace "
+                "cross-encoder modeliyle yeniden sıralanır (runbook/incident/bilgi "
+                "bankası araması daha isabetli olur). Model ilk çağrıda indirilir/yüklenir; "
+                "yüklenemezse (offline vb.) otomatik olarak devre dışı kalır, RAG bozulmaz.",
+        "env": "RAG_RERANKER_ENABLED",
+    },
+    "rag_reranker_model": {
+        "default": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1", "type": "str",
+        "group": "rag_reranker", "label": "Reranker modeli (HuggingFace)",
+        "help": "sentence-transformers CrossEncoder ile yüklenecek HuggingFace model adı. "
+                "Varsayılan hafif/çok dilli MiniLM modeli — bu sunucuda GPU olmadığı için "
+                "CPU'da hızlıdır (~15 aday <1sn). Daha yüksek kaliteli ama ÇOK daha yavaş "
+                "(CPU'da 15 aday ~10sn) bir alternatif için 'BAAI/bge-reranker-v2-m3' "
+                "girilebilir — yalnızca chat gecikmesi sorun değilse önerilir.",
+        "env": "RAG_RERANKER_MODEL",
+    },
+    "rag_reranker_candidates": {
+        "default": 15, "type": "int", "min": 5, "max": 50,
+        "group": "rag_reranker", "label": "Reranker aday sayısı",
+        "help": "Reranking öncesi embedding aramasından çekilecek aday sayısı — bu "
+                "adaylar cross-encoder ile yeniden sıralanıp en iyi top-k seçilir. "
+                "Büyütmek isabetliliği artırabilir ama CPU'da yanıt süresini uzatır.",
+        "env": "RAG_RERANKER_CANDIDATES",
+    },
     # ── Proxy (uygulama notu; nginx restart ile uygulanır) ───────────
     "nginx_proxy_read_timeout_sec": {
         "default": 1800, "type": "int", "min": 60, "max": 7200,
@@ -320,6 +381,10 @@ GROUP_LABELS = {
     "background": "Arka plan görevleri",
     "ai_ready": "AI Ready tarama",
     "nlq": "Linux NL envanter snapshot",
+    "logs": "Log toplama (SSH / Syslog)",
+    "unified_chat": "Unified Chat (agentic)",
+    "linux_chat": "Linux Chat (agentic)",
+    "rag_reranker": "RAG Reranker (HuggingFace)",
     "proxy": "Proxy / Nginx",
 }
 

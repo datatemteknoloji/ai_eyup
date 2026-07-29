@@ -168,10 +168,15 @@ const Chat: React.FC<{
   const [incognito, setIncognito] = useState(false)
   const incognitoSessionRef = useRef<number | null>(null)
   const [inventoryMode, setInventoryMode] = useState<boolean>(() => localStorage.getItem('chat_inventory_mode') === '1')
+  // RAG + Envanter sorgu yalnızca Linux doğal dil için. OpenShift/Exadata aynı
+  // Chat bileşenini paylaşır ama Sanallaştırma gibi platform API akışına gider.
+  const showLinuxQueryToggles = inventoryPlatform === 'linux'
+  const effectiveInventoryMode = showLinuxQueryToggles && inventoryMode
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const inventoryMsgSeq = useRef(-1000)
 
   const INVENTORY_CHIPS = [
@@ -291,9 +296,9 @@ const Chat: React.FC<{
         ]
 
   const { data: sessions = [], refetch: refetchSessions, isFetched: sessionsFetched } = useQuery<ChatSession[]>({
-    queryKey: ['chat-sessions'],
+    queryKey: ['chat-sessions', inventoryPlatform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/chat/sessions`)
+      const res = await fetch(`${API_BASE_URL}/chat/sessions?category=${inventoryPlatform}`)
       if (!res.ok) throw new Error('Failed')
       return res.json()
     }
@@ -312,12 +317,16 @@ const Chat: React.FC<{
 
   const createSessionMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/chat/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: inventoryPlatform }),
+      })
       if (!res.ok) throw new Error('Failed')
       return res.json()
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['chat-sessions', inventoryPlatform] })
       abortRef.current?.abort()
       setIsLoading(false)
       setStreamingText('')
@@ -335,7 +344,7 @@ const Chat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: (_: unknown, sessionId: number) => {
-      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], prev => (prev ?? []).filter(s => s.id !== sessionId))
+      queryClient.setQueryData<ChatSession[]>(['chat-sessions', inventoryPlatform], prev => (prev ?? []).filter(s => s.id !== sessionId))
       queryClient.removeQueries({ queryKey: ['chat-messages', sessionId] })
       if (selectedSessionId === sessionId) setSelectedSessionId(null)
     }
@@ -343,11 +352,11 @@ const Chat: React.FC<{
 
   const clearAllSessionsMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/chat/sessions`, { method: 'DELETE' })
+      const res = await fetch(`${API_BASE_URL}/chat/sessions?category=${inventoryPlatform}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: () => {
-      queryClient.setQueryData<ChatSession[]>(['chat-sessions'], [])
+      queryClient.setQueryData<ChatSession[]>(['chat-sessions', inventoryPlatform], [])
       queryClient.removeQueries({ queryKey: ['chat-messages'] })
       setSelectedSessionId(null)
       setSuppressAutoCreate(true)
@@ -460,7 +469,7 @@ const Chat: React.FC<{
 
   const sendMessage = async (messageText: string) => {
     if (!messageText.trim() || isLoading) return
-    if (inventoryMode && !looksLikeLiveTechQuestion(messageText)) {
+    if (effectiveInventoryMode && !looksLikeLiveTechQuestion(messageText)) {
       await sendInventoryQuery(messageText)
       return
     }
@@ -479,6 +488,7 @@ const Chat: React.FC<{
     setIsLoading(true)
     setPendingUserMessage(messageText)
     setStreamingText('')
+    setToolCalls([])
     setThinkingPhase(needsSsh ? 'context' : 'streaming')
 
     const ctrl = new AbortController()
@@ -499,6 +509,7 @@ const Chat: React.FC<{
           model: selectedModel,
           use_rag: useRag,
           ephemeral: incognito,
+          platform: inventoryPlatform,
         }),
         signal: ctrl.signal
       })
@@ -535,6 +546,22 @@ const Chat: React.FC<{
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
+            }
+            if (chunk.type === 'tool_call') {
+              const tool = chunk.tool || ''
+              const label = chunk.label || tool
+              setToolCalls(prev => [...prev, { tool, label, done: false }])
+            }
+            if (chunk.type === 'tool_result') {
+              const tool = chunk.tool || ''
+              setToolCalls(prev => {
+                const idx = [...prev].reverse().findIndex(t => t.tool === tool && !t.done)
+                if (idx === -1) return prev
+                const realIdx = prev.length - 1 - idx
+                const next = [...prev]
+                next[realIdx] = { ...next[realIdx], done: true }
+                return next
+              })
             }
             if (chunk.error) {
               setStreamingText(`❌ Hata: ${chunk.error}`)
@@ -661,7 +688,7 @@ const Chat: React.FC<{
                   try {
                     const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
                       method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({}),
+                      body: JSON.stringify({ category: inventoryPlatform }),
                     })
                     if (res.ok) {
                       const s = await res.json()
@@ -692,6 +719,7 @@ const Chat: React.FC<{
             <span className={`text-sm ${incognito ? 'text-amber-300' : 'text-slate-300'}`}>{incognito ? 'Açık' : 'Kapalı'}</span>
           </label>
 
+          {showLinuxQueryToggles && (
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-slate-400 text-sm font-medium">RAG:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-white/[0.1]'}`}
@@ -701,7 +729,9 @@ const Chat: React.FC<{
             </span>
             <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
           </label>
+          )}
 
+          {showLinuxQueryToggles && (
           <label className="flex items-center gap-2 cursor-pointer" title="Açıkken liste/filtre soruları envanter snapshot'tan cevaplanır. SSH/diagnostik (journalctl, sestatus, kök neden…) otomatik canlı Chat'e düşer.">
             <span className="text-slate-400 text-sm font-medium">Envanter sorgu:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${inventoryMode ? 'bg-emerald-600' : 'bg-white/[0.1]'}`}
@@ -715,6 +745,7 @@ const Chat: React.FC<{
             </span>
             <span className="text-slate-300 text-sm">{inventoryMode ? 'Açık' : 'Kapalı'}</span>
           </label>
+          )}
 
           <div className="flex items-center gap-2">
             <span className="text-slate-400 text-sm font-medium">Model:</span>
@@ -729,6 +760,13 @@ const Chat: React.FC<{
             </select>
           </div>
 
+          {inventoryPlatform === 'openshift' && (
+            <div className="px-4 py-2.5 bg-cyber-card border border-cyan-500/30 rounded-[10px] text-sm text-cyan-300">
+              OpenShift cluster (API)
+            </div>
+          )}
+
+          {inventoryPlatform !== 'openshift' && (
           <div className="relative" ref={serverDropdownRef}>
             <button ref={serverBtnRef} type="button"
               onClick={() => {
@@ -783,7 +821,9 @@ const Chat: React.FC<{
               document.body
             )}
           </div>
+          )}
 
+          {inventoryPlatform !== 'openshift' && (
           <div className="relative" ref={hypervisorDropdownRef}>
             <button ref={hypervisorBtnRef} type="button"
               onClick={() => {
@@ -838,6 +878,7 @@ const Chat: React.FC<{
               document.body
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -909,11 +950,11 @@ const Chat: React.FC<{
                 </div>
                 <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
                 <p className="text-slate-400 text-center max-w-md mb-6">
-                  {inventoryMode
+                  {effectiveInventoryMode
                     ? 'Envanter sorgu açık: sonuçlar snapshot tablolarından gelir (LLM hostname/sayı uydurmaz).'
                     : 'Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.'}
                 </p>
-                {inventoryMode && (
+                {effectiveInventoryMode && (
                   <div className="flex flex-wrap gap-2 justify-center max-w-2xl px-4">
                     {INVENTORY_CHIPS.map(chip => (
                       <button
@@ -1006,6 +1047,17 @@ const Chat: React.FC<{
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start">
                     <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
+                      {toolCalls.length > 0 && (
+                        <div className="space-y-1 mb-2">
+                          {toolCalls.map((tc, i) => (
+                            <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
+                              <span className={tc.done ? 'opacity-60' : 'animate-pulse'}>
+                                🔧 {tc.label}{tc.done ? '' : '…'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -1036,7 +1088,7 @@ const Chat: React.FC<{
 
           {/* Input */}
           <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
-            {inventoryMode && (
+            {effectiveInventoryMode && (
               <div className="mb-3 flex flex-wrap gap-2">
                 {INVENTORY_CHIPS.map(chip => (
                   <button
@@ -1086,7 +1138,7 @@ const Chat: React.FC<{
                 <input type="text" value={input} onChange={e => setInput(e.target.value)}
                   placeholder={
                     isLoading ? 'AI düşünüyor...' :
-                    inventoryMode ? 'Envanter sorusu yazın… (örn. uptime 200 günden fazla)' :
+                    effectiveInventoryMode ? 'Envanter sorusu yazın… (örn. uptime 200 günden fazla)' :
                     'Mesajınızı yazın... (Enter ile gönder)'
                   }
                   className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${

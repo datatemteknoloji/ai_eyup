@@ -55,8 +55,12 @@ _VIRTUALIZATION_PERSONA = (
     "- VM yaşam döngüsü: provisioning, template/klonlama, kaynak resize, snapshot/backup stratejisi\n"
     "- Ağ sanallaştırma: vSwitch/vDS, VLAN, port group tasarımı\n"
     "- Lisanslama ve sürüm uyumluluğu, guest OS/Tools durumu, HA/DRS risk değerlendirmesi\n\n"
-    "Her soruya kıdemli bir sanallaştırma yöneticisi gibi yaklaş: sadece veriyi listeleme, "
-    "kapasite riskini, olası kök nedeni ve somut aksiyon önerisini de belirt."
+    "YANIT UZUNLUĞU — VARSAYILAN KISA: Varsayılan olarak KISA, SADE ve NET cevap ver — "
+    "basit/doğrudan bir soruya ('kaç VM var?', 'hangi ESX'te?' gibi) 1-3 cümlelik doğrudan "
+    "cevap ya da küçük bir tablo yeterlidir; gereksiz giriş cümlesi veya istenmeyen ek yorum "
+    "ekleme. SADECE kullanıcı açıkça 'detaylı anlat', 'derinlemesine incele', 'risk "
+    "değerlendirmesi yap' derse ya da soru gerçekten kapasite/sağlık değerlendirmesi "
+    "gerektiriyorsa kapasite riskini, olası kök nedeni ve somut aksiyon önerisini de ekle."
 )
 
 # ── Intent keywords ───────────────────────────────────────────────────────────
@@ -909,7 +913,71 @@ def h_busiest_host_cpu(db: Session, question: str = "") -> str:
 
 def h_cpu_not_available(db: Session, topic: str) -> str:
     return _na(f"{topic} — bu bilgi vCenter QuickStats/PerformanceManager'da mevcut değil ya da mevcut sync tarafından toplanmıyor. "
-               f"Bunu eklemek için CPU Ready/reservation/limit/hot-add alanlarını çeken yeni bir vCenter collector'ı geliştirilmesi gerekir.")
+               f"Bunu eklemek için CPU Ready gibi tarihsel PerformanceManager sayaçlarını çeken yeni bir vCenter collector'ı geliştirilmesi gerekir.")
+
+
+def h_cpu_hot_add(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM CPU Hot Add sorgusu sonuç döndürmedi.")
+    rows = [[v["name"], "Açık" if str(v.get("cpu_hot_add")).lower() == "true" else "Kapalı", v["hypervisor"]] for v in r["vms"]]
+    return "### VM Bazında CPU Hot Add Durumu\n\n" + _md_table(["VM", "CPU Hot Add", "Hypervisor"], rows)
+
+
+def h_memory_hot_add(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM Memory Hot Add sorgusu sonuç döndürmedi.")
+    rows = [[v["name"], "Açık" if str(v.get("memory_hot_add")).lower() == "true" else "Kapalı", v["hypervisor"]] for v in r["vms"]]
+    return "### VM Bazında Memory Hot Add Durumu\n\n" + _md_table(["VM", "Memory Hot Add", "Hypervisor"], rows)
+
+
+def h_cpu_reservation(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM CPU rezervasyon sorgusu sonuç döndürmedi.")
+    reserved = [v for v in r["vms"] if (v.get("cpu_reservation_mhz") or 0) > 0]
+    reserved.sort(key=lambda v: -(v.get("cpu_reservation_mhz") or 0))
+    return (
+        "### CPU Rezervasyonu Olan VM'ler\n\n"
+        + _md_table(["VM", "Rezervasyon (MHz)", "vCPU", "Hypervisor"],
+                    [[v["name"], v["cpu_reservation_mhz"], v["num_cpu"], v["hypervisor"]] for v in reserved],
+                    "Hiçbir VM'de CPU rezervasyonu tanımlı değil.")
+    )
+
+
+def h_cpu_limit(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM CPU limit sorgusu sonuç döndürmedi.")
+    limited = [v for v in r["vms"] if (v.get("cpu_limit_mhz") or -1) not in (-1, None)]
+    limited.sort(key=lambda v: (v.get("cpu_limit_mhz") or 0))
+    return (
+        "### CPU Limiti Uygulanmış VM'ler\n\n"
+        "_Not: vCenter'da limit tanımsızsa değer -1 (sınırsız) döner, bu VM'ler listeye dahil edilmez._\n\n"
+        + _md_table(["VM", "Limit (MHz)", "vCPU", "Hypervisor"],
+                    [[v["name"], v["cpu_limit_mhz"], v["num_cpu"], v["hypervisor"]] for v in limited],
+                    "Hiçbir VM'de CPU limiti tanımlı değil.")
+    )
+
+
+def h_memory_reservation(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM memory rezervasyon sorgusu sonuç döndürmedi.")
+    reserved = [v for v in r["vms"] if (v.get("memory_reservation_mb") or 0) > 0]
+    reserved.sort(key=lambda v: -(v.get("memory_reservation_mb") or 0))
+    return (
+        "### Memory Rezervasyonu Olan VM'ler\n\n"
+        + _md_table(["VM", "Rezervasyon (MB)", "RAM (GB)", "Hypervisor"],
+                    [[v["name"], v["memory_reservation_mb"], v["mem_total_mb"] and round(v["mem_total_mb"] / 1024, 1), v["hypervisor"]] for v in reserved],
+                    "Hiçbir VM'de memory rezervasyonu tanımlı değil.")
+    )
 
 
 # ── RAM ──────────────────────────────────────────────────────────────────────
@@ -1021,10 +1089,55 @@ def h_old_snapshots(db: Session, question: str = "") -> str:
 
 def h_disk_not_available(db: Session, topic: str) -> str:
     return _na(
-        f"{topic} — Guest içi disk doluluk (%) ve thin/thick hâlâ guest/node-exporter veya "
-        f"VMDK envanter collector gerektirir. VMDK düzeyinde IOPS için vCenter "
-        f"PerformanceManager (virtualDisk read/write averaged) metric_sync VMware "
-        f"yedeğinde yazılmaya çalışılır; değer yoksa collector/izin kontrol edin."
+        f"{topic} — bu bilgi için ayrı bir tarihsel collector (ör. datastore performans "
+        f"trendi, snapshot boyutu) veya harici bir entegrasyon (ör. backup) gerekir."
+    )
+
+
+def h_guest_disk_usage_over_90(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    with_data = [v for v in r["vms"] if v.get("guest_disk_pct") is not None]
+    if not with_data:
+        return _na(
+            "Guest içi disk doluluk verisi hiçbir VM için gelmedi — bu bilgi VMware Tools'un "
+            "çalışıyor olmasını gerektirir; Tools kapalı/kurulu değilse vCenter bu veriyi vermez."
+        )
+    high = sorted([v for v in with_data if v["guest_disk_pct"] >= 90], key=lambda v: -v["guest_disk_pct"])
+    return (
+        f"### Guest İçi Disk Doluluğu %90 Üzerinde Olan VM'ler (anlık, VMware Tools üzerinden)\n\n"
+        f"_Not: {len(with_data)}/{len(r['vms'])} VM'de Tools çalışıyor ve veri döndü; diğerlerinde Tools kapalı/kurulu değil._\n\n"
+        + _md_table(["VM", "Disk %", "Toplam (GB)", "Boş (GB)", "Hypervisor"],
+                    [[v["name"], v["guest_disk_pct"], v["guest_disk_total_gb"], v["guest_disk_avail_gb"], v["hypervisor"]] for v in high],
+                    "Guest içi disk doluluğu %90'ın üzerinde VM yok.")
+    )
+
+
+def h_disk_provisioning(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    with_data = [v for v in r["vms"] if v.get("disk_provisioning")]
+    if not with_data:
+        return _na("VM disk provisioning (thin/thick) bilgisi hiçbir VM için gelmedi.")
+    rows = [[v["name"], v["disk_provisioning"], v["hypervisor"]] for v in sorted(with_data, key=lambda v: v["disk_provisioning"])]
+    return (
+        "### VM Disk Provisioning Tipi (thin/thick)\n\n"
+        "_Not: 'mixed' — VM'in birden fazla diski var ve tipleri farklı._\n\n"
+        + _md_table(["VM", "Provisioning", "Hypervisor"], rows)
+    )
+
+
+def h_disk_iops_top(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    with_data = [v for v in r["vms"] if v.get("disk_read_iops") is not None or v.get("disk_write_iops") is not None]
+    if not with_data:
+        return _na("Canlı disk IOPS sorgusu sonuç döndürmedi (PerformanceManager sayaçları bu vCenter'da bulunamadı olabilir).")
+    with_data.sort(key=lambda v: -((v.get("disk_read_iops") or 0) + (v.get("disk_write_iops") or 0)))
+    rows = [[v["name"], v.get("disk_read_iops"), v.get("disk_write_iops"), v["hypervisor"]] for v in with_data[:20]]
+    return (
+        "### En Fazla Disk IO/IOPS Kullanan VM'ler (anlık, PerformanceManager)\n\n"
+        + _md_table(["VM", "Read IOPS", "Write IOPS", "Hypervisor"], rows)
     )
 
 
@@ -1056,9 +1169,37 @@ def h_guest_agent_down(db: Session, question: str = "") -> str:
 
 def h_network_not_available(db: Session, topic: str) -> str:
     return _na(
-        f"{topic} — per-VM network trafiği (inbound/outbound throughput) ve adapter connected/disconnected durumu "
-        f"şu anda toplanmıyor. VM bazlı VLAN/port-group için 'vlan' veya 'port group' diye sorun "
-        f"(vCenter'dan canlı çekilir)."
+        f"{topic} — bu bilgi için ayrı bir tarihsel (zaman serisi) collector gerekir; "
+        f"aşağıdaki anlık ölçümlerle karıştırılmamalı. VM bazlı VLAN/port-group için "
+        f"'vlan' veya 'port group' diye sorun (vCenter'dan canlı çekilir)."
+    )
+
+
+def h_network_traffic_top(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    with_data = [v for v in r["vms"] if v.get("net_rx_kbps") is not None or v.get("net_tx_kbps") is not None]
+    if not with_data:
+        return _na("Canlı network trafiği sorgusu sonuç döndürmedi (PerformanceManager sayaçları bu vCenter'da bulunamadı olabilir).")
+    with_data.sort(key=lambda v: -((v.get("net_rx_kbps") or 0) + (v.get("net_tx_kbps") or 0)))
+    rows = [[v["name"], v.get("net_rx_kbps"), v.get("net_tx_kbps"), v["hypervisor"]] for v in with_data[:20]]
+    return (
+        "### En Fazla Network Trafiğine Sahip VM'ler (anlık, KB/s)\n\n"
+        + _md_table(["VM", "Inbound (KB/s)", "Outbound (KB/s)", "Hypervisor"], rows)
+    )
+
+
+def h_adapter_disconnected(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı VM ağ adaptörü sorgusu sonuç döndürmedi.")
+    disc = [v for v in r["vms"] if (v.get("nic_disconnected") or 0) > 0]
+    rows = [[v["name"], v["nic_disconnected"], v["nic_total"], v["hypervisor"]] for v in disc]
+    return (
+        "### Ağ Adaptörü (NIC) Bağlantısı Kesik VM'ler\n\n"
+        + _md_table(["VM", "Disconnected NIC", "Toplam NIC", "Hypervisor"], rows,
+                    "Tüm VM'lerde tüm ağ adaptörleri bağlı (connected) durumda.")
     )
 
 
@@ -1253,8 +1394,22 @@ def h_storage_alarms_30d(db: Session, question: str = "") -> str:
 
 
 def h_storage_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — gerçek Datastore nesnesi (isim, kapasite, latency, bağlı host listesi) ayrı senkronize edilmiyor; "
-               f"sadece host'a bağlı toplam depolama (ds_used/ds_total) mevcut.")
+    return _na(f"{topic} — gerçek Datastore nesnesinin latency/performans trendi ayrı bir tarihsel "
+               f"collector gerektirir; anlık kapasite/erişim durumu için 'datastore erişim durumu' diye sorun.")
+
+
+def h_datastore_accessibility(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_datastore_status(db)
+    if r["errors"] and not r["datastores"]:
+        return _na(f"vCenter datastore sorgusu başarısız oldu: {'; '.join(r['errors'][:2])}")
+    if not r["datastores"]:
+        return _na("vCenter'da datastore bulunamadı.")
+    inaccessible = [d for d in r["datastores"] if not d.get("accessible")]
+    rows = [[d["name"], d.get("type") or "-", f"%{d.get('usage_pct')}" if d.get("usage_pct") is not None else "-",
+             d.get("host_count"), d["hypervisor"]] for d in inaccessible]
+    header = f"### Erişilemeyen (Inaccessible) Datastore'lar\n\n**Toplam datastore:** {len(r['datastores'])} | **Erişilemeyen:** {len(inaccessible)}\n\n"
+    return header + _md_table(["Datastore", "Tip", "Doluluk", "Bağlı Host Sayısı", "Hypervisor"], rows, "Tüm datastore'lar erişilebilir durumda.")
 
 
 # ── Olaylar ve Alarm ──────────────────────────────────────────────────────────
@@ -1330,6 +1485,33 @@ def h_unknown_os(db: Session, question: str = "") -> str:
 def h_no_tools(db: Session, question: str = "") -> str:
     vms = [v for v in _get_vms(db) if not v.get("tools_status") or "notinstalled" in (v["tools_status"] or "").lower().replace("_", "")]
     return "### Guest Tools Kurulu Olmayan VM'ler\n\n" + _md_table(["VM", "Tools Durumu"], [[v["name"], v["tools_status"] or "bilinmiyor"] for v in vms], "Tüm VM'lerde Guest Tools kurulu görünüyor.")
+
+
+_TOOLS_VERSION_TR = {
+    "guestToolsCurrent": "Güncel",
+    "guestToolsNeedUpgrade": "Güncelleme gerekiyor",
+    "guestToolsNotInstalled": "Kurulu değil",
+    "guestToolsSupportedOld": "Eski ama destekleniyor",
+    "guestToolsSupportedNew": "Yeni ama destekleniyor",
+    "guestToolsTooOld": "Çok eski (desteklenmiyor)",
+    "guestToolsBlacklisted": "Kara listede (uyumsuz)",
+    "guestToolsUnmanaged": "Yönetilmiyor (OVT/açık kaynak Tools)",
+}
+
+
+def h_tools_version_outdated(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    with_data = [v for v in r["vms"] if v.get("tools_version_status")]
+    if not with_data:
+        return _na("Canlı VMware Tools versiyon durumu sorgusu sonuç döndürmedi.")
+    outdated = [v for v in with_data if v["tools_version_status"] not in ("guestToolsCurrent", "guestToolsSupportedNew")]
+    rows = [[v["name"], _TOOLS_VERSION_TR.get(v["tools_version_status"], v["tools_version_status"]), v["hypervisor"]] for v in outdated]
+    return (
+        f"### VMware Tools Versiyonu Güncel Olmayan VM'ler\n\n"
+        f"_{len(with_data)}/{len(r['vms'])} VM'de Tools durumu okunabildi (Tools kapalıysa veri gelmez)._\n\n"
+        + _md_table(["VM", "Tools Durumu", "Hypervisor"], rows, "Tüm VM'lerde Tools versiyonu güncel.")
+    )
 
 
 def h_no_owner(db: Session, question: str = "") -> str:
@@ -1450,32 +1632,32 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer", h_cpu_usage_over_90),
     (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre", h_cpu_top20_now),
     (r"cpu\s*ready", lambda db, q: h_cpu_not_available(db, "CPU Ready değeri")),
-    (r"cpu\s*hot\s*add", lambda db, q: h_cpu_not_available(db, "CPU Hot Add durumu")),
+    (r"cpu\s*hot\s*add", h_cpu_hot_add),
     (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu", h_highest_vcpu),
     (r"overcommit\s*oran", h_overcommit_ratio),
     (r"hangi\s*host\s*cpu\s*açısından\s*en\s*yoğun|cpu.*en\s*yoğun\s*host|cpu\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_cpu),
-    (r"cpu\s*rezervasyon", lambda db, q: h_cpu_not_available(db, "CPU rezervasyonu")),
-    (r"cpu\s*limiti\s*uygulanmış", lambda db, q: h_cpu_not_available(db, "CPU limiti")),
+    (r"cpu\s*rezervasyon", h_cpu_reservation),
+    (r"cpu\s*limiti\s*uygulanmış", h_cpu_limit),
 
     # RAM
     (r"bellek\s*kullanımı\s*%?\s*90|ram\s*kullanımı\s*%?\s*90", h_ram_usage_over_90),
     (r"ballooning|memory\s*balloon", h_ballooning),
     (r"swap\s*kullanan", h_swap),
-    (r"memory\s*hot\s*add", lambda db, q: h_cpu_not_available(db, "Memory Hot Add durumu")),
+    (r"memory\s*hot\s*add", h_memory_hot_add),
     (r"en\s*fazla\s*ram.a\s*sahip|en\s*fazla\s*ram'e\s*sahip", h_highest_ram),
     (r"ortalama\s*ram\s*kullanımına\s*göre|ram.*ilk\s*20", h_avg_ram_top20),
     (r"host\s*bazında\s*ram\s*doluluk", h_host_ram_fill),
     (r"ram\s*kullanımında\s*ani\s*artış", lambda db, q: h_cpu_not_available(db, "Anlık RAM artış geçmişi (tarihsel VM performans serisi)")),
-    (r"memory\s*reservation", lambda db, q: h_cpu_not_available(db, "Memory reservation")),
+    (r"memory\s*reservation", h_memory_reservation),
     (r"bellek\s*yetersizliği\s*yaşayan\s*host", h_host_ram_insufficient),
 
     # Disk
-    (r"disk\s*kullanımı\s*%?\s*90", lambda db, q: h_disk_not_available(db, "VM/guest içi disk doluluk yüzdesi")),
+    (r"disk\s*kullanımı\s*%?\s*90", h_guest_disk_usage_over_90),
     (r"snapshot\s*bulunan\s*vm", h_snapshot_vms),
     (r"\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*eski\s*snapshot", h_old_snapshots),
     (r"en\s*büyük\s*snapshot", lambda db, q: h_disk_not_available(db, "Snapshot boyutu")),
-    (r"thin\s*provision|thick\s*provision", lambda db, q: h_disk_not_available(db, "Thin/Thick provisioning tipi")),
-    (r"en\s*fazla\s*disk\s*io|disk\s*io\s*yoğunluğu", lambda db, q: h_disk_not_available(db, "Disk IO / IOPS")),
+    (r"thin\s*provision|thick\s*provision", h_disk_provisioning),
+    (r"en\s*fazla\s*disk\s*io|disk\s*io\s*yoğunluğu", h_disk_iops_top),
     (r"disk\s*latency", lambda db, q: h_disk_not_available(db, "Disk latency")),
     (r"boşta\s*duran\s*disk|attached\s*olup\s*kullanılmayan", lambda db, q: h_disk_not_available(db, "Kullanılmayan/idle disk tespiti")),
 
@@ -1484,7 +1666,9 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"ip\s*adresi\s*olmayan\s*çalışan", h_no_ip_running),
     (r"guest\s*agent\s*çalışmayan", h_guest_agent_down),
     (r"vlan\s*(id|ids|bilgi)|vm.*vlan|vlan.*vm|port\s*group|portgroup|hangi\s*vlan|vlan.?leri", h_vm_vlans),
-    (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput|ağ\s*hatası|adapter\s*disconnected", lambda db, q: h_network_not_available(db, "Per-VM network trafiği/adapter durumu")),
+    (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput", h_network_traffic_top),
+    (r"adapter\s*disconnected", h_adapter_disconnected),
+    (r"ağ\s*hatası", lambda db, q: h_network_not_available(db, "Ağ hatası tespiti")),
 
     # Host Sağlığı
     (r"ram\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_ram),
@@ -1509,7 +1693,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"datastore\s*dağılım|vm.*datastore.*dağılım|datastore.*bazında.*vm|vm.*datastore.*bazında", h_datastore_by_disk),
     (r"en\s*dolu\s*datastore|%?\s*85\s*üzeri\s*dolu\s*datastore", h_datastore_over_85),
     (r"storage\s*latency\s*yüksek", lambda db, q: h_storage_not_available(db, "Datastore latency")),
-    (r"storage\s*bağlantı\s*problemi|datastore.a\s*erişemeyen|datastore'a\s*erişemeyen", lambda db, q: h_storage_not_available(db, "Datastore bağlantı/erişim durumu")),
+    (r"storage\s*bağlantı\s*problemi|datastore.a\s*erişemeyen|datastore'a\s*erişemeyen|datastore\s*erişim\s*durumu", h_datastore_accessibility),
     (r"storage\s*alarm", h_storage_alarms_30d),
     (r"en\s*fazla\s*vm\s*barındıran\s*datastore|en\s*büyük\s*datastore", h_largest_datastore),
     (r"kullanılmayan\s*datastore", lambda db, q: h_storage_not_available(db, "Kullanılmayan datastore tespiti")),
@@ -1530,7 +1714,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     # Envanter
     (r"işletim\s*sistemi\s*bilinmeyen\s*vm", h_unknown_os),
     (r"guest\s*tools\s*kurulu\s*olmayan", h_no_tools),
-    (r"tools.*qemu\s*agent\s*güncel\s*olmayan|vmware\s*tools.*güncel\s*olmayan", lambda db, q: h_cpu_not_available(db, "Tools/Agent versiyon güncelliği")),
+    (r"tools.*qemu\s*agent\s*güncel\s*olmayan|vmware\s*tools.*güncel\s*olmayan", h_tools_version_outdated),
     (r"son\s*\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*açıl(mayan|mamış)", h_unbooted_1y),
     (r"owner\s*bilgisi\s*olmayan", h_no_owner),
     (r"etiketi.*tag.*olmayan|tag.etiket.*eksik", h_no_tag),
@@ -1722,10 +1906,10 @@ def _compute_hypervisor_answer(
     # System prompt
     system_prompt = (
         _VIRTUALIZATION_PERSONA + "\n\n"
-        "Sana sağlanan gerçek veri üzerinden Türkçe, net ve pratik yanıtlar ver. "
-        "Sayısal değerleri tablolar veya liste halinde sun. "
-        "Yorum yaparken kapasite uyarıları, riskler ve önerileri belirt. "
-        "Bilgi yoksa 'Bu veriye erişimim yok' de, uydurma."
+        "Sana sağlanan gerçek veri üzerinden Türkçe, kısa, net ve pratik yanıtlar ver. "
+        "Sayısal değerleri gerektiğinde tablo veya liste halinde sun ama gereksiz uzatma. "
+        "Kullanıcı açıkça detay istemedikçe kapasite uyarısı/risk/öneri gibi ek yorumları "
+        "sadece gerçekten ilgiliyse ve kısaca ekle. Bilgi yoksa 'Bu veriye erişimim yok' de, uydurma."
     )
 
     # Konuşma geçmişi + güncel soru

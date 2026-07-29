@@ -2,26 +2,34 @@
 Uygulama/Servis Keşfi API — sunucularda otomatik tespit edilen uygulamaları
 (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) listeleme/filtreleme/silme ve
 manuel "yeniden tarama" tetikleme.
+
+Erisim: 'applications' modulu (admin her zaman; diger kullanicilar atama ile).
 """
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.auth import client_ip, require_module, require_role
 from app.core.database import get_db
 from app.models.discovered_application import DiscoveredApplication
 from app.models.server import Server
+from app.models.user import User
+from app.services.audit import record_audit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_require_apps = require_module("applications")
 
 
 @router.get("")
 @router.get("/")
 def list_applications(
     db: Session = Depends(get_db),
+    _user: User = Depends(_require_apps),
     server_id: Optional[int] = None,
     category: Optional[str] = None,
     status: Optional[str] = None,
@@ -64,7 +72,10 @@ def list_applications(
 
 
 @router.get("/summary")
-def applications_summary(db: Session = Depends(get_db)):
+def applications_summary(
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_apps),
+):
     """Ürün başına kaç sunucuda çalıştığı + kategori dağılımı + son tarama zamanları."""
     per_name = (
         db.query(DiscoveredApplication.name, DiscoveredApplication.category,
@@ -102,8 +113,17 @@ def applications_summary(db: Session = Depends(get_db)):
 
 
 @router.post("/servers/{server_id}/rescan")
-def rescan_server(server_id: int, db: Session = Depends(get_db)):
-    """Bir sunucu için ANINDA (rescan aralığını göz ardı ederek) uygulama taraması yapar."""
+def rescan_server(
+    server_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_apps),
+    _op: User = Depends(require_role("operator")),
+):
+    """Bir sunucu için ANINDA (rescan aralığını göz ardı ederek) uygulama taraması yapar.
+
+    Canlı SSH/WinRM tetikler — en az operator + applications modülü gerekir.
+    """
     from app.services.app_discovery import discover_applications_for_server
 
     server = db.query(Server).filter(Server.id == server_id).first()
@@ -111,21 +131,50 @@ def rescan_server(server_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Sunucu bulunamadi")
 
     apps = discover_applications_for_server(db, server)
+    record_audit(
+        db, category="applications", action="applications.rescan", status="success",
+        actor=user, summary=f"Uygulama taraması: {server.name} ({len(apps)} bulundu)",
+        target_type="server", target_id=server_id, server_id=server_id,
+        ip_address=client_ip(request),
+    )
     return {"status": "ok", "server_id": server_id, "found": len(apps), "applications": apps}
 
 
 @router.delete("/{app_id}")
-def delete_application(app_id: int, db: Session = Depends(get_db)):
+def delete_application(
+    app_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_apps),
+):
     app_row = db.query(DiscoveredApplication).filter(DiscoveredApplication.id == app_id).first()
     if not app_row:
         raise HTTPException(status_code=404, detail="Kayit bulunamadi")
+    name, sid = app_row.name, app_row.server_id
     db.delete(app_row)
     db.commit()
+    record_audit(
+        db, category="applications", action="applications.delete", status="success",
+        actor=user, summary=f"Uygulama kaydı silindi: {name}",
+        target_type="discovered_application", target_id=app_id, server_id=sid,
+        ip_address=client_ip(request),
+    )
     return {"status": "deleted", "id": app_id}
 
 
 @router.delete("/server/{server_id}")
-def delete_server_applications(server_id: int, db: Session = Depends(get_db)):
+def delete_server_applications(
+    server_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_apps),
+):
     count = db.query(DiscoveredApplication).filter(DiscoveredApplication.server_id == server_id).delete()
     db.commit()
+    record_audit(
+        db, category="applications", action="applications.delete_server", status="success",
+        actor=user, summary=f"Sunucu uygulama kayıtları temizlendi ({count})",
+        target_type="server", target_id=server_id, server_id=server_id,
+        ip_address=client_ip(request),
+    )
     return {"status": "deleted", "count": count}

@@ -32,14 +32,26 @@ def is_token_revoked(jti: str) -> bool:
 
 def hash_password(password: str) -> str:
     # bcrypt 72 bayt sınırı — uzun parolaları kırp.
-    return pwd_context.hash((password or "")[:72])
+    # passlib + bcrypt>=4.1 uyumsuzluğu için doğrudan bcrypt kullan.
+    import bcrypt as _bcrypt
+    pw = (password or "")[:72].encode("utf-8")
+    return _bcrypt.hashpw(pw, _bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    # Önce doğrudan bcrypt (passlib'in bcrypt 4.1+ ile kırılganlığına karşı),
+    # olmazsa passlib fallback.
     try:
-        return pwd_context.verify((plain or "")[:72], hashed)
+        import bcrypt as _bcrypt
+        return _bcrypt.checkpw(
+            (plain or "")[:72].encode("utf-8"),
+            (hashed or "").encode("utf-8"),
+        )
     except Exception:
-        return False
+        try:
+            return pwd_context.verify((plain or "")[:72], hashed)
+        except Exception:
+            return False
 
 
 def create_access_token(subject: str, *, extra: Optional[Dict[str, Any]] = None,

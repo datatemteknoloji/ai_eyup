@@ -18,6 +18,14 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# RAG reranker (HuggingFace cross-encoder, bkz. app/services/reranker.py) — bu
+# container'da GPU passthrough yok (Ollama ayrı/host tarafında GPU kullanıyor),
+# bu yüzden CPU-only torch wheel index'i kullanılıyor; gereksiz CUDA runtime
+# kütüphaneleri indirilmez, image küçük kalır. Model yüklenemezse (offline vb.)
+# reranker.py sessizce devre dışı kalır, RAG akışı bundan etkilenmez.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install --no-cache-dir sentence-transformers==5.6.1 "numpy<2"
+
 COPY . .
 
 RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos \

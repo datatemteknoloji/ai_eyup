@@ -56,6 +56,10 @@ DEFAULT_MODULES = [
      "icon": "FileUp",   "color": "orange",  "sort_order": 7},
     {"id": "level1",         "name": "İşletim Level 1",  "description": "Disk, ASM, LVM, servis, kullanıcı runbook'ları",
      "icon": "Wrench",   "color": "teal",    "sort_order": 8},
+    {"id": "applications",   "name": "Uygulamalar",      "description": "Sunucularda tespit edilen uygulamalar (Oracle, PostgreSQL, Nginx, IIS vb.) — ayrı atama gerektirir",
+     "icon": "Package",  "color": "violet",  "sort_order": 9},
+    {"id": "knowledge",      "name": "Bilgi Bankası",    "description": "AI'in SSH/WinRM taramalarından öğrendiği kalıcı sunucu bilgileri — ayrı atama gerektirir",
+     "icon": "Brain",    "color": "pink",    "sort_order": 10},
 ]
 
 # 'aiops' modülü kaldırıldı (2026-07) — Komuta Merkezi/Events/Incidents/Anomaly/RCA/Baseline

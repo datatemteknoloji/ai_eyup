@@ -26,6 +26,43 @@ RUNBOOK_CHUNK_SIZE = 800
 RUNBOOK_CHUNK_OVERLAP = 100
 
 
+def _candidate_k(top_k: int) -> int:
+    """Reranker açıksa embedding aramasından daha geniş bir aday kümesi çek —
+    reranker bu adayları yeniden sıralayıp gerçek top_k'yı seçecek."""
+    try:
+        from app.services import runtime_settings
+        from app.services.reranker import is_enabled
+        if not is_enabled():
+            return top_k
+        candidates = runtime_settings.get_int("rag_reranker_candidates")
+        return max(top_k, candidates)
+    except Exception:
+        return top_k
+
+
+async def _rerank_hits(query: str, hits: List[dict], top_k: int) -> List[dict]:
+    """Embedding sıralı `hits`'i reranker ile yeniden sırala ve en iyi top_k'yı
+    döndür. Reranker kapalı/hatalıysa orijinal (embedding) sırayı korur.
+
+    CPU-bound model çağrısı (`rerank`) bir thread executor'da çalıştırılır —
+    hem event loop'u bloklamaz hem de dört RAG koleksiyonu (runbook/incidents/
+    metrics/knowledge) gerçekten PARALEL rerank edilebilir (bkz.
+    get_rag_context_for_message'daki asyncio.gather)."""
+    if not hits:
+        return hits
+    try:
+        import asyncio as _asyncio
+        from app.services.reranker import rerank
+        docs = [h.get("document") or "" for h in hits]
+        loop = _asyncio.get_event_loop()
+        order = await loop.run_in_executor(None, rerank, query, docs, top_k)
+        if order:
+            return [hits[i] for i in order]
+    except Exception as e:
+        logger.debug("RAG rerank atlandı: %s", e)
+    return hits[:top_k]
+
+
 def chunk_text(text: str, chunk_size: int = RUNBOOK_CHUNK_SIZE, overlap: int = RUNBOOK_CHUNK_OVERLAP) -> List[str]:
     """Metni paragraf/cümle sınırlarına yakın chunk'lara böl."""
     text = (text or "").strip()
@@ -386,7 +423,8 @@ async def get_runbook_context(message: str, top_k: Optional[int] = None) -> str:
         emb = await get_embedding(message)
         if not emb or all(abs(float(x)) < 1e-12 for x in emb):
             return ""
-        hits = query_collection(COLLECTION_RUNBOOK, query_embedding=emb, n_results=top_k)
+        hits = query_collection(COLLECTION_RUNBOOK, query_embedding=emb, n_results=_candidate_k(top_k))
+        hits = await _rerank_hits(message, hits, top_k)
         if not hits:
             return ""
         return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
@@ -401,7 +439,8 @@ async def get_incidents_context(message: str, top_k: Optional[int] = None) -> st
         emb = await get_embedding(message)
         if not emb or all(abs(float(x)) < 1e-12 for x in emb):
             return ""
-        hits = query_collection(COLLECTION_INCIDENTS, query_embedding=emb, n_results=top_k)
+        hits = query_collection(COLLECTION_INCIDENTS, query_embedding=emb, n_results=_candidate_k(top_k))
+        hits = await _rerank_hits(message, hits, top_k)
         if not hits:
             return ""
         return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
@@ -416,7 +455,8 @@ async def get_metrics_context(message: str, top_k: Optional[int] = None) -> str:
         emb = await get_embedding(message)
         if not emb or all(abs(float(x)) < 1e-12 for x in emb):
             return ""
-        hits = query_collection(COLLECTION_METRICS, query_embedding=emb, n_results=top_k)
+        hits = query_collection(COLLECTION_METRICS, query_embedding=emb, n_results=_candidate_k(top_k))
+        hits = await _rerank_hits(message, hits, top_k)
         if not hits:
             return ""
         return "\n\n".join(h["document"] for h in hits if h.get("document"))
@@ -431,7 +471,8 @@ async def get_knowledge_context(message: str, top_k: Optional[int] = None) -> st
         emb = await get_embedding(message)
         if not emb or all(abs(float(x)) < 1e-12 for x in emb):
             return ""
-        hits = query_collection(COLLECTION_KNOWLEDGE, query_embedding=emb, n_results=top_k)
+        hits = query_collection(COLLECTION_KNOWLEDGE, query_embedding=emb, n_results=_candidate_k(top_k))
+        hits = await _rerank_hits(message, hits, top_k)
         if not hits:
             return ""
         return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
@@ -454,10 +495,15 @@ async def get_rag_context_for_message(
     burada varsayılan olarak semantik knowledge_facts araması kullanılır (filo geneli).
     include_server_facts=True ise seçili sunucu kayıtları da eklenir (preview / özel yollar).
     """
-    runbook = await get_runbook_context(message)
-    incidents = await get_incidents_context(message)
-    metrics = await get_metrics_context(message)
-    knowledge = await get_knowledge_context(message)
+    # Paralel çalıştır — sıralı awaitlerde her biri (özellikle reranker açıkken)
+    # birkaç saniye sürebilir; art arda dört kez beklemek toplam gecikmeyi katlar.
+    import asyncio as _asyncio
+    runbook, incidents, metrics, knowledge = await _asyncio.gather(
+        get_runbook_context(message),
+        get_incidents_context(message),
+        get_metrics_context(message),
+        get_knowledge_context(message),
+    )
     if include_server_facts and db is not None and server_ids:
         try:
             direct = format_knowledge_facts_for_servers(db, server_ids)

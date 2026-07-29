@@ -465,13 +465,30 @@ def _suggest_host_actions(issues: List[Dict[str, Any]], platform: str) -> List[s
 
 
 def virt_ops_summary(db: Session) -> Dict[str, Any]:
-    data = build_virt_command_center(db)
-    crit = data["critical_count"]
-    warn = data["warning_count"]
+    """Navbar badge için hafif özet — full command center üretmez.
+
+    Eski yol `build_virt_command_center` çağırıyordu (kartlar, resource_logs,
+    platform listeleri); her 30 sn'de Layout'tan çağrıldığında ana sayfayı
+    yavaşlatıyordu. Burada yalnızca kritik/uyarı host sayıları hesaplanır.
+    """
+    hypervisors = db.query(Hypervisor).all()
+    crit_count = warn_count = 0
+    for hv in hypervisors:
+        htype = hv.hypervisor_type.value if hv.hypervisor_type else "unknown"
+        platform = PLATFORM_LABELS.get(htype, htype.upper())
+        hosts = _latest_host_metrics(db, hv.id)
+        for host in hosts:
+            issues = _host_issues(host, hv.name, platform)
+            if not issues:
+                continue
+            max_sev = max(SEV_RANK.get(i["severity"], 0) for i in issues)
+            if max_sev >= 3:
+                crit_count += 1
+            else:
+                warn_count += 1
     return {
-        "critical": crit,
-        "warning": warn,
-        "total": crit + warn,
-        "health_score": data["health"]["score"],
-        "action_needed": crit > 0 or warn > 0,
+        "critical": crit_count,
+        "warning": warn_count,
+        "total": crit_count + warn_count,
+        "action_needed": crit_count > 0 or warn_count > 0,
     }

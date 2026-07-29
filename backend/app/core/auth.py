@@ -14,7 +14,7 @@ from app.models.user import User
 # auto_error=False → token yoksa 403 fırlatmak yerine None döner; kontrolü biz yaparız.
 _bearer = HTTPBearer(auto_error=False)
 
-ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
+ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3, "superadmin": 3}
 
 
 def _resolve_user(
@@ -69,6 +69,36 @@ def require_role(min_role: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Bu işlem için en az '{min_role}' yetkisi gerekli",
+            )
+        return user
+
+    return _dep
+
+
+def user_has_module(user: User, module_id: str, db: Session) -> bool:
+    """Admin/superadmin tüm modüllere erişir; diğerleri UserModule atamasına bakar."""
+    if user.role in ("admin", "superadmin"):
+        return True
+    from app.models.module import UserModule
+    return (
+        db.query(UserModule.id)
+        .filter(UserModule.user_id == user.id, UserModule.module_id == module_id)
+        .first()
+        is not None
+    )
+
+
+def require_module(module_id: str):
+    """Belirtilen platform modülüne erişimi zorunlu kılar (menü + URL + API)."""
+
+    def _dep(
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not user_has_module(user, module_id, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Bu alan için '{module_id}' modül yetkisi gerekli",
             )
         return user
 

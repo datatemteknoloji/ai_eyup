@@ -1,7 +1,7 @@
 """
 Chat API endpoints - veritabanı tabanlı (kalıcı, tüm worker'larda aynı veri)
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import func, delete
 from pydantic import BaseModel
@@ -139,6 +139,21 @@ class ChatRequest(BaseModel):
     use_rag: Optional[bool] = True  # RAG (runbook, incident, metrik) kullanılsın mı
     skip_server_context: Optional[bool] = False  # SSH/Prometheus context toplama, event analizi için
     ephemeral: Optional[bool] = False  # Gizli mod: mesajlar DB'ye yazılmaz
+    # linux | openshift | exadata — OpenShift sohbeti Linux SSH/tool ile karışmasın
+    platform: Optional[str] = "linux"
+
+
+_CHAT_CATEGORIES = frozenset({"linux", "openshift", "exadata"})
+
+
+def _normalize_chat_platform(platform: Optional[str]) -> str:
+    p = (platform or "linux").strip().lower()
+    return p if p in _CHAT_CATEGORIES else "linux"
+
+
+class SessionCreate(BaseModel):
+    server_ids: Optional[List[int]] = None
+    category: Optional[str] = "linux"
 
 
 class ChatResponse(BaseModel):
@@ -204,12 +219,13 @@ def _servers_mentioned_in_message(db: Session, message: str) -> List[Server]:
 
 
 @router.get("/sessions")
-async def list_chat_sessions(db: Session = Depends(get_db)):
-    """Linux AI chat session'larını listele (DB'den)"""
+async def list_chat_sessions(category: str = "linux", db: Session = Depends(get_db)):
+    """Platform AI chat session'larını listele (DB'den)."""
     from app.services.chat_history import repair_session_title_from_first_user_message
 
+    cat = _normalize_chat_platform(category)
     sessions = db.query(ChatSession).filter(
-        ChatSession.category == "linux"
+        ChatSession.category == cat
     ).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
@@ -229,14 +245,15 @@ async def list_chat_sessions(db: Session = Depends(get_db)):
 
 @router.post("/sessions")
 async def create_chat_session(
-    server_ids: Optional[List[int]] = None,
+    body: SessionCreate = Body(default_factory=SessionCreate),
     db: Session = Depends(get_db),
 ):
     """Yeni chat session oluştur"""
+    cat = _normalize_chat_platform(body.category)
     session = ChatSession(
         title="Yeni Chat",
-        server_ids=server_ids or [],
-        category="linux",
+        server_ids=body.server_ids or [],
+        category=cat,
     )
     db.add(session)
     db.commit()
@@ -297,9 +314,10 @@ async def delete_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions")
-async def delete_all_sessions(db: Session = Depends(get_db)):
-    """Linux chat session'larını sil (kalıcı)"""
-    ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.category == "linux").all()]
+async def delete_all_sessions(category: str = "linux", db: Session = Depends(get_db)):
+    """Platform chat session'larını sil (kalıcı)"""
+    cat = _normalize_chat_platform(category)
+    ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.category == cat).all()]
     if ids:
         db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
         db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
@@ -973,6 +991,7 @@ def _build_prompt(
     prometheus_available,
     selected_server_names,
     history_block="",
+    platform="linux",
 ):
     NL = "\n"
     parts = []
@@ -994,13 +1013,32 @@ def _build_prompt(
         coll.append("PROMETHEUS: Node Exporter metrikleri mevcut.")
     collection_summary = NL.join(coll)
 
-    identity = NL.join([
+    if platform == "openshift":
+        identity = NL.join([
+            "Sen 15+ yillik deneyime sahip kıdemli bir OpenShift / Kubernetes Platform Yoneticisisin.",
+            "Bu sohbet YALNIZCA OpenShift Container Platform kapsamındadır.",
+            "",
+            "UZMANLIK: pod, Deployment, StatefulSet, namespace/proje, Route, SCC, node, operator,",
+            "CrashLoopBackOff, ImagePullBackOff, OOMKilled, PVC, etcd, clusterversion.",
+            "",
+            "KARISTIRMA: Linux sunucu SSH/systemd (systemctl, journalctl, SELinux) cevabi URETME.",
+            "O konular icin kullaniciyi Linux AIOps sohbetine yonlendir.",
+            "BAĞLAM ve ARAÇ SONUÇLARI OpenShift canlı verisidir — uydurma.",
+            "",
+            "ONEMLI: Asla 'cluster'a baglanamam' deme. Sistem OpenShift API ile sorgu yapabiliyor.",
+        ])
+    else:
+        identity = NL.join([
         "Sen 15+ yillik deneyime sahip kıdemli bir Linux Sistem Yoneticisi",
         "ve Sanallaştırma Uzmanisın (Senior Linux SysAdmin & Virtualization Engineer).",
         "Kullanıcı birden fazla sunucu adı verip 'karşılaştır' / 'compare' derse:",
         "Linux/Windows için OS config (sürüm, kernel, güvenlik) ve kaynakları;",
         "VM için sanal makine özelliklerini; ESX için donanım (vendor/model/CPU/RAM/NIC)",
         "farklarını yan yana özetle; hangisinin production'a daha uygun olduğunu kısaca öner.",
+        "",
+        "PLATFORM SINIRI: Bu sohbet Linux sunucu (SSH/systemd) odaklıdır.",
+        "OpenShift pod/namespace/cluster durumunu Linux SSH verisiyle karistirma;",
+        "pod/CrashLoop sorulari icin OpenShift AIOps sohbetini oner.",
         "",
         "UZMANLIK ALANLARIN:",
         "--- Linux Sistem Yonetimi ---",
@@ -1062,12 +1100,20 @@ def _build_prompt(
         "3. ASLA 'SSH yapamam', 'dogrudan baglanamam', 'veri tabanindan bakiyorum' yazma.",
         "   Dogru cumle: '[sunucu_adi] icin SSH baglantisi basarisiz oldu veya veri alinamadi.'",
         "4. Tablo istenirse Markdown tablo kullan (| kolon | kolon |)",
-        "5. Turkce yanitla — kisaltmadan, net ve aciklayici yaz",
+        "5. Turkce yanitla",
+        "5b. YANIT UZUNLUGU — VARSAYILAN KISA: Varsayilan olarak KISA, SADE ve NET cevap ver.",
+        "    Basit/dogrudan bir soruya ('CPU kac cekirdek?', 'disk doluluk yuzdesi ne?', 'hangi",
+        "    surum kurulu?' gibi) 1-3 cumlelik dogrudan cevap yeterlidir — gereksiz giris",
+        "    cumlesi, arka plan bilgisi veya istenmeyen ek yorum ekleme. Kullanici acikca",
+        "    'detayli anlat', 'derinlemesine incele', 'kok neden analizi yap', 'tum",
+        "    detaylariyla acikla' gibi DAHA FAZLA DETAY istemedikce asagidaki UZMAN YANIT",
+        "    TARZI'ndaki kok-neden/tani/adim/risk sablonunu HER soruya zorla uygulama.",
         "6. Veri varsa asla 'bilmiyorum' ya da 'emin degilim' deme — veriyi yorumla",
         "7. resolv.conf, /etc/ dosya iceriklerini gorudugunde, oldugu gibi goster (trim etme)",
         "",
-        "UZMAN YANIT TARZI:",
-        "8. Her soruyu bir kıdemli admin gibi ele al:",
+        "UZMAN YANIT TARZI (SADECE arıza/performans/güvenlik gibi kök-neden gerektiren",
+        "sorularda veya kullanici acikca detay istediginde uygula — basit sorularda ATLA):",
+        "8. Boyle bir soruda bir kıdemli admin gibi ele al:",
         "   - Once olasi KOKEN NEDENLER (root cause) belirt",
         "   - BAGLAM'da komut ciktisi varsa yorumla; yoksa 'Bu bilgi mevcut taramada toplanmadi' de",
         "   - COZUM ADIMLARI numaralı liste halinde ver (yapilabilir, sirali)",
@@ -1146,13 +1192,18 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 return
 
             ephemeral = bool(request.ephemeral)
+            chat_platform = _normalize_chat_platform(request.platform)
 
             # ── Session ──────────────────────────────────────────────────
             session_id = request.session_id
             if not session_id:
                 from app.services.chat_history import title_from_message
                 title = "[Gizli]" if ephemeral else title_from_message(message)
-                session = ChatSession(title=title, server_ids=request.server_ids or [], category="linux")
+                session = ChatSession(
+                    title=title,
+                    server_ids=request.server_ids or [],
+                    category=chat_platform,
+                )
                 db.add(session)
                 db.commit()
                 db.refresh(session)
@@ -1419,22 +1470,35 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # Kullanıcı "ahmet-test2 sunucusundan..." veya "192.168.1.46'dan..."
             # dediğinde o sunucuyu otomatik seç
             if not selected_servers:
-                all_ai_servers = _linux_ai_ready_servers(db)
-                msg_lower_srv = message.lower()
-                detected_servers = []
-                for s in all_ai_servers:
-                    name_match = s.name and s.name.lower() in msg_lower_srv
-                    ip_match = s.ip_address and s.ip_address in message
-                    if name_match or ip_match:
-                        detected_servers.append(s)
-                if detected_servers:
-                    selected_servers = detected_servers
-                    logger.info(f"Mesajdan sunucu algılandı: {[s.name for s in detected_servers]}")
+                if chat_platform == "openshift":
+                    selected_servers = []
                 else:
-                    selected_servers = all_ai_servers
+                    all_ai_servers = _linux_ai_ready_servers(db)
+                    msg_lower_srv = message.lower()
+                    detected_servers = []
+                    for s in all_ai_servers:
+                        name_match = s.name and s.name.lower() in msg_lower_srv
+                        ip_match = s.ip_address and s.ip_address in message
+                        if name_match or ip_match:
+                            detected_servers.append(s)
+                    if detected_servers:
+                        selected_servers = detected_servers
+                        logger.info(f"Mesajdan sunucu algılandı: {[s.name for s in detected_servers]}")
+                    else:
+                        selected_servers = all_ai_servers
 
             server_context = ""
-            if selected_servers:
+            if chat_platform == "openshift":
+                try:
+                    from app.models.openshift import OpenShiftCluster
+                    clusters = db.query(OpenShiftCluster).all()
+                    if clusters:
+                        server_context = "OPENSHIFT CLUSTERLAR:\n" + "\n".join(
+                            f"- {c.name}" for c in clusters
+                        )
+                except Exception:
+                    server_context = ""
+            elif selected_servers:
                 lines = [
                     f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}, "
                     f"Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB"
@@ -1532,6 +1596,11 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             needs_ssh = (
                 any(k in ml for k in SERVER_TRIGGER) or _has_topic(message)
             ) and not request.skip_server_context
+            # OpenShift sohbeti Linux SSH/Prometheus ile karışmasın
+            if chat_platform == "openshift":
+                needs_ssh = False
+                needs_prometheus = False
+                selected_servers = []
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
             # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
             # düşen sorgular (STANDARD_GROUPS'un tamamı, ~9 grup/60+ komut) tek sunucuda bile
@@ -1708,6 +1777,76 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
+            # ── 5b. AI Streaming için model/sağlayıcı — agentic araç döngüsünden ÖNCE
+            # belirleniyor çünkü döngü yalnızca yerel Ollama/llm_gateway yolunda çalışır.
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
+
+            # ── Agentic READ_ONLY tool-calling (opsiyonel, öncesindeki sabit-context
+            # SSH taramasını KALDIRMAZ — yalnızca ek bir bağlam bloğu olarak üstüne
+            # ekler). unified_chat.py'deki AYNI mekanizma — bkz. oradaki yorum.
+            from app.services import runtime_settings as _rts
+            _uses_external_api = (
+                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
+                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
+                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
+            )
+            if not _uses_external_api and not ephemeral and not request.skip_server_context and _rts.get_bool("linux_chat_agentic_mode"):
+                try:
+                    from app.services.unified_tool_chat import run_read_only_tool_loop
+                    from app.services.agent.tools import domains_for_platform
+                    max_tool_steps = _rts.get_int("linux_chat_max_tool_steps")
+                    tool_domains = domains_for_platform(chat_platform)
+                    if chat_platform == "openshift":
+                        from app.models.openshift import OpenShiftCluster
+                        clusters = db.query(OpenShiftCluster).all()
+                        tool_server_summary = "\n".join(
+                            f"- OpenShift cluster: {c.name} api={getattr(c, 'api_url', None) or '-'}"
+                            for c in clusters
+                        ) or "(Tanımlı OpenShift cluster yok)"
+                    else:
+                        tool_server_summary = "\n".join(
+                            f"- {s.name} ({s.ip_address}) OS={s.os_type or s.os_version or 'Linux'} bağlantı=SSH"
+                            for s in selected_servers
+                        )
+
+                    loop = _asyncio.get_event_loop()
+                    gen = run_read_only_tool_loop(
+                        db, model, message, context_str, tool_server_summary,
+                        max_steps=max_tool_steps,
+                        domains=tool_domains,
+                        platform=chat_platform,
+                    )
+
+                    def _next_item(g):
+                        try:
+                            return next(g)
+                        except StopIteration:
+                            return None
+
+                    tool_context_text = ""
+                    while True:
+                        item = await loop.run_in_executor(None, _next_item, gen)
+                        if item is None:
+                            break
+                        itype = item.get("type")
+                        if itype == "tool_call":
+                            yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
+                        elif itype == "tool_result":
+                            yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                        elif itype == "final":
+                            tool_context_text = item.get("tool_text") or ""
+                            break
+                        elif itype in ("skipped", "error"):
+                            if itype == "error":
+                                logger.warning(f"[LinuxChat] agentic tool loop hatası: {item.get('detail')}")
+                            break
+
+                    if tool_context_text:
+                        context_str = context_str + "\n\nARAÇ SONUÇLARI (bu turda modelin kendi kararıyla çalıştırdığı ek SSH/canlı sorgular):\n" + tool_context_text
+                except Exception as e:
+                    logger.warning(f"[LinuxChat] agentic tool loop devre dışı bırakıldı: {e}")
+
             prompt = _build_prompt(
                 message=message,
                 context_str=context_str,
@@ -1716,6 +1855,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 prometheus_available=bool(prom_ctx),
                 selected_server_names=[s.name for s in selected_servers],
                 history_block=history_block,
+                platform=chat_platform,
             )
 
             # Kullanıcı mesajını kaydet (gizli modda atla — assistant ile birlikte sonda)
@@ -1724,8 +1864,6 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 db.commit()
 
             # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
-            model = request.model or get_active_model(db)
-            provider = _detect_provider(model)
             full_response = ""
 
             async with httpx.AsyncClient(timeout=180.0) as client:

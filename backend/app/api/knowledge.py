@@ -2,21 +2,28 @@
 Bilgi Bankasi (Knowledge Base) API — AI'in SSH/WinRM taramalarindan ogrendigi
 kalici, yapisal sunucu gerceklerini (LearnedFact) listeleme/filtreleme/
 duzenleme/silme.
+
+Erisim: 'knowledge' modulu (admin her zaman; diger kullanicilar atama ile).
 """
 import logging
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.auth import client_ip, require_module
 from app.core.database import get_db
 from app.models.learned_fact import LearnedFact
 from app.models.server import Server
+from app.models.user import User
+from app.services.audit import record_audit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_require_knowledge = require_module("knowledge")
 
 
 def _schedule_knowledge_rag_reindex() -> None:
@@ -53,6 +60,7 @@ class FactUpdate(BaseModel):
 @router.get("/")
 def list_facts(
     db: Session = Depends(get_db),
+    _user: User = Depends(_require_knowledge),
     server_id: Optional[int] = None,
     category: Optional[str] = None,
     source: Optional[str] = None,
@@ -92,7 +100,10 @@ def list_facts(
 
 
 @router.get("/summary")
-def facts_summary(db: Session = Depends(get_db)):
+def facts_summary(
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_knowledge),
+):
     """Sunucu basina ogrenilen fact sayisi + kategori dagilimi."""
     per_server = (
         db.query(LearnedFact.server_id, func.count(LearnedFact.id))
@@ -124,7 +135,13 @@ def facts_summary(db: Session = Depends(get_db)):
 
 
 @router.put("/{fact_id}")
-def update_fact(fact_id: int, body: FactUpdate, db: Session = Depends(get_db)):
+def update_fact(
+    fact_id: int,
+    body: FactUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_knowledge),
+):
     fact = db.query(LearnedFact).filter(LearnedFact.id == fact_id).first()
     if not fact:
         raise HTTPException(status_code=404, detail="Kayit bulunamadi")
@@ -133,25 +150,54 @@ def update_fact(fact_id: int, body: FactUpdate, db: Session = Depends(get_db)):
     from datetime import datetime, timezone
     fact.last_confirmed_at = datetime.now(timezone.utc)
     db.commit()
+    record_audit(
+        db, category="knowledge", action="knowledge.update", status="success",
+        actor=user, summary=f"Bilgi güncellendi: {fact.key}",
+        target_type="learned_fact", target_id=fact_id, server_id=fact.server_id,
+        ip_address=client_ip(request),
+    )
     _schedule_knowledge_rag_reindex()
     return fact.to_dict()
 
 
 @router.delete("/{fact_id}")
-def delete_fact(fact_id: int, db: Session = Depends(get_db)):
+def delete_fact(
+    fact_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_knowledge),
+):
     fact = db.query(LearnedFact).filter(LearnedFact.id == fact_id).first()
     if not fact:
         raise HTTPException(status_code=404, detail="Kayit bulunamadi")
+    key, sid = fact.key, fact.server_id
     db.delete(fact)
     db.commit()
+    record_audit(
+        db, category="knowledge", action="knowledge.delete", status="success",
+        actor=user, summary=f"Bilgi silindi: {key}",
+        target_type="learned_fact", target_id=fact_id, server_id=sid,
+        ip_address=client_ip(request),
+    )
     _schedule_knowledge_rag_reindex()
     return {"status": "deleted", "id": fact_id}
 
 
 @router.delete("/server/{server_id}")
-def delete_server_facts(server_id: int, db: Session = Depends(get_db)):
+def delete_server_facts(
+    server_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_knowledge),
+):
     """Bir sunucuya ait tum ogrenilmis bilgileri temizle (yeniden ogrenilsin)."""
     count = db.query(LearnedFact).filter(LearnedFact.server_id == server_id).delete()
     db.commit()
+    record_audit(
+        db, category="knowledge", action="knowledge.delete_server", status="success",
+        actor=user, summary=f"Sunucu bilgileri temizlendi ({count} kayıt)",
+        target_type="server", target_id=server_id, server_id=server_id,
+        ip_address=client_ip(request),
+    )
     _schedule_knowledge_rag_reindex()
     return {"status": "deleted", "count": count}

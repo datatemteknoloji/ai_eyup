@@ -162,6 +162,83 @@ def extract_and_store_facts(
     return touched
 
 
+# ── Sohbet icinde ad-hoc calistirilan READ_ONLY tool'lardan hangileri "yapisal/
+# durabilir" bilgi tasir. Anlik metrik/log/process/olay iceren tool'lar (ör.
+# get_processes, read_service_logs, get_kernel_errors, get_security_events)
+# KASITLI OLARAK burada YOK — bu modulun tasarim ilkesine (sadece degismesi
+# beklenmeyen bilgi ogrenilir) uymak icin.
+TOOL_OUTPUT_STABLE_TOOLS = {
+    "get_system_summary", "lvm_info", "list_free_disks", "get_mount_health",
+    "get_network_status", "get_package_status", "get_security_patch_status",
+    "execute_approved_command", "get_disk_usage",
+}
+
+_TOOL_FACT_CATEGORY = "chat_discovery"
+
+
+def extract_facts_from_tool_output(
+    db: Session, server, tool_name: str, output: Dict[str, Any],
+) -> int:
+    """Unified Chat'in agentic modunda serbestce cagrilan bir READ_ONLY tool'un
+    ciktisindan (yalnizca TOOL_OUTPUT_STABLE_TOOLS'taki 'yapisal' araclar icin)
+    kalici bir "chat_discovery" fact'i olusturur/gunceller.
+
+    extract_and_store_facts()'ten farki: sabit bir alan whitelist'ine degil,
+    dogrudan tool'un (kisaltilmis) tum ciktisina dayanir — cunku sohbet
+    icinde serbestce cagrilan araclarin cikti sekli onceden bilinmez/sabit
+    degildir. Boylece ad-hoc bir soruyla kesfedilen yapisal bilgi de (ör.
+    "df -h ile kesfedilen mount duzeni") kalici hafizaya girer.
+    """
+    if tool_name not in TOOL_OUTPUT_STABLE_TOOLS or not output:
+        return 0
+    if not server or not getattr(server, "id", None):
+        return 0
+    if isinstance(output, dict) and (output.get("ok") is False or output.get("error")):
+        return 0
+
+    value_str = _stringify(output)[:_MAX_VALUE_CHARS]
+    if not value_str:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    try:
+        from app.models.learned_fact import LearnedFact
+
+        existing = (
+            db.query(LearnedFact)
+            .filter(
+                LearnedFact.server_id == server.id,
+                LearnedFact.category == _TOOL_FACT_CATEGORY,
+                LearnedFact.key == tool_name,
+            )
+            .first()
+        )
+        if existing:
+            if existing.value == value_str:
+                existing.last_confirmed_at = now
+                existing.times_confirmed = (existing.times_confirmed or 1) + 1
+            else:
+                existing.value = value_str
+                existing.first_learned_at = now
+                existing.last_confirmed_at = now
+                existing.times_confirmed = 1
+            existing.source = "chat_tool"
+        else:
+            db.add(LearnedFact(
+                server_id=server.id, category=_TOOL_FACT_CATEGORY, key=tool_name, value=value_str,
+                source="chat_tool", first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
+            ))
+        db.commit()
+        return 1
+    except Exception as e:
+        logger.debug(f"Chat discovery fact learning atlandi ({getattr(server, 'name', '?')}/{tool_name}): {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 def _age_label(dt: Optional[datetime]) -> str:
     if not dt:
         return "bilinmiyor"

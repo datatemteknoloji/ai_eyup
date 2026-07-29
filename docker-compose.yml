@@ -79,6 +79,9 @@ services:
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - APP_VERSION=${APP_VERSION:-}
+      # RAG reranker (HuggingFace) modeli burada cache'lenir — kalıcı volume
+      # olmazsa her container recreate'inde ~2GB model yeniden indirilir.
+      - HF_HOME=/app/hf_cache
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
@@ -88,6 +91,7 @@ services:
       - /data/data/chroma:/app/chroma
       - /data/data/repos:/app/repos
       - /data/data/uploads:/app/uploads
+      - /data/data/hf_cache:/app/hf_cache
     # OpenShift cluster (ocp.datatem.local) *.local alanı yerel router DNS'inde çözülüyor
     # ama container'ın (network_mode: host olsa da kendi /etc/hosts + daemon DNS'i kullanır)
     # varsayılan DNS'i genel internet sunucularına (8.8.8.8/1.1.1.1) sabit — bu yüzden

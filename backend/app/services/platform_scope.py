@@ -4,6 +4,7 @@ Platform kapsamı — Linux / Windows / Sanallaştırma AIOps filtreleme yardım
 from __future__ import annotations
 
 import re
+import time
 from typing import List, Optional, Set
 
 from sqlalchemy import func as sa_func, or_, and_
@@ -15,6 +16,26 @@ from app.models.server import Server
 from app.models.exadata import ExadataNode
 
 VALID_PLATFORMS = frozenset({"linux", "windows", "virt", "exadata", "openshift"})
+
+# Kısa TTL önbellek — Layout her 30-60 sn'de ops/summary çağırır; her çağrıda
+# Server tablosunun tamamını Python'da taramak gereksiz. Process-içi, thread-safe
+# olmak zorunda değil (uvicorn tek worker varsayılanı); en kötü stale = TTL.
+_ID_CACHE: dict = {}  # key -> (expires_monotonic, value)
+_ID_CACHE_TTL = 45.0
+
+
+def _cached(key: str, factory):
+    now = time.monotonic()
+    hit = _ID_CACHE.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    val = factory()
+    _ID_CACHE[key] = (now + _ID_CACHE_TTL, val)
+    return val
+
+
+def invalidate_platform_id_cache() -> None:
+    _ID_CACHE.clear()
 
 # `os_type` henüz toplanmamış (ör. VMware Tools kurulu değil, sync hiç
 # çalışmamış) VM'ler için isim tabanlı son çare tahmini — sadece os_type
@@ -59,7 +80,7 @@ def get_linux_server_ids(db: Session) -> List[int]:
 
 
 def get_windows_server_ids(db: Session) -> List[int]:
-    return [s.id for s in db.query(Server).all() if is_windows_server(s)]
+    return _cached("windows_ids", lambda: [s.id for s in db.query(Server).all() if is_windows_server(s)])
 
 
 def get_vm_server_ids(db: Session) -> List[int]:
@@ -85,8 +106,10 @@ def is_linux_module_server(server: Server, exadata_ids: Optional[Set[int]] = Non
 
 
 def get_linux_module_server_ids(db: Session) -> List[int]:
-    exadata_ids = get_exadata_server_id_set(db)
-    return [s.id for s in db.query(Server).all() if is_linux_module_server(s, exadata_ids)]
+    def _build():
+        exadata_ids = get_exadata_server_id_set(db)
+        return [s.id for s in db.query(Server).all() if is_linux_module_server(s, exadata_ids)]
+    return _cached("linux_module_ids", _build)
 
 
 def get_linux_module_server_id_set(db: Session) -> Set[int]:

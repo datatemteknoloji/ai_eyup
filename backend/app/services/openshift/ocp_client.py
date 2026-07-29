@@ -6,7 +6,7 @@ Kubernetes/OpenShift API sunucusuna doğrudan REST çağrıları yapar.
 """
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from urllib3.exceptions import InsecureRequestWarning
@@ -199,31 +199,57 @@ class OpenShiftClient:
             return []
 
     def list_pods(self, namespace: Optional[str] = None) -> List[Dict]:
-        """Pod envanteri — durum, restart sayısı, node adı."""
+        """Pod envanteri — durum, restart sayısı, node adı.
+
+        Kubernetes continue-token ile tüm sayfaları çeker (limit tek başına
+        yeterli olmayabilir). Ham containerStatuses dönülmez — AI/tool
+        bağlamını şişirir ve 300+ pod'da çıktı kesilip 1-2 pod kalırdı.
+        """
         try:
             path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
-            r = self._get(path, params={"limit": 1000}, timeout=30)
-            if r.status_code != 200:
-                logger.error(f"OpenShift pod listesi hatası: {r.status_code} - {r.text[:200]}")
-                return []
-            pods = []
-            for p in (r.json() or {}).get("items", []):
-                meta = p.get("metadata", {}) or {}
-                status_obj = p.get("status", {}) or {}
-                container_statuses = status_obj.get("containerStatuses", []) or []
-                ready_count = sum(1 for c in container_statuses if c.get("ready"))
-                total_count = len(container_statuses) or len((p.get("spec", {}) or {}).get("containers", []) or [])
-                restart_count = sum(c.get("restartCount", 0) for c in container_statuses)
+            pods: List[Dict] = []
+            continue_token: Optional[str] = None
+            for _page in range(50):  # güvenlik üst sınırı
+                params: Dict[str, Any] = {"limit": 500}
+                if continue_token:
+                    params["continue"] = continue_token
+                r = self._get(path, params=params, timeout=45)
+                if r.status_code != 200:
+                    logger.error(f"OpenShift pod listesi hatası: {r.status_code} - {r.text[:200]}")
+                    break
+                body = r.json() or {}
+                for p in body.get("items", []) or []:
+                    meta = p.get("metadata", {}) or {}
+                    status_obj = p.get("status", {}) or {}
+                    container_statuses = status_obj.get("containerStatuses", []) or []
+                    ready_count = sum(1 for c in container_statuses if c.get("ready"))
+                    total_count = len(container_statuses) or len((p.get("spec", {}) or {}).get("containers", []) or [])
+                    restart_count = sum(int(c.get("restartCount", 0) or 0) for c in container_statuses)
+                    # Waiting/terminated nedeni (CrashLoopBackOff vb.) — kısa string
+                    wait_reason = None
+                    for c in container_statuses:
+                        state = c.get("state") or {}
+                        waiting = state.get("waiting") or {}
+                        if waiting.get("reason"):
+                            wait_reason = waiting["reason"]
+                            break
+                        term = state.get("terminated") or {}
+                        if term.get("reason") and term.get("reason") not in ("Completed",):
+                            wait_reason = term["reason"]
+                            break
 
-                pods.append({
-                    "namespace": meta.get("namespace", ""),
-                    "name": meta.get("name", ""),
-                    "status": status_obj.get("phase", "Unknown"),
-                    "node_name": (p.get("spec", {}) or {}).get("nodeName", ""),
-                    "restart_count": restart_count,
-                    "ready": f"{ready_count}/{total_count}",
-                    "container_statuses": container_statuses,
-                })
+                    pods.append({
+                        "namespace": meta.get("namespace", ""),
+                        "name": meta.get("name", ""),
+                        "status": status_obj.get("phase", "Unknown"),
+                        "reason": wait_reason,
+                        "node_name": (p.get("spec", {}) or {}).get("nodeName", ""),
+                        "restart_count": restart_count,
+                        "ready": f"{ready_count}/{total_count}",
+                    })
+                continue_token = (body.get("metadata") or {}).get("continue") or None
+                if not continue_token:
+                    break
             return pods
         except Exception as e:
             logger.error(f"OpenShift list_pods error: {e}", exc_info=True)
