@@ -220,7 +220,10 @@ const RagTab: React.FC = () => {
   return (
     <div>
       <h2 className="text-xl font-semibold text-white mb-2">RAG (Bilgi Tabanı)</h2>
-      <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook PDF&apos;leri, Bilgi Bankası, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
+      <p className="text-slate-400 text-sm mb-6">
+        Chat, runbook PDF’leri, Bilgi Bankası ve geçmiş olayları arka planda kullanır.
+        Incident / event / bilgi bankası otomatik indekslenir; PDF yükleme ve acil yenileme buradan yapılır.
+      </p>
 
       {(statusError || statusIsError) && (
         <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
@@ -322,36 +325,61 @@ const RagTab: React.FC = () => {
           {src && <p className="text-[10px] text-slate-500 mt-1">facts {src.learned_facts_db ?? 0} · inv {src.linux_inventory_db ?? 0}</p>}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-sm text-emerald-100/90">
+        <p className="font-medium text-emerald-200">Otomatik senkron açık</p>
+        <p className="text-xs text-emerald-200/70 mt-1">
+          Incident, event ve Bilgi Bankası arka planda yaklaşık her 30 dakikada RAG’e eklenir
+          (ilk çalıştırma ~5 dk sonra). Bilgi Bankası kaydı değişince de otomatik yenilenir.
+          Aşağıdaki butonlar yalnızca <span className="text-emerald-100">hemen zorla yenilemek</span> veya
+          ilk kurulum / PDF için.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-3">
         <button onClick={() => reindexAll.mutate()} disabled={reindexAll.isPending}
           className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
-          {reindexAll.isPending ? 'Yenileniyor (birkaç dk sürebilir)...' : "Tümünü RAG'e Yenile"}
+          {reindexAll.isPending ? 'Yenileniyor (birkaç dk sürebilir)...' : 'Şimdi tümünü yenile'}
         </button>
-        <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-          {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik Açıklamalarını Yükle'}
-        </button>
-        <button onClick={() => reindexIncidents.mutate()} disabled={reindexIncidents.isPending}
-          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-          {reindexIncidents.isPending ? 'Indexleniyor...' : "Incident'ları RAG'e Ekle"}
-        </button>
-        <button onClick={() => reindexEvents.mutate()} disabled={reindexEvents.isPending}
-          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-          {reindexEvents.isPending ? 'Indexleniyor...' : "Event'leri RAG'e Ekle"}
-        </button>
-        <button onClick={() => reindexKnowledge.mutate()} disabled={reindexKnowledge.isPending}
-          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-          {reindexKnowledge.isPending ? 'Indexleniyor...' : "Bilgi Bankası'nı RAG'e Ekle"}
-        </button>
+        {(status?.metrics ?? 0) === 0 && (
+          <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+            {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik açıklamalarını ilk kez yükle'}
+          </button>
+        )}
       </div>
+
+      <details className="mb-6 group">
+        <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 list-none flex items-center gap-2">
+          <span className="underline-offset-2 group-open:underline">Gelişmiş — tek kaynaklı manuel index</span>
+          <span className="text-slate-600">(genelde gerekmez)</span>
+        </summary>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
+            className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
+            {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik açıklamaları'}
+          </button>
+          <button onClick={() => reindexIncidents.mutate()} disabled={reindexIncidents.isPending}
+            className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
+            {reindexIncidents.isPending ? 'Indexleniyor...' : "Incident'lar"}
+          </button>
+          <button onClick={() => reindexEvents.mutate()} disabled={reindexEvents.isPending}
+            className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
+            {reindexEvents.isPending ? 'Indexleniyor...' : "Event'ler"}
+          </button>
+          <button onClick={() => reindexKnowledge.mutate()} disabled={reindexKnowledge.isPending}
+            className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
+            {reindexKnowledge.isPending ? 'Indexleniyor...' : 'Bilgi Bankası'}
+          </button>
+        </div>
+      </details>
+
       <div className="mt-2 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
-        <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl kullanılır?</h4>
+        <h4 className="text-sm font-medium text-slate-300 mb-2">Ne otomatik, ne manuel?</h4>
         <ul className="text-xs text-slate-500 space-y-1">
-          <li>• <strong>Tümünü Yenile:</strong> Metrik + incident + event + envanter/bilgi bankasını tek seferde indexler (önerilen).</li>
-          <li>• <strong>Metrik açıklamaları:</strong> Chat&apos;te “bu metrik ne?” sorularında kullanılır.</li>
-          <li>• <strong>Incident / Event:</strong> Benzer geçmiş olaylar yanıtta kullanılır (event son 2000 kayıt).</li>
-          <li>• <strong>Bilgi Bankası:</strong> learned_facts yoksa linux_inventory + tespit edilen uygulamalardan üretilir.</li>
-          <li>• Embedding için Ollama&apos;da <code className="bg-cyber-card px-1 rounded">nomic-embed-text</code> modeli gerekir.</li>
+          <li>• <strong>Otomatik:</strong> Incident / event / Bilgi Bankası → arka plan görevi (~30 dk).</li>
+          <li>• <strong>Manuel (üstteki PDF kutusu):</strong> Runbook PDF yükleme — dosya sizden gelir.</li>
+          <li>• <strong>Manuel (nadiren):</strong> Metrik açıklamaları ilk kurulum; “Şimdi yenile” beklemek istemezseniz.</li>
+          <li>• Embedding için Ollama&apos;da <code className="bg-cyber-card px-1 rounded">nomic-embed-text</code> gerekir.</li>
         </ul>
       </div>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}

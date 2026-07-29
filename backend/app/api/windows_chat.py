@@ -710,6 +710,65 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
+            # ── Agentic READ_ONLY WinRM araç döngüsü ──────────────────────
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
+            from app.services import runtime_settings as _rts
+            _uses_external_api = (
+                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
+                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
+                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
+            )
+            if not _uses_external_api and not request.skip_server_context and _rts.get_bool("windows_chat_agentic_mode"):
+                try:
+                    from app.services.unified_tool_chat import run_read_only_tool_loop
+                    from app.services.agent.tools import domains_for_platform
+                    max_tool_steps = _rts.get_int("windows_chat_max_tool_steps")
+                    tool_server_summary = "\n".join(
+                        f"- {s.name} ({s.ip_address}) OS={s.os_type or s.os_version or 'Windows'} bağlantı=WinRM"
+                        for s in selected_servers
+                    )
+                    loop = asyncio.get_event_loop()
+                    gen = run_read_only_tool_loop(
+                        db, model, message, context_str, tool_server_summary,
+                        max_steps=max_tool_steps,
+                        domains=domains_for_platform("windows"),
+                        platform="windows",
+                    )
+
+                    def _next_item(g):
+                        try:
+                            return next(g)
+                        except StopIteration:
+                            return None
+
+                    tool_context_text = ""
+                    while True:
+                        item = await loop.run_in_executor(None, _next_item, gen)
+                        if item is None:
+                            break
+                        itype = item.get("type")
+                        if itype == "tool_call":
+                            yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
+                        elif itype == "tool_result":
+                            yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                        elif itype == "final":
+                            tool_context_text = item.get("tool_text") or ""
+                            break
+                        elif itype in ("skipped", "error"):
+                            if itype == "error":
+                                logger.warning(f"[WindowsChat] agentic tool loop hatası: {item.get('detail')}")
+                            break
+
+                    if tool_context_text:
+                        context_str = (
+                            context_str
+                            + "\n\nARAÇ SONUÇLARI (modelin çağırdığı READ_ONLY WinRM/canlı sorgular):\n"
+                            + tool_context_text
+                        )
+                except Exception as e:
+                    logger.warning(f"[WindowsChat] agentic tool loop devre dışı: {e}")
+
             prompt = _build_prompt(
                 message=message,
                 context_str=context_str,
@@ -722,8 +781,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             db.add(ChatMessage(session_id=session_id, role="user", content=message))
             db.commit()
 
-            model = request.model or get_active_model(db)
-            provider = _detect_provider(model)
+            # model/provider yukarıda agentic için belirlendi
             full_response = ""
 
             async with httpx.AsyncClient(timeout=180.0) as client:

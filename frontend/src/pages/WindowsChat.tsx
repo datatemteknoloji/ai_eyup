@@ -7,6 +7,8 @@ import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
 import { FileDown } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
+import { chatMarkdownComponents, chatBubbleShell, chatResponseBody } from '../components/chatMarkdown'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -96,25 +98,8 @@ const ThinkingDots = () => (
 )
 
 const StreamingText = ({ text }: { text: string }) => (
-  <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        table: ({ children }) => (
-          <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-            <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-          </div>
-        ),
-        thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-        th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-        tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-        code: ({ className, children }) => className
-          ? <code className={className}>{children}</code>
-          : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
-      }}
-    >{text}</ReactMarkdown>
+  <div className={chatResponseBody}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{text}</ReactMarkdown>
     <span className="inline-block w-1.5 h-4 bg-sky-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
   </div>
 )
@@ -158,10 +143,10 @@ const WindowsChat: React.FC<{
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('windows_chat_selected_model') || 'llama3:70b')
-  const [useRag, setUseRag] = useState<boolean>(true)
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -330,6 +315,7 @@ const WindowsChat: React.FC<{
     setIsLoading(true)
     setPendingUserMessage(messageText)
     setStreamingText('')
+    setToolCalls([])
     setThinkingPhase(needsWinrm ? 'context' : 'streaming')
 
     const ctrl = new AbortController()
@@ -346,7 +332,7 @@ const WindowsChat: React.FC<{
           session_id: selectedSessionId,
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
           model: selectedModel,
-          use_rag: useRag
+          use_rag: true
         }),
         signal: ctrl.signal
       })
@@ -383,6 +369,22 @@ const WindowsChat: React.FC<{
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
+            }
+            if (chunk.type === 'tool_call') {
+              const tool = chunk.tool || ''
+              const label = chunk.label || tool
+              setToolCalls(prev => [...prev, { tool, label, done: false }])
+            }
+            if (chunk.type === 'tool_result') {
+              const tool = chunk.tool || ''
+              setToolCalls(prev => {
+                const idx = [...prev].reverse().findIndex(t => t.tool === tool && !t.done)
+                if (idx === -1) return prev
+                const realIdx = prev.length - 1 - idx
+                const next = [...prev]
+                next[realIdx] = { ...next[realIdx], done: true }
+                return next
+              })
             }
             if (chunk.error) {
               setStreamingText(`❌ Hata: ${chunk.error}`)
@@ -471,9 +473,8 @@ const WindowsChat: React.FC<{
     <>
     <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
       {/* Üst bar */}
-      <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
+      <div className="flex-shrink-0 p-3 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="px-3 py-1 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 text-xs font-semibold">Windows Altyapı Analizi</div>
           {messages.length > 0 && (
             <button
               type="button"
@@ -488,20 +489,10 @@ const WindowsChat: React.FC<{
               <FileDown size={13} /> Sohbeti PDF
             </button>
           )}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-slate-400 text-sm font-medium">RAG:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-sky-600' : 'bg-white/[0.1]'}`}
-              onClick={() => setUseRag(v => !v)} role="switch" aria-checked={useRag}>
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
-                style={{ marginTop: 2 }} />
-            </span>
-            <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
-          </label>
-
           <div className="flex items-center gap-2">
             <span className="text-slate-400 text-sm font-medium">Model:</span>
             <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('windows_chat_selected_model', e.target.value) }}
-              className="px-4 py-2.5 bg-gradient-to-r from-sky-600 to-sky-700 border border-sky-500 rounded-xl text-white text-sm font-medium hover:from-sky-500 hover:to-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer min-w-[200px]"
+              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer min-w-[180px]"
               style={{ appearance: 'auto' }}>
               {availableModels.map(m => (
                 <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
@@ -523,7 +514,7 @@ const WindowsChat: React.FC<{
               }}
               className="flex items-center gap-2 px-4 py-2.5 bg-cyber-card border border-white/[0.08] rounded-[10px] text-left min-w-[240px] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-500">
               <span className="text-slate-300 text-sm">
-                {selectedServers.length === 0 ? 'Windows sunucu seçin (çoklu)' : `${selectedServers.length} sunucu seçili`}
+                {selectedServers.length === 0 ? 'Hedef (opsiyonel)' : `${selectedServers.length} sunucu`}
               </span>
               <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
             </button>
@@ -567,6 +558,8 @@ const WindowsChat: React.FC<{
           </div>
         </div>
       </div>
+
+      <ChatPlatformStatsBar platform="windows" />
 
       <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
@@ -633,8 +626,8 @@ const WindowsChat: React.FC<{
                 <div className="w-20 h-20 bg-gradient-to-br from-sky-500 to-sky-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-sky-500/25">
                   <span className="text-4xl">🪟</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
-                <p className="text-slate-400 text-center max-w-md mb-8">Windows sunucularınız hakkında sorular sorun: servis durumu, disk doluluğu, event log hataları, bekleyen güncellemeler...</p>
+                <h2 className="text-3xl font-bold text-white mb-2">Altyapınızı Sorgulayın</h2>
+                <p className="text-slate-400 text-center max-w-md mb-8">Windows sunucu durumu, servis, event log ve güncelleme sorularını doğal dilde sorun.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -645,7 +638,7 @@ const WindowsChat: React.FC<{
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[82%] rounded-3xl px-5 py-4 shadow-lg ${
+                    <div className={`${chatBubbleShell} ${
                       msg.role === 'user'
                         ? 'bg-gradient-to-r from-sky-600 to-indigo-600 text-white border border-sky-400/30'
                         : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
@@ -653,22 +646,8 @@ const WindowsChat: React.FC<{
                       {msg.role === 'user' ? (
                         <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
                       ) : (
-                        <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                            table: ({ children }) => (
-                              <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-                                <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-                              </div>
-                            ),
-                            thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-                            th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-                            tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-                            code: ({ className, children }) => className
-                              ? <code className={className}>{children}</code>
-                              : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
-                          }}>{msg.content}</ReactMarkdown>
+                        <div className={chatResponseBody}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {msg.content?.trim().length > 40 && (
                               <button type="button"
@@ -708,6 +687,17 @@ const WindowsChat: React.FC<{
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start">
                     <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
+                      {toolCalls.length > 0 && (
+                        <div className="space-y-1 mb-2">
+                          {toolCalls.map((tc, i) => (
+                            <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
+                              <span className={tc.done ? 'opacity-60' : 'animate-pulse'}>
+                                🔧 {tc.label}{tc.done ? '' : '…'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">

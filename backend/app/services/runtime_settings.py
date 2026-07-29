@@ -336,6 +336,33 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "araç (tool) sayısı.",
         "env": "LINUX_CHAT_MAX_TOOL_STEPS",
     },
+    # ── Windows Chat (agentic tool-calling) ──────────────────────────
+    "windows_chat_agentic_mode": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "windows_chat", "label": "Windows Chat agentic mod",
+        "help": "Açıkken model, sabit WinRM taramasıyla yetinmeyip gerekirse READ_ONLY "
+                "WinRM/PowerShell araçları çağırabilir.",
+        "env": "WINDOWS_CHAT_AGENTIC_MODE",
+    },
+    "windows_chat_max_tool_steps": {
+        "default": 6, "type": "int", "min": 1, "max": 12,
+        "group": "windows_chat", "label": "Windows Chat maks. araç adımı",
+        "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla araç sayısı.",
+        "env": "WINDOWS_CHAT_MAX_TOOL_STEPS",
+    },
+    # ── Virt Chat (agentic live tools beside hypervisor_intelligence) ─
+    "virt_chat_agentic_mode": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "virt_chat", "label": "Sanallaştırma Chat agentic mod",
+        "help": "Açıkken canlı alarm/task sorularında vCenter READ_ONLY araçları "
+                "hypervisor_intelligence cevabına eklenir.",
+        "env": "VIRT_CHAT_AGENTIC_MODE",
+    },
+    "virt_chat_max_tool_steps": {
+        "default": 4, "type": "int", "min": 1, "max": 8,
+        "group": "virt_chat", "label": "Sanallaştırma Chat maks. araç adımı",
+        "env": "VIRT_CHAT_MAX_TOOL_STEPS",
+    },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
     "rag_reranker_enabled": {
         "default": True, "type": "bool", "min": 0, "max": 1,

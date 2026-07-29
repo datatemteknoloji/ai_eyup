@@ -7,8 +7,10 @@ import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
 import * as XLSX from 'xlsx'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
-import { FileDown, EyeOff } from 'lucide-react'
+import { FileDown } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
+import { chatMarkdownComponents, chatBubbleShell, chatResponseBody } from '../components/chatMarkdown'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -84,7 +86,6 @@ function getFirstMarkdownTable(content: string): string | null {
 }
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string }
-interface Hypervisor { id: number; name: string; type?: string; hostname?: string; ip_address?: string }
 interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; meta?: { charts?: ChatChartPayload[] } | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
@@ -98,25 +99,8 @@ const ThinkingDots = () => (
 )
 
 const StreamingText = ({ text }: { text: string }) => (
-  <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        table: ({ children }) => (
-          <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-            <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-          </div>
-        ),
-        thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-        th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-        tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-        code: ({ className, children }) => className
-          ? <code className={className}>{children}</code>
-          : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-auto text-xs my-2 max-h-[min(50vh,28rem)]">{children}</pre>
-      }}
-    >{text}</ReactMarkdown>
+  <div className={chatResponseBody}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{text}</ReactMarkdown>
     <span className="inline-block w-1.5 h-4 bg-blue-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
   </div>
 )
@@ -159,34 +143,17 @@ const Chat: React.FC<{
   const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
-  const [selectedHypervisors, setSelectedHypervisors] = useState<number[]>([])
-  const [hypervisorSearch, setHypervisorSearch] = useState('')
-  const [hypervisorDropdownOpen, setHypervisorDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
-  const [useRag, setUseRag] = useState<boolean>(true)
-  const [incognito, setIncognito] = useState(false)
-  const incognitoSessionRef = useRef<number | null>(null)
-  const [inventoryMode, setInventoryMode] = useState<boolean>(() => localStorage.getItem('chat_inventory_mode') === '1')
-  // RAG + Envanter sorgu yalnızca Linux doğal dil için. OpenShift/Exadata aynı
-  // Chat bileşenini paylaşır ama Sanallaştırma gibi platform API akışına gider.
-  const showLinuxQueryToggles = inventoryPlatform === 'linux'
-  const effectiveInventoryMode = showLinuxQueryToggles && inventoryMode
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
+  // Envanter NLQ UI kaldırıldı — doğal dil = canlı/agentic (Virt formu)
+  const effectiveInventoryMode = false
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
   const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const inventoryMsgSeq = useRef(-1000)
 
-  const INVENTORY_CHIPS = [
-    { label: 'Uptime > 200 gün', q: '200 günden fazla uptime olan sunucuları listele' },
-    { label: 'Disk > %85 (prod)', q: 'production ortamında disk kullanımı %85 üzeri sunucular' },
-    { label: 'CPU > %90', q: 'CPU kullanımı yüzde 90 üzeri sunucular' },
-    { label: 'Son 30 günde reboot', q: 'Son 30 gün içinde reboot olan sunucular' },
-    { label: 'Veri alınamayan', q: 'Envanter verisi alınamayan veya unreachable sunucular' },
-    { label: 'Top 10 disk', q: 'İlk 10 en yüksek disk kullanımı olan sunucular' },
-  ] as const
 
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
@@ -196,13 +163,9 @@ const Chat: React.FC<{
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const serverDropdownRef = useRef<HTMLDivElement>(null)
-  const hypervisorDropdownRef = useRef<HTMLDivElement>(null)
   const serverBtnRef = useRef<HTMLButtonElement>(null)
-  const hypervisorBtnRef = useRef<HTMLButtonElement>(null)
   const serverMenuRef = useRef<HTMLDivElement>(null)
-  const hypervisorMenuRef = useRef<HTMLDivElement>(null)
   const [serverMenuRect, setServerMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
-  const [hypervisorMenuRect, setHypervisorMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)  // hangi session için stream çalışıyor
   const initialHandled = useRef(false)
@@ -214,10 +177,6 @@ const Chat: React.FC<{
         serverDropdownRef.current && !serverDropdownRef.current.contains(t) &&
         serverMenuRef.current && !serverMenuRef.current.contains(t)
       ) { setServerDropdownOpen(false); setServerMenuRect(null) }
-      if (
-        hypervisorDropdownRef.current && !hypervisorDropdownRef.current.contains(t) &&
-        hypervisorMenuRef.current && !hypervisorMenuRef.current.contains(t)
-      ) { setHypervisorDropdownOpen(false); setHypervisorMenuRect(null) }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -236,17 +195,6 @@ const Chat: React.FC<{
     return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
   }, [serverDropdownOpen])
 
-  useLayoutEffect(() => {
-    if (!hypervisorDropdownOpen) return
-    const update = () => {
-      const el = hypervisorBtnRef.current; if (!el) return
-      const r = el.getBoundingClientRect()
-      setHypervisorMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
-    }
-    update()
-    window.addEventListener('scroll', update, true); window.addEventListener('resize', update)
-    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
-  }, [hypervisorDropdownOpen])
 
   const queryClient = useQueryClient()
 
@@ -259,18 +207,6 @@ const Chat: React.FC<{
     }
   })
 
-  const { data: hypervisors = [] } = useQuery<Hypervisor[]>({
-    queryKey: ['hypervisors'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/hypervisors/`)
-      if (!res.ok) {
-        console.warn('Hypervisors fetch failed', res.status)
-        return []
-      }
-      return res.json()
-    },
-    retry: 1,
-  })
 
   const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
     queryKey: ['ai-models'],
@@ -505,10 +441,10 @@ const Chat: React.FC<{
           message: messageText,
           session_id: selectedSessionId,
           server_ids: selectedServers.length > 0 ? selectedServers : undefined,
-          hypervisor_ids: selectedHypervisors.length > 0 ? selectedHypervisors : undefined,
+          hypervisor_ids: undefined,
           model: selectedModel,
-          use_rag: useRag,
-          ephemeral: incognito,
+          use_rag: true,
+          ephemeral: false,
           platform: inventoryPlatform,
         }),
         signal: ctrl.signal
@@ -644,11 +580,6 @@ const Chat: React.FC<{
     return s.name.toLowerCase().includes(q) || s.ip_address.toLowerCase().includes(q)
   })
 
-  const filteredHypervisors = hypervisors.filter(h => {
-    if (!hypervisorSearch) return true
-    const q = hypervisorSearch.toLowerCase()
-    return (h.name || '').toLowerCase().includes(q) || (h.hostname || '').toLowerCase().includes(q) || (h.ip_address || '').toLowerCase().includes(q)
-  })
 
   const thinkingLabel =
     thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus)...' :
@@ -657,17 +588,16 @@ const Chat: React.FC<{
   return (
     <>
     <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
-      {/* Üst bar */}
-      <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
+      {/* Üst bar — Virt formu: model + opsiyonel hedef + PDF */}
+      <div className="flex-shrink-0 p-3 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="px-3 py-1 rounded-full border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 text-xs font-semibold">Modern UI v2</div>
           {messages.length > 0 && (
             <button
               type="button"
               onClick={() => exportChatMessagesToPrintWindow(messages, {
-                title: 'Linux AI Asistan',
+                title: inventoryPlatform === 'openshift' ? 'OpenShift AI' : inventoryPlatform === 'exadata' ? 'Exadata AI' : 'Linux AI',
                 subtitle: new Date().toLocaleString('tr-TR'),
-                filename: `linux_ai_${new Date().toISOString().slice(0, 10)}`,
+                filename: `${inventoryPlatform}_ai_${new Date().toISOString().slice(0, 10)}`,
               })}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
               title="Sohbeti PDF olarak kaydet"
@@ -675,82 +605,10 @@ const Chat: React.FC<{
               <FileDown size={13} /> Sohbeti PDF
             </button>
           )}
-          <label className="flex items-center gap-2 cursor-pointer" title="Sohbet geçmişe yazılmaz; kapatınca silinir">
-            <EyeOff size={14} className={incognito ? 'text-amber-400' : 'text-slate-500'} />
-            <span className="text-slate-400 text-sm font-medium">Gizli:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${incognito ? 'bg-amber-600' : 'bg-white/[0.1]'}`}
-              onClick={async () => {
-                const next = !incognito
-                if (next) {
-                  setLocalInventoryMessages([])
-                  setPendingUserMessage(null)
-                  setStreamingText('')
-                  try {
-                    const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ category: inventoryPlatform }),
-                    })
-                    if (res.ok) {
-                      const s = await res.json()
-                      await fetch(`${API_BASE_URL}/chat/sessions/${s.id}?title=${encodeURIComponent('[Gizli] geçici oturum')}`, {
-                        method: 'PUT',
-                      }).catch(() => null)
-                      incognitoSessionRef.current = s.id
-                      setSelectedSessionId(s.id)
-                      queryClient.setQueryData(['chat-messages', s.id], [])
-                    }
-                  } catch { /* ignore */ }
-                } else {
-                  const sid = incognitoSessionRef.current
-                  if (sid) {
-                    try { await fetch(`${API_BASE_URL}/chat/sessions/${sid}`, { method: 'DELETE' }) } catch { /* ignore */ }
-                    if (selectedSessionId === sid) setSelectedSessionId(null)
-                  }
-                  incognitoSessionRef.current = null
-                  setLocalInventoryMessages([])
-                  queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
-                }
-                setIncognito(next)
-              }}
-              role="switch" aria-checked={incognito}>
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${incognito ? 'translate-x-5' : 'translate-x-1'}`}
-                style={{ marginTop: 2 }} />
-            </span>
-            <span className={`text-sm ${incognito ? 'text-amber-300' : 'text-slate-300'}`}>{incognito ? 'Açık' : 'Kapalı'}</span>
-          </label>
-
-          {showLinuxQueryToggles && (
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-slate-400 text-sm font-medium">RAG:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-blue-600' : 'bg-white/[0.1]'}`}
-              onClick={() => setUseRag(v => !v)} role="switch" aria-checked={useRag}>
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
-                style={{ marginTop: 2 }} />
-            </span>
-            <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
-          </label>
-          )}
-
-          {showLinuxQueryToggles && (
-          <label className="flex items-center gap-2 cursor-pointer" title="Açıkken liste/filtre soruları envanter snapshot'tan cevaplanır. SSH/diagnostik (journalctl, sestatus, kök neden…) otomatik canlı Chat'e düşer.">
-            <span className="text-slate-400 text-sm font-medium">Envanter sorgu:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${inventoryMode ? 'bg-emerald-600' : 'bg-white/[0.1]'}`}
-              onClick={() => setInventoryMode(v => {
-                const next = !v
-                localStorage.setItem('chat_inventory_mode', next ? '1' : '0')
-                return next
-              })} role="switch" aria-checked={inventoryMode}>
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${inventoryMode ? 'translate-x-5' : 'translate-x-1'}`}
-                style={{ marginTop: 2 }} />
-            </span>
-            <span className="text-slate-300 text-sm">{inventoryMode ? 'Açık' : 'Kapalı'}</span>
-          </label>
-          )}
-
           <div className="flex items-center gap-2">
             <span className="text-slate-400 text-sm font-medium">Model:</span>
             <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
-              className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 border border-blue-500 rounded-xl text-white text-sm font-medium hover:from-blue-500 hover:to-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[200px]"
+              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
               style={{ appearance: 'auto' }}>
               {availableModels.map(m => (
                 <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
@@ -759,14 +617,11 @@ const Chat: React.FC<{
               ))}
             </select>
           </div>
-
-          {inventoryPlatform === 'openshift' && (
-            <div className="px-4 py-2.5 bg-cyber-card border border-cyan-500/30 rounded-[10px] text-sm text-cyan-300">
-              OpenShift cluster (API)
+          {inventoryPlatform === 'openshift' ? (
+            <div className="px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-sm text-cyan-300">
+              OpenShift API
             </div>
-          )}
-
-          {inventoryPlatform !== 'openshift' && (
+          ) : (
           <div className="relative" ref={serverDropdownRef}>
             <button ref={serverBtnRef} type="button"
               onClick={() => {
@@ -777,9 +632,9 @@ const Chat: React.FC<{
                   setServerDropdownOpen(true)
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-cyber-card border border-white/[0.08] rounded-[10px] text-left min-w-[240px] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500">
+              className="flex items-center gap-2 px-3 py-2 bg-slate-800/80 border border-slate-600/80 rounded-xl text-left min-w-[200px] hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
               <span className="text-slate-300 text-sm">
-                {selectedServers.length === 0 ? 'Sunucu seçin (çoklu)' : `${selectedServers.length} sunucu seçili`}
+                {selectedServers.length === 0 ? 'Hedef (opsiyonel)' : `${selectedServers.length} sunucu`}
               </span>
               <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
             </button>
@@ -822,65 +677,9 @@ const Chat: React.FC<{
             )}
           </div>
           )}
-
-          {inventoryPlatform !== 'openshift' && (
-          <div className="relative" ref={hypervisorDropdownRef}>
-            <button ref={hypervisorBtnRef} type="button"
-              onClick={() => {
-                if (hypervisorDropdownOpen) { setHypervisorDropdownOpen(false); setHypervisorMenuRect(null) }
-                else {
-                  const r = hypervisorBtnRef.current!.getBoundingClientRect()
-                  setHypervisorMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
-                  setHypervisorDropdownOpen(true)
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-cyber-card border border-white/[0.08] rounded-[10px] text-left min-w-[240px] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <span className="text-slate-300 text-sm">
-                {selectedHypervisors.length === 0 ? 'Hypervisor seçin (çoklu)' : `${selectedHypervisors.length} hypervisor seçili`}
-              </span>
-              <span className="ml-auto text-slate-500">{hypervisorDropdownOpen ? '▲' : '▼'}</span>
-            </button>
-            {hypervisorDropdownOpen && hypervisorMenuRect && createPortal(
-              <div ref={hypervisorMenuRef} className="flex flex-col overflow-hidden bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl"
-                style={{ position:'fixed', top: hypervisorMenuRect.top, left: hypervisorMenuRect.left, width: hypervisorMenuRect.width,
-                  maxHeight: `min(20rem, calc(100vh - ${hypervisorMenuRect.top}px - 8px))`, zIndex: 9999 }}>
-                <div className="p-2 border-b border-white/[0.06] shrink-0">
-                  <input type="text" value={hypervisorSearch} onChange={e => setHypervisorSearch(e.target.value)}
-                    placeholder="Hypervisor ara..." autoFocus
-                    className="w-full bg-cyber-deep border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <div className="flex items-center gap-2 p-2 border-b border-white/[0.06] shrink-0">
-                  <button type="button" onClick={() => setSelectedHypervisors(filteredHypervisors.map(h => h.id))}
-                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
-                  <button type="button" onClick={() => setSelectedHypervisors([])}
-                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
-                  <span className="text-xs text-slate-500 ml-auto">{filteredHypervisors.length} hypervisor</span>
-                </div>
-                <div className="overflow-y-auto flex-1 min-h-0">
-                  {filteredHypervisors.length === 0 ? (
-                    <div className="p-4 text-center text-slate-500 text-sm">Hypervisor yok</div>
-                  ) : filteredHypervisors.map(h => (
-                    <label key={h.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer">
-                      <input type="checkbox" checked={selectedHypervisors.includes(h.id)}
-                        onChange={e => {
-                          if (e.target.checked) setSelectedHypervisors(prev => [...prev, h.id])
-                          else setSelectedHypervisors(prev => prev.filter(id => id !== h.id))
-                        }}
-                        className="rounded border-white/[0.2] bg-cyber-card text-blue-500 focus:ring-blue-500" />
-                      <div>
-                        <div className="text-white text-sm font-medium">{h.name}</div>
-                        <div className="text-slate-500 text-xs font-mono">{h.hostname || h.ip_address || '-'}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>,
-              document.body
-            )}
-          </div>
-          )}
         </div>
       </div>
+      <ChatPlatformStatsBar platform={inventoryPlatform} />
 
       <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
@@ -940,7 +739,11 @@ const Chat: React.FC<{
                 <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
                   <span className="text-2xl font-bold text-white">AI</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Linux Asistanı</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">{
+                  inventoryPlatform === 'openshift' ? 'OpenShift Asistanı' :
+                  inventoryPlatform === 'exadata' ? 'Exadata Asistanı' :
+                  'Linux Asistanı'
+                }</h2>
                 <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
               </div>
             ) : (messages.length === 0 && localInventoryMessages.length === 0 && !pendingUserMessage) ? (
@@ -948,27 +751,14 @@ const Chat: React.FC<{
                 <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
                   <span className="text-4xl">💬</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">Altyapınızı Sorgulayın</h2>
                 <p className="text-slate-400 text-center max-w-md mb-6">
-                  {effectiveInventoryMode
-                    ? 'Envanter sorgu açık: sonuçlar snapshot tablolarından gelir (LLM hostname/sayı uydurmaz).'
-                    : 'Sunucularınız hakkında sorular sorun, performans analizi isteyin veya komut çalıştırın.'}
+                  {inventoryPlatform === 'openshift'
+                    ? 'Pod, node, proje ve cluster durumu hakkında doğal dilde sorun.'
+                    : inventoryPlatform === 'exadata'
+                    ? 'Exadata node’ları hakkında doğal dilde sorun.'
+                    : 'Sunucu durumu, performans, servis ve log sorularını doğal dilde sorun.'}
                 </p>
-                {effectiveInventoryMode && (
-                  <div className="flex flex-wrap gap-2 justify-center max-w-2xl px-4">
-                    {INVENTORY_CHIPS.map(chip => (
-                      <button
-                        key={chip.label}
-                        type="button"
-                        disabled={isLoading}
-                        onClick={() => sendInventoryQuery(chip.q)}
-                        className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-500/30 hover:bg-emerald-500/25 disabled:opacity-50"
-                      >
-                        {chip.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -980,7 +770,7 @@ const Chat: React.FC<{
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[82%] rounded-3xl px-5 py-4 shadow-lg ${
+                    <div className={`${chatBubbleShell} ${
                       msg.role === 'user'
                         ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border border-blue-400/30'
                         : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
@@ -988,22 +778,8 @@ const Chat: React.FC<{
                       {msg.role === 'user' ? (
                         <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
                       ) : (
-                        <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                            table: ({ children }) => (
-                              <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-                                <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-                              </div>
-                            ),
-                            thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-                            th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-                            tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-                            code: ({ className, children }) => className
-                              ? <code className={className}>{children}</code>
-                              : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-auto text-xs my-2 max-h-[min(50vh,28rem)]">{children}</pre>
-                          }}>{msg.content}</ReactMarkdown>
+                        <div className={chatResponseBody}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {msg.content?.trim().length > 40 && (
                               <button type="button"
@@ -1088,21 +864,6 @@ const Chat: React.FC<{
 
           {/* Input */}
           <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
-            {effectiveInventoryMode && (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {INVENTORY_CHIPS.map(chip => (
-                  <button
-                    key={chip.label}
-                    type="button"
-                    disabled={isLoading}
-                    onClick={() => sendInventoryQuery(chip.q)}
-                    className="px-2.5 py-1 rounded-md text-[11px] bg-emerald-500/10 text-emerald-200/90 border border-emerald-500/25 hover:bg-emerald-500/20 disabled:opacity-50"
-                  >
-                    {chip.label}
-                  </button>
-                ))}
-              </div>
-            )}
             {selectedServers.length > 0 && (
               <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
@@ -1118,28 +879,12 @@ const Chat: React.FC<{
                 })}
               </div>
             )}
-            {selectedHypervisors.length > 0 && (
-              <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
-                <span className="text-xs text-slate-400">Seçili hypervisorlar:</span>
-                {selectedHypervisors.map(hypervisorId => {
-                  const hypervisor = hypervisors.find(h => h.id === hypervisorId)
-                  return hypervisor ? (
-                    <span key={hypervisorId}
-                      className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-300 text-xs rounded border border-blue-500/30">
-                      {hypervisor.name}
-                      <button onClick={() => setSelectedHypervisors(prev => prev.filter(id => id !== hypervisorId))} className="ml-1 hover:text-blue-200">✕</button>
-                    </span>
-                  ) : null
-                })}
-              </div>
-            )}
             <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-cyber-deep/80 border border-white/[0.08] rounded-2xl p-2">
               <div className="flex-1 relative">
                 <input type="text" value={input} onChange={e => setInput(e.target.value)}
                   placeholder={
                     isLoading ? 'AI düşünüyor...' :
-                    effectiveInventoryMode ? 'Envanter sorusu yazın… (örn. uptime 200 günden fazla)' :
-                    'Mesajınızı yazın... (Enter ile gönder)'
+                    'Altyapınızı sorgulayın… (Enter ile gönder)'
                   }
                   className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
                     isLoading ? 'border-blue-500/60' : 'border-white/[0.06]'

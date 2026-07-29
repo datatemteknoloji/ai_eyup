@@ -914,9 +914,54 @@ async def ask_hypervisor_question(
             history = req.history[-8:]
 
         from app.services.hypervisor_intelligence import answer_hypervisor_question
+        from app.services import runtime_settings as _rts
+
+        # Canlı alarm/task sorularında vCenter READ_ONLY araçlarını önce çalıştır
+        live_hint = any(
+            k in question.lower()
+            for k in (
+                "canlı", "canli", "şu an", "su an", "aktif alarm", "alarm",
+                "task", "görev", "gorev", "gerçek zamanlı", "gercek zamanli",
+                "live",
+            )
+        )
+        agentic_extra = ""
+        if live_hint and _rts.get_bool("virt_chat_agentic_mode"):
+            try:
+                from app.services.unified_tool_chat import run_read_only_tool_loop
+                from app.services.agent.tools import domains_for_platform
+                from app.core.config import get_active_model
+                model_name = req.model or get_active_model(db)
+                hv_summary = "\n".join(
+                    f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
+                    for h in db.query(Hypervisor).all()
+                )
+                gen = run_read_only_tool_loop(
+                    db, model_name, question, "", hv_summary,
+                    max_steps=_rts.get_int("virt_chat_max_tool_steps"),
+                    domains=domains_for_platform("virt"),
+                    platform="virt",
+                )
+                for item in gen:
+                    if item.get("type") == "final":
+                        agentic_extra = item.get("tool_text") or ""
+                        break
+                    if item.get("type") in ("skipped", "error"):
+                        break
+            except Exception as e:
+                logger.warning(f"[HypervisorAsk] agentic live tools: {e}")
+
+        ask_question = question
+        if agentic_extra:
+            ask_question = (
+                question
+                + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
+                + agentic_extra[:20000]
+            )
+
         result = answer_hypervisor_question(
             db=db,
-            question=question,
+            question=ask_question,
             model=req.model,
             conversation_history=history,
         )

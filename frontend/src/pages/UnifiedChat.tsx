@@ -6,6 +6,8 @@ import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
 import { FileDown } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
+import { chatMarkdownComponents, chatBubbleShell, chatResponseBody } from '../components/chatMarkdown'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -87,25 +89,8 @@ const ThinkingDots = () => (
 )
 
 const StreamingText = ({ text }: { text: string }) => (
-  <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        table: ({ children }) => (
-          <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-            <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-          </div>
-        ),
-        thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-        th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-        td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-        tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-        code: ({ className, children }) => className
-          ? <code className={className}>{children}</code>
-          : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-        pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
-      }}
-    >{text}</ReactMarkdown>
+  <div className={chatResponseBody}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{text}</ReactMarkdown>
     <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
   </div>
 )
@@ -153,7 +138,6 @@ const UnifiedChat: React.FC<{
   const [isLoading, setIsLoading] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('unified_chat_selected_model') || 'llama3:70b')
-  const [useRag, setUseRag] = useState<boolean>(true)
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
   const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
@@ -305,7 +289,7 @@ const UnifiedChat: React.FC<{
           message: messageText,
           session_id: selectedSessionId,
           model: selectedModel,
-          use_rag: useRag
+          use_rag: true
         }),
         signal: ctrl.signal
       })
@@ -458,20 +442,10 @@ const UnifiedChat: React.FC<{
               <FileDown size={13} /> Sohbeti PDF
             </button>
           )}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-slate-400 text-sm font-medium">RAG:</span>
-            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${useRag ? 'bg-violet-600' : 'bg-white/[0.1]'}`}
-              onClick={() => setUseRag(v => !v)} role="switch" aria-checked={useRag}>
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${useRag ? 'translate-x-5' : 'translate-x-1'}`}
-                style={{ marginTop: 2 }} />
-            </span>
-            <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
-          </label>
-
           <div className="flex items-center gap-2">
             <span className="text-slate-400 text-sm font-medium">Model:</span>
             <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('unified_chat_selected_model', e.target.value) }}
-              className="px-4 py-2.5 bg-gradient-to-r from-violet-600 to-violet-700 border border-violet-500 rounded-xl text-white text-sm font-medium hover:from-violet-500 hover:to-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-400 cursor-pointer min-w-[200px]"
+              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-400 cursor-pointer min-w-[180px]"
               style={{ appearance: 'auto' }}>
               {availableModels.map(m => (
                 <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
@@ -485,6 +459,8 @@ const UnifiedChat: React.FC<{
           </span>
         </div>
       </div>
+
+      <ChatPlatformStatsBar platform="all" />
 
       <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
         {/* Sol Panel - Oturumlar */}
@@ -551,10 +527,10 @@ const UnifiedChat: React.FC<{
                 <div className="w-20 h-20 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-violet-500/25">
                   <span className="text-4xl">🌐</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Yeni Sohbet</h2>
+                <h2 className="text-3xl font-bold text-white mb-2">Altyapınızı Sorgulayın</h2>
                 <p className="text-slate-400 text-center max-w-md mb-8">
-                  Linux, Windows ve sanallaştırma altyapınızın tamamı hakkında soru sorun — platformlar arası
-                  karşılaştırma ve genel özet dahil.
+                  Linux, Windows ve sanallaştırma altyapınızın tamamı hakkında doğal dilde sorun —
+                  platformlar arası karşılaştırma ve genel özet dahil.
                 </p>
                 <div className="flex flex-col gap-2 w-full max-w-lg">
                   {SUGGESTED_QUESTIONS.map(q => (
@@ -574,7 +550,7 @@ const UnifiedChat: React.FC<{
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[82%] rounded-3xl px-5 py-4 shadow-lg ${
+                    <div className={`${chatBubbleShell} ${
                       msg.role === 'user'
                         ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border border-violet-400/30'
                         : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
@@ -582,22 +558,8 @@ const UnifiedChat: React.FC<{
                       {msg.role === 'user' ? (
                         <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
                       ) : (
-                        <div className="chat-response-content text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                            table: ({ children }) => (
-                              <div className="overflow-auto max-h-[min(50vh,28rem)] my-3 rounded-lg border border-slate-500 shadow-sm">
-                                <table className="min-w-full text-left text-sm border-collapse">{children}</table>
-                              </div>
-                            ),
-                            thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-                            th: ({ children }) => <th className="px-4 py-2.5 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>,
-                            td: ({ children }) => <td className="px-4 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>,
-                            tr: ({ children, ...props }) => <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>,
-                            code: ({ className, children }) => className
-                              ? <code className={className}>{children}</code>
-                              : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
-                            pre: ({ children }) => <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
-                          }}>{msg.content}</ReactMarkdown>
+                        <div className={chatResponseBody}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {msg.content?.trim().length > 40 && (
                               <button type="button"

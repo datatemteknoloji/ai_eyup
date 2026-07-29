@@ -1027,6 +1027,13 @@ def _build_prompt(
             "",
             "ONEMLI: Asla 'cluster'a baglanamam' deme. Sistem OpenShift API ile sorgu yapabiliyor.",
         ])
+    elif platform == "exadata":
+        identity = NL.join([
+            "Sen kıdemli bir Exadata / Oracle altyapı uzmanısın.",
+            "Bu sohbet Exadata compute/cell'e bağlı Linux sunucular üzerindendir.",
+            "Bağlamda Exadata kaydı yoksa uydurma; envanter eksikliğini açıkça söyle.",
+            "Genel Linux SSH araçlarıyla node sağlığını inceleyebilirsin; cell/ILOM özel API yoksa belirt.",
+        ])
     else:
         identity = NL.join([
         "Sen 15+ yillik deneyime sahip kıdemli bir Linux Sistem Yoneticisi",
@@ -1704,6 +1711,39 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             # ── 5. Prompt ─────────────────────────────────────────────────
             context_parts = []
+            if chat_platform == "openshift":
+                try:
+                    from app.services.agent.tools import _openshift_ask_handler
+                    import json as _json_ocp
+                    ocp_live = _openshift_ask_handler(db, {"question": message}, {})
+                    if ocp_live.get("ok"):
+                        context_parts.append(
+                            "OPENSHIFT CANLI ÖZET (API):\n"
+                            + _json_ocp.dumps(
+                                {
+                                    k: ocp_live.get(k)
+                                    for k in (
+                                        "cluster", "version", "node_count", "nodes",
+                                        "project_count", "pod_count", "pods_by_status",
+                                        "problem_pod_count", "problem_pods_sample",
+                                    )
+                                    if ocp_live.get(k) is not None
+                                },
+                                ensure_ascii=False,
+                                default=str,
+                            )[:12000]
+                        )
+                    elif ocp_live.get("error"):
+                        context_parts.append(
+                            f"OPENSHIFT CANLI ÖZET: alınamadı — {ocp_live.get('error')}"
+                        )
+                except Exception as _ocp_e:
+                    logger.warning(f"[Chat] openshift prefetch: {_ocp_e}")
+            elif chat_platform == "exadata" and not selected_servers:
+                context_parts.append(
+                    "EXADATA NOTU: Bu ortamda Exadata node'una bağlı sunucu kaydı yok. "
+                    "Cevap uydurma; kullanıcıyı Exadata envanter tanımlamaya yönlendir."
+                )
             if ssh_ctx:
                 # Per-server contexts for focused summary
                 _ssh_server_ctxs = [c for c in ssh_ctx.split("\n\n") if c.strip()]

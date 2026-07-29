@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
+import { chatMarkdownComponents } from '../components/chatMarkdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
@@ -37,6 +38,13 @@ interface Suggestions {
   suggestions: string[]
   report_suggestions?: string[]
   sample_vms: string[]
+}
+
+interface AIModel {
+  name: string
+  size: number
+  parameter_size: string
+  family: string
 }
 
 interface HypervisorChatProps {
@@ -217,9 +225,9 @@ function MessageBubble({ msg }: { msg: Message }) {
           <Server size={14} className="text-white" />
         </div>
       )}
-      <div className={`max-w-[85%] ${isUser ? 'order-first' : ''}`}>
+      <div className={`min-w-0 max-w-[min(85%,48rem)] ${isUser ? 'order-first' : ''}`}>
         <div
-          className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+          className={`rounded-2xl px-4 py-3 text-sm leading-relaxed overflow-hidden ${
             isUser
               ? 'bg-blue-600 text-white rounded-tr-sm ml-auto'
               : msg.error
@@ -230,11 +238,10 @@ function MessageBubble({ msg }: { msg: Message }) {
           {isUser ? (
             <p>{msg.content}</p>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none
+            <div className="prose prose-invert prose-sm max-w-none min-w-0
               prose-headings:text-blue-300 prose-headings:font-semibold
               prose-strong:text-white prose-code:text-amber-300
               prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded
-              prose-table:text-xs prose-th:bg-slate-900/50 prose-td:border-slate-700
               prose-a:text-blue-400">
               {msg.error ? (
                 <div className="flex items-center gap-2">
@@ -242,7 +249,7 @@ function MessageBubble({ msg }: { msg: Message }) {
                   <span>{msg.content}</span>
                 </div>
               ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
                   {msg.content}
                 </ReactMarkdown>
               )}
@@ -418,6 +425,9 @@ export default function HypervisorChat({
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<string>(
+    () => localStorage.getItem('virt_chat_selected_model') || localStorage.getItem('chat_selected_model') || 'llama3:70b',
+  )
   const [historySearch, setHistorySearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -429,6 +439,31 @@ export default function HypervisorChat({
     const t = setTimeout(() => setDebouncedSearch(historySearch), 300)
     return () => clearTimeout(t)
   }, [historySearch])
+
+  const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+    queryKey: ['ai-models'],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/chat/models`, { signal: AbortSignal.timeout(5000) })
+        if (!res.ok) return { success: false, models: [], default: 'llama3.2:3b' }
+        return res.json()
+      } catch {
+        return { success: false, models: [], default: 'llama3.2:3b' }
+      }
+    },
+    retry: false,
+    staleTime: 60_000,
+  })
+
+  const availableModels: AIModel[] =
+    modelsData?.models?.length
+      ? modelsData.models
+      : [
+          { name: 'llama3.2:3b', size: 0, parameter_size: '3.2B', family: 'llama' },
+          { name: 'llama3.1:8b', size: 0, parameter_size: '8.0B', family: 'llama' },
+          { name: 'qwen2.5:7b', size: 0, parameter_size: '7.6B', family: 'qwen2' },
+          { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' },
+        ]
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
     queryKey: ['hv-chat-sessions', debouncedSearch],
@@ -549,6 +584,7 @@ export default function HypervisorChat({
         body: JSON.stringify({
           question: q.trim(),
           session_id: activeSessionId,
+          model: selectedModel,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -586,7 +622,7 @@ export default function HypervisorChat({
       setLoading(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [loading, selectedSessionId, queryClient, loadSessionMessages])
+  }, [loading, selectedSessionId, selectedModel, queryClient, loadSessionMessages])
 
   useEffect(() => {
     if (initialQuestion && !initialHandled.current) {
@@ -611,17 +647,19 @@ export default function HypervisorChat({
 
   const chatPanel = (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
-      {!embedded && (
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50 bg-slate-900 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <HardDrive size={18} className="text-white" />
+      <div className="flex-shrink-0 px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
+        <div className="flex items-center gap-3 flex-wrap">
+          {!embedded && (
+            <div className="flex items-center gap-3 mr-2">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                <HardDrive size={18} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-white font-semibold text-sm leading-tight">Hypervisor Asistanı</h1>
+                <p className="text-slate-400 text-[11px]">Altyapı sorguları ve rapor üretimi</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-white font-semibold text-lg">Hypervisor Asistanı</h1>
-              <p className="text-slate-400 text-xs">Altyapı sorguları ve rapor üretimi</p>
-            </div>
-          </div>
+          )}
           {messages.length > 0 && (
             <button
               type="button"
@@ -642,30 +680,26 @@ export default function HypervisorChat({
               <FileDown size={13} /> Sohbeti PDF
             </button>
           )}
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 text-sm font-medium">Model:</span>
+            <select
+              value={selectedModel}
+              onChange={e => {
+                setSelectedModel(e.target.value)
+                localStorage.setItem('virt_chat_selected_model', e.target.value)
+              }}
+              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
+              style={{ appearance: 'auto' }}
+            >
+              {availableModels.map(m => (
+                <option key={m.name} value={m.name} className="bg-slate-900 text-white">
+                  {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-      )}
-      {embedded && messages.length > 0 && (
-        <div className="flex justify-end px-4 pt-2 flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => exportChatMessagesToPrintWindow(
-              messages.map(m => ({
-                role: m.role,
-                content: m.content,
-                created_at: m.timestamp?.toISOString?.() || undefined,
-              })),
-              {
-                title: 'Sanallaştırma AI Asistan',
-                subtitle: new Date().toLocaleString('tr-TR'),
-                filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
-              },
-            )}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-          >
-            <FileDown size={13} /> Sohbeti PDF
-          </button>
-        </div>
-      )}
+      </div>
 
       <QuickStatsBar />
 

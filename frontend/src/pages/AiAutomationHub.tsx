@@ -1,13 +1,13 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Bot, Server, Shield, Cloud, Layers, Globe } from 'lucide-react'
+import { Bot, Server, Shield, Cloud, Layers, Globe, Boxes } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import Chat from './Chat'
 import WindowsChat from './WindowsChat'
 import UnifiedChat from './UnifiedChat'
 import HypervisorChat from './HypervisorChat'
 
-type PlatformId = 'all' | 'linux' | 'windows' | 'virt' | 'exadata'
+type PlatformId = 'all' | 'linux' | 'windows' | 'virt' | 'exadata' | 'openshift'
 
 const PLATFORM_TABS: {
   id: PlatformId
@@ -15,10 +15,11 @@ const PLATFORM_TABS: {
   icon: React.ReactNode
   moduleIds: string[]
 }[] = [
-  { id: 'all', label: 'Tüm Altyapı', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'executive'] },
+  { id: 'all', label: 'Tüm Altyapı', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'executive', 'openshift'] },
   { id: 'linux', label: 'Linux', icon: <Server size={14} />, moduleIds: ['linux'] },
   { id: 'windows', label: 'Windows', icon: <Shield size={14} />, moduleIds: ['windows'] },
   { id: 'virt', label: 'Sanallaştırma', icon: <Cloud size={14} />, moduleIds: ['virtualization'] },
+  { id: 'openshift', label: 'OpenShift', icon: <Boxes size={14} />, moduleIds: ['openshift'] },
   { id: 'exadata', label: 'Exadata', icon: <Layers size={14} />, moduleIds: ['exadata'] },
 ]
 
@@ -82,6 +83,19 @@ export default function AiAutomationHub() {
         {platform === 'all' && <UnifiedChat embedded />}
         {platform === 'linux' && <Chat embedded inventoryPlatform="linux" />}
         {platform === 'windows' && <WindowsChat embedded />}
+        {platform === 'openshift' && (
+          <>
+            <div className="flex-shrink-0 mx-4 mt-3 px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-sm text-cyan-200">
+              <span className="font-semibold">OpenShift</span>
+              <span className="text-cyan-200/70 ml-2">
+                — cluster API üzerinden pod, node, event ve proje sorgulama
+              </span>
+            </div>
+            <div className="flex-1 min-h-0">
+              <Chat embedded inventoryPlatform="openshift" />
+            </div>
+          </>
+        )}
         {platform === 'exadata' && (
           <>
             <div className="flex-shrink-0 mx-4 mt-3 px-4 py-2 rounded-xl bg-orange-500/10 border border-orange-500/25 text-sm text-orange-200">
