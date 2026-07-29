@@ -5,12 +5,14 @@ import { chatMarkdownComponents } from '../components/chatMarkdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
-  Send, Cpu, Server, MemoryStick, HardDrive, Zap,
+  Cpu, Server, MemoryStick, HardDrive, Zap,
   MessageSquare, Lightbulb, Loader2, AlertCircle,
-  ChevronDown, ChevronUp, FileDown,
-  Search, Plus, Trash2, BarChart3, History,
+  ChevronDown, ChevronUp, FileDown, BarChart3,
 } from 'lucide-react'
 import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '../utils/pdfExport'
+import {
+  NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect, NlChatInput,
+} from '../components/nlChatUi'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,16 +92,6 @@ function IntentBadges({ intents, reportType }: { intents?: string[]; reportType?
       })}
     </div>
   )
-}
-
-function formatSessionDate(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  if (diff < 86400000) return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-  if (diff < 604800000) return d.toLocaleDateString('tr-TR', { weekday: 'short' })
-  return d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
 }
 
 // ── Quick stats bar ───────────────────────────────────────────────────────────
@@ -306,113 +298,6 @@ function TypingIndicator() {
   )
 }
 
-// ── History sidebar ───────────────────────────────────────────────────────────
-
-function HistorySidebar({
-  sessions,
-  selectedId,
-  search,
-  onSearchChange,
-  onSelect,
-  onNew,
-  onDelete,
-  onClearAll,
-  loading,
-}: {
-  sessions: ChatSession[]
-  selectedId: number | null
-  search: string
-  onSearchChange: (v: string) => void
-  onSelect: (id: number | null) => void
-  onNew: () => void
-  onDelete: (id: number) => void
-  onClearAll: () => void
-  loading?: boolean
-}) {
-  return (
-    <div className="w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col">
-      <div className="p-3 border-b border-slate-700/50 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
-            <History size={14} />
-            Geçmiş
-          </div>
-          <div className="flex gap-1">
-            <button
-              onClick={onNew}
-              className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-              title="Yeni sohbet"
-            >
-              <Plus size={14} />
-            </button>
-            {sessions.length > 0 && (
-              <button
-                onClick={onClearAll}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/40 text-slate-400 hover:text-red-400 transition-colors"
-                title="Tümünü sil"
-              >
-                <Trash2 size={14} />
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            value={search}
-            onChange={e => onSearchChange(e.target.value)}
-            placeholder="Sohbetlerde ara..."
-            className="w-full bg-slate-800 border border-slate-700/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
-          />
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-2">
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 size={20} className="text-slate-500 animate-spin" />
-          </div>
-        ) : sessions.length === 0 ? (
-          <div className="text-center py-8 px-2">
-            <p className="text-xs text-slate-500">
-              {search ? 'Arama sonucu yok' : 'Henüz sohbet yok'}
-            </p>
-            {!search && (
-              <button onClick={onNew} className="mt-2 text-xs text-blue-400 hover:text-blue-300">
-                + Yeni sohbet başlat
-              </button>
-            )}
-          </div>
-        ) : (
-          sessions.map(session => (
-            <div
-              key={session.id}
-              onClick={() => onSelect(session.id)}
-              className={`group flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer mb-1 transition-colors ${
-                selectedId === session.id
-                  ? 'bg-blue-600/20 border border-blue-500/30'
-                  : 'hover:bg-slate-800/80 border border-transparent'
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-slate-200 truncate">{session.title}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  {session.message_count} mesaj · {formatSessionDate(session.updated_at || session.created_at)}
-                </p>
-              </div>
-              <button
-                onClick={e => { e.stopPropagation(); onDelete(session.id) }}
-                className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-opacity flex-shrink-0"
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HypervisorChat({
@@ -432,7 +317,6 @@ export default function HypervisorChat({
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
   const initialHandled = useRef(false)
 
   useEffect(() => {
@@ -620,7 +504,6 @@ export default function HypervisorChat({
       }])
     } finally {
       setLoading(false)
-      setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [loading, selectedSessionId, selectedModel, queryClient, loadSessionMessages])
 
@@ -632,13 +515,6 @@ export default function HypervisorChat({
     }
   }, [initialQuestion, sendQuestion, onInitialQuestionUsed])
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendQuestion(input)
-    }
-  }
-
   function startNewChat() {
     createSessionMutation.mutate()
   }
@@ -646,60 +522,46 @@ export default function HypervisorChat({
   const isEmpty = messages.length === 0 && !loading
 
   const chatPanel = (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0">
-      <div className="flex-shrink-0 px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
-        <div className="flex items-center gap-3 flex-wrap">
-          {!embedded && (
-            <div className="flex items-center gap-3 mr-2">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                <HardDrive size={18} className="text-white" />
-              </div>
-              <div>
-                <h1 className="text-white font-semibold text-sm leading-tight">Hypervisor Asistanı</h1>
-                <p className="text-slate-400 text-[11px]">Altyapı sorguları ve rapor üretimi</p>
-              </div>
+    <NlChatPanel>
+      <NlTopBar>
+        {!embedded && (
+          <div className="flex items-center gap-3 mr-2">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <HardDrive size={18} className="text-white" />
             </div>
-          )}
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={() => exportChatMessagesToPrintWindow(
-                messages.map(m => ({
-                  role: m.role,
-                  content: m.content,
-                  created_at: m.timestamp?.toISOString?.() || undefined,
-                })),
-                {
-                  title: 'Sanallaştırma AI Asistan',
-                  subtitle: new Date().toLocaleString('tr-TR'),
-                  filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
-                },
-              )}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-            >
-              <FileDown size={13} /> Sohbeti PDF
-            </button>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 text-sm font-medium">Model:</span>
-            <select
-              value={selectedModel}
-              onChange={e => {
-                setSelectedModel(e.target.value)
-                localStorage.setItem('virt_chat_selected_model', e.target.value)
-              }}
-              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
-              style={{ appearance: 'auto' }}
-            >
-              {availableModels.map(m => (
-                <option key={m.name} value={m.name} className="bg-slate-900 text-white">
-                  {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
-                </option>
-              ))}
-            </select>
+            <div>
+              <h1 className="text-white font-semibold text-sm leading-tight">Hypervisor Asistanı</h1>
+              <p className="text-slate-400 text-[11px]">Altyapı sorguları ve rapor üretimi</p>
+            </div>
           </div>
-        </div>
-      </div>
+        )}
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => exportChatMessagesToPrintWindow(
+              messages.map(m => ({
+                role: m.role,
+                content: m.content,
+                created_at: m.timestamp?.toISOString?.() || undefined,
+              })),
+              {
+                title: 'Sanallaştırma AI Asistan',
+                subtitle: new Date().toLocaleString('tr-TR'),
+                filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
+              },
+            )}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+          >
+            <FileDown size={13} /> Sohbeti PDF
+          </button>
+        )}
+        <NlModelSelect
+          value={selectedModel}
+          onChange={setSelectedModel}
+          models={availableModels}
+          storageKey="virt_chat_selected_model"
+        />
+      </NlTopBar>
 
       <QuickStatsBar />
 
@@ -750,40 +612,20 @@ export default function HypervisorChat({
         </div>
       )}
 
-      <div className="px-4 pb-4 max-w-3xl mx-auto w-full flex-shrink-0">
-        <div className="flex items-end gap-2 bg-slate-800 border border-slate-700/50 rounded-2xl px-4 py-3 focus-within:border-blue-500/50 transition-colors">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Sorunuzu yazın… (ör: Kapasite raporu oluştur, Kaç ESX hostum var?)"
-            rows={1}
-            className="flex-1 bg-transparent text-white placeholder-slate-500 text-sm resize-none focus:outline-none leading-relaxed"
-            style={{ maxHeight: '120px', overflowY: 'auto' }}
-          />
-          <button
-            onClick={() => sendQuestion(input)}
-            disabled={!input.trim() || loading}
-            className="w-8 h-8 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:opacity-50 flex items-center justify-center transition-all flex-shrink-0"
-          >
-            {loading ? (
-              <Loader2 size={15} className="text-white animate-spin" />
-            ) : (
-              <Send size={15} className="text-white" />
-            )}
-          </button>
-        </div>
-        <p className="text-center text-[10px] text-slate-600 mt-1.5">
-          Enter ile gönder · Shift+Enter yeni satır · Rapor soruları desteklenir
-        </p>
-      </div>
-    </div>
+      <NlChatInput
+        value={input}
+        onChange={setInput}
+        onSubmit={() => sendQuestion(input)}
+        loading={loading}
+        placeholder="Sorunuzu yazın… (ör: Kapasite raporu oluştur, Kaç ESX hostum var?)"
+        hint="Enter ile gönder · Shift+Enter yeni satır · Rapor soruları desteklenir"
+      />
+    </NlChatPanel>
   )
 
   return (
-    <div className={`flex bg-slate-900 min-h-0 overflow-hidden ${embedded ? 'h-full' : '-m-5 h-[calc(100vh-3.5rem)]'}`}>
-      <HistorySidebar
+    <NlChatRoot embedded={embedded}>
+      <NlHistorySidebar
         sessions={sessions}
         selectedId={selectedSessionId}
         search={historySearch}
@@ -799,6 +641,6 @@ export default function HypervisorChat({
         loading={sessionsLoading}
       />
       {chatPanel}
-    </div>
+    </NlChatRoot>
   )
 }

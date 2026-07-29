@@ -105,6 +105,15 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
 
             io = perf_io.get(r.get("vm_ref")) or {}
 
+            # CPU Ready % — 20s interval summation: ready_ms / (20000 * vCPU) * 100
+            cpu_ready_ms = io.get("cpu_ready_ms")
+            cpu_ready_pct = None
+            if cpu_ready_ms is not None and num_cpu:
+                try:
+                    cpu_ready_pct = round(float(cpu_ready_ms) / (20000.0 * float(num_cpu)) * 100.0, 2)
+                except Exception:
+                    cpu_ready_pct = None
+
             vms.append({
                 "vm_ref": r.get("vm_ref"),
                 "name": r.get("name"),
@@ -141,6 +150,16 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
                 "disk_write_iops": io.get("disk_write_iops"),
                 "net_rx_kbps": io.get("net_rx_kbps"),
                 "net_tx_kbps": io.get("net_tx_kbps"),
+                "cpu_ready_ms": cpu_ready_ms,
+                "cpu_ready_pct": cpu_ready_pct,
+                "disk_latency_ms": io.get("disk_latency_ms"),
+                "disk_read_latency_ms": io.get("disk_read_latency_ms"),
+                "disk_write_latency_ms": io.get("disk_write_latency_ms"),
+                "ds_read_latency_ms": io.get("ds_read_latency_ms"),
+                "ds_write_latency_ms": io.get("ds_write_latency_ms"),
+                "snapshot_space_gb": r.get("snapshot_space_gb"),
+                "storage_uncommitted_bytes": r.get("storage_uncommitted_bytes"),
+                "custom_attrs": r.get("custom_attrs") or [],
             })
 
     return {"vms": vms, "errors": errors, "hypervisors": len(hvs)}
@@ -165,3 +184,24 @@ def fetch_datastore_status(db: Session) -> Dict[str, Any]:
             errors.append(f"{hv.name}: {exc}")
 
     return {"datastores": datastores, "errors": errors, "hypervisors": len(hvs)}
+
+
+def fetch_cluster_status(db: Session) -> Dict[str, Any]:
+    """Tüm VMware hypervisor'larda Cluster HA/DRS durumunu canlı çeker."""
+    hvs = _vmware_hypervisors(db)
+    if not hvs:
+        return {"clusters": [], "errors": ["Tanımlı VMware hypervisor yok"]}
+
+    clusters: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for hv in hvs:
+        client = _build_client(hv)
+        try:
+            for c in client.list_clusters_status():
+                c["hypervisor"] = hv.name
+                clusters.append(c)
+        except Exception as exc:
+            logger.error("list_clusters_status failed for %s: %s", hv.name, exc, exc_info=True)
+            errors.append(f"{hv.name}: {exc}")
+
+    return {"clusters": clusters, "errors": errors, "hypervisors": len(hvs)}

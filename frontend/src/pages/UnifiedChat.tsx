@@ -4,10 +4,14 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
-import { FileDown } from 'lucide-react'
+import { FileDown, Globe } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
-import { chatMarkdownComponents, chatBubbleShell, chatResponseBody } from '../components/chatMarkdown'
+import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
+import {
+  NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
+  NlEmptyState, NlChatInput, nlUserBubbleClass, nlAssistantBubbleClass,
+} from '../components/nlChatUi'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -374,8 +378,7 @@ const UnifiedChat: React.FC<{
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = () => {
     if (!input.trim() || isLoading) return
     const messageText = input
     setInput('')
@@ -404,145 +407,78 @@ const UnifiedChat: React.FC<{
     return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
   }
 
-  const formatSessionDate = (dateString: string) => {
-    const date = new Date(dateString)
-    if (Number.isNaN(date.getTime())) return '—'
-    const now = new Date()
-    const days = Math.floor((now.getTime() - date.getTime()) / 86400000)
-    if (days <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Dün'
-    if (days < 7) return `${days} gün önce`
-    return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
-  }
-
   const thinkingLabel =
     thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (Linux SSH / Windows WinRM / Sanallaştırma)...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
   return (
     <>
-    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
-      {/* Üst bar */}
-      <div className="flex-shrink-0 p-4 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="px-3 py-1 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-200 text-xs font-semibold">
-            Tüm Altyapı — Linux + Windows + Sanallaştırma
-          </div>
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={() => exportChatMessagesToPrintWindow(messages, {
-                title: 'Tüm Altyapı AI Asistan',
-                subtitle: new Date().toLocaleString('tr-TR'),
-                filename: `unified_ai_${new Date().toISOString().slice(0, 10)}`,
-              })}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-              title="Sohbeti PDF olarak kaydet"
-            >
-              <FileDown size={13} /> Sohbeti PDF
-            </button>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 text-sm font-medium">Model:</span>
-            <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('unified_chat_selected_model', e.target.value) }}
-              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-400 cursor-pointer min-w-[180px]"
-              style={{ appearance: 'auto' }}>
-              {availableModels.map(m => (
-                <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
-                  {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          <span className="text-xs text-slate-500">
-            Sunucu adı veya IP belirtirseniz otomatik hedeflenir, aksi halde tüm AI Ready sunucular taranır.
-          </span>
-        </div>
-      </div>
+      <NlChatRoot embedded={embedded}>
+        <NlHistorySidebar
+          sessions={sessions}
+          selectedId={selectedSessionId}
+          onSelect={id => {
+            if (id !== selectedSessionId) {
+              abortRef.current?.abort()
+              setIsLoading(false)
+              setStreamingText('')
+              setPendingUserMessage(null)
+              setThinkingPhase('idle')
+            }
+            setSelectedSessionId(id)
+            setInput('')
+          }}
+          onNew={() => createSessionMutation.mutate()}
+          onDelete={id => setConfirmDialog({
+            open: true,
+            message: 'Bu chat silinecek?',
+            onConfirm: () => deleteSessionMutation.mutate(id),
+          })}
+          onClearAll={() => setConfirmDialog({
+            open: true,
+            message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?',
+            onConfirm: () => clearAllSessionsMutation.mutate(),
+          })}
+        />
+        <NlChatPanel>
+          <NlTopBar>
+            <span className="px-2.5 py-1 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-200 text-[11px] font-medium">
+              Tüm Altyapı
+            </span>
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => exportChatMessagesToPrintWindow(messages, {
+                  title: 'Tüm Altyapı AI Asistan',
+                  subtitle: new Date().toLocaleString('tr-TR'),
+                  filename: `unified_ai_${new Date().toISOString().slice(0, 10)}`,
+                })}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+                title="Sohbeti PDF olarak kaydet"
+              >
+                <FileDown size={13} /> Sohbeti PDF
+              </button>
+            )}
+            <NlModelSelect
+              value={selectedModel}
+              onChange={setSelectedModel}
+              models={availableModels}
+              storageKey="unified_chat_selected_model"
+            />
+          </NlTopBar>
 
-      <ChatPlatformStatsBar platform="all" />
+          <ChatPlatformStatsBar platform="all" />
 
-      <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
-        {/* Sol Panel - Oturumlar */}
-        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl min-h-0">
-          <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
-            <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
-            <div className="flex items-center gap-1">
-              <button onClick={() => createSessionMutation.mutate()}
-                className="px-2 py-1 bg-violet-600 text-white text-xs rounded-lg hover:bg-violet-500">+ Yeni</button>
-              {sessions.length > 0 && (
-                <button onClick={() => setConfirmDialog({ open: true, message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?', onConfirm: () => clearAllSessionsMutation.mutate() })}
-                  className="px-2 py-1 bg-white/[0.05] text-slate-400 text-xs rounded-lg hover:bg-white/[0.08]">✕</button>
-              )}
-            </div>
-          </div>
-          <div className="overflow-y-auto flex-1 min-h-0 p-2">
-            {sessions.length === 0 ? (
-              <div className="text-center py-6 text-slate-500 text-xs">Henüz chat yok</div>
-            ) : sessions.map(session => (
-              <div key={session.id}
-                className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
-                  selectedSessionId === session.id ? 'bg-violet-600/20 border border-violet-500/30' : 'hover:bg-white/[0.04]'
-                }`}
-                onClick={() => {
-                  if (session.id !== selectedSessionId) {
-                    abortRef.current?.abort()
-                    setIsLoading(false)
-                    setStreamingText('')
-                    setPendingUserMessage(null)
-                    setThinkingPhase('idle')
-                  }
-                  setSelectedSessionId(session.id)
-                  setInput('')
-                }}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-slate-200 truncate">{session.title}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {session.message_count} mesaj · {formatSessionDate(session.updated_at || session.created_at)}
-                  </p>
-                </div>
-                <button onClick={e => { e.stopPropagation(); setConfirmDialog({ open: true, message: 'Bu chat silinecek?', onConfirm: () => deleteSessionMutation.mutate(session.id) }) }}
-                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs p-1 rounded transition-opacity">
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Sağ Panel */}
-        <div className="flex-1 min-h-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
-          {/* Mesajlar */}
-          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-8">
-            {selectedSessionId === null ? (
-              <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-violet-500/25">
-                  <span className="text-2xl font-bold text-white">AI</span>
-                </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Altyapı Asistanı</h2>
-                <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
-              </div>
-            ) : (messages.length === 0 && !pendingUserMessage) ? (
-              <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-violet-500/25">
-                  <span className="text-4xl">🌐</span>
-                </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Altyapınızı Sorgulayın</h2>
-                <p className="text-slate-400 text-center max-w-md mb-8">
-                  Linux, Windows ve sanallaştırma altyapınızın tamamı hakkında doğal dilde sorun —
-                  platformlar arası karşılaştırma ve genel özet dahil.
-                </p>
-                <div className="flex flex-col gap-2 w-full max-w-lg">
-                  {SUGGESTED_QUESTIONS.map(q => (
-                    <button key={q} type="button" onClick={() => sendMessage(q)}
-                      className="text-left text-sm px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors">
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
+            {messages.length === 0 && !pendingUserMessage ? (
+              <NlEmptyState
+                icon={<Globe size={24} className="text-white" />}
+                description="Linux, Windows ve sanallaştırma altyapınızın tamamı hakkında doğal dilde sorun — platformlar arası karşılaştırma ve genel özet dahil."
+                suggestions={SUGGESTED_QUESTIONS}
+                onSelectSuggestion={sendMessage}
+              />
             ) : (
-              <div className="space-y-4">
+              <div className="max-w-3xl mx-auto space-y-4">
                 {[
                   ...messages,
                   ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
@@ -550,46 +486,48 @@ const UnifiedChat: React.FC<{
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`${chatBubbleShell} ${
-                      msg.role === 'user'
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border border-violet-400/30'
-                        : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
-                    }`}>
+                    <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
                       ) : (
                         <div className={chatResponseBody}>
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {msg.content?.trim().length > 40 && (
-                              <button type="button"
+                              <button
+                                type="button"
                                 onClick={() => exportMarkdownToPrintWindow(msg.content, {
                                   title: 'AI Asistan Yanıtı',
                                   subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString('tr-TR') : undefined,
                                   filename: `ai_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
                                 })}
-                                className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1">
+                                className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1"
+                              >
                                 <FileDown size={12} /> PDF
                               </button>
                             )}
                             {getFirstMarkdownTable(msg.content) && (
                               <>
-                              <button type="button"
-                                onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
-                                className="text-xs px-2 py-1.5 rounded bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] flex items-center gap-1">
-                                CSV İndir
-                              </button>
-                              <button type="button"
-                                onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
-                                className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
-                                Excel İndir
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
+                                  className="text-xs px-2 py-1.5 rounded bg-slate-700/70 hover:bg-slate-700 text-slate-200 border border-slate-600/50 flex items-center gap-1"
+                                >
+                                  CSV İndir
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
+                                  className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1"
+                                >
+                                  Excel İndir
+                                </button>
                               </>
                             )}
                           </div>
                         </div>
                       )}
-                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-violet-200' : 'text-slate-500'}`}>
+                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
                         {formatDate(msg.created_at)}
                       </div>
                     </div>
@@ -598,7 +536,7 @@ const UnifiedChat: React.FC<{
 
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start">
-                    <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
+                    <div className={`${nlAssistantBubbleClass} max-w-[min(85%,48rem)] w-full`}>
                       {toolCalls.length > 0 && (
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
@@ -638,49 +576,22 @@ const UnifiedChat: React.FC<{
             )}
           </div>
 
-          {/* Input */}
-          <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
-            <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-cyber-deep/80 border border-white/[0.08] rounded-2xl p-2">
-              <div className="flex-1 relative">
-                <input type="text" value={input} onChange={e => setInput(e.target.value)}
-                  placeholder={isLoading ? 'AI düşünüyor...' : 'Örn: Genel altyapı durumu nasıl? · En yüksek CPU kullanan sunucular...'}
-                  className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors ${
-                    isLoading ? 'border-violet-500/60' : 'border-white/[0.06]'
-                  }`}
-                  disabled={isLoading}
-                />
-                {isLoading && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {[0,1,2].map(i => (
-                      <div key={i} className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 100}ms` }} />
-                    ))}
-                  </div>
-                )}
-              </div>
-              {isLoading ? (
-                <button type="button" onClick={handleAbort}
-                  className="px-5 py-3 bg-rose-600/90 text-white rounded-xl hover:bg-rose-500 transition-all text-sm font-medium">
-                  ⏹ Durdur
-                </button>
-              ) : (
-                <button type="submit" disabled={!input.trim()}
-                  className="px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl hover:from-violet-500 hover:to-indigo-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-violet-500/25">
-                  <span className="flex items-center gap-2">
-                    <span>Gönder</span><span>→</span>
-                  </span>
-                </button>
-              )}
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-    <ConfirmDialog
-      open={confirmDialog.open}
-      message={confirmDialog.message}
-      onConfirm={confirmDialog.onConfirm}
-      onCancel={() => setConfirmDialog(d => ({ ...d, open: false }))}
-    />
+          <NlChatInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            onAbort={handleAbort}
+            loading={isLoading}
+            placeholder="Örn: Genel altyapı durumu nasıl? · En yüksek CPU kullanan sunucular..."
+          />
+        </NlChatPanel>
+      </NlChatRoot>
+      <ConfirmDialog
+        open={confirmDialog.open}
+        message={confirmDialog.message}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(d => ({ ...d, open: false }))}
+      />
     </>
   )
 }

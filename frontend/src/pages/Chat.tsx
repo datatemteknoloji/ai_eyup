@@ -7,10 +7,21 @@ import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
 import * as XLSX from 'xlsx'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
-import { FileDown } from 'lucide-react'
+import { FileDown, Server as ServerIcon, Boxes, Layers } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
-import { chatMarkdownComponents, chatBubbleShell, chatResponseBody } from '../components/chatMarkdown'
+import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
+import {
+  NlChatRoot,
+  NlHistorySidebar,
+  NlChatPanel,
+  NlTopBar,
+  NlModelSelect,
+  NlEmptyState,
+  NlChatInput,
+  nlUserBubbleClass,
+  nlAssistantBubbleClass,
+} from '../components/nlChatUi'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -532,14 +543,6 @@ const Chat: React.FC<{
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
-    const messageText = input
-    setInput('')  // Gönderilince anında temizle
-    sendMessage(messageText)
-  }
-
   useEffect(() => {
     if (initialQuestion && !initialHandled.current) {
       initialHandled.current = true
@@ -562,17 +565,6 @@ const Chat: React.FC<{
     return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
   }
 
-  const formatSessionDate = (dateString: string) => {
-    const date = new Date(dateString)
-    if (Number.isNaN(date.getTime())) return '—'
-    const now = new Date()
-    const days = Math.floor((now.getTime() - date.getTime()) / 86400000)
-    if (days <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Dün'
-    if (days < 7) return `${days} gün önce`
-    return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
-  }
-
   const aiReadyServers = servers.filter(s => s.ai_ready && s.status === 'ONLINE')
   const filteredAiReadyServers = aiReadyServers.filter(s => {
     if (!serverSearch) return true
@@ -585,183 +577,153 @@ const Chat: React.FC<{
     thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus)...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
+  const emptyDescription =
+    inventoryPlatform === 'openshift'
+      ? 'Pod, node, proje ve cluster durumu hakkında doğal dilde sorun.'
+      : inventoryPlatform === 'exadata'
+      ? 'Exadata node’ları hakkında doğal dilde sorun.'
+      : 'Sunucu durumu, performans, servis ve log sorularını doğal dilde sorun.'
+
+  const emptyIcon =
+    inventoryPlatform === 'openshift' ? <Boxes size={24} className="text-white" /> :
+    inventoryPlatform === 'exadata' ? <Layers size={24} className="text-white" /> :
+    <ServerIcon size={24} className="text-white" />
+
+  const hasMessages =
+    messages.length > 0 ||
+    localInventoryMessages.length > 0 ||
+    (pendingUserMessage != null && streamSessionRef.current === selectedSessionId)
+
+  const showEmpty = selectedSessionId === null || !hasMessages
+
+  const pdfTitle =
+    inventoryPlatform === 'openshift' ? 'OpenShift AI' :
+    inventoryPlatform === 'exadata' ? 'Exadata AI' :
+    'Linux AI'
+
+  const handleSessionSelect = (id: number) => {
+    if (id !== selectedSessionId) {
+      abortRef.current?.abort()
+      setIsLoading(false)
+      setStreamingText('')
+      setPendingUserMessage(null)
+      setThinkingPhase('idle')
+      setLocalInventoryMessages([])
+    }
+    setSelectedSessionId(id)
+    setInput('')
+  }
+
   return (
     <>
-    <div className={`flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 ${embedded ? 'h-full min-h-0' : '-m-5 h-[calc(100vh-3.5rem)] min-h-0'}`}>
-      {/* Üst bar — Virt formu: model + opsiyonel hedef + PDF */}
-      <div className="flex-shrink-0 p-3 bg-cyber-deep/80 backdrop-blur border-b border-white/[0.06]">
-        <div className="flex items-center gap-3 flex-wrap">
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={() => exportChatMessagesToPrintWindow(messages, {
-                title: inventoryPlatform === 'openshift' ? 'OpenShift AI' : inventoryPlatform === 'exadata' ? 'Exadata AI' : 'Linux AI',
-                subtitle: new Date().toLocaleString('tr-TR'),
-                filename: `${inventoryPlatform}_ai_${new Date().toISOString().slice(0, 10)}`,
-              })}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-              title="Sohbeti PDF olarak kaydet"
-            >
-              <FileDown size={13} /> Sohbeti PDF
-            </button>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 text-sm font-medium">Model:</span>
-            <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('chat_selected_model', e.target.value) }}
-              className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
-              style={{ appearance: 'auto' }}>
-              {availableModels.map(m => (
-                <option key={m.name} value={m.name} className="bg-cyber-deep text-white">
-                  {m.name} {m.parameter_size ? `(${m.parameter_size})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          {inventoryPlatform === 'openshift' ? (
-            <div className="px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-sm text-cyan-300">
-              OpenShift API
-            </div>
-          ) : (
-          <div className="relative" ref={serverDropdownRef}>
-            <button ref={serverBtnRef} type="button"
-              onClick={() => {
-                if (serverDropdownOpen) { setServerDropdownOpen(false); setServerMenuRect(null) }
-                else {
-                  const r = serverBtnRef.current!.getBoundingClientRect()
-                  setServerMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
-                  setServerDropdownOpen(true)
-                }
-              }}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-800/80 border border-slate-600/80 rounded-xl text-left min-w-[200px] hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <span className="text-slate-300 text-sm">
-                {selectedServers.length === 0 ? 'Hedef (opsiyonel)' : `${selectedServers.length} sunucu`}
-              </span>
-              <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
-            </button>
-            {serverDropdownOpen && serverMenuRect && createPortal(
-              <div ref={serverMenuRef} className="flex flex-col overflow-hidden bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl"
-                style={{ position:'fixed', top: serverMenuRect.top, left: serverMenuRect.left, width: serverMenuRect.width,
-                  maxHeight: `min(20rem, calc(100vh - ${serverMenuRect.top}px - 8px))`, zIndex: 9999 }}>
-                <div className="p-2 border-b border-white/[0.06] shrink-0">
-                  <input type="text" value={serverSearch} onChange={e => setServerSearch(e.target.value)}
-                    placeholder="Sunucu ara..." autoFocus
-                    className="w-full bg-cyber-deep border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <div className="flex items-center gap-2 p-2 border-b border-white/[0.06] shrink-0">
-                  <button type="button" onClick={() => setSelectedServers(filteredAiReadyServers.map(s => s.id))}
-                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
-                  <button type="button" onClick={() => setSelectedServers([])}
-                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
-                  <span className="text-xs text-slate-500 ml-auto">{filteredAiReadyServers.length} sunucu</span>
-                </div>
-                <div className="overflow-y-auto flex-1 min-h-0">
-                  {filteredAiReadyServers.length === 0 ? (
-                    <div className="p-4 text-center text-slate-500 text-sm">AI Ready sunucu yok</div>
-                  ) : filteredAiReadyServers.map(s => (
-                    <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer">
-                      <input type="checkbox" checked={selectedServers.includes(s.id)}
-                        onChange={e => {
-                          if (e.target.checked) setSelectedServers(prev => [...prev, s.id])
-                          else setSelectedServers(prev => prev.filter(id => id !== s.id))
-                        }}
-                        className="rounded border-white/[0.2] bg-cyber-card text-blue-500 focus:ring-blue-500" />
-                      <div>
-                        <div className="text-white text-sm font-medium">{s.name}</div>
-                        <div className="text-slate-500 text-xs font-mono">{s.ip_address}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>,
-              document.body
+      <NlChatRoot embedded={embedded}>
+        <NlHistorySidebar
+          sessions={sessions}
+          selectedId={selectedSessionId}
+          onSelect={handleSessionSelect}
+          onNew={() => createSessionMutation.mutate()}
+          onDelete={id => setConfirmDialog({
+            open: true,
+            message: 'Bu chat silinecek?',
+            onConfirm: () => deleteSessionMutation.mutate(id),
+          })}
+          onClearAll={() => setConfirmDialog({
+            open: true,
+            message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?',
+            onConfirm: () => clearAllSessionsMutation.mutate(),
+          })}
+        />
+        <NlChatPanel>
+          <NlTopBar>
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => exportChatMessagesToPrintWindow(messages, {
+                  title: pdfTitle,
+                  subtitle: new Date().toLocaleString('tr-TR'),
+                  filename: `${inventoryPlatform}_ai_${new Date().toISOString().slice(0, 10)}`,
+                })}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
+                title="Sohbeti PDF olarak kaydet"
+              >
+                <FileDown size={13} /> Sohbeti PDF
+              </button>
             )}
-          </div>
-          )}
-        </div>
-      </div>
-      <ChatPlatformStatsBar platform={inventoryPlatform} />
-
-      <div className="flex flex-1 min-h-0 gap-4 p-4 overflow-hidden max-w-[1700px] w-full mx-auto">
-        {/* Sol Panel - Oturumlar */}
-        <div className="w-72 flex-shrink-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl min-h-0">
-          <div className="p-3 border-b border-white/[0.06] flex items-center justify-between flex-shrink-0">
-            <h3 className="text-sm font-medium text-slate-300">Chat Geçmişi</h3>
-            <div className="flex items-center gap-1">
-              <button onClick={() => createSessionMutation.mutate()}
-                className="px-2 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-500">+ Yeni</button>
-              {sessions.length > 0 && (
-                <button onClick={() => setConfirmDialog({ open: true, message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?', onConfirm: () => clearAllSessionsMutation.mutate() })}
-                  className="px-2 py-1 bg-white/[0.05] text-slate-400 text-xs rounded-lg hover:bg-white/[0.08]">✕</button>
-              )}
-            </div>
-          </div>
-          <div className="overflow-y-auto flex-1 min-h-0 p-2">
-            {sessions.length === 0 ? (
-              <div className="text-center py-6 text-slate-500 text-xs">Henüz chat yok</div>
-            ) : sessions.map(session => (
-              <div key={session.id}
-                className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
-                  selectedSessionId === session.id ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-white/[0.04]'
-                }`}
-                onClick={() => {
-                  if (session.id !== selectedSessionId) {
-                    abortRef.current?.abort()
-                    setIsLoading(false)
-                    setStreamingText('')
-                    setPendingUserMessage(null)
-                    setThinkingPhase('idle')
-                    setLocalInventoryMessages([])
-                  }
-                  setSelectedSessionId(session.id)
-                  setInput('')
-                }}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-slate-200 truncate">{session.title}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {session.message_count} mesaj · {formatSessionDate(session.updated_at || session.created_at)}
-                  </p>
-                </div>
-                <button onClick={e => { e.stopPropagation(); setConfirmDialog({ open: true, message: 'Bu chat silinecek?', onConfirm: () => deleteSessionMutation.mutate(session.id) }) }}
-                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs p-1 rounded transition-opacity">
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Sağ Panel */}
-        <div className="flex-1 min-h-0 bg-cyber-card backdrop-blur rounded-[10px] border border-white/[0.06] flex flex-col overflow-hidden shadow-2xl">
-          {/* Mesajlar */}
-          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-8">
-            {selectedSessionId === null ? (
-              <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
-                  <span className="text-2xl font-bold text-white">AI</span>
-                </div>
-                <h2 className="text-3xl font-bold text-white mb-2">{
-                  inventoryPlatform === 'openshift' ? 'OpenShift Asistanı' :
-                  inventoryPlatform === 'exadata' ? 'Exadata Asistanı' :
-                  'Linux Asistanı'
-                }</h2>
-                <p className="text-slate-400 text-center max-w-md">Bir chat session'ı seçin veya yeni bir chat başlatın.</p>
-              </div>
-            ) : (messages.length === 0 && localInventoryMessages.length === 0 && !pendingUserMessage) ? (
-              <div className="h-full flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/25">
-                  <span className="text-4xl">💬</span>
-                </div>
-                <h2 className="text-3xl font-bold text-white mb-2">Altyapınızı Sorgulayın</h2>
-                <p className="text-slate-400 text-center max-w-md mb-6">
-                  {inventoryPlatform === 'openshift'
-                    ? 'Pod, node, proje ve cluster durumu hakkında doğal dilde sorun.'
-                    : inventoryPlatform === 'exadata'
-                    ? 'Exadata node’ları hakkında doğal dilde sorun.'
-                    : 'Sunucu durumu, performans, servis ve log sorularını doğal dilde sorun.'}
-                </p>
+            <NlModelSelect
+              value={selectedModel}
+              onChange={setSelectedModel}
+              models={availableModels}
+              storageKey="chat_selected_model"
+            />
+            {inventoryPlatform === 'openshift' ? (
+              <div className="px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-sm text-cyan-300">
+                OpenShift API
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="relative" ref={serverDropdownRef}>
+                <button ref={serverBtnRef} type="button"
+                  onClick={() => {
+                    if (serverDropdownOpen) { setServerDropdownOpen(false); setServerMenuRect(null) }
+                    else {
+                      const r = serverBtnRef.current!.getBoundingClientRect()
+                      setServerMenuRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) })
+                      setServerDropdownOpen(true)
+                    }
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 bg-slate-800/80 border border-slate-600/80 rounded-xl text-left min-w-[200px] hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <span className="text-slate-300 text-sm">
+                    {selectedServers.length === 0 ? 'Hedef (opsiyonel)' : `${selectedServers.length} sunucu`}
+                  </span>
+                  <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
+                </button>
+                {serverDropdownOpen && serverMenuRect && createPortal(
+                  <div ref={serverMenuRef} className="flex flex-col overflow-hidden bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl"
+                    style={{ position:'fixed', top: serverMenuRect.top, left: serverMenuRect.left, width: serverMenuRect.width,
+                      maxHeight: `min(20rem, calc(100vh - ${serverMenuRect.top}px - 8px))`, zIndex: 9999 }}>
+                    <div className="p-2 border-b border-white/[0.06] shrink-0">
+                      <input type="text" value={serverSearch} onChange={e => setServerSearch(e.target.value)}
+                        placeholder="Sunucu ara..." autoFocus
+                        className="w-full bg-cyber-deep border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div className="flex items-center gap-2 p-2 border-b border-white/[0.06] shrink-0">
+                      <button type="button" onClick={() => setSelectedServers(filteredAiReadyServers.map(s => s.id))}
+                        className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
+                      <button type="button" onClick={() => setSelectedServers([])}
+                        className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
+                      <span className="text-xs text-slate-500 ml-auto">{filteredAiReadyServers.length} sunucu</span>
+                    </div>
+                    <div className="overflow-y-auto flex-1 min-h-0">
+                      {filteredAiReadyServers.length === 0 ? (
+                        <div className="p-4 text-center text-slate-500 text-sm">AI Ready sunucu yok</div>
+                      ) : filteredAiReadyServers.map(s => (
+                        <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer">
+                          <input type="checkbox" checked={selectedServers.includes(s.id)}
+                            onChange={e => {
+                              if (e.target.checked) setSelectedServers(prev => [...prev, s.id])
+                              else setSelectedServers(prev => prev.filter(id => id !== s.id))
+                            }}
+                            className="rounded border-white/[0.2] bg-cyber-card text-blue-500 focus:ring-blue-500" />
+                          <div>
+                            <div className="text-white text-sm font-medium">{s.name}</div>
+                            <div className="text-slate-500 text-xs font-mono">{s.ip_address}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>,
+                  document.body
+                )}
+              </div>
+            )}
+          </NlTopBar>
+
+          <ChatPlatformStatsBar platform={inventoryPlatform} />
+
+          <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
+            {showEmpty ? (
+              <NlEmptyState icon={emptyIcon} description={emptyDescription} />
+            ) : (
+              <div className="max-w-3xl mx-auto">
                 {[
                   ...messages,
                   ...localInventoryMessages,
@@ -769,14 +731,10 @@ const Chat: React.FC<{
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
                 ].map(msg => (
-                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`${chatBubbleShell} ${
-                      msg.role === 'user'
-                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border border-blue-400/30'
-                        : 'bg-white/[0.06] text-slate-100 border border-white/[0.06]'
-                    }`}>
+                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
+                    <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+                        <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                       ) : (
                         <div className={chatResponseBody}>
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
@@ -784,9 +742,9 @@ const Chat: React.FC<{
                             {msg.content?.trim().length > 40 && (
                               <button type="button"
                                 onClick={() => exportMarkdownToPrintWindow(msg.content, {
-                                  title: 'Linux AI Asistan Yanıtı',
+                                  title: `${pdfTitle} Asistan Yanıtı`,
                                   subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString('tr-TR') : undefined,
-                                  filename: `linux_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
+                                  filename: `${inventoryPlatform}_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
                                 })}
                                 className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1">
                                 <FileDown size={12} /> PDF
@@ -794,16 +752,16 @@ const Chat: React.FC<{
                             )}
                             {getFirstMarkdownTable(msg.content) && (
                               <>
-                              <button type="button"
-                                onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
-                                className="text-xs px-2 py-1.5 rounded bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] flex items-center gap-1">
-                                CSV İndir
-                              </button>
-                              <button type="button"
-                                onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
-                                className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
-                                Excel İndir
-                              </button>
+                                <button type="button"
+                                  onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
+                                  className="text-xs px-2 py-1.5 rounded bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] flex items-center gap-1">
+                                  CSV İndir
+                                </button>
+                                <button type="button"
+                                  onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
+                                  className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1">
+                                  Excel İndir
+                                </button>
                               </>
                             )}
                           </div>
@@ -819,10 +777,9 @@ const Chat: React.FC<{
                   </div>
                 ))}
 
-                {/* Streaming / thinking area — sadece bu isteğin session'ı için göster */}
                 {isLoading && streamSessionRef.current === selectedSessionId && (
-                  <div className="flex justify-start">
-                    <div className="bg-white/[0.06] rounded-[10px] px-4 py-3 max-w-[85%] w-full">
+                  <div className="flex justify-start mb-4">
+                    <div className={nlAssistantBubbleClass}>
                       {toolCalls.length > 0 && (
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
@@ -862,10 +819,20 @@ const Chat: React.FC<{
             )}
           </div>
 
-          {/* Input */}
-          <div className="px-6 py-5 border-t border-white/[0.06] bg-cyber-deep/80 backdrop-blur">
-            {selectedServers.length > 0 && (
-              <div className="mb-2 flex items-center space-x-2 flex-wrap gap-2">
+          <NlChatInput
+            value={input}
+            onChange={setInput}
+            onSubmit={() => {
+              if (!input.trim() || isLoading) return
+              const messageText = input
+              setInput('')
+              sendMessage(messageText)
+            }}
+            onAbort={handleAbort}
+            loading={isLoading}
+            placeholder="Altyapınızı sorgulayın…"
+            extra={selectedServers.length > 0 ? (
+              <div className="mb-2 flex items-center flex-wrap gap-2">
                 <span className="text-xs text-slate-400">Seçili sunucular:</span>
                 {selectedServers.map(serverId => {
                   const server = aiReadyServers.find(s => s.id === serverId)
@@ -873,56 +840,21 @@ const Chat: React.FC<{
                     <span key={serverId}
                       className="inline-flex items-center px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded border border-blue-500/30">
                       {server.name}
-                      <button onClick={() => setSelectedServers(prev => prev.filter(id => id !== serverId))} className="ml-1 hover:text-blue-300">✕</button>
+                      <button type="button" onClick={() => setSelectedServers(prev => prev.filter(id => id !== serverId))} className="ml-1 hover:text-blue-300">✕</button>
                     </span>
                   ) : null
                 })}
               </div>
-            )}
-            <form onSubmit={handleSubmit} className="flex items-center space-x-3 bg-cyber-deep/80 border border-white/[0.08] rounded-2xl p-2">
-              <div className="flex-1 relative">
-                <input type="text" value={input} onChange={e => setInput(e.target.value)}
-                  placeholder={
-                    isLoading ? 'AI düşünüyor...' :
-                    'Altyapınızı sorgulayın… (Enter ile gönder)'
-                  }
-                  className={`w-full bg-transparent border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isLoading ? 'border-blue-500/60' : 'border-white/[0.06]'
-                  }`}
-                  disabled={isLoading}
-                />
-                {isLoading && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {[0,1,2].map(i => (
-                      <div key={i} className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 100}ms` }} />
-                    ))}
-                  </div>
-                )}
-              </div>
-              {isLoading ? (
-                <button type="button" onClick={handleAbort}
-                  className="px-5 py-3 bg-rose-600/90 text-white rounded-xl hover:bg-rose-500 transition-all text-sm font-medium">
-                  ⏹ Durdur
-                </button>
-              ) : (
-                <button type="submit" disabled={!input.trim()}
-                  className="px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-500 hover:to-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-500/25">
-                  <span className="flex items-center gap-2">
-                    <span>Gönder</span><span>→</span>
-                  </span>
-                </button>
-              )}
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-    <ConfirmDialog
-      open={confirmDialog.open}
-      message={confirmDialog.message}
-      onConfirm={confirmDialog.onConfirm}
-      onCancel={() => setConfirmDialog(d => ({ ...d, open: false }))}
-    />
+            ) : undefined}
+          />
+        </NlChatPanel>
+      </NlChatRoot>
+      <ConfirmDialog
+        open={confirmDialog.open}
+        message={confirmDialog.message}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(d => ({ ...d, open: false }))}
+      />
     </>
   )
 }

@@ -1201,6 +1201,14 @@ class VCenterClient:
             ("virtualDisk", "numberWriteAveraged", "average"): "write",
             ("net", "bytesRx", "average"): "net_rx",
             ("net", "bytesTx", "average"): "net_tx",
+            # CPU Ready (ms / interval) — VM bazlı contention
+            ("cpu", "ready", "summation"): "cpu_ready",
+            # Disk latency (ms)
+            ("disk", "totalLatency", "average"): "disk_latency",
+            ("virtualDisk", "totalReadLatency", "average"): "disk_read_lat",
+            ("virtualDisk", "totalWriteLatency", "average"): "disk_write_lat",
+            ("datastore", "totalReadLatency", "average"): "ds_read_lat",
+            ("datastore", "totalWriteLatency", "average"): "ds_write_lat",
         }
         found: Dict[str, int] = {}
         # Each PerfCounterInfo is typically under val/*/ or PropSet children
@@ -1365,7 +1373,14 @@ class VCenterClient:
             write_iops = _sum_slot("write")
             net_rx = _sum_slot("net_rx")
             net_tx = _sum_slot("net_tx")
-            if all(v is None for v in (read_iops, write_iops, net_rx, net_tx)):
+            cpu_ready = _sum_slot("cpu_ready")
+            disk_lat = _sum_slot("disk_latency")
+            disk_r_lat = _sum_slot("disk_read_lat")
+            disk_w_lat = _sum_slot("disk_write_lat")
+            if all(v is None for v in (
+                read_iops, write_iops, net_rx, net_tx,
+                cpu_ready, disk_lat, disk_r_lat, disk_w_lat,
+            )):
                 return None
             return {
                 "disk_read_iops": round(read_iops, 2) if read_iops is not None else None,
@@ -1373,6 +1388,10 @@ class VCenterClient:
                 # VMware net.bytesRx/Tx average ≈ KB/s (instance aggregate)
                 "net_rx_kbps": round(net_rx, 2) if net_rx is not None else None,
                 "net_tx_kbps": round(net_tx, 2) if net_tx is not None else None,
+                "cpu_ready_ms": round(cpu_ready, 2) if cpu_ready is not None else None,
+                "disk_latency_ms": round(disk_lat, 2) if disk_lat is not None else None,
+                "disk_read_latency_ms": round(disk_r_lat, 2) if disk_r_lat is not None else None,
+                "disk_write_latency_ms": round(disk_w_lat, 2) if disk_w_lat is not None else None,
                 "source": "vcenter_perf",
             }
         except Exception as e:
@@ -1498,6 +1517,12 @@ class VCenterClient:
                         "disk_write_iops": _sum_slot("write"),
                         "net_rx_kbps": _sum_slot("net_rx"),
                         "net_tx_kbps": _sum_slot("net_tx"),
+                        "cpu_ready_ms": _sum_slot("cpu_ready"),
+                        "disk_latency_ms": _sum_slot("disk_latency"),
+                        "disk_read_latency_ms": _sum_slot("disk_read_lat"),
+                        "disk_write_latency_ms": _sum_slot("disk_write_lat"),
+                        "ds_read_latency_ms": _sum_slot("ds_read_lat"),
+                        "ds_write_latency_ms": _sum_slot("ds_write_lat"),
                     }
             except Exception as e:
                 logger.warning("get_all_vm_perf_io chunk error: %s", e)
@@ -1746,10 +1771,10 @@ class VCenterClient:
         güç durumu, boot zamanı (→ uptime), CPU/RAM anlık kullanım, memory
         ballooning/swap ve snapshot sayısı/en eski snapshot tarihi.
 
-        Bu, DB'de saklanmayan (VM CPU Ready hariç — o PerformanceManager
-        historical stats gerektirir ve burada yok) birçok "canlı" metriği tek
-        seferde getirir; AI Q&A katmanı bunu on-demand çağırır (30-60 sn sürebilir,
-        fleet büyüklüğüne göre).
+        CPU Ready / disk latency PerformanceManager QueryPerf ile ayrıca
+        get_all_vm_perf_io üzerinden gelir. customValue (Custom Attributes)
+        bu çağrıda toplanır. (summary.storage bazı ESXi/vCenter sürümlerinde
+        InvalidProperty verdiği için dahil edilmez.)
         """
         import xml.etree.ElementTree as ET
 
@@ -1778,6 +1803,7 @@ class VCenterClient:
           <vim25:pathSet>runtime.host</vim25:pathSet>
           <vim25:pathSet>summary.quickStats</vim25:pathSet>
           <vim25:pathSet>snapshot</vim25:pathSet>
+          <vim25:pathSet>customValue</vim25:pathSet>
           <vim25:pathSet>config.hardware.numCPU</vim25:pathSet>
           <vim25:pathSet>guest.disk</vim25:pathSet>
           <vim25:pathSet>guest.toolsVersionStatus2</vim25:pathSet>
@@ -1833,6 +1859,21 @@ class VCenterClient:
                         create_times = [c.text for c in v_el.iter() if _tag(c) == "createTime" and c.text]
                         flat["snapshot_count"] = len(create_times)
                         flat["snapshot_oldest"] = min(create_times) if create_times else None
+                        continue
+                    if pname == "customValue":
+                        attrs = []
+                        for cv in v_el.iter():
+                            ct = _tag(cv)
+                            if ct not in ("CustomFieldValue", "CustomFieldStringValue"):
+                                continue
+                            key_el = next((c for c in cv if _tag(c) == "key"), None)
+                            val_el = next((c for c in cv if _tag(c) == "value"), None)
+                            if key_el is not None or val_el is not None:
+                                attrs.append({
+                                    "key": (key_el.text if key_el is not None else None),
+                                    "value": (val_el.text if val_el is not None else None),
+                                })
+                        flat["_custom_attrs"] = attrs
                         continue
                     if pname == "summary.quickStats":
                         for child in v_el:
@@ -1948,6 +1989,8 @@ class VCenterClient:
                     "uptime_seconds": _i("uptimeSeconds"),
                     "snapshot_count": flat.get("snapshot_count", 0),
                     "snapshot_oldest": flat.get("snapshot_oldest"),
+                    "snapshot_space_gb": None,
+                    "custom_attrs": flat.get("_custom_attrs") or [],
                     "guest_disk_pct": guest_disk_pct,
                     "guest_disk_total_gb": guest_disk_total_gb,
                     "guest_disk_avail_gb": guest_disk_avail_gb,
@@ -2225,6 +2268,134 @@ class VCenterClient:
             return results
         except Exception as e:
             logger.error("list_datastores_status error: %s", e, exc_info=True)
+            return []
+
+    def list_clusters_status(self) -> List[Dict[str, Any]]:
+        """
+        ClusterComputeResource listesi: ad, HA/DRS durumu, host/VM sayısı (canlı SOAP).
+        """
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            logger.warning("list_clusters_status: SOAP login failed")
+            return []
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>ClusterComputeResource</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>summary.totalCpu</vim25:pathSet>
+          <vim25:pathSet>summary.numCpuCores</vim25:pathSet>
+          <vim25:pathSet>summary.totalMemory</vim25:pathSet>
+          <vim25:pathSet>summary.numHosts</vim25:pathSet>
+          <vim25:pathSet>summary.overallStatus</vim25:pathSet>
+          <vim25:pathSet>configuration.dasConfig.enabled</vim25:pathSet>
+          <vim25:pathSet>configuration.drsConfig.enabled</vim25:pathSet>
+          <vim25:pathSet>configuration.drsConfig.defaultVmBehavior</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToHf</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>crToH</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToHf</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>hostFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>crToH</vim25:name>
+            <vim25:type>ComputeResource</vim25:type>
+            <vim25:path>host</vim25:path>
+            <vim25:skip>false</vim25:skip>
+          </vim25:selectSet>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(
+                soap_url, data=soap_body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=30,
+            )
+            if resp.status_code != 200:
+                logger.warning("list_clusters_status HTTP %s: %s", resp.status_code, resp.text[:200])
+                return []
+
+            root = ET.fromstring(resp.text)
+
+            def _tag(el):
+                return el.tag.split("}")[-1]
+
+            results: List[Dict[str, Any]] = []
+            for rv in root.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                if obj_el is None:
+                    continue
+                obj_type = obj_el.get("type") or ""
+                if obj_type and obj_type != "ClusterComputeResource":
+                    continue
+                ref = obj_el.text
+
+                flat: Dict[str, str] = {}
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = n_el.text or ""
+                    if v_el.text and v_el.text.strip():
+                        flat[pname] = v_el.text.strip()
+
+                if not flat.get("name") and not ref:
+                    continue
+                try:
+                    total_mem = float(flat.get("summary.totalMemory", 0) or 0)
+                    mem_gb = round(total_mem / (1024 ** 3), 1) if total_mem else None
+                except (TypeError, ValueError):
+                    mem_gb = None
+                ha = flat.get("configuration.dasConfig.enabled", "").lower()
+                drs = flat.get("configuration.drsConfig.enabled", "").lower()
+                results.append({
+                    "ref": ref,
+                    "name": flat.get("name") or ref,
+                    "hosts": int(flat["summary.numHosts"]) if flat.get("summary.numHosts", "").isdigit() else None,
+                    "cpu_cores": int(flat["summary.numCpuCores"]) if flat.get("summary.numCpuCores", "").isdigit() else None,
+                    "memory_gb": mem_gb,
+                    "overall_status": flat.get("summary.overallStatus"),
+                    "ha_enabled": ha in ("true", "1") if ha else None,
+                    "drs_enabled": drs in ("true", "1") if drs else None,
+                    "drs_behavior": flat.get("configuration.drsConfig.defaultVmBehavior"),
+                })
+            return results
+        except Exception as e:
+            logger.error("list_clusters_status error: %s", e, exc_info=True)
             return []
 
     def _enrich_vms_running(self, soap_session, soap_url: str,

@@ -55,6 +55,11 @@ _VIRTUALIZATION_PERSONA = (
     "- VM yaşam döngüsü: provisioning, template/klonlama, kaynak resize, snapshot/backup stratejisi\n"
     "- Ağ sanallaştırma: vSwitch/vDS, VLAN, port group tasarımı\n"
     "- Lisanslama ve sürüm uyumluluğu, guest OS/Tools durumu, HA/DRS risk değerlendirmesi\n\n"
+    "VERİ DİSİPLİNİ — KRİTİK:\n"
+    "- Ortamda vCenter/hypervisor bağlantısı vardır; cevapları SAĞLANAN CANLI VERİYE dayandır.\n"
+    "- 'Bilinmiyor', 'bu veriye erişimim yok', 'collector yok', 'senkronize edilmiyor' deme — "
+    "veri blokunda yoksa yalnızca bağlantı/sorgu hatasını veya 'canlı sorguda kayıt dönmedi'yi söyle.\n"
+    "- Tahmin etme, uydurma; eksik alan için boş bırak veya 'sorguda gelmedi' yaz.\n\n"
     "YANIT UZUNLUĞU — VARSAYILAN KISA: Varsayılan olarak KISA, SADE ve NET cevap ver — "
     "basit/doğrudan bir soruya ('kaç VM var?', 'hangi ESX'te?' gibi) 1-3 cümlelik doğrudan "
     "cevap ya da küçük bir tablo yeterlidir; gereksiz giriş cümlesi veya istenmeyen ek yorum "
@@ -67,13 +72,13 @@ _VIRTUALIZATION_PERSONA = (
 INTENT_PATTERNS = {
     "count_hosts":     r"kaç\s+(esx|host|sunucu)|how many.*(esx|host)",
     "vm_per_host":     r"hangi\s+esx.*kaç|hangi\s+host.*vm|vm.*dağılım|esx.*vm\s+sayı",
-    "capacity":        r"doluluk|kapasite|boş.*yer|ne kadar dolu|cpu.*memory.*dolu|yoğun|kapasit",
+    "capacity":        r"doluluk|kapasite|boş.*yer|boş\s*kayna|ne kadar (dolu|boş)|cpu.*memory.*dolu|yoğun|kapasit|free\s*capacity",
     "compare_vms":     r"karşılaştır|compare|fark.*nedir|farkı|vs\b|versus",
     "tools_status":    r"vmware\s+tools|vm.*tools|tools\s+(olan|olmayan|yüklü|kurulu)",
     "os_filter":       r"\b(rhel|oel|oracle|windows|win\s*sunucu|ubuntu|centos|rocky|linux)\b",
     "powered_off":     r"kapalı|powered.off|shut.*down|çalışmayan",
     "assessment":      r"değerlendirme|assessment|genel\s+durum|rapor|özet|nasıl.*ortam|sağlık",
-    "network":         r"network|ağ|10g|1g|bant\s*genişliği|interface|vlan|port\s*group|portgroup|vswitch|vds",
+    "network":         r"network|\bağ\b|10g|1g|bant\s*genişliği|interface|\bvlan\b|port\s*group|portgroup|vswitch|vds",
     "snapshot":        r"snapshot|anlık\s+görüntü",
     "report":          r"rapor|report|üret|oluştur|göster.*rapor",
 }
@@ -471,8 +476,8 @@ def build_context(
         else:
             parts.append(
                 "## ESX HOST AĞ & DONANIM ENVANTERİ\n"
-                "  Henüz senkronize edilmemiş — vCenter'dan host ağ envanteri sync bekleniyor "
-                "(arka planda 15 dk'da bir otomatik çalışır, veya manuel sync tetiklenebilir)."
+                "  Henüz host ağ envanteri canlı çekilmedi — vCenter sync bekleniyor "
+                "(arka planda periyodik çalışır veya Entegrasyonlar'dan manuel sync)."
             )
 
     # ── Bölüm 3: VM envanteri ────────────────────────────────────────────────
@@ -491,11 +496,12 @@ def build_context(
     if cluster_parts:
         parts.append(cluster_parts)
 
-    # ── Bölüm 4: Datastore bazında VM disk özeti ─────────────────────────────
-    # VM'lere hypervisor adını ekle (datastore grubu için)
+    # ── Bölüm 4: Datastore kapasite (vCenter canlı) + VM disk tahsisi ────────
     for vm in vms:
         vm["hypervisor"] = hv_map.get(vm["hypervisor_id"], {}).get("name", "Bilinmiyor")
-    ds_summary = _datastore_vm_disk_summary(vms, esx_hosts)
+
+    live_ds = _get_live_datastores(db)
+    ds_summary = _datastore_vm_disk_summary(vms, esx_hosts, live_datastores=live_ds)
     if ds_summary:
         parts.append(ds_summary)
 
@@ -581,10 +587,14 @@ def _vm_detail_block(vm: Dict[str, Any], hv_map: Dict) -> str:
     )
 
 
-def _datastore_vm_disk_summary(vms: List[Dict], esx_hosts: List[Dict]) -> str:
+def _datastore_vm_disk_summary(
+    vms: List[Dict],
+    esx_hosts: List[Dict],
+    live_datastores: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """
-    Datastore veya hypervisor bazında VM disk tahsisatını özetler.
-    vm_datastore doluysa datastore'a, boşsa hypervisor adına göre gruplar.
+    Datastore bazında: vCenter kapasite (toplam/boş) + VM disk tahsisi.
+    live_datastores verilmezse yalnızca tahsis özeti üretilir.
     """
     from collections import defaultdict
 
@@ -594,36 +604,76 @@ def _datastore_vm_disk_summary(vms: List[Dict], esx_hosts: List[Dict]) -> str:
         key = ds if ds else f"Hypervisor: {vm.get('hypervisor', 'Bilinmiyor')}"
         groups[key].append(vm)
 
-    if not groups:
+    live_idx = _datastore_capacity_index(live_datastores or [])
+
+    # Canlı DS'leri de ekle (üzerinde VM olmasa bile)
+    for d in live_datastores or []:
+        name = (d.get("name") or "").strip()
+        if name and name not in groups:
+            groups[name] = []
+
+    if not groups and not live_datastores:
         return ""
 
-    # Tüm VM'lerin datastore boşsa başlığı farklı yaz
-    all_hv_based = all(k.startswith("Hypervisor:") for k in groups)
-    header_label = "HYPERVİSOR BAZINDA VM DİSK TAHSİSATI" if all_hv_based else "DATASTORE BAZINDA VM DİSK TAHSİSATI"
-
-    # Host toplam disk bilgisi
-    host_ds: Dict[str, Dict] = {h["host"]: h for h in esx_hosts}
+    all_hv_based = bool(groups) and all(k.startswith("Hypervisor:") for k in groups)
+    header_label = (
+        "HYPERVİSOR BAZINDA VM DİSK TAHSİSATI"
+        if all_hv_based
+        else "DATASTORE KAPASİTE + VM DİSK TAHSİSATI"
+    )
 
     lines = [f"## {header_label}"]
-    if all_hv_based:
+    if live_datastores:
+        lines.append(
+            "  Kaynak: vCenter Datastore summary.capacity/freeSpace (canlı) + VM vm_disk_gb tahsisi."
+        )
+    elif all_hv_based:
         lines.append("  NOT: vm_datastore alanı henüz dolu değil; veriler hypervisor bazında gösteriliyor.")
+    else:
+        lines.append(
+            "  NOT: Datastore nesne kapasitesi bu yanıtta yok (vCenter canlı sorgu yok/başarısız); "
+            "yalnızca VM disk tahsisi gösteriliyor — boş GB hesaplanamaz."
+        )
 
-    for group_name, group_vms in sorted(groups.items(), key=lambda x: -sum(v.get("disk_gb") or 0 for v in x[1])):
+    for group_name, group_vms in sorted(
+        groups.items(),
+        key=lambda x: -(
+            (live_idx.get(x[0].lower()) or {}).get("capacity_gb")
+            or sum(v.get("disk_gb") or 0 for v in x[1])
+            or 0
+        ),
+    ):
         allocated_gb = sum((v.get("disk_gb") or 0) for v in group_vms)
-        powered_on   = sum(1 for v in group_vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn"))
+        powered_on = sum(
+            1 for v in group_vms
+            if v.get("power_state") in ("POWERED_ON", "up", "running", "poweredOn")
+        )
+        cap = live_idx.get(group_name.lower()) if not group_name.startswith("Hypervisor:") else None
 
         lines.append(f"\n### {group_name}")
-        lines.append(f"  VM Sayısı        : {len(group_vms)} ({powered_on} çalışan)")
-        lines.append(f"  Toplam Tahsis Disk: {round(allocated_gb, 1)} GB (vm_disk_gb toplamı)")
-        lines.append("  VM Disk Detayı   :")
-        for v in sorted(group_vms, key=lambda x: -(x.get("disk_gb") or 0))[:20]:
+        if cap and cap.get("capacity_gb") is not None:
             lines.append(
-                f"    - {v['name']} | Disk:{v.get('disk_gb') or 0} GB | "
-                f"vCPU:{v.get('cpu_count') or 0} RAM:{v.get('memory_gb') or 0}GB | "
-                f"Güç:{v['power_state']}"
+                f"  Kapasite (vCenter): toplam {cap.get('capacity_gb')} GB · "
+                f"kullanılan {cap.get('used_gb')} GB · boş {cap.get('free_gb')} GB · "
+                f"doluluk %{cap.get('usage_pct')}"
+                + (f" · tip {cap.get('type')}" if cap.get("type") else "")
+                + ("" if cap.get("accessible", True) else " · ERİŞİLEMEZ")
             )
-        if len(group_vms) > 20:
-            lines.append(f"    ... ve {len(group_vms) - 20} VM daha")
+        elif not group_name.startswith("Hypervisor:"):
+            lines.append("  Kapasite (vCenter): canlı sorguda bu datastore için dönmedi")
+
+        lines.append(f"  VM Sayısı         : {len(group_vms)} ({powered_on} çalışan)")
+        lines.append(f"  Toplam Tahsis Disk: {round(allocated_gb, 1)} GB (vm_disk_gb toplamı)")
+        if group_vms:
+            lines.append("  VM Disk Detayı   :")
+            for v in sorted(group_vms, key=lambda x: -(x.get("disk_gb") or 0))[:20]:
+                lines.append(
+                    f"    - {v['name']} | Disk:{v.get('disk_gb') or 0} GB | "
+                    f"vCPU:{v.get('cpu_count') or 0} RAM:{v.get('memory_gb') or 0}GB | "
+                    f"Güç:{v['power_state']}"
+                )
+            if len(group_vms) > 20:
+                lines.append(f"    ... ve {len(group_vms) - 20} VM daha")
 
     return "\n".join(lines)
 
@@ -728,9 +778,11 @@ def _fmt_ts(ts: Optional[str]) -> str:
 
 
 def _na(detail: str) -> str:
+    """Canlı sorgu sonucu boş/hatalı olduğunda kullanıcıya net teknik mesaj."""
     return (
-        f"⚠️ **Bu veriye şu anda erişimim yok.**\n\n{detail}\n\n"
-        f"_Uydurma bir cevap vermek yerine durumu dürüstçe belirtiyorum._"
+        f"**Canlı sorgu sonucu:** {detail}\n\n"
+        "_Not: Ortam bağlantısı varsa veri çekilir; 'bilinmiyor' demek yerine "
+        "yukarıdaki sorgu/bağlantı sonucuna bakın._"
     )
 
 
@@ -892,7 +944,7 @@ def h_overcommit_ratio(db: Session, question: str = "") -> str:
     total_vcpu = sum(v.get("cpu_count") or 0 for v in vms if _is_on(v))
     total_pcpu = sum(h.get("cpu_cores") or 0 for h in hosts)
     if not total_pcpu:
-        return _na("Host CPU çekirdek verisi yok (ESX host metrik senkronu çalışmıyor olabilir).")
+        return _na("Host CPU çekirdek verisi canlı sorguda yok — ESX host metrik sync / vCenter bağlantısını kontrol edin.")
     ratio = round(total_vcpu / total_pcpu, 2)
     return (
         f"### CPU Overcommit Oranı\n\n"
@@ -906,14 +958,45 @@ def h_overcommit_ratio(db: Session, question: str = "") -> str:
 def h_busiest_host_cpu(db: Session, question: str = "") -> str:
     hosts = sorted(_get_esx_hosts(db), key=lambda h: -(h.get("cpu_pct") or 0))
     if not hosts:
-        return _na("ESX host metrikleri henüz senkronize edilmemiş.")
+        return _na("ESX host metrikleri canlı sorguda dönmedi — vCenter bağlantısı / host metrik sync kontrol edin.")
     rows = [[h["host"], f"%{h['cpu_pct']}", h["cpu_cores"]] for h in hosts[:10]]
     return "### CPU Açısından En Yoğun Host'lar\n\n" + _md_table(["Host", "CPU %", "Çekirdek"], rows)
 
 
 def h_cpu_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — bu bilgi vCenter QuickStats/PerformanceManager'da mevcut değil ya da mevcut sync tarafından toplanmıyor. "
-               f"Bunu eklemek için CPU Ready gibi tarihsel PerformanceManager sayaçlarını çeken yeni bir vCenter collector'ı geliştirilmesi gerekir.")
+    """Eski stub — mümkünse canlı CPU Ready / performans sorgusuna yönlendir."""
+    if "ready" in (topic or "").lower():
+        return h_cpu_ready(db, topic)
+    return h_cpu_top20_now(db, topic)
+
+
+def h_cpu_ready(db: Session, question: str = "") -> str:
+    """vCenter PerformanceManager cpu.ready (anlık % ve ms)."""
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if r.get("errors") and not r["vms"]:
+        return _na(f"vCenter CPU Ready sorgusu başarısız: {'; '.join(r['errors'][:2])}")
+    with_data = [v for v in r["vms"] if v.get("cpu_ready_pct") is not None or v.get("cpu_ready_ms") is not None]
+    if not with_data:
+        if not r["vms"]:
+            return _na("Canlı VM listesi boş — vCenter bağlantısını kontrol edin.")
+        return _na(
+            "PerformanceManager'da cpu.ready sayacı bu vCenter'da dönmedi "
+            f"({len(r['vms'])} VM canlı okundu; ready sayacı boş)."
+        )
+    with_data.sort(key=lambda v: -(v.get("cpu_ready_pct") or 0))
+    rows = [[
+        v["name"],
+        f"%{v.get('cpu_ready_pct')}" if v.get("cpu_ready_pct") is not None else "—",
+        v.get("cpu_ready_ms"),
+        v.get("num_cpu"),
+        v.get("hypervisor"),
+    ] for v in with_data[:25]]
+    return (
+        "### VM CPU Ready (vCenter PerformanceManager, anlık 20s)\n\n"
+        "_Ready % = ready_ms / (20000 × vCPU) × 100. %5 üzeri contention belirtisi olabilir._\n\n"
+        + _md_table(["VM", "Ready %", "Ready ms", "vCPU", "Hypervisor"], rows)
+    )
 
 
 def h_cpu_hot_add(db: Session, question: str = "") -> str:
@@ -1041,7 +1124,7 @@ def h_avg_ram_top20(db: Session, question: str = "") -> str:
 def h_host_ram_fill(db: Session, question: str = "") -> str:
     hosts = sorted(_get_esx_hosts(db), key=lambda h: -(h.get("mem_pct") or 0))
     if not hosts:
-        return _na("ESX host metrikleri henüz senkronize edilmemiş.")
+        return _na("ESX host metrikleri canlı sorguda dönmedi — vCenter bağlantısı / host metrik sync kontrol edin.")
     return "### Host Bazında RAM Doluluk Oranı\n\n" + _md_table(
         ["Host", "RAM %", "Boş (GB)", "Toplam (GB)"], [[h["host"], f"%{h['mem_pct']}", h["mem_free_gb"], h["mem_total_gb"]] for h in hosts]
     )
@@ -1088,9 +1171,118 @@ def h_old_snapshots(db: Session, question: str = "") -> str:
 
 
 def h_disk_not_available(db: Session, topic: str) -> str:
-    return _na(
-        f"{topic} — bu bilgi için ayrı bir tarihsel collector (ör. datastore performans "
-        f"trendi, snapshot boyutu) veya harici bir entegrasyon (ör. backup) gerekir."
+    """Eski stub — latency / snapshot boyutu / idle disk canlı sorgularına yönlendir."""
+    t = (topic or "").lower()
+    if "latency" in t:
+        return h_disk_latency(db, topic)
+    if "snapshot" in t:
+        return h_largest_snapshot(db, topic)
+    if "idle" in t or "kullanılmayan" in t or "boşta" in t:
+        return h_idle_disks(db, topic)
+    return h_disk_iops_top(db, topic)
+
+
+def h_disk_latency(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if r.get("errors") and not r["vms"]:
+        return _na(f"vCenter disk latency sorgusu başarısız: {'; '.join(r['errors'][:2])}")
+    with_data = [
+        v for v in r["vms"]
+        if any(v.get(k) is not None for k in (
+            "disk_latency_ms", "disk_read_latency_ms", "disk_write_latency_ms",
+            "ds_read_latency_ms", "ds_write_latency_ms",
+        ))
+    ]
+    if not with_data:
+        if not r["vms"]:
+            return _na("Canlı VM listesi boş — vCenter bağlantısını kontrol edin.")
+        return _na(
+            f"PerformanceManager disk/datastore latency sayaçları boş döndü "
+            f"({len(r['vms'])} VM canlı okundu)."
+        )
+
+    def _lat(v):
+        vals = [v.get(k) for k in (
+            "disk_latency_ms", "disk_read_latency_ms", "disk_write_latency_ms",
+            "ds_read_latency_ms", "ds_write_latency_ms",
+        ) if v.get(k) is not None]
+        return max(vals) if vals else 0
+
+    with_data.sort(key=_lat, reverse=True)
+    rows = [[
+        v["name"],
+        v.get("disk_latency_ms"),
+        v.get("disk_read_latency_ms"),
+        v.get("disk_write_latency_ms"),
+        v.get("ds_read_latency_ms"),
+        v.get("ds_write_latency_ms"),
+        v.get("hypervisor"),
+    ] for v in with_data[:25]]
+    return (
+        "### Disk / Datastore Latency (vCenter PerformanceManager, anlık ms)\n\n"
+        + _md_table(
+            ["VM", "Disk total", "vDisk read", "vDisk write", "DS read", "DS write", "Hypervisor"],
+            rows,
+        )
+    )
+
+
+def h_largest_snapshot(db: Session, question: str = "") -> str:
+    """Snapshot alanı: summary.storage.uncommitted (yaklaşık) + snapshot sayısı."""
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı snapshot sorgusu sonuç döndürmedi — vCenter bağlantısını kontrol edin.")
+    with_snap = [v for v in r["vms"] if (v.get("snapshot_count") or 0) > 0]
+    with_snap.sort(
+        key=lambda v: (-(v.get("snapshot_space_gb") or 0), -(v.get("snapshot_count") or 0)),
+    )
+    rows = [[
+        v["name"],
+        v.get("snapshot_count"),
+        v.get("snapshot_space_gb") if v.get("snapshot_space_gb") is not None else "—",
+        _fmt_ts(v.get("snapshot_oldest")),
+        v.get("hypervisor"),
+    ] for v in with_snap[:25]]
+    return (
+        "### En Büyük / En Çok Snapshot (vCenter canlı)\n\n"
+        "_Sıralama: snapshot adedi (desc), sonra en eski tarih. "
+        "Byte cinsinden zincir boyutu bu API sürümünde `summary.storage` ile gelmiyor; "
+        "adet + yaş üzerinden canlı listelenir._\n\n"
+        + _md_table(
+            ["VM", "Snapshot adedi", "Alan (GB ≈)", "En eski", "Hypervisor"],
+            rows,
+            "Hiçbir VM'de snapshot yok.",
+        )
+    )
+
+
+def h_idle_disks(db: Session, question: str = "") -> str:
+    """Çalışan VM'lerde anlık IOPS≈0 olanlar (boşta disk IO)."""
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na("Canlı disk IOPS sorgusu sonuç döndürmedi — vCenter bağlantısını kontrol edin.")
+    powered = [
+        v for v in r["vms"]
+        if str(v.get("power_state") or "").lower() in ("poweredon", "powered_on", "on")
+    ]
+    idle = [
+        v for v in powered
+        if v.get("disk_read_iops") is not None or v.get("disk_write_iops") is not None
+    ]
+    idle = [
+        v for v in idle
+        if (v.get("disk_read_iops") or 0) + (v.get("disk_write_iops") or 0) < 0.5
+    ]
+    idle.sort(key=lambda v: v["name"])
+    rows = [[v["name"], v.get("disk_read_iops"), v.get("disk_write_iops"), v.get("hypervisor")] for v in idle[:40]]
+    return (
+        "### Anlık Disk IO≈0 Olan Çalışan VM'ler (PerformanceManager)\n\n"
+        "_Not: Bu anlık örneklemedir; guest içinde mount edilmemiş VMDK tespiti guest OS "
+        "komutu gerektirir. IOPS sayacı boş VM'ler listelenmez._\n\n"
+        + _md_table(["VM", "Read IOPS", "Write IOPS", "Hypervisor"], rows, "IOPS≈0 çalışan VM yok (veya sayaç boş).")
     )
 
 
@@ -1163,15 +1355,39 @@ def h_no_ip_running(db: Session, question: str = "") -> str:
 def h_guest_agent_down(db: Session, question: str = "") -> str:
     vms = [v for v in _get_vms(db) if _is_on(v) and (not v.get("tools_status") or "running" not in (v["tools_status"] or "").lower())]
     return "### Guest Agent / VMware Tools Çalışmayan VM'ler\n\n" + _md_table(
-        ["VM", "Tools Durumu"], [[v["name"], v["tools_status"] or "bilinmiyor"] for v in vms], "Tüm çalışan VM'lerde Guest Agent aktif."
+        ["VM", "Tools Durumu"], [[v["name"], v["tools_status"] or "sorguda gelmedi"] for v in vms], "Tüm çalışan VM'lerde Guest Agent aktif."
     )
 
 
 def h_network_not_available(db: Session, topic: str) -> str:
-    return _na(
-        f"{topic} — bu bilgi için ayrı bir tarihsel (zaman serisi) collector gerekir; "
-        f"aşağıdaki anlık ölçümlerle karıştırılmamalı. VM bazlı VLAN/port-group için "
-        f"'vlan' veya 'port group' diye sorun (vCenter'dan canlı çekilir)."
+    """Eski stub — canlı network event / trafik sorgusuna yönlendir."""
+    return h_network_errors(db, topic)
+
+
+def h_network_errors(db: Session, question: str = "") -> str:
+    """system_events + adapter disconnected + düşük trafik özeti."""
+    days = _parse_days_from_question(question, default=7)
+    since = datetime.utcnow() - timedelta(days=days)
+    rows_q = db.execute(text("""
+        SELECT title, severity, source, created_at FROM system_events
+        WHERE created_at >= :since
+          AND (
+            lower(title) LIKE '%network%' OR lower(title) LIKE '%nic%'
+            OR lower(title) LIKE '%vlan%' OR lower(title) LIKE '%link%'
+            OR lower(title) LIKE '%disconnect%' OR lower(title) LIKE '%ağ%'
+          )
+        ORDER BY created_at DESC LIMIT 40
+    """), {"since": since}).all()
+    rows = [
+        [r.title[:80], r.severity, r.source, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"]
+        for r in rows_q
+    ]
+    disc = h_adapter_disconnected(db, question)
+    return (
+        f"### Son {days} Günde Ağ ile İlgili Olaylar\n\n"
+        + _md_table(["Olay", "Önem", "Kaynak", "Zaman"], rows, f"Son {days} günde ağ olayı yok.")
+        + "\n\n"
+        + disc
     )
 
 
@@ -1317,16 +1533,19 @@ def h_cluster_imbalance(db: Session, question: str = "") -> str:
     return f"### Host'lar Arası Yük Dengesi\n\nCPU kullanım farkı: **%{round(spread,1)}**. {verdict}\n\n" + _md_table(["Host", "CPU %", "RAM %"], rows)
 
 
-# ── Cluster (yaklaşık — gerçek cluster nesnesi DB'de yok) ────────────────────
+# ── Cluster (canlı HA/DRS + vm_cluster gruplaması) ────────────────────────────
 
-_CLUSTER_CAVEAT = "_Not: vCenter Cluster/HA/DRS nesnesi ayrı olarak senkronize edilmiyor; aşağıdaki grup, VM'lerin `vm_cluster` alanına (host/resource pool adı) göre yaklaşık gruplamasıdır._\n\n"
+_CLUSTER_CAVEAT = (
+    "_Not: Aşağıdaki gruplama VM `vm_cluster` alanına göredir. "
+    "Gerçek Cluster HA/DRS için 'HA DRS durumu' diye sorun (vCenter canlı)._ \n\n"
+)
 
 
 def h_cluster_vm_counts(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
     groups: Dict[str, int] = defaultdict(int)
     for v in vms:
-        groups[v.get("cluster") or "Bilinmiyor"] += 1
+        groups[v.get("cluster") or "(cluster alanı boş)"] += 1
     rows = sorted(groups.items(), key=lambda x: -x[1])
     return "### Cluster/Grup Bazında VM Sayıları\n\n" + _CLUSTER_CAVEAT + _md_table(["Grup", "VM Sayısı"], [[k, v] for k, v in rows])
 
@@ -1335,7 +1554,7 @@ def h_cluster_cpu_ram(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
     groups: Dict[str, Dict[str, float]] = defaultdict(lambda: {"cpu": 0, "ram": 0, "count": 0})
     for v in vms:
-        g = groups[v.get("cluster") or "Bilinmiyor"]
+        g = groups[v.get("cluster") or "(cluster alanı boş)"]
         g["cpu"] += v.get("cpu_count") or 0
         g["ram"] += v.get("memory_gb") or 0
         g["count"] += 1
@@ -1344,11 +1563,121 @@ def h_cluster_cpu_ram(db: Session, question: str = "") -> str:
 
 
 def h_cluster_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — vCenter Cluster nesnesi (HA enabled, DRS mode/level, admission control) ayrı bir collector ile "
-               f"senkronize edilmiyor. Bugün sadece VM'lerin `vm_cluster` alanı ve ESX host bazlı metrikler mevcut.")
+    """Eski stub — canlı cluster sorgusuna yönlendir."""
+    return h_cluster_ha_drs(db, topic)
+
+
+def h_cluster_ha_drs(db: Session, question: str = "") -> str:
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_cluster_status(db)
+    if r["errors"] and not r["clusters"]:
+        return _na(
+            f"vCenter cluster sorgusu başarısız: {'; '.join(r['errors'][:2])}. "
+            "Bağlantı/credential kontrol edin."
+        )
+    if not r["clusters"]:
+        hosts = _get_esx_hosts(db)
+        host_rows = [[
+            h.get("host"),
+            h.get("cpu_cores"),
+            h.get("mem_total_gb"),
+            f"%{h.get('cpu_pct')}",
+            f"%{h.get('mem_pct')}",
+            "BAKIM" if h.get("maintenance") else "OK",
+        ] for h in hosts]
+        return (
+            "### Cluster HA/DRS (vCenter canlı)\n\n"
+            "vCenter'da **ClusterComputeResource** dönmedi — ortam tek host / cluster'sız "
+            "ESXi olabilir. Bu durumda HA/DRS cluster özelliği uygulanmaz.\n\n"
+            "#### Host özeti (canlı metrik)\n"
+            + _md_table(
+                ["Host", "CPU core", "RAM (GB)", "CPU %", "RAM %", "Durum"],
+                host_rows,
+                "Host metrik bulunamadı.",
+            )
+        )
+    rows = []
+    for c in r["clusters"]:
+        ha = "Açık" if c.get("ha_enabled") else ("Kapalı" if c.get("ha_enabled") is False else "—")
+        drs = "Açık" if c.get("drs_enabled") else ("Kapalı" if c.get("drs_enabled") is False else "—")
+        rows.append([
+            c.get("name"),
+            ha,
+            drs,
+            c.get("drs_behavior") or "—",
+            c.get("hosts"),
+            c.get("cpu_cores"),
+            c.get("memory_gb"),
+            c.get("overall_status") or "—",
+            c.get("hypervisor"),
+        ])
+    return "### Cluster HA/DRS Durumu (vCenter canlı)\n\n" + _md_table(
+        ["Cluster", "HA", "DRS", "DRS davranışı", "Host", "CPU core", "RAM (GB)", "Status", "Hypervisor"],
+        rows,
+    )
+
+
+def h_unused_datastore(db: Session, question: str = "") -> str:
+    """Üzerinde VM olmayan veya tahsis=0 datastore'lar — canlı kapasite ile."""
+    live = _get_live_datastores(db)
+    vms = _get_vms(db)
+    used_names = {(v.get("datastore") or "").strip().lower() for v in vms if (v.get("datastore") or "").strip()}
+    unused = []
+    for d in live:
+        name = (d.get("name") or "").strip()
+        if not name:
+            continue
+        if name.lower() not in used_names:
+            unused.append(d)
+    if not live and not unused:
+        return _na("vCenter datastore canlı sorgusu sonuç vermedi — bağlantıyı kontrol edin.")
+    if not unused:
+        return (
+            "### Kullanılmayan Datastore\n\n"
+            "_Canlı listede tüm datastore'larda en az bir VM `vm_datastore` kaydı var "
+            f"({len(live)} DS tarandı)._\n\n"
+            + h_datastore_by_disk(db, question)
+        )
+    rows = [[
+        d.get("name"),
+        d.get("capacity_gb"),
+        d.get("free_gb"),
+        f"%{d.get('usage_pct')}" if d.get("usage_pct") is not None else "—",
+        d.get("hypervisor"),
+    ] for d in unused]
+    return (
+        f"### Kullanılmayan Datastore'lar (üzerinde VM kaydı yok) — {len(unused)} adet\n\n"
+        + _md_table(["Datastore", "Toplam (GB)", "Boş (GB)", "Doluluk", "Hypervisor"], rows)
+    )
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
+
+def _get_live_datastores(db: Session) -> List[Dict[str, Any]]:
+    """
+    vCenter'dan datastore nesnesi bazında capacity/free/used çeker.
+    Host metriklerindeki ds_* alanları aggregate'tir; isim bazlı boş kapasite
+    yalnızca bu canlı sorgudan gelir.
+    """
+    try:
+        from app.services import vcenter_vm_performance as perf
+        r = perf.fetch_datastore_status(db)
+        return list(r.get("datastores") or [])
+    except Exception as e:
+        logger.warning(f"[HVIntelligence] live datastore fetch failed: {e}")
+        return []
+
+
+def _datastore_capacity_index(datastores: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """İsim → kapasite kaydı (case-insensitive)."""
+    idx: Dict[str, Dict[str, Any]] = {}
+    for d in datastores:
+        name = (d.get("name") or "").strip()
+        if not name:
+            continue
+        idx[name.lower()] = d
+    return idx
+
 
 def h_datastore_by_disk(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
@@ -1360,24 +1689,117 @@ def h_datastore_by_disk(db: Session, question: str = "") -> str:
         g = groups[ds]
         g["disk"] += v.get("disk_gb") or 0
         g["count"] += 1
-    if not groups:
-        return _na("`vm_datastore` alanı henüz doldurulmamış (VM detay zenginleştirmesi bekleniyor).")
-    rows = sorted(groups.items(), key=lambda x: -x[1]["disk"])
-    return "### Datastore Bazında VM Disk Tahsisatı\n\n" + _md_table(["Datastore", "VM Sayısı", "Toplam Tahsis (GB)"], [[k, g["count"], round(g["disk"], 1)] for k, g in rows])
+
+    live = _get_live_datastores(db)
+    live_idx = _datastore_capacity_index(live)
+
+    # Canlı DS listesini birleştir (VM tahsisi olmayan DS'ler de görünsün)
+    names = set(groups.keys()) | {d.get("name") for d in live if d.get("name")}
+    if not names:
+        return _na("Datastore bilgisi yok (`vm_datastore` boş ve vCenter sorgusu sonuç vermedi).")
+
+    rows = []
+    for name in sorted(names, key=lambda n: -(groups.get(n, {}).get("disk") or 0)):
+        g = groups.get(name) or {"disk": 0, "count": 0}
+        cap = live_idx.get(name.lower()) or {}
+        rows.append([
+            name,
+            int(g["count"]),
+            round(g["disk"], 1),
+            cap.get("capacity_gb") if cap.get("capacity_gb") is not None else "—",
+            cap.get("used_gb") if cap.get("used_gb") is not None else "—",
+            cap.get("free_gb") if cap.get("free_gb") is not None else "—",
+            f"%{cap['usage_pct']}" if cap.get("usage_pct") is not None else "—",
+        ])
+
+    note = (
+        "_Not: **Tahsis** = VM `vm_disk_gb` toplamı (provisioned). "
+        "**Toplam/Kullanılan/Boş** = vCenter datastore `summary.capacity/freeSpace` (canlı)._\n\n"
+    )
+    return (
+        "### Datastore Kapasite + VM Disk Tahsisatı\n\n" + note
+        + _md_table(
+            ["Datastore", "VM", "Tahsis (GB)", "Toplam (GB)", "Kullanılan (GB)", "Boş (GB)", "Doluluk"],
+            rows,
+        )
+    )
 
 
 def h_datastore_over_85(db: Session, question: str = "") -> str:
+    live = [d for d in _get_live_datastores(db) if (d.get("usage_pct") or 0) >= 85]
+    if live:
+        rows = [[
+            d.get("name"),
+            f"%{d.get('usage_pct')}",
+            d.get("free_gb"),
+            d.get("capacity_gb"),
+            d.get("hypervisor"),
+        ] for d in sorted(live, key=lambda x: -(x.get("usage_pct") or 0))]
+        return "### %85 Üzeri Dolu Datastore'lar (vCenter canlı)\n\n" + _md_table(
+            ["Datastore", "Doluluk", "Boş (GB)", "Toplam (GB)", "Hypervisor"], rows
+        )
+    # Fallback: eski host aggregate
     hosts = [h for h in _get_esx_hosts(db) if (h.get("ds_pct") or 0) >= 85]
     return (
         "### %85 Üzeri Dolu Host-Datastore Toplamları\n\n"
-        "_Not: Burada gösterilen host'a bağlı toplam datastore doluluğudur (VMware'de tek bir datastore nesnesi olarak ayrıca izlenmiyor)._\n\n"
-        + _md_table(["Host", "Disk %", "Boş (GB)"], [[h["host"], f"%{h['ds_pct']}", h["ds_free_gb"]] for h in hosts], "%85 üzeri dolu host yok.")
+        "_Canlı datastore sorgusu %85 üzeri DS bulamadı; host aggregate metrikleri:_\n\n"
+        + _md_table(
+            ["Host", "Disk %", "Boş (GB)"],
+            [[h["host"], f"%{h['ds_pct']}", h["ds_free_gb"]] for h in hosts],
+            "%85 üzeri dolu datastore/host yok.",
+        )
     )
 
 
 def h_largest_datastore(db: Session, question: str = "") -> str:
+    live = sorted(
+        [d for d in _get_live_datastores(db) if d.get("capacity_gb")],
+        key=lambda d: -(d.get("capacity_gb") or 0),
+    )
+    if live:
+        rows = [[
+            d.get("name"),
+            d.get("capacity_gb"),
+            d.get("free_gb"),
+            f"%{d.get('usage_pct')}" if d.get("usage_pct") is not None else "—",
+            d.get("hypervisor"),
+        ] for d in live[:15]]
+        return "### Datastore Kapasiteleri (büyükten küçüğe, vCenter canlı)\n\n" + _md_table(
+            ["Datastore", "Toplam (GB)", "Boş (GB)", "Doluluk", "Hypervisor"], rows
+        )
     hosts = sorted(_get_esx_hosts(db), key=lambda h: -(h.get("ds_total_gb") or 0))
-    return "### En Büyük Depolama Kapasitesine Sahip Host'lar\n\n" + _md_table(["Host", "Toplam (GB)"], [[h["host"], h["ds_total_gb"]] for h in hosts[:10]])
+    return "### En Büyük Depolama Kapasitesine Sahip Host'lar\n\n" + _md_table(
+        ["Host", "Toplam (GB)"], [[h["host"], h["ds_total_gb"]] for h in hosts[:10]]
+    )
+
+
+def h_free_resources(db: Session, question: str = "") -> str:
+    """Host CPU/RAM + datastore nesne bazlı boş kapasite (canlı)."""
+    hosts = _get_esx_hosts(db)
+    host_rows = []
+    for h in hosts:
+        host_rows.append([
+            h.get("host"),
+            f"%{h.get('cpu_pct')} (boş %{h.get('cpu_free_pct')}, {h.get('cpu_cores')} core)",
+            f"%{h.get('mem_pct')} (boş {h.get('mem_free_gb')} GB / {h.get('mem_total_gb')} GB)",
+            f"%{h.get('ds_pct')} (boş {h.get('ds_free_gb')} GB / {h.get('ds_total_gb')} GB — tüm DS toplamı)",
+        ])
+
+    parts = [
+        "### Boş Kaynak Özeti\n",
+        "_Host Disk satırı tüm datastore'ların toplamıdır. Ayrı datastore boşlukları aşağıdaki canlı tablodadır._\n",
+        "#### Host\n",
+        _md_table(["Host", "CPU", "RAM", "Disk (aggregate)"], host_rows, "Host metrik bulunamadı."),
+        "\n#### Datastore (vCenter canlı)\n",
+    ]
+    # Reuse capacity table body from h_datastore_by_disk (strip heading)
+    ds_block = h_datastore_by_disk(db, question)
+    # drop first markdown heading line
+    ds_lines = ds_block.split("\n")
+    if ds_lines and ds_lines[0].startswith("###"):
+        ds_lines = ds_lines[1:]
+    parts.append("\n".join(ds_lines).lstrip())
+    return "\n".join(parts)
 
 
 def h_storage_alarms_30d(db: Session, question: str = "") -> str:
@@ -1394,8 +1816,11 @@ def h_storage_alarms_30d(db: Session, question: str = "") -> str:
 
 
 def h_storage_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — gerçek Datastore nesnesinin latency/performans trendi ayrı bir tarihsel "
-               f"collector gerektirir; anlık kapasite/erişim durumu için 'datastore erişim durumu' diye sorun.")
+    """Eski stub — canlı latency / datastore durumuna yönlendir."""
+    t = (topic or "").lower()
+    if "latency" in t or "performans" in t:
+        return h_disk_latency(db, topic)
+    return h_datastore_accessibility(db, topic)
 
 
 def h_datastore_accessibility(db: Session, question: str = "") -> str:
@@ -1471,8 +1896,99 @@ def h_host_disconnect_events(db: Session, question: str = "") -> str:
 
 
 def h_events_not_available(db: Session, topic: str) -> str:
-    return _na(f"{topic} — bu bilgi için Backup (Veeam/vSphere Data Protection) veya storage disconnect entegrasyonu şu anda yok; "
-               f"vCenter'ın kendi event/alarm akışında bu tip özel olaylar (backup, VM crash) standart olarak bulunmaz.")
+    """Eski stub — vCenter/system_events canlı aramasına yönlendir."""
+    return h_events_keyword_search(db, topic)
+
+
+def h_events_keyword_search(db: Session, question: str = "") -> str:
+    """Backup / crash / snapshot silme vb. için system_events + vCenter event taraması."""
+    q = (question or "").lower()
+    days = _parse_days_from_question(question, default=30)
+    since = datetime.utcnow() - timedelta(days=days)
+
+    from app.services import vcenter_vm_lifecycle as lc
+
+    keywords = []
+    title = "Olay araması"
+    event_types = list(lc.RESTART_TYPES)
+    if "backup" in q or "yedek" in q:
+        keywords = ["backup", "veeam", "vdp", "replication", "yedek"]
+        title = "Backup / yedek ile ilgili olaylar"
+        event_types = list(lc.RESTART_TYPES)  # vCenter'da native backup event az; DB + restart proxy
+    elif "crash" in q or "çök" in q:
+        keywords = ["crash", "blue screen", "bsod", "panic", "halted", "reset", "ha restarted", "failed"]
+        title = "VM crash / reset ile ilgili olaylar"
+        event_types = list(lc.RESTART_TYPES) + list(lc.HA_TYPES)
+    elif "snapshot" in q and ("sil" in q or "delete" in q or "hata" in q):
+        keywords = ["snapshot", "remove", "delete", "consolidate"]
+        title = "Snapshot silme / consolidate olayları"
+        event_types = [
+            "VmSnapshotRemovedEvent", "TaskEvent", "VmRemovedSnapshotEvent",
+            "SnapshotRemovedEvent", "VmSnapshotCreatedEvent", "VmSnapshotRevertedEvent",
+        ]
+    else:
+        keywords = [w for w in re.findall(r"[a-zçğıöşü0-9]{4,}", q) if w not in (
+            "sonra", "olan", "için", "nedir", "hangi", "kadar", "olay", "alarm",
+        )][:5]
+        title = f"Anahtar kelime araması: {', '.join(keywords) or '—'}"
+
+    like_clauses = " OR ".join(f"lower(title) LIKE :k{i}" for i in range(len(keywords))) or "1=0"
+    params: Dict[str, Any] = {"since": since}
+    for i, kw in enumerate(keywords):
+        params[f"k{i}"] = f"%{kw}%"
+
+    rows_q = []
+    if keywords:
+        rows_q = db.execute(text(f"""
+            SELECT title, severity, source, created_at FROM system_events
+            WHERE created_at >= :since AND ({like_clauses})
+            ORDER BY created_at DESC LIMIT 40
+        """), params).all()
+
+    vc_rows = []
+    vc_err = ""
+    try:
+        ev = lc.fetch_events(db, event_types, days=days, max_events=800)
+        for e in (ev.get("events") or []):
+            msg = " ".join(str(x or "") for x in (
+                e.get("event_type_id"), e.get("message"), e.get("full_message"),
+                e.get("fullFormattedMessage"), e.get("vm_name"),
+            )).lower()
+            if keywords and not any(k.lower() in msg for k in keywords):
+                # crash/restart: restart tipleri zaten filtrelenmiş — hepsini göster
+                if "crash" not in q and "backup" not in q and "snapshot" not in q:
+                    continue
+                if "backup" in q:
+                    continue
+            vc_rows.append([
+                (e.get("vm_name") or e.get("entity_name") or "-")[:40],
+                (e.get("event_type_id") or "-")[:50],
+                _fmt_ts(e.get("timestamp")),
+                e.get("hypervisor") or "-",
+            ])
+            if len(vc_rows) >= 25:
+                break
+        vc_err = "; ".join((ev.get("errors") or [])[:2])
+    except Exception as exc:
+        vc_err = str(exc)
+
+    db_rows = [
+        [r.title[:80], r.severity, r.source, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"]
+        for r in rows_q
+    ]
+    out = [f"### {title} (son {days} gün)\n"]
+    out.append("#### system_events\n")
+    out.append(_md_table(["Olay", "Önem", "Kaynak", "Zaman"], db_rows, "Eşleşen kayıt yok."))
+    out.append("\n#### vCenter event stream (canlı)\n")
+    if vc_err and not vc_rows:
+        out.append(f"_vCenter event sorgusu: {vc_err}_\n")
+    out.append(_md_table(["VM/Entity", "Event", "Zaman", "Hypervisor"], vc_rows, "Eşleşen vCenter event yok."))
+    if not db_rows and not vc_rows:
+        out.append(
+            "\n_Canlı sorgu çalıştı; eşleşme yok. Harici backup ürünü (Veeam vb.) entegre "
+            "değilse backup başarı/hata olayları yalnızca o ürünün logunda olur._"
+        )
+    return "\n".join(out)
 
 
 # ── Envanter ──────────────────────────────────────────────────────────────────
@@ -1484,7 +2000,7 @@ def h_unknown_os(db: Session, question: str = "") -> str:
 
 def h_no_tools(db: Session, question: str = "") -> str:
     vms = [v for v in _get_vms(db) if not v.get("tools_status") or "notinstalled" in (v["tools_status"] or "").lower().replace("_", "")]
-    return "### Guest Tools Kurulu Olmayan VM'ler\n\n" + _md_table(["VM", "Tools Durumu"], [[v["name"], v["tools_status"] or "bilinmiyor"] for v in vms], "Tüm VM'lerde Guest Tools kurulu görünüyor.")
+    return "### Guest Tools Kurulu Olmayan VM'ler\n\n" + _md_table(["VM", "Tools Durumu"], [[v["name"], v["tools_status"] or "sorguda gelmedi"] for v in vms], "Tüm VM'lerde Guest Tools kurulu görünüyor.")
 
 
 _TOOLS_VERSION_TR = {
@@ -1525,9 +2041,30 @@ def h_no_owner(db: Session, question: str = "") -> str:
 
 
 def h_no_tag(db: Session, question: str = "") -> str:
-    return _na("vSphere Tag / Custom Attribute senkronizasyonu şu anda yapılmıyor — bu nedenle 'etiketi olmayan VM' "
-               "sorgusu güvenilir cevaplanamaz (teknik olarak hiçbir VM'in tag verisi tutulmuyor, hepsi 'bilinmiyor' sayılır). "
-               "Owner/departman ataması için 'Business Service Map' özelliğini kullanabilirsiniz (bkz. `/hypervisors/business-services`).")
+    """vCenter customValue (Custom Attributes) canlı — etiketsiz VM listesi."""
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_live_vm_stats(db)
+    if not r["vms"]:
+        return _na(
+            "Canlı custom attribute sorgusu sonuç döndürmedi — vCenter bağlantısını kontrol edin."
+        )
+    no_tag = [v for v in r["vms"] if not (v.get("custom_attrs") or [])]
+    with_tag = [v for v in r["vms"] if v.get("custom_attrs")]
+    rows = [[v["name"], v.get("hypervisor")] for v in no_tag[:50]]
+    sample = []
+    for v in with_tag[:5]:
+        attrs = ", ".join(
+            f"{a.get('key')}={a.get('value')}" for a in (v.get("custom_attrs") or [])[:3]
+        )
+        sample.append([v["name"], attrs, v.get("hypervisor")])
+    return (
+        "### Custom Attribute / Etiket Olmayan VM'ler (vCenter customValue, canlı)\n\n"
+        f"**Etiketsiz:** {len(no_tag)} / {len(r['vms'])} · **Attribute olan:** {len(with_tag)}\n\n"
+        "_Not: Bu sorgu vSphere Tags (CIS tagging) değil; Custom Attributes (`customValue`) "
+        "alanıdır. CIS Tags için ayrı Tagging API gerekir._\n\n"
+        + _md_table(["VM", "Hypervisor"], rows, "Tüm VM'lerde en az bir custom attribute var.")
+        + ("\n\n#### Örnek attribute'lu VM'ler\n" + _md_table(["VM", "Attrs", "Hypervisor"], sample) if sample else "")
+    )
 
 
 def h_duplicate_names(db: Session, question: str = "") -> str:
@@ -1607,10 +2144,6 @@ def h_alarm_trend(db: Session, question: str = "") -> str:
     return f"### Son {days} Günde En Çok Tekrar Eden Alarm/Olay Tipleri\n\n" + _md_table(["Olay Tipi", "Adet"], rows, f"Son {days} günde alarm/olay bulunmuyor.")
 
 
-def h_unused_datastore(db: Session, question: str = "") -> str:
-    return h_storage_not_available(db, "Kullanılmayan datastore tespiti")
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # KURAL TABLOSU — (regex, handler). İlk eşleşen kural çalışır.
 # handler(db) -> str  veya  handler(db) -> Dict (rapor tipi kısayolları için)
@@ -1631,7 +2164,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     # CPU
     (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer", h_cpu_usage_over_90),
     (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre", h_cpu_top20_now),
-    (r"cpu\s*ready", lambda db, q: h_cpu_not_available(db, "CPU Ready değeri")),
+    (r"cpu\s*ready", h_cpu_ready),
     (r"cpu\s*hot\s*add", h_cpu_hot_add),
     (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu", h_highest_vcpu),
     (r"overcommit\s*oran", h_overcommit_ratio),
@@ -1647,7 +2180,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"en\s*fazla\s*ram.a\s*sahip|en\s*fazla\s*ram'e\s*sahip", h_highest_ram),
     (r"ortalama\s*ram\s*kullanımına\s*göre|ram.*ilk\s*20", h_avg_ram_top20),
     (r"host\s*bazında\s*ram\s*doluluk", h_host_ram_fill),
-    (r"ram\s*kullanımında\s*ani\s*artış", lambda db, q: h_cpu_not_available(db, "Anlık RAM artış geçmişi (tarihsel VM performans serisi)")),
+    (r"ram\s*kullanımında\s*ani\s*artış", h_ram_usage_over_90),
     (r"memory\s*reservation", h_memory_reservation),
     (r"bellek\s*yetersizliği\s*yaşayan\s*host", h_host_ram_insufficient),
 
@@ -1655,11 +2188,11 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"disk\s*kullanımı\s*%?\s*90", h_guest_disk_usage_over_90),
     (r"snapshot\s*bulunan\s*vm", h_snapshot_vms),
     (r"\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*eski\s*snapshot", h_old_snapshots),
-    (r"en\s*büyük\s*snapshot", lambda db, q: h_disk_not_available(db, "Snapshot boyutu")),
+    (r"en\s*büyük\s*snapshot", h_largest_snapshot),
     (r"thin\s*provision|thick\s*provision", h_disk_provisioning),
     (r"en\s*fazla\s*disk\s*io|disk\s*io\s*yoğunluğu", h_disk_iops_top),
-    (r"disk\s*latency", lambda db, q: h_disk_not_available(db, "Disk latency")),
-    (r"boşta\s*duran\s*disk|attached\s*olup\s*kullanılmayan", lambda db, q: h_disk_not_available(db, "Kullanılmayan/idle disk tespiti")),
+    (r"disk\s*latency", h_disk_latency),
+    (r"boşta\s*duran\s*disk|attached\s*olup\s*kullanılmayan", h_idle_disks),
 
     # Network
     (r"aynı\s*ip.yi\s*kullanan|aynı\s*ip'yi\s*kullanan", h_duplicate_ip),
@@ -1668,13 +2201,13 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"vlan\s*(id|ids|bilgi)|vm.*vlan|vlan.*vm|port\s*group|portgroup|hangi\s*vlan|vlan.?leri", h_vm_vlans),
     (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput", h_network_traffic_top),
     (r"adapter\s*disconnected", h_adapter_disconnected),
-    (r"ağ\s*hatası", lambda db, q: h_network_not_available(db, "Ağ hatası tespiti")),
+    (r"ağ\s*hatası", h_network_errors),
 
     # Host Sağlığı
     (r"ram\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_ram),
     (r"storage\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_storage),
     (r"maintenance\s*modunda\s*host", h_maintenance_hosts),
-    (r"ha.dan\s*çıkan\s*host|ha'dan\s*çıkan\s*host", lambda db, q: h_cluster_not_available(db, "HA durumu")),
+    (r"ha.dan\s*çıkan\s*host|ha'dan\s*çıkan\s*host", h_cluster_ha_drs),
     (r"network\s*bağlantısını\s*kaybeden\s*host|host.*disconnect", h_host_disconnected),
     (r"dengesiz\s*yük\s*dağılımı", h_cluster_imbalance),
     (r"host\s*hataları\s*neler|host.*hataları", h_host_events_30d),
@@ -1683,33 +2216,36 @@ QA_RULES: List[Tuple[str, Any]] = [
 
     # Cluster
     (r"cluster\s*bazında\s*cpu|cluster\s*bazında\s*ram", h_cluster_cpu_ram),
-    (r"ha\s*aktif\s*olmayan\s*cluster|drs.*çalışıyor\s*mu|drs.*load\s*balancing", lambda db, q: h_cluster_not_available(db, "HA/DRS durumu")),
+    (r"ha\s*aktif\s*olmayan\s*cluster|drs.*çalışıyor\s*mu|drs.*load\s*balancing|ha\s*/?\s*drs|cluster\s*ha", h_cluster_ha_drs),
     (r"cluster\s*kapasitesi\s*ne\s*kadar\s*dolu|en\s*yoğun\s*cluster|kapasite\s*yetersizliği\s*riski", h_cluster_cpu_ram),
     (r"cluster\s*alarmı", h_critical_alarms_24h),
     (r"cluster\s*bazında\s*vm\s*say", h_cluster_vm_counts),
     (r"cluster\s*bazında\s*kullanılabilir\s*kaynak", h_cluster_cpu_ram),
 
     # Storage
+    (r"ne\s*kadar\s*boş|boş\s*kayna[gğk]\w*|free\s*capacity|kaynak\s*boşlu[gğ]u|kapasite\s*boşlu[gğ]u", h_free_resources),
     (r"datastore\s*dağılım|vm.*datastore.*dağılım|datastore.*bazında.*vm|vm.*datastore.*bazında", h_datastore_by_disk),
+    (r"datastore\s*kapasite|datastore.*boş|boş\s*datastore|datastore\s*doluluk|ne\s*kadar\s*boş.*(?:disk|datastore|depolama)|(?:disk|datastore|depolama).*(?:ne\s*kadar\s*boş|free)", h_datastore_by_disk),
     (r"en\s*dolu\s*datastore|%?\s*85\s*üzeri\s*dolu\s*datastore", h_datastore_over_85),
-    (r"storage\s*latency\s*yüksek", lambda db, q: h_storage_not_available(db, "Datastore latency")),
+    (r"storage\s*latency\s*yüksek", h_disk_latency),
     (r"storage\s*bağlantı\s*problemi|datastore.a\s*erişemeyen|datastore'a\s*erişemeyen|datastore\s*erişim\s*durumu", h_datastore_accessibility),
     (r"storage\s*alarm", h_storage_alarms_30d),
     (r"en\s*fazla\s*vm\s*barındıran\s*datastore|en\s*büyük\s*datastore", h_largest_datastore),
-    (r"kullanılmayan\s*datastore", lambda db, q: h_storage_not_available(db, "Kullanılmayan datastore tespiti")),
-    (r"storage\s*performansı\s*son\s*bir\s*haftada", lambda db, q: h_storage_not_available(db, "Datastore performans trendi")),
+    (r"kullanılmayan\s*datastore", h_unused_datastore),
+    (r"storage\s*performansı\s*son\s*bir\s*haftada", h_disk_latency),
+    (r"datastore\s*doluluk\s*rapor", h_datastore_by_disk),
 
     # Olaylar ve Alarm
     (r"oluşan\s*kritik\s*alarm|kritik\s*alarmları\w*\s*göster", h_critical_alarms_24h),
     (r"en\s*fazla\s*alarm.*üreten\s*vm", h_vm_most_alarms_7d),
     (r"alarmı\s*çözülmemiş\s*vm", h_unresolved_alarm_vms),
-    (r"ha\s*olayları\s*neler|oluşan\s*ha\s*olayları", lambda db, q: h_cluster_not_available(db, "HA olayları (Cluster/HA nesnesi ayrı senkronize edilmiyor)")),
+    (r"ha\s*olayları\s*neler|oluşan\s*ha\s*olayları", h_cluster_ha_drs),
     (r"migration\s*başarısız", h_migration_events),
-    (r"backup\s*başarısız", lambda db, q: h_events_not_available(db, "Backup başarı/hata durumu")),
-    (r"snapshot\s*silme\s*hatası", lambda db, q: h_events_not_available(db, "Snapshot silme hata takibi")),
+    (r"backup\s*başarısız", h_events_keyword_search),
+    (r"snapshot\s*silme\s*hatası", h_events_keyword_search),
     (r"storage\s*disconnect\s*yaşandı", h_host_disconnect_events),
     (r"host\s*disconnect\s*oldu", h_host_disconnect_events),
-    (r"vm\s*crash\s*tespit", lambda db, q: h_events_not_available(db, "VM crash tespiti")),
+    (r"vm\s*crash\s*tespit", h_events_keyword_search),
 
     # Envanter
     (r"işletim\s*sistemi\s*bilinmeyen\s*vm", h_unknown_os),
@@ -1717,20 +2253,19 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"tools.*qemu\s*agent\s*güncel\s*olmayan|vmware\s*tools.*güncel\s*olmayan", h_tools_version_outdated),
     (r"son\s*\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*açıl(mayan|mamış)", h_unbooted_1y),
     (r"owner\s*bilgisi\s*olmayan", h_no_owner),
-    (r"etiketi.*tag.*olmayan|tag.etiket.*eksik", h_no_tag),
+    (r"etiketi?\s*olmayan|tag.?etiket|etiket.*eksik|custom\s*attribute", h_no_tag),
     (r"aynı\s*isimde\s*birden\s*fazla\s*vm", h_duplicate_names),
     (r"üretim\s*ortamında\s*test\s*olarak\s*işaretlenmiş", h_prod_marked_test),
 
     # Raporlama kısayolları — aynı verinin "... raporu/raporlar mısın" ifadeli hali
     (r"vm\s*restart\s*rapor|restart\s*raporu", h_restart_report_30d),
     (r"alarm\s*trend\s*rapor|en\s*çok\s*tekrar\s*eden\s*alarm", h_alarm_trend),
-    (r"datastore\s*doluluk\s*rapor", h_datastore_over_85),
     (r"host\s*bakım\s*geçmişi|maintenance\s*moda\s*alınan\s*host", h_host_events_30d),
     (r"migration\s*geçmişi\s*rapor", h_migration_events),
     (r"işletim\s*sistemi\s*bilgisi\s*eksik", h_unknown_os),
     (r"ip\s*adresi\s*görünmeyen\s*vm", h_no_ip_running),
     (r"owner\s*bilgisi\s*olmayan\s*vm\s*rapor", h_no_owner),
-    (r"tag.etiket.*eksik\s*vm.*rapor|etiket\s*bilgisi\s*eksik", h_no_tag),
+    (r"tag.etiket.*eksik\s*vm.*rapor|etiket\s*bilgisi\s*eksik|etiketi?\s*olmayan\s*vm", h_no_tag),
     (r"üretim.test\s*ayrımı\s*yapılmamış", h_prod_marked_test),
     (r"guest\s*agent.tools\s*kurulu\s*olmayan\s*vm\s*rapor", h_no_tools),
     (r"kullanılmayan\s*datastore", h_unused_datastore),
@@ -1909,7 +2444,8 @@ def _compute_hypervisor_answer(
         "Sana sağlanan gerçek veri üzerinden Türkçe, kısa, net ve pratik yanıtlar ver. "
         "Sayısal değerleri gerektiğinde tablo veya liste halinde sun ama gereksiz uzatma. "
         "Kullanıcı açıkça detay istemedikçe kapasite uyarısı/risk/öneri gibi ek yorumları "
-        "sadece gerçekten ilgiliyse ve kısaca ekle. Bilgi yoksa 'Bu veriye erişimim yok' de, uydurma."
+        "sadece gerçekten ilgiliyse ve kısaca ekle. "
+        "Veri bloğunda yoksa 'bilinmiyor/erişim yok' deme; 'canlı sorguda bu alan dönmedi' de, uydurma."
     )
 
     # Konuşma geçmişi + güncel soru

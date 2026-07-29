@@ -245,7 +245,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
     { type: 'link', path: '/dashboard', name: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     // ── Üst düzey yönetici özeti — tüm ortamlar tek ekranda ───────────────
-    { type: 'link', path: '/executive', name: 'Yönetici Ekranı', icon: <Crown size={18} />, moduleId: 'executive' },
+    {
+      type: 'group', key: 'executive', name: 'Yönetici Ekranı', icon: <Crown size={18} />,
+      moduleIds: ['executive', 'ai_automation'],
+      children: [
+        { type: 'link', path: '/executive', name: 'Özet', icon: <LayoutDashboard size={15} />, moduleId: 'executive' },
+        { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
+      ],
+    },
 
     // ── Linux ─────────────────────────────────────────────────────────────
     {
@@ -331,9 +338,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         },
       ],
     },
-
-    // ── AI & Automation ───────────────────────────────────────────────────
-    { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={18} />, moduleIds: ['ai_automation', 'executive'] },
 
     // ── Integrations ──────────────────────────────────────────────────────
     {

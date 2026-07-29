@@ -23,10 +23,10 @@ const CHAT_HINT: Record<PlatformKey, string> = {
 
 function PlatformBanner({ platform, hint }: { platform: PlatformKey; hint?: string }) {
   return (
-    <div className="mb-4 px-4 py-2 rounded-xl bg-slate-800/80 border border-slate-700/60 text-sm text-slate-300">
+    <div className="px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs text-slate-400">
       <span className="text-slate-500">Platform:</span>{' '}
-      <span className="font-medium text-white">{PLATFORM_AIOPS_LABEL[platform]}</span>
-      <span className="text-slate-500 ml-2">— {hint || 'kendi log kaynaklarından analiz'}</span>
+      <span className="font-medium text-slate-200">{PLATFORM_AIOPS_LABEL[platform]}</span>
+      <span className="text-slate-500 ml-2">— {hint || 'doğal dil sorgulama'}</span>
     </div>
   )
 }
@@ -40,13 +40,11 @@ function PlatformChatShell({
 }) {
   return (
     <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
-      <div className="flex-none px-5 pt-4">
+      <div className="flex-none px-4 pt-3 pb-2 border-b border-slate-700/50">
         <PlatformBanner platform={platform} hint={CHAT_HINT[platform]} />
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden px-5 pb-4">
-        <div className="h-full min-h-0 overflow-hidden rounded-xl border border-slate-700/50">
-          {children}
-        </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {children}
       </div>
     </div>
   )

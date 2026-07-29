@@ -916,17 +916,10 @@ async def ask_hypervisor_question(
         from app.services.hypervisor_intelligence import answer_hypervisor_question
         from app.services import runtime_settings as _rts
 
-        # Canlı alarm/task sorularında vCenter READ_ONLY araçlarını önce çalıştır
-        live_hint = any(
-            k in question.lower()
-            for k in (
-                "canlı", "canli", "şu an", "su an", "aktif alarm", "alarm",
-                "task", "görev", "gorev", "gerçek zamanlı", "gercek zamanli",
-                "live",
-            )
-        )
+        # Ortam bağlıyken her soruda canlı araç denemesi — "bilinmiyor" yok.
+        live_hint = True
         agentic_extra = ""
-        if live_hint and _rts.get_bool("virt_chat_agentic_mode"):
+        if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
             try:
                 from app.services.unified_tool_chat import run_read_only_tool_loop
                 from app.services.agent.tools import domains_for_platform

@@ -354,8 +354,8 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "virt_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
         "group": "virt_chat", "label": "Sanallaştırma Chat agentic mod",
-        "help": "Açıkken canlı alarm/task sorularında vCenter READ_ONLY araçları "
-                "hypervisor_intelligence cevabına eklenir.",
+        "help": "Açıkken kapasite/storage/HA/alarm vb. sorularda vCenter READ_ONLY araçları "
+                "önce çalışır; 'bilinmiyor' yerine canlı veri çekilir.",
         "env": "VIRT_CHAT_AGENTIC_MODE",
     },
     "virt_chat_max_tool_steps": {

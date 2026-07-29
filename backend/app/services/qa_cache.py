@@ -29,8 +29,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "hv_qa_cache:v1:"
-_HIT_PREFIX = "hv_qa_hits:v1:"
+_KEY_PREFIX = "hv_qa_cache:v3:"
+_HIT_PREFIX = "hv_qa_hits:v2:"
 
 _BASE_TTL_SECONDS = 5 * 60        # ilk cevap: 5 dk hatırla
 _WARM_TTL_SECONDS = 15 * 60       # 3+ kez sorulmuşsa: 15 dk (log sync periyoduyla uyumlu)

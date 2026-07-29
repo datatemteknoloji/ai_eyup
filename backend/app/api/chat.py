@@ -1392,8 +1392,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             raw_output_lines.append(f"**`{cmd}`**\n```\n{out}\n```\n")
                             srv_ctx.append(f"--- {cmd} ---\n{out}")
                         else:
-                            raw_output_lines.append(f"**`{cmd}`**: *SSH hatası: {err or 'bilinmiyor'}*\n")
-                            srv_ctx.append(f"--- {cmd} ---\nHATA: {err or 'bilinmiyor'}")
+                            raw_output_lines.append(f"**`{cmd}`**: *SSH hatası: {err or 'detay dönmedi'}*\n")
+                            srv_ctx.append(f"--- {cmd} ---\nHATA: {err or 'detay dönmedi'}")
                     cmd_context_parts.append("\n".join(srv_ctx))
                 raw_output = "\n".join(raw_output_lines)
 

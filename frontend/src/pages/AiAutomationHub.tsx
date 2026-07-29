@@ -83,32 +83,8 @@ export default function AiAutomationHub() {
         {platform === 'all' && <UnifiedChat embedded />}
         {platform === 'linux' && <Chat embedded inventoryPlatform="linux" />}
         {platform === 'windows' && <WindowsChat embedded />}
-        {platform === 'openshift' && (
-          <>
-            <div className="flex-shrink-0 mx-4 mt-3 px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-sm text-cyan-200">
-              <span className="font-semibold">OpenShift</span>
-              <span className="text-cyan-200/70 ml-2">
-                — cluster API üzerinden pod, node, event ve proje sorgulama
-              </span>
-            </div>
-            <div className="flex-1 min-h-0">
-              <Chat embedded inventoryPlatform="openshift" />
-            </div>
-          </>
-        )}
-        {platform === 'exadata' && (
-          <>
-            <div className="flex-shrink-0 mx-4 mt-3 px-4 py-2 rounded-xl bg-orange-500/10 border border-orange-500/25 text-sm text-orange-200">
-              <span className="font-semibold">Exadata</span>
-              <span className="text-orange-200/70 ml-2">
-                — compute node ve cell&apos;e bağlı Linux sunucular üzerinden sorgulama
-              </span>
-            </div>
-            <div className="flex-1 min-h-0">
-              <Chat embedded inventoryPlatform="exadata" />
-            </div>
-          </>
-        )}
+        {platform === 'openshift' && <Chat embedded inventoryPlatform="openshift" />}
+        {platform === 'exadata' && <Chat embedded inventoryPlatform="exadata" />}
         {platform === 'virt' && <HypervisorChat embedded />}
       </div>
     </div>

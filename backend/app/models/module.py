@@ -62,6 +62,10 @@ DEFAULT_MODULES = [
      "icon": "Brain",    "color": "pink",    "sort_order": 10},
 ]
 
-# 'aiops' modülü kaldırıldı (2026-07) — Komuta Merkezi/Events/Incidents/Anomaly/RCA/Baseline
-# özellikleri zaten 'linux' modülü kapsamında sunuluyordu, ayrı bir rol gereksizdi.
-REMOVED_MODULE_IDS = ["aiops"]
+# 'aiops' kaldırıldı (2026-07) — Komuta Merkezi/Events özellikleri 'linux' kapsamında.
+# 'knowledge_base' kaldırıldı (2026-07) — tek kanonik id: 'knowledge' (çift Bilgi Bankası sütunu).
+REMOVED_MODULE_MIGRATIONS = {
+    "aiops": "linux",
+    "knowledge_base": "knowledge",
+}
+REMOVED_MODULE_IDS = list(REMOVED_MODULE_MIGRATIONS.keys())

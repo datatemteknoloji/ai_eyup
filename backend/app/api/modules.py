@@ -72,32 +72,49 @@ def _ensure_modules_seeded(db: Session):
 
 
 def _cleanup_removed_modules(db: Session):
-    """Kaldırılan modülleri (ör. 'aiops') veritabanından temizle.
+    """Kaldırılan modülleri veritabanından temizle.
 
-    Etkilenen kullanıcılara, kapsadığı içeriği zaten sağlayan yerine geçen
-    modülü ('linux') ata, sonra Module satırını sil — UserModule kayıtları
-    FK CASCADE ile otomatik silinir.
+    Etkilenen kullanıcılara yerine geçen modül atanır (örn. knowledge_base→knowledge,
+    aiops→linux); sonra eski Module satırı silinir — UserModule FK CASCADE temizlenir.
     """
+    from app.models.module import REMOVED_MODULE_MIGRATIONS
+
     if not REMOVED_MODULE_IDS:
         return
     existing_removed = db.query(Module).filter(Module.id.in_(REMOVED_MODULE_IDS)).all()
     if not existing_removed:
         return
-    affected_user_ids = {
+
+    for mod in existing_removed:
+        replacement = REMOVED_MODULE_MIGRATIONS.get(mod.id)
+        if not replacement:
+            continue
+        # replacement modülünün seed edilmiş olduğundan emin ol
+        if not db.query(Module).filter(Module.id == replacement).first():
+            seed = next((m for m in DEFAULT_MODULES if m["id"] == replacement), None)
+            if seed:
+                db.add(Module(**seed))
+                db.flush()
+        rows = db.query(UserModule).filter(UserModule.module_id == mod.id).all()
+        for r in rows:
+            has_replacement = db.query(UserModule).filter(
+                UserModule.user_id == r.user_id, UserModule.module_id == replacement
+            ).first()
+            if not has_replacement:
+                db.add(UserModule(user_id=r.user_id, module_id=replacement, granted_by=r.granted_by))
+
+    affected = {
         r.user_id for r in db.query(UserModule).filter(UserModule.module_id.in_(REMOVED_MODULE_IDS)).all()
     }
-    for uid in affected_user_ids:
-        has_linux = db.query(UserModule).filter(
-            UserModule.user_id == uid, UserModule.module_id == "linux"
-        ).first()
-        if not has_linux:
-            db.add(UserModule(user_id=uid, module_id="linux"))
     for mod in existing_removed:
         db.delete(mod)
     db.commit()
-    if affected_user_ids:
-        logger.info("Kaldırılan modüller temizlendi (%s); %s kullanıcıya 'linux' atandı",
-                     REMOVED_MODULE_IDS, len(affected_user_ids))
+    if affected:
+        logger.info(
+            "Kaldırılan modüller temizlendi (%s); etkilenen kullanıcı=%s",
+            REMOVED_MODULE_IDS,
+            len(affected),
+        )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
