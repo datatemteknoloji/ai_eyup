@@ -18,6 +18,7 @@ export const PLATFORM_REPORT_LABELS: Record<PlatformKey, string> = {
   windows: 'Windows Altyapı Raporları',
   virt: 'Sanallaştırma Altyapı Raporları',
   exadata: 'Exadata Altyapı Raporları',
+  openshift: 'OpenShift Altyapı Raporları',
 }
 
 export const PLATFORM_REPORT_SUBTITLES: Record<PlatformKey, string> = {
@@ -25,6 +26,7 @@ export const PLATFORM_REPORT_SUBTITLES: Record<PlatformKey, string> = {
   windows: 'Windows sunucu olayları, güvenlik ve yama durumu raporları',
   virt: 'Hypervisor, VM kapasitesi, risk ve operasyon raporları',
   exadata: 'Rack, compute node ve cell bazlı Exadata raporları',
+  openshift: 'Cluster, node ve workload bazlı OpenShift raporları',
 }
 
 const VIRT_CATALOG: ReportCatalogItem[] = [
@@ -71,11 +73,14 @@ const EXADATA_CATALOG: ReportCatalogItem[] = [
   { type: 'node_health', title: 'Node Sağlık', icon: <Layers size={18} />, color: 'green', desc: 'Compute node ve cell durumları' },
 ]
 
+const OPENSHIFT_CATALOG: ReportCatalogItem[] = []
+
 export const PLATFORM_REPORT_CATALOGS: Record<PlatformKey, ReportCatalogItem[]> = {
   linux: LINUX_CATALOG,
   windows: WINDOWS_CATALOG,
   virt: VIRT_CATALOG,
   exadata: EXADATA_CATALOG,
+  openshift: OPENSHIFT_CATALOG,
 }
 
 export function reportsApiBase(platform: PlatformKey): string {

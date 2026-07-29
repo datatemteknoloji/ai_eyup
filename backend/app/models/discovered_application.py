@@ -38,7 +38,7 @@ class DiscoveredApplication(Base):
     detection_method = Column(String(30), nullable=True)         # process | service | port | package | registry
     evidence = Column(Text, nullable=True)                       # ham cikti kirintisi (debug/citation)
 
-    status = Column(String(20), default="running", nullable=False)  # running | stopped
+    status = Column(String(20), default="running", nullable=False)  # running | installed | stopped
     source = Column(String(20), default="ssh", nullable=False)      # ssh | winrm | manual
 
     first_detected_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

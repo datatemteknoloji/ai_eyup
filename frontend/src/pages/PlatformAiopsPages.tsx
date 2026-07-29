@@ -3,6 +3,7 @@ import type { PlatformKey } from '../config/platformAiops'
 import { PLATFORM_AIOPS_LABEL } from '../config/platformAiops'
 import OpsCenter from './OpsCenter'
 import VirtOpsCenter from './VirtOpsCenter'
+import OpenShiftOpsCenter from './OpenShiftOpsCenter'
 import EventsHub from './EventsHub'
 import AnalysisHub from './AnalysisHub'
 import Incidents from './Incidents'
@@ -17,6 +18,7 @@ const CHAT_HINT: Record<PlatformKey, string> = {
   windows: 'AI-Ready Windows sunuculara WinRM ile bağlanır; performans, servis, event log, güncelleme sorularına cevap verir.',
   virt: 'Senkronize vCenter/OLVM verisi (host, VM, cluster, datastore, metrik) üzerinden doğal dilde soru sorabilirsiniz.',
   exadata: 'Exadata compute/cell’e bağlı Linux node’lar üzerinden doğal dil sorgulama.',
+  openshift: 'Senkronize OpenShift cluster/node/proje/workload verisi üzerinden doğal dilde soru sorabilirsiniz.',
 }
 
 function PlatformBanner({ platform, hint }: { platform: PlatformKey; hint?: string }) {
@@ -80,6 +82,11 @@ export const ExadataEventsPage = () => <EventsHub platform="exadata" />
 export const ExadataIncidentsPage = withPlatformPage('exadata', Incidents)
 export const ExadataAnalysisPage = () => <AnalysisHub platform="exadata" />
 
+export const OpenShiftOpsPage = () => <OpenShiftOpsCenter />
+export const OpenShiftEventsPage = () => <EventsHub platform="openshift" />
+export const OpenShiftIncidentsPage = withPlatformPage('openshift', Incidents)
+export const OpenShiftAnalysisPage = () => <AnalysisHub platform="openshift" />
+
 export const LinuxChatPage = () => (
   <PlatformChatShell platform="linux">
     <Chat embedded inventoryPlatform="linux" />
@@ -98,6 +105,11 @@ export const VirtChatPage = () => (
 export const ExadataChatPage = () => (
   <PlatformChatShell platform="exadata">
     <Chat embedded inventoryPlatform="exadata" />
+  </PlatformChatShell>
+)
+export const OpenShiftChatPage = () => (
+  <PlatformChatShell platform="openshift">
+    <Chat embedded inventoryPlatform="openshift" />
   </PlatformChatShell>
 )
 

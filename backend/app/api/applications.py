@@ -82,12 +82,16 @@ def applications_summary(db: Session = Depends(get_db)):
     total_running = db.query(func.count(DiscoveredApplication.id)).filter(
         DiscoveredApplication.status == "running"
     ).scalar() or 0
+    total_installed = db.query(func.count(DiscoveredApplication.id)).filter(
+        DiscoveredApplication.status == "installed"
+    ).scalar() or 0
     scanned_servers = db.query(func.count(Server.id)).filter(
         Server.app_discovery_last_scan.isnot(None)
     ).scalar() or 0
 
     return {
         "total_running": total_running,
+        "total_installed": total_installed,
         "scanned_servers": scanned_servers,
         "by_product": [
             {"name": n, "category": c, "server_count": count}

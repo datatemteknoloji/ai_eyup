@@ -73,10 +73,16 @@ def _upsert_virt_event(db: Session, log: Dict[str, Any], event_type: str, now: d
 
 
 def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
-    """Virt komuta merkezi + vCenter event/alarm kaynaklarından SystemEvent oluştur/güncelle."""
+    """Virt komuta merkezi + vCenter/OpenShift Virtualization event/alarm kaynaklarından SystemEvent oluştur/güncelle."""
     from app.services.vcenter_event_collector import sync_all_vcenter_events
+    from app.services.openshift_virt_event_collector import sync_all_openshift_virt_events
 
     vcenter_result = sync_all_vcenter_events(db, hours=48)
+    try:
+        openshift_virt_result = sync_all_openshift_virt_events(db, hours=48)
+    except Exception as exc:
+        logger.warning("OpenShift Virtualization event sync atlandı: %s", exc)
+        openshift_virt_result = {"success": False, "total_saved": 0, "errors": [str(exc)]}
     data = build_virt_command_center(db)
     now = datetime.utcnow()
     saved = 0
@@ -118,10 +124,12 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
                 logger.warning("[AutoIncident] Virt event #%s: %s", ev.id, exc)
 
     return {
-        "total_saved": saved + vcenter_result.get("total_saved", 0),
+        "total_saved": saved + vcenter_result.get("total_saved", 0) + openshift_virt_result.get("total_saved", 0),
         "virt_saved": saved,
         "vcenter_saved": vcenter_result.get("total_saved", 0),
+        "openshift_virt_saved": openshift_virt_result.get("total_saved", 0),
         "critical_hosts": len(data.get("critical_hosts", [])),
         "platform_logs": len(data.get("platform_logs", [])),
         "vcenter_sync": vcenter_result,
+        "openshift_virt_sync": openshift_virt_result,
     }

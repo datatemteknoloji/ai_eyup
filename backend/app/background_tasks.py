@@ -50,6 +50,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_windows_exporter_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_openshift_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
         self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
         self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
@@ -372,6 +373,40 @@ class BackgroundTaskManager:
                 logger.error(f"Inventory sync task error: {e}")
                 await asyncio.sleep(max(60, _rt_sec("inventory_sync_interval_minutes", 5) * 60))
 
+
+    async def _periodic_openshift_sync(self):
+        """OpenShift Container Platform cluster'larından envanter + olay senkronizasyonu (10 dk)."""
+        logger.info("OpenShift sync task started (600s interval)")
+        await asyncio.sleep(180)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.openshift_sync_service import sync_all_openshift_clusters
+                    from app.services.openshift_event_collector import sync_all_openshift_events
+
+                    loop = asyncio.get_event_loop()
+                    inv_result = await loop.run_in_executor(None, sync_all_openshift_clusters, db)
+                    if inv_result.get("total_clusters", 0) > 0:
+                        ev_result = await loop.run_in_executor(None, sync_all_openshift_events, db)
+                        logger.info(
+                            "OpenShift sync: %s cluster, %s yeni olay",
+                            inv_result.get("total_clusters", 0),
+                            ev_result.get("total_saved", 0),
+                        )
+                        from app.services import qa_cache
+                        qa_cache.invalidate_all()
+                except Exception as e:
+                    logger.error(f"OpenShift sync error: {e}", exc_info=True)
+                finally:
+                    db.close()
+                await asyncio.sleep(_rt_sec("openshift_sync_interval_sec", 600))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"OpenShift sync task error: {e}")
+                await asyncio.sleep(_rt_sec("openshift_sync_interval_sec", 600))
 
     async def _periodic_esx_metric_sync(self):
         """Her 15 dakikada VMware vCenter'lardan ESX host metriklerini DB'ye yazar.

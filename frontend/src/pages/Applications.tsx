@@ -36,6 +36,7 @@ interface ByCategory {
 
 interface Summary {
   total_running: number
+  total_installed?: number
   scanned_servers: number
   by_product: ByProduct[]
   by_category: ByCategory[]
@@ -51,7 +52,12 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   running: { label: 'Çalışıyor', color: 'text-green-300 bg-green-500/10 border-green-500/25' },
+  installed: { label: 'Kurulu', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
   stopped: { label: 'Durdu', color: 'text-slate-400 bg-white/[0.05] border-white/[0.1]' },
+}
+
+const METHOD_LABEL: Record<string, string> = {
+  process: 'Süreç', service: 'Servis', port: 'Port', package: 'Paket', registry: 'Kayıt',
 }
 
 const SOURCE_LABEL: Record<string, string> = { ssh: 'SSH', winrm: 'WinRM', manual: 'Manuel' }
@@ -63,6 +69,15 @@ function fmt(dt: string | null) {
   } catch {
     return dt
   }
+}
+
+function fmtVersion(v: string | null) {
+  if (!v) return '—'
+  const s = v.trim()
+  if (!s) return '—'
+  // Zaten temizlenmiş beklenir; yine de uzun banner kırp
+  if (s.length > 48) return s.slice(0, 48) + '…'
+  return s
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -152,10 +167,9 @@ const Applications: React.FC = () => {
       <div>
         <h1 className="text-xl font-semibold text-white">Uygulamalar</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Sunucularda otomatik olarak tespit edilen çalışan uygulama/servisler (Oracle DB, PostgreSQL,
-          MySQL/MariaDB, MSSQL, Nginx/Apache/IIS, Tomcat, Redis, MongoDB, Kafka, Docker/Kubernetes vb).
-          Arka planda periyodik (~12 saatte bir) SSH/WinRM taraması ile güncellenir; bir sunucu için
-          anında yeniden taramak için aşağıdan "Yeniden Tara" kullanılabilir.
+          Sunucularda SSH/WinRM ile tespit edilen gerçek uygulamalar. Yalnızca çalışan süreç/servis
+          veya dinleyen port kanıtı varsa &quot;Çalışıyor&quot;; yalnızca paket/registry varsa &quot;Kurulu&quot;.
+          Port ve sürüm uydurulmaz — taramada görülmeyen alanlar boş kalır.
         </p>
       </div>
 
@@ -164,14 +178,18 @@ const Applications: React.FC = () => {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-2xl font-bold text-white">{summary.total_running}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Çalışan uygulama tespiti</div>
+            <div className="text-xs text-slate-400 mt-0.5">Çalışan uygulama</div>
+          </div>
+          <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
+            <div className="text-2xl font-bold text-white">{summary.total_installed ?? 0}</div>
+            <div className="text-xs text-slate-400 mt-0.5">Kurulu (çalışmıyor)</div>
           </div>
           <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-2xl font-bold text-white">{summary.scanned_servers}</div>
             <div className="text-xs text-slate-400 mt-0.5">Taranmış sunucu</div>
           </div>
-          <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4 col-span-2">
-            <div className="text-xs text-slate-400 mb-1.5">Kategori dağılımı</div>
+          <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
+            <div className="text-xs text-slate-400 mb-1.5">Kategori (çalışan)</div>
             <div className="flex flex-wrap gap-1.5">
               {summary.by_category.map(c => (
                 <button
@@ -184,6 +202,9 @@ const Applications: React.FC = () => {
                   {CATEGORY_LABEL[c.category] || c.category} ({c.count})
                 </button>
               ))}
+              {summary.by_category.length === 0 && (
+                <span className="text-xs text-slate-500">Henüz yok</span>
+              )}
             </div>
           </div>
         </div>
@@ -223,6 +244,7 @@ const Applications: React.FC = () => {
           className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
           <option value="">Tümü</option>
           <option value="running">Çalışıyor</option>
+          <option value="installed">Kurulu</option>
           <option value="stopped">Durdu</option>
         </select>
         <input value={q} onChange={e => { setOffset(0); setQ(e.target.value) }}
@@ -267,6 +289,7 @@ const Applications: React.FC = () => {
                 <th className="text-left px-3 py-2.5 font-medium">Sürüm</th>
                 <th className="text-left px-3 py-2.5 font-medium">Port</th>
                 <th className="text-left px-3 py-2.5 font-medium">Durum</th>
+                <th className="text-left px-3 py-2.5 font-medium">Kanıt</th>
                 <th className="text-left px-3 py-2.5 font-medium">Kaynak</th>
                 <th className="text-left px-3 py-2.5 font-medium">Son görülme</th>
                 <th className="px-3 py-2.5" />
@@ -278,14 +301,17 @@ const Applications: React.FC = () => {
                 return (
                   <tr key={a.id} className="hover:bg-white/[0.03]">
                     <td className="px-3 py-2 text-slate-200 whitespace-nowrap text-xs">{a.server_name}</td>
-                    <td className="px-3 py-2 text-slate-200 text-xs font-medium">{a.name}</td>
+                    <td className="px-3 py-2 text-slate-200 text-xs font-medium" title={a.evidence || ''}>{a.name}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-300">{CATEGORY_LABEL[a.category] || a.category}</td>
-                    <td className="px-3 py-2 text-slate-400 font-mono text-[11px] max-w-xs truncate" title={a.version || ''}>
-                      {a.version || '—'}
+                    <td className="px-3 py-2 text-slate-300 font-mono text-[11px] max-w-xs truncate" title={a.version || ''}>
+                      {fmtVersion(a.version)}
                     </td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{a.port ?? '—'}</td>
                     <td className="px-3 py-2">
                       <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${st.color}`}>{st.label}</span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 text-xs" title={a.evidence || ''}>
+                      {METHOD_LABEL[a.detection_method || ''] || a.detection_method || '—'}
                     </td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{SOURCE_LABEL[a.source] || a.source}</td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{fmt(a.last_seen_at)}</td>
@@ -300,9 +326,9 @@ const Applications: React.FC = () => {
                 )
               })}
               {!isFetching && rows.length === 0 && (
-                <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-500">
+                <tr><td colSpan={10} className="px-3 py-10 text-center text-slate-500">
                   Henüz tespit edilen uygulama yok — arka plan taraması ilk çalıştığında (veya bir sunucu
-                  seçip "Yeniden Tara" dediğinizde) burada birikmeye başlar.
+                  seçip &quot;Yeniden Tara&quot; dediğinizde) burada birikmeye başlar.
                 </td></tr>
               )}
             </tbody>

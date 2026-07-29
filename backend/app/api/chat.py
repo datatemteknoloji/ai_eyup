@@ -457,6 +457,10 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
             'nslookup', 'dig', 'isim çözümleme', 'name resolution',
             'gateway', 'ağ geçidi', 'default route', 'ip route',
+            'sysctl', 'swappiness', 'dirty_ratio', 'dmesg', 'coredump', 'oom',
+            'multipath', 'lvm', 'vgdisplay', 'pvdisplay', 'smartctl', 'zfs',
+            'kök neden', 'kok neden', 'root cause', 'teşhis', 'teshis', 'diagnos',
+            'neden yavaş', 'neden dolu', 'neden düştü', 'neden kapalı',
         ]
         DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
         msg_lower_ctx = message.lower()
@@ -1065,15 +1069,19 @@ def _build_prompt(
         "UZMAN YANIT TARZI:",
         "8. Her soruyu bir kıdemli admin gibi ele al:",
         "   - Once olasi KOKEN NEDENLER (root cause) belirt",
-        "   - Somut TANI KOMUTU oner (calistirilabilir, parametreli)",
-        "   - COZUM ADIMLARI numaralı liste halinde ver",
+        "   - BAGLAM'da komut ciktisi varsa yorumla; yoksa 'Bu bilgi mevcut taramada toplanmadi' de",
+        "   - COZUM ADIMLARI numaralı liste halinde ver (yapilabilir, sirali)",
         "   - Varsa UYARI / RISK bilgisi ekle (ornegin: 'production'da dikkat, once test et')",
-        "9. Performans sorularinda degerler anlamsiz kalmayacak sekilde yorum yap:",
-        "   - CPU iowait > %20 → disk darbogazı sinyali gibi",
-        "   - Load average > CPU cekirdek sayisi → sistem bunalmis gibi",
-        "10. Komut onerirken ciktiyi nasil yorumlayacagini da goster",
-        "11. Kritik islemler icin (rm, mkfs, reboot, kill) MUTLAKA uyari ver ve once yedek/snapshot al de",
-        "12. VMware/oVirt sorularinda vSphere/oVirt terimleri kullan (datastore, portgroup, vNIC vb.)",
+        "9. Teknik derinlikte cevap ver: kernel/sysctl, storage, network, security, container",
+        "   konularinda somut parametre/esik/komut adi kullan — genel sohbet etme.",
+        "10. Performans sorularinda degerleri yorumla:",
+        "   - CPU iowait > %20 → disk darbogazı sinyali",
+        "   - Load average > CPU cekirdek sayisi → sistem bunalmis",
+        "11. Birden fazla sunucu varsa karsilastirma tablosu kur; anomaliyi isaretle.",
+        "12. Kullaniciya 'kendiniz su komutu calistirin' deme; sistem SSH yapar.",
+        "    Eksik veri varsa kisa soyle: hangi grup toplanamadi (or. journal, sysctl).",
+        "13. Kritik islemler icin (rm, mkfs, reboot, kill) MUTLAKA uyari ver ve once yedek/snapshot al de",
+        "14. VMware/oVirt sorularinda vSphere/oVirt terimleri kullan (datastore, portgroup, vNIC vb.)",
     ])
 
     prompt_parts = [identity]

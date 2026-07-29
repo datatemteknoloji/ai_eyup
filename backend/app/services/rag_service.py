@@ -4,7 +4,7 @@ Chat prompt'una eklenecek metinleri döndürür.
 """
 import logging
 from collections import defaultdict
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -107,7 +107,9 @@ def _incident_to_text(incident) -> str:
 
 async def ingest_incidents_from_db(db: Session) -> int:
     from app.models.event import Incident
-    clear_collection(COLLECTION_INCIDENTS)
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
+
+    # clear YAPMA — Event chunk'ları aynı collection'da; yalnızca incident_* id'leri yenilenir
     rows = db.query(Incident).order_by(Incident.id).all()
     ids, texts, metadatas = [], [], []
     for r in rows:
@@ -119,11 +121,11 @@ async def ingest_incidents_from_db(db: Session) -> int:
         metadatas.append({"incident_id": r.id, "title": (r.title or "")[:200], "severity": r.severity or ""})
     if not texts:
         return 0
-    from app.services.embedding import get_embeddings_batch
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
-        return 0
+        detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
+        raise RuntimeError(f"Incident RAG ingest: {detail}")
     add_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
     return len(ids)
 
@@ -138,9 +140,11 @@ def _event_to_text(event) -> str:
     return "\n".join(p for p in parts if p).strip()
 
 
-async def ingest_events_from_db(db: Session) -> int:
+async def ingest_events_from_db(db: Session, limit: int = 2000) -> int:
     from app.models.event import SystemEvent
-    rows = db.query(SystemEvent).order_by(SystemEvent.id.desc()).limit(500).all()
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
+
+    rows = db.query(SystemEvent).order_by(SystemEvent.id.desc()).limit(max(100, min(limit, 5000))).all()
     ids, texts, metadatas = [], [], []
     for r in rows:
         t = _event_to_text(r)
@@ -151,16 +155,18 @@ async def ingest_events_from_db(db: Session) -> int:
         metadatas.append({"event_id": r.id, "title": (r.title or "")[:200], "event_type": r.event_type or ""})
     if not texts:
         return 0
-    from app.services.embedding import get_embeddings_batch
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
-        return 0
+        detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
+        raise RuntimeError(f"Event RAG ingest: {detail}")
     add_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
     return len(ids)
 
 
 async def ingest_metric_descriptions(items: List[dict]) -> int:
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
+
     clear_collection(COLLECTION_METRICS)
     if not items:
         return 0
@@ -175,78 +181,162 @@ async def ingest_metric_descriptions(items: List[dict]) -> int:
         metadatas.append({"metric_name": name})
     if not documents:
         return 0
-    from app.services.embedding import get_embeddings_batch
     embeddings = await get_embeddings_batch(documents)
     ids = [f"metric_{i}" for i in range(len(documents))]
     documents, embeddings, metadatas, ids = _filter_valid_embeddings(documents, embeddings, metadatas, ids)
     if not documents:
-        return 0
+        detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
+        raise RuntimeError(f"Metrik RAG ingest: {detail}")
     add_chunks(COLLECTION_METRICS, ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
     return len(ids)
 
 
 async def ingest_knowledge_from_db(db: Session) -> int:
     """
-    Bilgi Bankası (learned_facts) → RAG knowledge_facts collection.
-    Sunucu+kategori bazında chunk; Chat semantik aramada kullanır.
+    Bilgi Bankası → RAG knowledge_facts.
+    Öncelik: learned_facts; yoksa linux_inventory + discovered_applications ile doldur.
     """
     from app.models.learned_fact import LearnedFact
     from app.models.server import Server
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
 
     clear_collection(COLLECTION_KNOWLEDGE)
     rows = db.query(LearnedFact).order_by(
         LearnedFact.server_id, LearnedFact.category, LearnedFact.key
     ).all()
-    if not rows:
-        return 0
-
-    server_ids = {r.server_id for r in rows}
-    servers = {
-        s.id: s
-        for s in db.query(Server).filter(Server.id.in_(list(server_ids))).all()
-    } if server_ids else {}
-
-    grouped = defaultdict(list)
-    for r in rows:
-        grouped[(r.server_id, r.category or "general")].append(r)
 
     texts, ids, metadatas = [], [], []
-    for (sid, cat), facts in grouped.items():
-        srv = servers.get(sid)
-        sname = (srv.name if srv else f"server-{sid}") or f"server-{sid}"
-        sip = (srv.ip_address if srv else "") or ""
-        lines = [
-            f"Sunucu bilgi bankası: {sname}" + (f" ({sip})" if sip else ""),
-            f"Kategori: {cat}",
-        ]
-        for f in facts:
-            val = (f.value or "").strip()
-            if len(val) > 500:
-                val = val[:500] + "…"
-            lines.append(f"- {f.key}: {val}")
-        text = "\n".join(lines).strip()
-        if not text:
-            continue
-        for i, ch in enumerate(chunk_text(text, chunk_size=1200, overlap=80) or [text]):
-            ids.append(f"kb_{sid}_{cat}_{i}")
-            texts.append(ch)
-            metadatas.append({
-                "server_id": sid,
-                "server_name": sname[:200],
-                "category": str(cat)[:50],
-                "source": "knowledge_base",
-            })
+
+    if rows:
+        server_ids = {r.server_id for r in rows}
+        servers = {
+            s.id: s
+            for s in db.query(Server).filter(Server.id.in_(list(server_ids))).all()
+        } if server_ids else {}
+
+        grouped = defaultdict(list)
+        for r in rows:
+            grouped[(r.server_id, r.category or "general")].append(r)
+
+        for (sid, cat), facts in grouped.items():
+            srv = servers.get(sid)
+            sname = (srv.name if srv else f"server-{sid}") or f"server-{sid}"
+            sip = (srv.ip_address if srv else "") or ""
+            lines = [
+                f"Sunucu bilgi bankası: {sname}" + (f" ({sip})" if sip else ""),
+                f"Kategori: {cat}",
+            ]
+            for f in facts:
+                val = (f.value or "").strip()
+                if len(val) > 500:
+                    val = val[:500] + "…"
+                lines.append(f"- {f.key}: {val}")
+            text = "\n".join(lines).strip()
+            if not text:
+                continue
+            for i, ch in enumerate(chunk_text(text, chunk_size=1200, overlap=80) or [text]):
+                ids.append(f"kb_{sid}_{cat}_{i}")
+                texts.append(ch)
+                metadatas.append({
+                    "server_id": sid,
+                    "server_name": sname[:200],
+                    "category": str(cat)[:50],
+                    "source": "knowledge_base",
+                })
+    else:
+        # learned_facts boşsa envanter + keşfedilen uygulamalardan semantik bilgi üret
+        texts, ids, metadatas = _knowledge_chunks_from_inventory(db)
 
     if not texts:
         return 0
-    from app.services.embedding import get_embeddings_batch
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
-        logger.warning("Knowledge RAG: tüm embedding'ler başarısız (Ollama?)")
-        return 0
+        detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
+        raise RuntimeError(f"Bilgi Bankası RAG ingest: {detail}")
     add_chunks(COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
     return len(ids)
+
+
+def _knowledge_chunks_from_inventory(db: Session) -> Tuple[List[str], List[str], List[dict]]:
+    """LinuxInventory + DiscoveredApplication → RAG chunk listeleri."""
+    from app.models.linux_inventory import LinuxInventory
+    from app.models.server import Server
+    from app.models.discovered_application import DiscoveredApplication
+
+    texts, ids, metadatas = [], [], []
+    inv_rows = db.query(LinuxInventory).all()
+    servers = {s.id: s for s in db.query(Server).all()}
+    apps_by_sid: dict = defaultdict(list)
+    try:
+        for a in db.query(DiscoveredApplication).filter(
+            DiscoveredApplication.status.in_(["running", "installed"])
+        ).all():
+            apps_by_sid[a.server_id].append(a)
+    except Exception:
+        pass
+
+    for inv in inv_rows:
+        srv = servers.get(inv.server_id)
+        if not srv:
+            continue
+        sname = srv.name or f"server-{inv.server_id}"
+        sip = srv.ip_address or ""
+        lines = [
+            f"Sunucu envanter özeti: {sname}" + (f" ({sip})" if sip else ""),
+            f"FQDN: {inv.fqdn or '—'}",
+            f"Datacenter: {inv.datacenter or '—'}",
+            f"Uygulama: {inv.application or '—'} / owner={inv.application_owner or '—'}",
+            f"Uptime(s): {inv.uptime_seconds}",
+            f"CPU%: {inv.cpu_usage_percent}  RAM%: {inv.memory_usage_percent}  Disk%: {inv.disk_usage_percent}",
+            f"Load: {inv.load_average_1m} / {inv.load_average_5m} / {inv.load_average_15m}",
+            f"Son patch: {inv.last_patch_date}  Son reboot: {inv.last_reboot_date}",
+            f"Toplama: {inv.collection_status} @ {inv.collection_time}",
+        ]
+        apps = apps_by_sid.get(inv.server_id) or []
+        if apps:
+            lines.append("Tespit edilen uygulamalar:")
+            for a in apps[:30]:
+                bits = [a.name]
+                if a.version:
+                    bits.append(f"v{a.version}")
+                if a.port:
+                    bits.append(f"port {a.port}")
+                bits.append(a.status or "")
+                lines.append("- " + " · ".join(str(b) for b in bits if b))
+        text = "\n".join(str(x) for x in lines if x is not None).strip()
+        for i, ch in enumerate(chunk_text(text, chunk_size=1200, overlap=80) or [text]):
+            ids.append(f"inv_{inv.server_id}_{i}")
+            texts.append(ch)
+            metadatas.append({
+                "server_id": inv.server_id,
+                "server_name": sname[:200],
+                "category": "inventory",
+                "source": "linux_inventory",
+            })
+
+    # Envanteri olmayan ama app keşfi olan sunucular
+    for sid, apps in apps_by_sid.items():
+        if any(m.get("server_id") == sid for m in metadatas):
+            continue
+        srv = servers.get(sid)
+        if not srv:
+            continue
+        sname = srv.name or f"server-{sid}"
+        lines = [f"Sunucu uygulamaları: {sname} ({srv.ip_address or ''})"]
+        for a in apps[:40]:
+            lines.append(f"- {a.name} {a.version or ''} [{a.status}]")
+        text = "\n".join(lines)
+        ids.append(f"apps_{sid}_0")
+        texts.append(text)
+        metadatas.append({
+            "server_id": sid,
+            "server_name": sname[:200],
+            "category": "applications",
+            "source": "discovered_applications",
+        })
+
+    return texts, ids, metadatas
 
 
 def format_knowledge_facts_for_servers(

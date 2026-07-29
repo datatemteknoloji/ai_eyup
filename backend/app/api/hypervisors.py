@@ -26,6 +26,8 @@ def _mask_hv_config(cfg: dict | None) -> dict:
         "username":        cfg.get("username") or "",
         "port":            cfg.get("port") or 443,
         "has_password":    bool(cfg.get("password")),
+        "api_url":         cfg.get("api_url") or "",
+        "has_token":       bool(cfg.get("token")),
     }
 
 
@@ -54,18 +56,22 @@ class TestConnectionRequest(BaseModel):
     port: Optional[int] = 443
     username: Optional[str] = None
     password: Optional[str] = None
+    api_url: Optional[str] = None
+    token: Optional[str] = None
 
 
 @router.post("/test-connection")
 async def test_connection(data: TestConnectionRequest):
     """Arayüzden bağlantı testi (VMware / oVirt-KVM)."""
+    htype = (data.type or "").lower()
     host = (data.ip_address or data.hostname or "").strip()
-    if not host:
+    if not host and htype != "openshift_virt":
         return {"success": False, "message": "Host (IP veya hostname) gerekli", "details": ""}
+    if htype == "openshift_virt" and not (data.api_url or host):
+        return {"success": False, "message": "API Server URL gerekli", "details": ""}
     port = data.port or 443
     username = (data.username or "").strip()
     password = data.password or ""
-    htype = (data.type or "").lower()
 
     if htype == "vmware":
         try:
@@ -130,7 +136,29 @@ async def test_connection(data: TestConnectionRequest):
         except Exception as exc:
             return {"success": False, "message": "Hyper-V bağlantı hatası", "details": str(exc)}
 
-    return {"success": False, "message": f"Desteklenmeyen tip: {data.type}. vmware, kvm, proxmox veya hyperv kullanın.", "details": ""}
+    if htype in ("openshift_virt",):
+        try:
+            from app.services.openshift.kubevirt_client import KubeVirtClient
+            api_url = (data.api_url or data.hostname or data.ip_address or "").strip()
+            token = (data.token or "").strip()
+            # Token verilmediyse kullanıcı adı/şifre ile OAuth üzerinden giriş yapılır
+            client = KubeVirtClient(
+                api_url=api_url,
+                token=token,
+                username=username if not token else "",
+                password=password if not token else "",
+                verify_ssl=False,
+            )
+            ok, detail = client.test_connection()
+            if ok:
+                return {"success": True, "message": "OpenShift Virtualization bağlantısı başarılı", "details": ""}
+            return {"success": False, "message": "OpenShift Virtualization bağlantı hatası", "details": detail or "Yanıt alınamadı"}
+        except ImportError as e:
+            return {"success": False, "message": "OpenShift Virtualization modülü yüklenemedi", "details": str(e)}
+        except Exception as e:
+            return {"success": False, "message": "OpenShift Virtualization bağlantı hatası", "details": str(e)}
+
+    return {"success": False, "message": f"Desteklenmeyen tip: {data.type}. vmware, kvm, proxmox, hyperv veya openshift_virt kullanın.", "details": ""}
 
 @router.get("/", response_model=List[HypervisorResponse])
 async def list_hypervisors(db: Session = Depends(get_db)):
@@ -155,27 +183,52 @@ async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: 
         try:
             hypervisor_type = HypervisorType(hypervisor.type.lower())
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid hypervisor type: {hypervisor.type}. Valid types: vmware, hyperv, kvm, xen")
-        
+            raise HTTPException(status_code=400, detail=f"Invalid hypervisor type: {hypervisor.type}. Valid types: vmware, hyperv, kvm, xen, proxmox, openshift_virt")
+
         # Connection config'i oluştur
         connection_config = hypervisor.connection_config or {}
-        if hypervisor.username and hypervisor.password:
+
+        password_val = hypervisor.password
+        username_val = hypervisor.username
+        hostname_val = hypervisor.hostname or hypervisor.name
+        ip_address_val = hypervisor.ip_address or ""
+
+        if hypervisor_type == HypervisorType.OPENSHIFT_VIRT:
+            # Token VEYA kullanıcı adı/şifre ile kimlik doğrulama — api_url hostname'e
+            # eşlenir; token ya da kullanıcı adı/şifre connection_config'e ve mevcut
+            # username/password kolonlarına yazılır (mevcut sync kodu bunları okuyor).
+            api_url = (hypervisor.api_url or hypervisor.hostname or hypervisor.ip_address or "").strip()
+            token = (hypervisor.token or "").strip()
+            hostname_val = api_url or hostname_val
+            ip_address_val = (api_url or ip_address_val)[:45]
+            connection_config.setdefault("api_url", api_url)
+            if token:
+                password_val = token
+                username_val = username_val or "token"
+                connection_config.setdefault("token", token)
+            elif hypervisor.username and hypervisor.password:
+                username_val = hypervisor.username
+                password_val = hypervisor.password
+                connection_config.setdefault("username", hypervisor.username)
+                connection_config.setdefault("password", hypervisor.password)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OpenShift Virtualization için Bearer Token veya kullanıcı adı/şifre gerekli",
+                )
+        elif hypervisor.username and hypervisor.password:
             connection_config.setdefault("username", hypervisor.username)
             connection_config.setdefault("password", hypervisor.password)
-        
-        # hostname ve ip_address NOT NULL olduğu için default değerler ekle
-        hostname = hypervisor.hostname or hypervisor.name
-        ip_address = hypervisor.ip_address or ""
-        
+
         # Yeni hypervisor oluştur
         db_hypervisor = Hypervisor(
             name=hypervisor.name,
             hypervisor_type=hypervisor_type,
-            hostname=hostname,
-            ip_address=ip_address,
+            hostname=hostname_val,
+            ip_address=ip_address_val,
             port=hypervisor.port or 443,
-            username=hypervisor.username,
-            password=hypervisor.password,  # Should be encrypted in production
+            username=username_val,
+            password=password_val,  # Should be encrypted in production
             connection_config=connection_config
         )
         
@@ -224,8 +277,40 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
             try:
                 update_data["hypervisor_type"] = HypervisorType(update_data.pop("type").lower())
             except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid hypervisor type. Valid types: vmware, hyperv, kvm, xen")
-        
+                raise HTTPException(status_code=400, detail="Invalid hypervisor type. Valid types: vmware, hyperv, kvm, xen, proxmox, openshift_virt")
+
+        # OpenShift Virtualization kolaylık alanlarını mevcut kolonlara + connection_config'e eşle
+        api_url = update_data.pop("api_url", None)
+        token = update_data.pop("token", None)
+        effective_type = update_data.get("hypervisor_type", db_hypervisor.hypervisor_type)
+        is_openshift_virt = effective_type == HypervisorType.OPENSHIFT_VIRT
+
+        if is_openshift_virt:
+            cc = dict(db_hypervisor.connection_config or {})
+            if "connection_config" in update_data and update_data["connection_config"]:
+                cc.update(update_data["connection_config"])
+            if api_url:
+                update_data["hostname"] = api_url
+                update_data["ip_address"] = api_url[:45]
+                cc["api_url"] = api_url
+            if token:
+                update_data["password"] = token
+                update_data["username"] = update_data.get("username") or db_hypervisor.username or "token"
+                cc["token"] = token
+                cc.pop("username", None)
+                cc.pop("password", None)
+            elif update_data.get("username") and update_data.get("password"):
+                cc["username"] = update_data["username"]
+                cc["password"] = update_data["password"]
+                cc.pop("token", None)
+            update_data["connection_config"] = cc
+        else:
+            if api_url:
+                update_data["hostname"] = api_url
+                update_data["ip_address"] = api_url[:45]
+            if token:
+                update_data["password"] = token
+
         for key, value in update_data.items():
             setattr(db_hypervisor, key, value)
         

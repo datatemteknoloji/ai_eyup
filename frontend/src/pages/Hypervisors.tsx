@@ -836,12 +836,13 @@ const HypervisorManagement = ({
       kvm: 'from-orange-500 to-orange-600',
       xen: 'from-blue-600 to-blue-700',
       proxmox: 'from-red-500 to-red-600',
+      openshift_virt: 'from-rose-600 to-red-700',
     }
     return colors[type.toLowerCase()] || 'from-slate-500 to-slate-600'
   }
 
   const getTypeLabel = (type: string) => {
-    const labels: Record<string, string> = { vmware: 'VMware', hyperv: 'Hyper-V', kvm: 'oVirt/KVM', xen: 'XEN', proxmox: 'Proxmox' }
+    const labels: Record<string, string> = { vmware: 'VMware', hyperv: 'Hyper-V', kvm: 'oVirt/KVM', xen: 'XEN', proxmox: 'Proxmox', openshift_virt: 'OpenShift Virtualization' }
     return labels[type.toLowerCase()] || type.toUpperCase()
   }
 
@@ -1127,10 +1128,21 @@ const SyncScanningOverlay = ({
 // ── Add Hypervisor Modal ────────────────────────────────────────────────────
 const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) => {
   const [formData, setFormData] = useState({
-    name: '', type: 'vmware', hostname: '', ip_address: '', port: 443, username: '', password: ''
+    name: '', type: 'vmware', hostname: '', ip_address: '', port: 443, username: '', password: '', token: ''
   })
+  const [ocpAuthMethod, setOcpAuthMethod] = useState<'token' | 'credentials'>('token')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const isTokenAuth = formData.type === 'openshift_virt'
+
+  const buildOpenShiftPayload = () => ({
+    name: formData.name,
+    type: formData.type,
+    api_url: formData.ip_address,
+    ...(ocpAuthMethod === 'token'
+      ? { token: formData.token }
+      : { username: formData.username, password: formData.password }),
+  })
 
   const testConnection = async () => {
     setTesting(true)
@@ -1139,7 +1151,11 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
       const r = await fetch(`${API_BASE_URL}/hypervisors/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: formData.type, hostname: formData.hostname || formData.ip_address, ip_address: formData.ip_address, port: formData.port, username: formData.username, password: formData.password })
+        body: JSON.stringify(
+          isTokenAuth
+            ? buildOpenShiftPayload()
+            : { type: formData.type, hostname: formData.hostname || formData.ip_address, ip_address: formData.ip_address, port: formData.port, username: formData.username, password: formData.password }
+        )
       })
       const data = await r.json()
       setTestResult({ success: data.success, message: data.message })
@@ -1153,9 +1169,13 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!testResult?.success) return
-    onCreate(formData)
+    onCreate(isTokenAuth ? buildOpenShiftPayload() : formData)
     onClose()
   }
+
+  const canTest = isTokenAuth
+    ? Boolean(formData.ip_address) && (ocpAuthMethod === 'token' ? Boolean(formData.token) : Boolean(formData.username) && Boolean(formData.password))
+    : Boolean(formData.username) && Boolean(formData.password)
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1178,32 +1198,82 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
               <option value="hyperv">Microsoft Hyper-V</option>
               <option value="kvm">KVM / oVirt</option>
               <option value="proxmox">Proxmox VE</option>
+              <option value="openshift_virt">OpenShift Virtualization</option>
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <label className="block text-xs text-slate-400 mb-1.5">IP Adresi *</label>
-              <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
-                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="192.168.1.100" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5">Port</label>
-              <input type="number" value={formData.port} onChange={e => { setFormData({...formData, port: parseInt(e.target.value) || 443}); setTestResult(null) }}
-                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
-            <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
-            <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
-          </div>
+          {isTokenAuth ? (
+            <>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Kimlik Doğrulama Yöntemi</label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-cyber-deep border border-white/[0.06] rounded-lg">
+                  <button type="button" onClick={() => { setOcpAuthMethod('token'); setTestResult(null) }}
+                    className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'token' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    Bearer Token
+                  </button>
+                  <button type="button" onClick={() => { setOcpAuthMethod('credentials'); setTestResult(null) }}
+                    className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'credentials' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    Kullanıcı Adı / Şifre
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">API Server URL *</label>
+                <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="https://api.cluster.example.com:6443" />
+              </div>
+              {ocpAuthMethod === 'token' ? (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5">Bearer Token *</label>
+                  <textarea required value={formData.token} onChange={e => { setFormData({...formData, token: e.target.value}); setTestResult(null) }}
+                    rows={3}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 font-mono" placeholder="Service Account token (oc whoami -t / sa/token secret)" />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+                    <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="kubeadmin" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+                    <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Kullanıcı adı/şifre, cluster'ın OAuth sunucusu üzerinden ("oc login" ile aynı akış) bir erişim token'ına çevrilir.
+                  </p>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1.5">IP Adresi *</label>
+                  <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="192.168.1.100" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5">Port</label>
+                  <input type="number" value={formData.port} onChange={e => { setFormData({...formData, port: parseInt(e.target.value) || 443}); setTestResult(null) }}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+                <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+                <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+              </div>
+            </>
+          )}
 
-          <button type="button" onClick={testConnection} disabled={testing || !formData.username || !formData.password}
+          <button type="button" onClick={testConnection} disabled={testing || !canTest}
             className="w-full py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2">
             {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> Test Ediliyor...</> : 'Bağlantıyı Test Et'}
           </button>

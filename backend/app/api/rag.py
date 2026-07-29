@@ -173,18 +173,47 @@ async def rag_metrics_seed(body: Optional[MetricDescriptionsSeedRequest] = None)
 
 
 @router.get("/status")
-async def rag_status():
-    """RAG collection'lardaki kayıt sayıları."""
+async def rag_status(db: Session = Depends(get_db)):
+    """RAG collection sayıları + kaynak DB özeti (UI sıfır maskelemesin diye)."""
     try:
-        return {
+        from app.models.event import Incident, SystemEvent
+        from app.models.learned_fact import LearnedFact
+        from app.models.linux_inventory import LinuxInventory
+        from app.data.default_metric_descriptions import DEFAULT_METRIC_DESCRIPTIONS
+
+        status = {
             "runbook": count_collection(COLLECTION_RUNBOOK),
             "incidents": count_collection(COLLECTION_INCIDENTS),
             "metrics": count_collection(COLLECTION_METRICS),
             "knowledge": count_collection(COLLECTION_KNOWLEDGE),
+            "sources": {
+                "incidents_db": db.query(Incident).count(),
+                "events_db": db.query(SystemEvent).count(),
+                "learned_facts_db": db.query(LearnedFact).count(),
+                "linux_inventory_db": db.query(LinuxInventory).count(),
+                "default_metrics": len(DEFAULT_METRIC_DESCRIPTIONS),
+            },
         }
+        return status
     except Exception as e:
         logger.warning(f"RAG status error: {e}")
-        return {"runbook": 0, "incidents": 0, "metrics": 0, "knowledge": 0}
+        raise HTTPException(status_code=500, detail=f"RAG durum okunamadı: {e}")
+
+
+@router.post("/reindex-all")
+async def rag_reindex_all(db: Session = Depends(get_db)):
+    """Metrik + incident + event + bilgi bankasını sırayla yeniler."""
+    results = {}
+    try:
+        items = DEFAULT_METRIC_DESCRIPTIONS
+        results["metrics"] = await ingest_metric_descriptions(items)
+        results["incidents"] = await ingest_incidents_from_db(db)
+        results["events"] = await ingest_events_from_db(db)
+        results["knowledge"] = await ingest_knowledge_from_db(db)
+        return {"success": True, "chunks": results, "total": sum(results.values())}
+    except Exception as e:
+        logger.exception("RAG reindex-all failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _preview_snip(text: str, n: int = 500) -> str:

@@ -333,6 +333,7 @@ async def exadata_ops_summary(db: Session = Depends(get_db)):
     return {
         "critical": critical,
         "warning": warning + unhealthy_racks,
+        "total": critical + warning + unhealthy_racks,
         "action_needed": critical > 0 or unhealthy_racks > 0,
         "rack_count": len(racks),
         "unhealthy_racks": unhealthy_racks,

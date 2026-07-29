@@ -238,6 +238,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load exadata router: {e}", exc_info=True)
 
+# OpenShift Container Platform (cluster/node/proje/workload envanter + AIOps)
+try:
+    from app.api import openshift as openshift_api
+    api_router.include_router(openshift_api.router, prefix="/openshift", tags=["openshift"])
+except Exception as e:
+    logger.error(f"Could not load openshift router: {e}", exc_info=True)
+
 # Modül bazlı altyapı raporları (Linux / Windows / Exadata)
 try:
     from app.api import platform_reports

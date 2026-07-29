@@ -8,12 +8,13 @@ import {
   Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check, AlertTriangle, Crown,
+  KeyRound, X, Check, AlertTriangle, Crown, Boxes,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import {
   buildPlatformAiopsChildren,
   PLATFORM_AIOPS_LABEL,
+  aiopsTotalBadge,
 } from '../config/platformAiops'
 
 // ── Şifre Değiştir Modal ──────────────────────────────────────────────────────
@@ -123,6 +124,7 @@ type SubgroupChild = {
   name: string
   icon: React.ReactNode
   children: LinkChild[]
+  badge?: () => React.ReactNode
   moduleId?: string
   moduleIds?: string[]
 }
@@ -161,11 +163,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const canLinuxAiops = hasModule('linux')
 
-  const { data: opsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+  const { data: opsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
     queryKey: ['ops-summary-nav'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/ops/summary?platform=linux`)
-      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
     refetchInterval: 30_000,
@@ -173,11 +175,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     enabled: canLinuxAiops,
   })
 
-  const { data: windowsOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+  const { data: windowsOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
     queryKey: ['windows-ops-summary'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/ops/summary?platform=windows`)
-      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
     refetchInterval: 30_000,
@@ -185,11 +187,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     enabled: hasModule('windows'),
   })
 
-  const { data: virtOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+  const { data: virtOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
     queryKey: ['virt-ops-summary'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/ops/summary`)
-      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
     refetchInterval: 30_000,
@@ -197,16 +199,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     enabled: hasModule('virtualization'),
   })
 
-  const { data: exadataOpsSummary } = useQuery<{ critical: number; warning: number; action_needed: boolean }>({
+  const { data: exadataOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
     queryKey: ['exadata-ops-summary'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/exadata/ops/summary`)
-      if (!r.ok) return { critical: 0, warning: 0, action_needed: false }
+      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
       return r.json()
     },
     refetchInterval: 30_000,
     staleTime: 20_000,
     enabled: hasModule('exadata'),
+  })
+
+  const { data: openshiftOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
+    queryKey: ['openshift-ops-summary'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/ops/summary`)
+      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
+      return r.json()
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+    enabled: hasModule('openshift'),
   })
 
   const isActive = (path: string) =>
@@ -225,6 +239,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary))
   const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary))
   const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary))
+  const openshiftAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('openshift', openshiftOpsSummary))
 
   const menuItems: MenuItem[] = [
     // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
@@ -247,6 +262,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {
           type: 'subgroup', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={15} />,
           moduleId: 'linux',
+          badge: aiopsTotalBadge(opsSummary),
           children: linuxAiopsLinks,
         },
       ],
@@ -266,6 +282,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {
           type: 'subgroup', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={15} />,
           moduleId: 'windows',
+          badge: aiopsTotalBadge(windowsOpsSummary),
           children: windowsAiopsLinks,
         },
       ],
@@ -280,6 +297,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {
           type: 'subgroup', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={15} />,
           moduleId: 'virtualization',
+          badge: aiopsTotalBadge(virtOpsSummary),
           children: virtAiopsLinks,
         },
       ],
@@ -294,7 +312,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {
           type: 'subgroup', key: 'exadata-aiops', name: PLATFORM_AIOPS_LABEL.exadata, icon: <Brain size={15} />,
           moduleId: 'exadata',
+          badge: aiopsTotalBadge(exadataOpsSummary),
           children: exadataAiopsLinks,
+        },
+      ],
+    },
+
+    // ── OpenShift Container Platform ──────────────────────────────────────
+    {
+      type: 'group', key: 'openshift', name: 'OpenShift Container Platform', icon: <Boxes size={18} />, moduleId: 'openshift',
+      children: [
+        { type: 'link', path: '/openshift', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
+        {
+          type: 'subgroup', key: 'openshift-aiops', name: PLATFORM_AIOPS_LABEL.openshift, icon: <Brain size={15} />,
+          moduleId: 'openshift',
+          badge: aiopsTotalBadge(openshiftOpsSummary),
+          children: openshiftAiopsLinks,
         },
       ],
     },
@@ -311,6 +344,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/hypervisors', name: 'vCenter / OLVM', icon: <Cloud size={15} /> },
         { type: 'link', path: '/integrations/physical-hosts', name: 'Fiziksel Hostlar', icon: <Server size={15} /> },
         { type: 'link', path: '/integrations/exadata', name: 'Exadata Envanter', icon: <Layers size={15} /> },
+        { type: 'link', path: '/integrations/openshift', name: 'OpenShift Envanter', icon: <Boxes size={15} /> },
       ],
     },
 
@@ -382,6 +416,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     const subPaths = collectGroupPaths(child.children)
     const subActive = isGroupActive(subPaths)
     const isSubOpen = openGroups[child.key] ?? subActive
+    const subBadge = child.badge?.()
 
     return (
       <li key={child.key} className="pt-1">
@@ -393,6 +428,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
           <span className="font-medium truncate flex-1 text-left">{child.name}</span>
+          {subBadge}
           <ChevronRight size={12} className={`text-slate-500 transition-transform duration-200 flex-shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
         </button>
         {isSubOpen && (
@@ -631,7 +667,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             const isChat = p.endsWith('/chat')
               || p.includes('/chat/')
               || p.includes('unified-chat')
-              || /\/(linux|windows|virt|exadata)\/.*chat/.test(p)
+              || /\/(linux|windows|virt|exadata|openshift)\/.*chat/.test(p)
             return isChat ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
           })()
         }`}>

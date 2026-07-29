@@ -48,6 +48,9 @@ interface CommandCenterData {
   critical_servers: ServerCard[]; warning_servers: ServerCard[]
   critical_count: number; warning_count: number
   storm_count: number; green_count: number; generated_at: string
+  event_critical?: number
+  event_warning?: number
+  event_total?: number
 }
 interface RCAResult {
   root_cause?: string; likely_cause?: string; impact?: string
@@ -61,7 +64,8 @@ interface RCAResponse {
 interface EventItem {
   id: number; title: string; severity: string; event_type: string
   server_id: number | null; server_name?: string
-  first_seen: string; last_seen: string; occurrence_count: number
+  first_seen?: string | null; last_seen?: string | null; created_at?: string | null
+  occurrence_count: number
   is_acknowledged: boolean; resolved: boolean
 }
 
@@ -96,9 +100,11 @@ const SEV_BADGE: Record<string, string> = {
   info:      'bg-blue-500/20 text-blue-300 border-blue-500/40',
 }
 
-function relTime(iso: string | null): string {
+function relTime(iso: string | null | undefined): string {
   if (!iso) return ''
-  const d = Date.now() - new Date(iso).getTime()
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const d = Date.now() - t
   const m = Math.floor(d / 60000)
   if (m < 1) return 'şimdi'
   if (m < 60) return `${m}dk`
@@ -108,12 +114,27 @@ function relTime(iso: string | null): string {
 }
 
 function metricCategory(metric: string): 'cpu' | 'memory' | 'disk' | 'network' | 'other' {
-  const m = metric.toLowerCase()
-  if (m.includes('cpu') || m.includes('load')) return 'cpu'
-  if (m.includes('mem') || m.includes('ram') || m.includes('swap')) return 'memory'
-  if (m.includes('disk') || m.includes('fs') || m.includes('filesystem') || m.includes('inode')) return 'disk'
-  if (m.includes('net') || m.includes('bandwidth') || m.includes('eth') || m.includes('rx') || m.includes('tx')) return 'network'
+  const m = (metric || '').toLowerCase()
+  if (m.includes('cpu') || m.includes('load') || m.includes('steal')) return 'cpu'
+  if (
+    m.includes('mem') || m.includes('ram') || m.includes('swap')
+    || m.includes('oom') || m.includes('out of memory') || m.includes('killer')
+  ) return 'memory'
+  if (
+    m.includes('disk') || m.includes('fs') || m.includes('filesystem') || m.includes('inode')
+    || m.includes('multipath') || m.includes('storage') || m.includes('volume')
+    || m.includes('lvm') || m.includes('mdadm') || m.includes('smart')
+  ) return 'disk'
+  if (
+    m.includes('net') || m.includes('bandwidth') || m.includes('eth')
+    || m.includes('rx') || m.includes('tx') || m.includes('nic')
+    || m.includes('bond') || m.includes('link down') || m.includes('carrier')
+  ) return 'network'
   return 'other'
+}
+
+function eventWhen(ev: { last_seen?: string | null; first_seen?: string | null; created_at?: string | null }): string | null {
+  return ev.last_seen || ev.first_seen || ev.created_at || null
 }
 
 // ── Metrik Kategori Widget ────────────────────────────────────────────────────
@@ -684,7 +705,16 @@ function ActivityTimeline({ platform }: { platform: string }) {
   const { data } = useQuery<{ events: EventItem[]; total: number }>({
     queryKey: ['ops-timeline', platform],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/events/?resolved=false&limit=40&offset=0&platform=${platform}`)
+      // Komuta Merkezi ile aynı actionable set: çözülmemiş + onaylı değil + bilinen değil
+      const p = new URLSearchParams({
+        resolved: 'false',
+        acknowledged: 'false',
+        known: 'false',
+        limit: '40',
+        offset: '0',
+        platform,
+      })
+      const r = await fetch(`${API_BASE_URL}/events/?${p}`)
       if (!r.ok) throw new Error('events fetch failed')
       return r.json()
     },
@@ -694,9 +724,13 @@ function ActivityTimeline({ platform }: { platform: string }) {
 
   const events = data?.events ?? []
 
-  const timeLabel = (iso: string) => {
-    const d = new Date(iso)
-    return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+  const timeLabel = (iso: string | null | undefined) => {
+    if (!iso) return '—'
+    const t = new Date(iso).getTime()
+    if (!Number.isFinite(t)) return '—'
+    const rel = relTime(iso)
+    if (rel === 'şimdi' || (rel && rel.endsWith('dk'))) return rel
+    return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
   }
 
   return (
@@ -725,7 +759,7 @@ function ActivityTimeline({ platform }: { platform: string }) {
                   <div className="flex-1 min-w-0 pb-2">
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-xs text-slate-300 leading-tight line-clamp-2">{ev.title}</span>
-                      <span className="text-[10px] text-slate-600 shrink-0 mt-0.5">{timeLabel(ev.last_seen || ev.first_seen)}</span>
+                      <span className="text-[10px] text-slate-600 shrink-0 mt-0.5">{timeLabel(eventWhen(ev))}</span>
                     </div>
                     {ev.server_name && (
                       <span className="text-[10px] text-slate-600">{ev.server_name}</span>
@@ -899,6 +933,12 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     qc.invalidateQueries({ queryKey: ['ops-command-center'] })
     qc.invalidateQueries({ queryKey: ['ops-timeline', platform] })
     qc.invalidateQueries({ queryKey: ['ops-handled'] })
+    // Navbar rozetleri (Linux/Windows/…) anında güncellensin
+    qc.invalidateQueries({ queryKey: ['ops-summary-nav'] })
+    qc.invalidateQueries({ queryKey: ['windows-ops-summary'] })
+    qc.invalidateQueries({ queryKey: ['virt-ops-summary'] })
+    qc.invalidateQueries({ queryKey: ['exadata-ops-summary'] })
+    qc.invalidateQueries({ queryKey: ['eventStats'] })
   }
 
   function toggleSelect(ids: number[], checked: boolean) {
@@ -916,7 +956,11 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     ]
     const counts = { cpu: 0, memory: 0, disk: 0, network: 0, other: 0 }
     const critCounts = { cpu: 0, memory: 0, disk: 0, network: 0, other: 0 }
+    const seen = new Set<number>()
     all.forEach(m => {
+      // Aynı event birden fazla satırda gelmesin
+      if (m.event_id && seen.has(m.event_id)) return
+      if (m.event_id) seen.add(m.event_id)
       const cat = metricCategory(m.metric)
       counts[cat]++
       if (m.severity === 'critical' || m.severity === 'emergency') critCounts[cat]++
@@ -924,10 +968,13 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     return { counts, critCounts }
   }, [data])
 
-  const filterCards = useCallback((cards: ServerCard[]) =>
+  const filterCards = useCallback((cards: ServerCard[], opts?: { ignoreSev?: boolean }) =>
     cards.filter(c => {
       if (tierFilter !== 'all' && c.server.tier !== tierFilter) return false
-      if (sevFilter !== 'all' && c.max_severity !== sevFilter) return false
+      // Kritik/uyarı kovaları zaten ayrılmış; sevFilter kovayı seçer, max_severity ile tekrar eleme
+      // (emergency / production-warning kartlarını gizlemesin).
+      if (!opts?.ignoreSev && sevFilter !== 'all' && c.max_severity !== sevFilter
+        && !(sevFilter === 'critical' && c.max_severity === 'emergency')) return false
       if (metricFilter !== 'all' && !c.metrics.some(m => metricCategory(m.metric) === metricFilter)) return false
       if (search && !c.server.name.toLowerCase().includes(search.toLowerCase())
         && !c.server.ip.includes(search)
@@ -937,9 +984,18 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
     [tierFilter, sevFilter, search, metricFilter]
   )
 
-  const critFiltered = useMemo(() => filterCards(data?.critical_servers ?? []), [data, filterCards])
-  const warnFiltered = useMemo(() => filterCards(data?.warning_servers ?? []), [data, filterCards])
-  const allOk = !data?.critical_count && !data?.storm_count && !data?.warning_count
+  const critFiltered = useMemo(() => {
+    if (sevFilter === 'warning') return []
+    return filterCards(data?.critical_servers ?? [], { ignoreSev: true })
+  }, [data, filterCards, sevFilter])
+  const warnFiltered = useMemo(() => {
+    if (sevFilter === 'critical') return []
+    return filterCards(data?.warning_servers ?? [], { ignoreSev: true })
+  }, [data, filterCards, sevFilter])
+
+  const kpiCritical = data?.event_critical ?? ((data?.critical_count ?? 0) + (data?.storm_count ?? 0))
+  const kpiWarning = data?.event_warning ?? (data?.warning_count ?? 0)
+  const allOk = !kpiCritical && !kpiWarning
 
   return (
     <>
@@ -948,8 +1004,8 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
         loading={isLoading}
         health={data?.health ? { score: data.health.score, label: data.health.label } : null}
         kpi={{
-          critical: (data?.critical_count ?? 0) + (data?.storm_count ?? 0),
-          warning: data?.warning_count ?? 0,
+          critical: kpiCritical,
+          warning: kpiWarning,
           tertiaryValue: data?.green_count ?? 0,
           tertiaryLabel: 'İşlenen',
           onCriticalClick: () => { setViewMode('active'); setSevFilter('critical') },

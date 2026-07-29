@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>datatem AI — Altyapı Mimarisi Sunumu</title>
+<style>
+  :root{
+    --bg-0:#070b14; --bg-1:#0c1424; --bg-2:#111c34;
+    --ink-0:#f4f7fb; --ink-1:#c3ccdd; --ink-2:#8590ab;
+    --line:#233150;
+    --linux:#34d399; --windows:#3b82f6; --virt:#818cf8; --exadata:#fb923c;
+    --openshift:#fb7185; --ai:#22d3ee; --exec:#fbbf24; --integ:#f97316; --l1:#2dd4bf;
+    --accent:#5eead4;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg-0);color:var(--ink-0);
+    font-family:"Segoe UI","Inter",system-ui,-apple-system,Arial,sans-serif;
+    overflow:hidden; height:100%;}
+  .deck{position:relative; width:100vw; height:100vh;}
+  .slide{
+    position:absolute; inset:0; display:none;
+    flex-direction:column; justify-content:flex-start;
+    padding:56px 88px 44px;
+    overflow-y:auto;
+    background:
+      radial-gradient(1200px 600px at 88% -10%, rgba(94,234,212,0.08), transparent 60%),
+      radial-gradient(900px 500px at -5% 105%, rgba(129,140,248,0.10), transparent 60%),
+      linear-gradient(180deg, var(--bg-1), var(--bg-0) 75%);
+  }
+  .slide.active{display:flex;}
+  .slide::-webkit-scrollbar{width:6px;}
+  .slide::-webkit-scrollbar-thumb{background:var(--line); border-radius:3px;}
+  .kicker{
+    display:inline-flex; align-items:center; gap:10px;
+    font-size:13px; letter-spacing:.18em; font-weight:700; color:var(--accent);
+    text-transform:uppercase; margin-bottom:18px;
+  }
+  .kicker::before{content:""; width:26px; height:2px; background:var(--accent); display:inline-block;}
+  h1.title{font-size:44px; line-height:1.15; margin:0 0 10px; font-weight:800; letter-spacing:-.01em;}
+  h2.slide-title{font-size:34px; margin:0 0 6px; font-weight:800; letter-spacing:-.01em;}
+  .subtitle{font-size:19px; color:var(--ink-1); margin:0 0 28px; font-weight:400; max-width:900px;}
+  .content{flex:1; min-height:0; display:flex; flex-direction:column;}
+  .meta{position:absolute; left:88px; bottom:34px; color:var(--ink-2); font-size:13px; letter-spacing:.02em;}
+  .pageno{position:absolute; right:88px; bottom:34px; color:var(--ink-2); font-size:13px; font-weight:600;}
+  .progress{position:absolute; top:0; left:0; height:4px; background:linear-gradient(90deg,var(--accent),var(--virt)); transition:width .25s ease;}
+
+  /* Title slide */
+  .titleslide{justify-content:center; align-items:flex-start;}
+  .brand{display:flex; align-items:center; gap:14px; margin-bottom:40px;}
+  .brand-mark{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--virt));
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#04121a;}
+  .brand-name{font-size:20px; font-weight:700; color:var(--ink-0); letter-spacing:.01em;}
+  .brand-sub{font-size:12.5px; color:var(--ink-2); letter-spacing:.06em; text-transform:uppercase;}
+  .titleslide h1.title{font-size:58px;}
+  .title-tags{display:flex; gap:10px; margin-top:26px; flex-wrap:wrap;}
+  .tag{border:1px solid var(--line); border-radius:999px; padding:7px 16px; font-size:13px; color:var(--ink-1); background:rgba(255,255,255,.02);}
+
+  /* Grid / cards */
+  .grid{display:grid; gap:16px; width:100%;}
+  .g3{grid-template-columns:repeat(3,1fr);}
+  .g4{grid-template-columns:repeat(4,1fr);}
+  .g5{grid-template-columns:repeat(5,1fr);}
+  .card{
+    background:linear-gradient(160deg, rgba(255,255,255,.035), rgba(255,255,255,.01));
+    border:1px solid var(--line); border-radius:16px; padding:20px 20px;
+    display:flex; flex-direction:column; gap:8px; position:relative; overflow:hidden;
+  }
+  .card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--c,var(--accent));}
+  .card h3{margin:0; font-size:16.5px; font-weight:700; color:var(--ink-0);}
+  .card p{margin:0; font-size:13.3px; color:var(--ink-1); line-height:1.5;}
+  .card .dot{width:9px;height:9px;border-radius:50%; background:var(--c,var(--accent)); margin-bottom:4px;}
+
+  /* Two column */
+  .cols{display:flex; gap:28px; flex:1; min-height:0;}
+  .col{flex:1; display:flex; flex-direction:column; gap:14px;}
+  .panel{border:1px solid var(--line); border-radius:16px; padding:22px 24px; background:rgba(255,255,255,.02);}
+  .panel h4{margin:0 0 12px; font-size:15px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-2); font-weight:700;}
+  .panel.bad{border-color:rgba(251,113,133,.35); background:rgba(251,113,133,.05);}
+  .panel.good{border-color:rgba(94,234,212,.35); background:rgba(94,234,212,.06);}
+  ul.bullets{margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:10px;}
+  ul.bullets li{font-size:14.5px; color:var(--ink-1); line-height:1.55; padding-left:20px; position:relative;}
+  ul.bullets li::before{content:"—"; position:absolute; left:0; color:var(--accent);}
+  .panel.bad ul.bullets li::before{color:#fb7185;}
+  .panel.good ul.bullets li::before{color:#34d399;}
+
+  /* architecture diagram */
+  .arch{margin:auto 0; display:flex; flex-direction:column; align-items:center; gap:10px; justify-content:center; width:100%;}
+  .arch-row{display:flex; gap:14px; justify-content:center; width:100%;}
+  .box{border:1px solid var(--line); border-radius:12px; padding:14px 18px; background:rgba(255,255,255,.03); text-align:center; min-width:150px;}
+  .box strong{display:block; font-size:14.5px; color:var(--ink-0); margin-bottom:2px;}
+  .box span{font-size:11.5px; color:var(--ink-2);}
+  .box.wide{min-width:100%;}
+  .box.accent{border-color:var(--accent); box-shadow:0 0 0 1px rgba(94,234,212,.15) inset;}
+  .arrow-down{color:var(--ink-2); font-size:20px; line-height:1;}
+  .arch-services{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; width:100%;}
+
+  /* flow */
+  .flow{display:flex; gap:14px; align-items:center; flex-wrap:wrap; justify-content:center; width:100%;}
+  .flow-step{border:1px solid var(--line); border-radius:14px; padding:16px 16px; background:rgba(255,255,255,.03); width:170px; text-align:left;}
+  .flow-step .n{font-size:11px; color:var(--accent); font-weight:800; letter-spacing:.08em;}
+  .flow-step h4{margin:6px 0 4px; font-size:14.5px; color:var(--ink-0);}
+  .flow-step p{margin:0; font-size:12px; color:var(--ink-2); line-height:1.4;}
+  .flow-arrow{color:var(--ink-2); font-size:22px; flex-shrink:0;}
+
+  /* stats */
+  .stat{border:1px solid var(--line); border-radius:16px; padding:26px 20px; text-align:center; background:rgba(255,255,255,.02);}
+  .stat .num{font-size:40px; font-weight:800; color:var(--accent); line-height:1;}
+  .stat .lbl{margin-top:10px; font-size:13px; color:var(--ink-1); line-height:1.4;}
+
+  /* tag list within panel */
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;}
+  .chip{font-size:12.5px; padding:5px 12px; border-radius:8px; background:rgba(255,255,255,.04); border:1px solid var(--line); color:var(--ink-1);}
+
+  .nav-btn{position:fixed; top:50%; transform:translateY(-50%); z-index:50; background:rgba(255,255,255,.05);
+    border:1px solid var(--line); color:var(--ink-1); width:42px; height:42px; border-radius:50%; cursor:pointer; font-size:18px;}
+  .nav-btn:hover{background:rgba(255,255,255,.1); color:#fff;}
+  #prevBtn{left:20px;} #nextBtn{right:20px;}
+  .hint{position:fixed; bottom:10px; left:50%; transform:translateX(-50%); color:var(--ink-2); font-size:11.5px; z-index:50;}
+
+  @media print{
+    body{overflow:visible; height:auto;}
+    .nav-btn,.hint,.progress{display:none !important;}
+    .slide{position:relative; display:flex !important; page-break-after:always; height:auto; min-height:100vh; overflow:visible;}
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress" style="width:0%"></div>
+<div class="deck" id="deck">
+
+  <!-- 1 -->
+  <section class="slide active titleslide">
+    <div class="brand">
+      <div class="brand-mark">dt</div>
+      <div>
+        <div class="brand-name">datatem AI</div>
+        <div class="brand-sub">Altyapı Yönetimi &amp; AIOps Platformu</div>
+      </div>
+    </div>
+    <div class="kicker">Yönetim Sunumu · Altyapı Mimarisi</div>
+    <h1 class="title">Sunucudan Konteynere,<br>Tek Platformda Yönetim ve Yapay Zeka</h1>
+    <p class="subtitle">Linux, Windows, sanallaştırma, Oracle Exadata ve OpenShift ortamlarını tek ekrandan izleyen; anomalileri kendi başına tespit eden; sorulara yerel yapay zeka ile yanıt veren, tamamen kurum içinde (self-hosted) çalışan bir operasyon platformu.</p>
+    <div class="title-tags">
+      <div class="tag">Self-hosted / On-prem</div>
+      <div class="tag">Yerel Yapay Zeka (Ollama)</div>
+      <div class="tag">5 Platform · 9 Modül</div>
+      <div class="tag">Docker Compose ile Kurulum</div>
+    </div>
+    <div class="meta">datatem Teknoloji · Altyapı Ekibi</div>
+    <div class="pageno">1 / 14</div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide">
+    <div class="kicker">Neden</div>
+    <h2 class="slide-title">Bu Platforma Neden İhtiyaç Duyduk?</h2>
+    <p class="subtitle">Operasyon ekibinin gerçekte karşılaştığı problemler ile çözüm yaklaşımımız.</p>
+    <div class="cols">
+      <div class="col">
+        <div class="panel bad" style="margin:auto 0">
+          <h4>Öncesinde durum</h4>
+          <ul class="bullets">
+            <li>Linux, Windows, sanallaştırma ve veritabanı altyapısı için birbirinden bağımsız araç ve konsollar</li>
+            <li>Yama, paket kurulumu ve rutin operasyon işleri büyük ölçüde manuel</li>
+            <li>Sorunlar önce kullanıcı şikâyetiyle fark ediliyor, kök neden analizi saatler sürebiliyor</li>
+            <li>Bulut tabanlı yapay zeka asistanları, kurumsal/hassas veriyi dış sunuculara gönderme riski taşıyor</li>
+          </ul>
+        </div>
+      </div>
+      <div class="col">
+        <div class="panel good" style="margin:auto 0">
+          <h4>datatem AI ile</h4>
+          <ul class="bullets">
+            <li>Tüm ortamlar (Linux · Windows · Sanallaştırma · Exadata · OpenShift) tek panelde, tek oturumda</li>
+            <li>Arka planda 7/24 çalışan otomasyon: envanter, metrik, log ve olay toplama</li>
+            <li>Anomaliler otomatik tespit edilir → olaya, gerekirse vakaya (incident) dönüşür → AI ön analiz sunar</li>
+            <li>Yapay zeka tamamen kurum içinde (Ollama) çalışır — hiçbir veri dışarı çıkmaz</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+      <div class="pageno">2 / 14</div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide">
+    <div class="kicker">Kapsam</div>
+    <h2 class="slide-title">Tek Platform, 9 Yönetim Modülü</h2>
+    <p class="subtitle">Her modül, ilgili ekibe kendi alanına özel envanter, izleme ve otomasyon sunar; erişim rol bazlı verilir.</p>
+    <div class="grid g3" style="margin:auto 0">
+      <div class="card" style="--c:var(--exec)"><span class="dot"></span><h3>Yönetici Ekranı</h3><p>Tüm ortamların (Linux, Windows, Sanallaştırma vb.) üst düzey yöneticiler için tek sayfalık özeti</p></div>
+      <div class="card" style="--c:var(--linux)"><span class="dot"></span><h3>Linux Yönetimi</h3><p>SSH tabanlı sunucu yönetimi, paket/yama dağıtımı, yerel repo, Ansible otomasyonu</p></div>
+      <div class="card" style="--c:var(--windows)"><span class="dot"></span><h3>Windows Yönetimi</h3><p>WinRM bağlantısı, Event Log toplama, Windows Update yönetimi</p></div>
+      <div class="card" style="--c:var(--virt)"><span class="dot"></span><h3>Sanallaştırma</h3><p>VMware, Proxmox, Hyper-V ve OpenShift Virtualization — tek hypervisor envanteri</p></div>
+      <div class="card" style="--c:var(--exadata)"><span class="dot"></span><h3>Exadata</h3><p>Oracle Exadata DB Machine — rack/kabinet, compute node ve storage cell envanteri</p></div>
+      <div class="card" style="--c:var(--openshift)"><span class="dot"></span><h3>OpenShift Container Platform</h3><p>Cluster, node, proje ve workload envanteri; tam AIOps desteği</p></div>
+      <div class="card" style="--c:var(--ai)"><span class="dot"></span><h3>AI &amp; Otomasyon</h3><p>AI Chat, çoklu platform tool-calling AI Agent, insan onaylı aksiyon akışı</p></div>
+      <div class="card" style="--c:var(--integ)"><span class="dot"></span><h3>Entegrasyonlar</h3><p>UCMDB statik import ve dış kaynak veri entegrasyonları</p></div>
+      <div class="card" style="--c:var(--l1)"><span class="dot"></span><h3>İşletim Level 1</h3><p>Disk, ASM, LVM, servis ve kullanıcı yönetimi için hazır runbook'lar</p></div>
+    </div>
+      <div class="pageno">3 / 14</div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide">
+    <div class="kicker">Mimari</div>
+    <h2 class="slide-title">Sistem Mimarisi — Uçtan Uca</h2>
+    <p class="subtitle">Tek bir Docker Compose yığınıyla ayağa kalkan, monolitik backend + SPA frontend mimarisi.</p>
+    <div class="arch">
+      <div class="box"><strong>Tarayıcı</strong><span>Kullanıcı arayüzü</span></div>
+      <div class="arrow-down">↓ HTTP / WebSocket</div>
+      <div class="box accent wide"><strong>Nginx (3000) → React SPA</strong><span>TypeScript + Tailwind · 50 ekran · /api/v1/* → backend'e proxy</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="box accent wide"><strong>FastAPI (8000, host network)</strong><span>JWT kimlik doğrulama · 43 API modülü · 117 servis bileşeni</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="arch-services">
+        <div class="box"><strong>PostgreSQL + TimescaleDB</strong><span>Kalıcı veri + zaman serisi metrik</span></div>
+        <div class="box"><strong>Redis</strong><span>Görev kuyruğu / önbellek</span></div>
+        <div class="box"><strong>Ollama + ChromaDB</strong><span>Yerel LLM + RAG vektör deposu</span></div>
+        <div class="box"><strong>Prometheus + Pushgateway</strong><span>Metrik toplama (Node Exporter)</span></div>
+        <div class="box"><strong>SSH · WinRM · API</strong><span>vCenter, KubeVirt, OpenShift, Exadata</span></div>
+      </div>
+    </div>
+      <div class="pageno">4 / 14</div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide">
+    <div class="kicker">Teknoloji Yığını</div>
+    <h2 class="slide-title">Kullanılan Teknolojiler</h2>
+    <p class="subtitle">Endüstri standardı, geniş topluluk desteğine sahip, açık kaynak ağırlıklı bir teknoloji seçimi.</p>
+    <div class="grid g3" style="margin:auto 0">
+      <div class="panel">
+        <h4>Backend</h4>
+        <div class="chips">
+          <span class="chip">Python 3.11</span><span class="chip">FastAPI</span><span class="chip">SQLAlchemy 2.0</span>
+          <span class="chip">Alembic</span><span class="chip">Celery</span><span class="chip">LangGraph (AI Agent)</span>
+          <span class="chip">Paramiko (SSH)</span><span class="chip">ChromaDB (RAG)</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h4>Frontend</h4>
+        <div class="chips">
+          <span class="chip">React 18</span><span class="chip">TypeScript</span><span class="chip">Tailwind CSS</span>
+          <span class="chip">Vite</span><span class="chip">TanStack Query</span><span class="chip">Recharts</span>
+          <span class="chip">react-markdown</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h4>Altyapı &amp; Veri</h4>
+        <div class="chips">
+          <span class="chip">PostgreSQL 15</span><span class="chip">TimescaleDB</span><span class="chip">Redis 7</span>
+          <span class="chip">Ollama (yerel LLM)</span><span class="chip">Prometheus</span><span class="chip">Node Exporter</span>
+          <span class="chip">Docker Compose</span>
+        </div>
+      </div>
+    </div>
+      <div class="pageno">5 / 14</div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide">
+    <div class="kicker">Yapay Zeka</div>
+    <h2 class="slide-title">Neden Yerel Yapay Zeka (Ollama)?</h2>
+    <p class="subtitle">Yapay zeka özellikleri, dışarıya veri göndermeyen, kurum içinde çalışan bir modelle sunulur.</p>
+    <div class="grid g4" style="margin:auto 0">
+      <div class="card" style="--c:var(--ai)"><h3>Veri Hiç Dışarı Çıkmaz</h3><p>Sohbet, kök neden analizi ve AI agent tüm çıkarımı şirket içindeki Ollama sunucusunda yapar; OpenAI/Anthropic gibi dış servislere istek gitmez.</p></div>
+      <div class="card" style="--c:var(--ai)"><h3>Maliyet Avantajı</h3><p>Token bazlı dış API ücreti yoktur; kullanım arttıkça maliyet artmaz, tamamen kurum kaynaklarıyla çalışır.</p></div>
+      <div class="card" style="--c:var(--ai)"><h3>Bağlamsal Yanıt (RAG)</h3><p>ChromaDB üzerinde runbook, doküman ve olay geçmişi indekslenir; AI yanıtları bu bağlamla desteklenir.</p></div>
+      <div class="card" style="--c:var(--ai)"><h3>İnsan Onay Kapısı</h3><p>Riskli komutlar (örn. root yetkili işlemler) AI tarafından otomatik çalıştırılmaz; insan onayı zorunludur.</p></div>
+    </div>
+      <div class="pageno">6 / 14</div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide">
+    <div class="kicker">AIOps</div>
+    <h2 class="slide-title">Otomasyon Kapalı Döngüsü</h2>
+    <p class="subtitle">Sorunlar büyümeden, otomatik olarak tespit edilip önceliklendirilir.</p>
+    <div class="flow" style="margin:auto 0">
+      <div class="flow-step"><span class="n">01</span><h4>Metrik Toplama</h4><p>Prometheus / Node Exporter verisi TimescaleDB'ye akar</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><span class="n">02</span><h4>Anomali Tespiti</h4><p>5 dakikada bir Z-score / IQR analiziyle sapmalar bulunur</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><span class="n">03</span><h4>Olay (Event)</h4><p>Anomaliler gruplanır, ilişkili olaylar birleştirilir</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><span class="n">04</span><h4>Vaka (Incident)</h4><p>Kritik seviyedeki olaylar otomatik vakaya yükseltilir</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><span class="n">05</span><h4>AI Kök Neden</h4><p>LangGraph + Ollama, olayı analiz edip özet ve öneri üretir</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><span class="n">06</span><h4>Karar &amp; Aksiyon</h4><p>Operasyon ekibi / yönetici ekranında görünür, aksiyon alınır</p></div>
+    </div>
+      <div class="pageno">7 / 14</div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide">
+    <div class="kicker">Platform Kapsamı</div>
+    <h2 class="slide-title">5 Platformda Aynı Derinlikte İzleme</h2>
+    <p class="subtitle">Her platform kendi envanterine ek olarak aynı AIOps katmanını (Olaylar · Vakalar · Sohbet · Komuta Merkezi) paylaşır.</p>
+    <div class="grid g5" style="margin:auto 0">
+      <div class="card" style="--c:var(--linux)"><h3>Linux</h3><p>Sunucu envanteri, SSH, paket &amp; yama, repo, Ansible</p></div>
+      <div class="card" style="--c:var(--windows)"><h3>Windows</h3><p>WinRM, Event Log, Windows Update, envanter</p></div>
+      <div class="card" style="--c:var(--virt)"><h3>Sanallaştırma</h3><p>VMware / Proxmox / Hyper-V / OpenShift Virtualization VM envanteri</p></div>
+      <div class="card" style="--c:var(--exadata)"><h3>Exadata</h3><p>Rack, compute node, storage cell envanteri ve izleme</p></div>
+      <div class="card" style="--c:var(--openshift)"><h3>OpenShift</h3><p>Cluster, node, proje, pod/deployment/route envanteri</p></div>
+    </div>
+      <div class="pageno">8 / 14</div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide">
+    <div class="kicker">Otomasyon</div>
+    <h2 class="slide-title">7/24 Çalışan 18 Arka Plan Görevi</h2>
+    <p class="subtitle">Kullanıcı hiçbir şey tetiklemeden veri sürekli tazelenir, sağlık kontrolü ve temizlik otomatik yapılır.</p>
+    <div class="grid g4" style="margin:auto 0">
+      <div class="panel"><h4>Envanter &amp; Senkronizasyon</h4><ul class="bullets"><li>VM / hypervisor senkronizasyonu</li><li>OpenShift cluster senkronizasyonu</li><li>Node Exporter &amp; ESX metrik senkronizasyonu</li><li>Otomatik sunucu onboarding</li></ul></div>
+      <div class="panel"><h4>İzleme &amp; Sağlık</h4><ul class="bullets"><li>Periyodik sağlık kontrolü (SSH ping)</li><li>Metrik senkronizasyonu</li><li>Linux envanteri için doğal dil sorgulama (NLQ)</li></ul></div>
+      <div class="panel"><h4>Anomali &amp; Analiz</h4><ul class="bullets"><li>Anomali taraması (Z-score / IQR)</li><li>RAG bilgi tabanı yeniden indeksleme</li></ul></div>
+      <div class="panel"><h4>Log, Olay &amp; Bakım</h4><ul class="bullets"><li>Linux / Windows / sanallaştırma log toplama</li><li>Syslog receiver (arka plan denetçisi)</li><li>Snapshot temizliği</li><li>Sistem güncelleme kurtarma (recovery)</li></ul></div>
+    </div>
+      <div class="pageno">9 / 14</div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide">
+    <div class="kicker">Güvenlik</div>
+    <h2 class="slide-title">Güvenlik ve Erişim Kontrolü</h2>
+    <div class="grid g3" style="margin:auto 0">
+      <div class="card" style="--c:#f43f5e"><h3>Kimlik Doğrulama</h3><p>JWT tabanlı stateless kimlik doğrulama; parolalar bcrypt ile hashlenir, token'lar 24 saatte sona erer, oturum sonlandırma için jti kara listesi kullanılır.</p></div>
+      <div class="card" style="--c:#f43f5e"><h3>Rol / Modül Bazlı Erişim</h3><p>Admin tüm modüllere erişir; Operator ve Viewer rolleri sadece kendilerine atanan modülleri görebilir.</p></div>
+      <div class="card" style="--c:#f43f5e"><h3>Denetim Kaydı (Audit Log)</h3><p>Sistem üzerinde yapılan tüm kritik işlemler kim, ne zaman, ne yaptı bilgisiyle kayıt altına alınır.</p></div>
+      <div class="card" style="--c:#f43f5e"><h3>Envanter Koruma Katmanı</h3><p>Sadece yetkili entegrasyon kaynaklarından envanter oluşturma/güncelleme izni verilir; dışarıdan zorla veri yazımı engellenir.</p></div>
+      <div class="card" style="--c:#f43f5e"><h3>İnsan Onaylı AI Aksiyonları</h3><p>AI agent'ın riskli/yetkili komutları, guard katmanı tarafından sınıflandırılır ve insan onayı olmadan çalıştırılmaz.</p></div>
+      <div class="card" style="--c:#f43f5e"><h3>Ağ Yalıtımı</h3><p>Kurulum scripti; veritabanı ve Redis'i sadece localhost'a bağlar, TLS yapılandırması otomatik yapılır.</p></div>
+    </div>
+      <div class="pageno">10 / 14</div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide">
+    <div class="kicker">Büyüklük</div>
+    <h2 class="slide-title">Rakamlarla Platform</h2>
+    <p class="subtitle">Kod tabanından ölçülen güncel rakamlar.</p>
+    <div class="grid g4" style="margin:auto 0">
+      <div class="stat"><div class="num">60K+</div><div class="lbl">satır backend kodu (Python)</div></div>
+      <div class="stat"><div class="num">38K+</div><div class="lbl">satır frontend kodu (React/TS)</div></div>
+      <div class="stat"><div class="num">43</div><div class="lbl">API modülü</div></div>
+      <div class="stat"><div class="num">50</div><div class="lbl">kullanıcı arayüzü ekranı</div></div>
+      <div class="stat"><div class="num">117</div><div class="lbl">servis bileşeni</div></div>
+      <div class="stat"><div class="num">26</div><div class="lbl">veri modeli</div></div>
+      <div class="stat"><div class="num">9</div><div class="lbl">yönetim modülü</div></div>
+      <div class="stat"><div class="num">18</div><div class="lbl">otomatik arka plan görevi</div></div>
+    </div>
+      <div class="pageno">11 / 14</div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide">
+    <div class="kicker">Dağıtım</div>
+    <h2 class="slide-title">Dağıtım ve İşletim Modeli</h2>
+    <div class="cols">
+      <div class="col">
+        <div class="panel" style="margin:auto 0">
+          <h4>Kurulum</h4>
+          <ul class="bullets">
+            <li>Tamamen self-hosted / on-prem — tek Docker Compose yığınıyla ayağa kalkar</li>
+            <li>Versiyonlanmış, tekrarlanabilir dağıtım paketi (<code>build-distribution.sh</code>)</li>
+            <li>Kurulum scripti rastgele <code>SECRET_KEY</code> / parola üretir ve TLS'i otomatik yapılandırır</li>
+          </ul>
+        </div>
+      </div>
+      <div class="col">
+        <div class="panel" style="margin:auto 0">
+          <h4>Kapalı Ağ (Air-gapped) Desteği</h4>
+          <ul class="bullets">
+            <li>İnternet erişimi olmayan ortamlar için offline Ollama model transferi desteklenir</li>
+            <li>Veritabanı ve Redis varsayılan olarak sadece localhost'a bağlanır</li>
+            <li>Prometheus / Pushgateway ile kurum içi metrik toplama, dış servise bağımlılık yoktur</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+      <div class="pageno">12 / 14</div>
+  </section>
+
+  <!-- 13 -->
+  <section class="slide">
+    <div class="kicker">Genişleyebilirlik</div>
+    <h2 class="slide-title">Kanıtlanmış Genişleme Hızı</h2>
+    <p class="subtitle">Modüler mimari sayesinde, platform yeni bir altyapı türünü kısa sürede aynı olgunlukla kapsayabiliyor.</p>
+    <div class="grid g3" style="margin:auto 0">
+      <div class="panel"><h4>Örnek: OpenShift Entegrasyonu</h4><ul class="bullets"><li>OpenShift Virtualization, Sanallaştırma modülüne yeni bir hypervisor tipi olarak eklendi</li><li>OpenShift Container Platform, Exadata ile aynı olgunlukta ayrı bir modül olarak eklendi (envanter + tam AIOps)</li><li>Her ikisi de token veya kullanıcı adı/şifre ile kimlik doğrulamayı destekliyor</li></ul></div>
+      <div class="panel"><h4>Neden Hızlı?</h4><ul class="bullets"><li>Her platform için tekrar eden bir kalıp: veri modeli → senkronizasyon servisi → olay toplayıcı → API → arayüz</li><li>Ortak AIOps katmanı (Olaylar/Vakalar/Sohbet) yeni platformlara otomatik miras kalır</li><li>Rol/modül sistemi sayesinde yeni modül, erişim kontrolüyle birlikte devreye girer</li></ul></div>
+      <div class="panel"><h4>Sonuç</h4><ul class="bullets"><li>Platform kapsamı, iş ihtiyacına göre yeni altyapı türleriyle büyümeye açık</li><li>Aynı yaklaşım gelecekte farklı bulut/konteyner/veritabanı platformları için de uygulanabilir</li></ul></div>
+    </div>
+      <div class="pageno">13 / 14</div>
+  </section>
+
+  <!-- 14 -->
+  <section class="slide">
+    <div class="kicker">Özet</div>
+    <h2 class="slide-title">Tek Cümleyle Ne Yaptık?</h2>
+    <p class="subtitle" style="font-size:22px; color:var(--ink-0); max-width:1000px; line-height:1.5;">
+      Dağınık araçlar yerine; Linux, Windows, sanallaştırma, Exadata ve OpenShift ortamlarını tek panelde toplayan, sorunları kendi başına tespit eden ve kurum içinde çalışan yapay zeka ile analiz eden, self-hosted bir operasyon platformu kurduk.
+    </p>
+    <div class="grid g4" style="margin-top:20px;">
+      <div class="card" style="--c:var(--accent)"><h3>Konsolidasyon</h3><p>Tek platform, 9 modül, 5 platform türü</p></div>
+      <div class="card" style="--c:var(--accent)"><h3>Veri Gizliliği</h3><p>Yerel AI, dışarıya veri çıkışı yok</p></div>
+      <div class="card" style="--c:var(--accent)"><h3>Proaktif Operasyon</h3><p>Otomatik anomali tespiti ve kök neden analizi</p></div>
+      <div class="card" style="--c:var(--accent)"><h3>Genişleyebilirlik</h3><p>Yeni platformlar hızla eklenebiliyor</p></div>
+    </div>
+    <div class="meta" style="bottom:34px;">Sorular ve tartışma için teşekkürler.</div>
+      <div class="pageno">14 / 14</div>
+  </section>
+
+</div>
+
+<button class="nav-btn" id="prevBtn">‹</button>
+<button class="nav-btn" id="nextBtn">›</button>
+<div class="hint">← → ok tuşları ile gezinin · yazdırma için Ctrl/Cmd+P</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  let idx = 0;
+
+  function render(){
+    slides.forEach((s,i)=> s.classList.toggle('active', i===idx));
+    document.getElementById('progress').style.width = ((idx+1)/total*100)+'%';
+  }
+  function go(delta){
+    idx = Math.max(0, Math.min(total-1, idx+delta));
+    render();
+  }
+  document.getElementById('prevBtn').onclick = ()=>go(-1);
+  document.getElementById('nextBtn').onclick = ()=>go(1);
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='ArrowRight' || e.key===' ' || e.key==='PageDown') go(1);
+    else if(e.key==='ArrowLeft' || e.key==='PageUp') go(-1);
+    else if(e.key==='Home') { idx=0; render(); }
+    else if(e.key==='End') { idx=total-1; render(); }
+  });
+  render();
+</script>
+</body>
+</html>

@@ -373,14 +373,22 @@ async def command_center(
 
     health = _calc_health_score(events, total_servers)
 
+    event_critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
+    event_warning = sum(1 for e in events if e.severity == "warning")
+
     return {
         "health": health,
         "storms": storms,
         "critical_servers": critical_servers[:30],
         "warning_servers": warning_servers[:50],
+        # Sunucu kartı sayıları (liste ile birebir)
         "critical_count": len(critical_servers),
         "warning_count": len(warning_servers),
         "storm_count": len(storms),
+        # Event sayıları — navbar / Events KPI ile aynı tanım
+        "event_critical": event_critical,
+        "event_warning": event_warning,
+        "event_total": event_critical + event_warning,
         "green_count": green_count,
         "generated_at": datetime.utcnow().isoformat(),
     }
@@ -482,7 +490,12 @@ async def ops_summary(
     platform: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Hafif özet — navbar badge (Komuta Merkezi ile aynı actionable filtre)."""
+    """Navbar badge — Komuta Merkezi / Events ile aynı actionable event sayıları.
+
+    critical = critical + emergency event adedi
+    warning  = warning event adedi
+    total    = critical + warning
+    """
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = _active_events(db, since, platform=platform)
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
@@ -494,7 +507,14 @@ async def ops_summary(
         .all()
     )
     open_incidents = len(filter_incidents_for_platform(open_incidents_q, platform, db))
-    return {"critical": critical, "warning": warning, "open_incidents": open_incidents, "action_needed": critical > 0}
+    total = critical + warning
+    return {
+        "critical": critical,
+        "warning": warning,
+        "total": total,
+        "open_incidents": open_incidents,
+        "action_needed": total > 0,
+    }
 
 
 # ── Snooze ────────────────────────────────────────────────────────────────────

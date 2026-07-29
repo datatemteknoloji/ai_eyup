@@ -68,6 +68,7 @@ def _event_display_server_name(e: SystemEvent, server_map: Optional[dict] = None
 def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
     if not server_name:
         server_name = _event_display_server_name(e)
+    last_seen = e.last_seen or e.created_at
     return {
         "id": e.id,
         "server_id": e.server_id,
@@ -81,7 +82,10 @@ def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
         "is_acknowledged": e.is_acknowledged,
         "is_known": getattr(e, "is_known", False),
         "resolved": e.resolved,
-        "created_at": e.created_at.isoformat() if e.created_at else None
+        "occurrence_count": getattr(e, "occurrence_count", None) or 1,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+        "first_seen": e.created_at.isoformat() if e.created_at else None,
+        "last_seen": last_seen.isoformat() if last_seen else None,
     }
 
 
@@ -118,13 +122,17 @@ async def event_stats(
     critical = actionable.filter(SystemEvent.severity == "critical").count()
     warning = actionable.filter(SystemEvent.severity == "warning").count()
     emergency = actionable.filter(SystemEvent.severity == "emergency").count()
+    # Navbar / Komuta Merkezi ile aynı: critical rozeti = critical + emergency
+    critical_badge = critical + emergency
 
     return {
         "total": total,
         "unresolved": unresolved,
-        "critical": critical,
+        "critical": critical_badge,
+        "critical_only": critical,
         "warning": warning,
         "emergency": emergency,
+        "actionable_total": critical_badge + warning,
         "acknowledged": acknowledged,
         "known": known
     }
@@ -166,7 +174,11 @@ async def list_events(
     if platform == "virt" and not show_routine:
         q = apply_hide_routine_virt(q, show_routine=False)
     if severity:
-        q = q.filter(SystemEvent.severity == severity)
+        sevs = [s.strip() for s in severity.split(",") if s.strip()]
+        if len(sevs) == 1:
+            q = q.filter(SystemEvent.severity == sevs[0])
+        elif sevs:
+            q = q.filter(SystemEvent.severity.in_(sevs))
     if event_type:
         q = q.filter(SystemEvent.event_type == event_type)
     if server_id:
@@ -196,7 +208,10 @@ async def list_events(
             q = q.filter(~SystemEvent.server_id.in_(offline_ids))
 
     total = q.count()
-    events = q.order_by(desc(SystemEvent.created_at)).offset(offset).limit(limit).all()
+    events = (
+        q.order_by(desc(SystemEvent.last_seen), desc(SystemEvent.created_at))
+        .offset(offset).limit(limit).all()
+    )
 
     # Server adlarını tek sorguda getir
     server_ids = list({e.server_id for e in events if e.server_id})
@@ -472,7 +487,11 @@ async def list_events_grouped(
     if platform == "virt" and not show_routine:
         q = apply_hide_routine_virt(q, show_routine=False)
     if severity:
-        q = q.filter(SystemEvent.severity == severity)
+        sevs = [s.strip() for s in severity.split(",") if s.strip()]
+        if len(sevs) == 1:
+            q = q.filter(SystemEvent.severity == sevs[0])
+        elif sevs:
+            q = q.filter(SystemEvent.severity.in_(sevs))
     if event_type:
         q = q.filter(SystemEvent.event_type == event_type)
     if server_id:

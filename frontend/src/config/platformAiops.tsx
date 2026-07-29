@@ -3,16 +3,23 @@ import {
   Zap, ClipboardList, AlertTriangle, Wrench, MessageSquare,
 } from 'lucide-react'
 
-export type PlatformKey = 'linux' | 'virt' | 'windows' | 'exadata'
+export type PlatformKey = 'linux' | 'virt' | 'windows' | 'exadata' | 'openshift'
 
 export const PLATFORM_AIOPS_PREFIX: Record<PlatformKey, string> = {
   linux: '/linux',
   virt: '/virt',
   windows: '/windows/aiops',
   exadata: '/exadata',
+  openshift: '/openshift',
 }
 
-export type AiopsSummary = { critical: number; warning: number; action_needed?: boolean }
+export type AiopsSummary = {
+  critical: number
+  warning: number
+  total?: number
+  open_incidents?: number
+  action_needed?: boolean
+}
 
 type ChildItem = {
   path: string
@@ -39,12 +46,24 @@ function warnBadge(n: number) {
   )
 }
 
-/** Her platform modülü için AIOps alt menüsü */
+function totalBadge(n: number) {
+  if (n <= 0) return null
+  return (
+    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500/90 text-white text-[10px] font-bold flex items-center justify-center">
+      {n > 99 ? '99+' : n}
+    </span>
+  )
+}
+
+/** Her platform modülü için AIOps alt menüsü — rozetler /ops/summary event sayılarıyla aynı */
 export function buildPlatformAiopsChildren(
   platform: PlatformKey,
   summary?: AiopsSummary,
 ): ChildItem[] {
   const base = PLATFORM_AIOPS_PREFIX[platform]
+  const critical = summary?.critical ?? 0
+  const warning = summary?.warning ?? 0
+  const openInc = summary?.open_incidents ?? 0
   return [
     {
       path: `${base}/chat`,
@@ -55,17 +74,29 @@ export function buildPlatformAiopsChildren(
       path: `${base}/ops`,
       name: 'Komuta Merkezi',
       icon: React.createElement(Zap, { size: 15 }),
-      badge: () => critBadge(summary?.critical ?? 0),
+      badge: () => critBadge(critical),
     },
     {
       path: `${base}/events`,
       name: 'Events',
       icon: React.createElement(ClipboardList, { size: 15 }),
-      badge: () => warnBadge(summary?.warning ?? 0),
+      // Uyarı rozeti; toplam actionable Events KPI "Aktif" ile totalBadge parent'ta
+      badge: () => warnBadge(warning),
     },
-    { path: `${base}/incidents`, name: 'Incidents', icon: React.createElement(AlertTriangle, { size: 15 }) },
+    {
+      path: `${base}/incidents`,
+      name: 'Incidents',
+      icon: React.createElement(AlertTriangle, { size: 15 }),
+      badge: () => (openInc > 0 ? warnBadge(openInc) : null),
+    },
     { path: `${base}/analysis`, name: 'Analiz Araçları', icon: React.createElement(Wrench, { size: 15 }) },
   ]
+}
+
+/** Linux AIOps / Windows AIOps üst satır toplam rozeti */
+export function aiopsTotalBadge(summary?: AiopsSummary) {
+  const n = summary?.total ?? ((summary?.critical ?? 0) + (summary?.warning ?? 0))
+  return () => totalBadge(n)
 }
 
 export const PLATFORM_AIOPS_LABEL: Record<PlatformKey, string> = {
@@ -73,4 +104,5 @@ export const PLATFORM_AIOPS_LABEL: Record<PlatformKey, string> = {
   virt: 'Sanallaştırma AIOps',
   windows: 'Windows AIOps',
   exadata: 'Exadata AIOps',
+  openshift: 'OpenShift AIOps',
 }

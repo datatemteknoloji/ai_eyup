@@ -103,6 +103,19 @@ async def startup_tasks():
     # Hafif şema güncellemeleri (mevcut tablolara eksik kolon ekle — idempotent)
     try:
         from sqlalchemy import text as _sa_text
+        # Postgres enum'a yeni hypervisor tipleri ekle — ayrı transaction, bazı Postgres
+        # sürümlerinde ADD VALUE diğer DDL'lerle aynı transaction'da hata verebiliyor.
+        # NOT: SQLAlchemy `Enum(HypervisorType)` sütunu değer olarak enum ÜYE ADINI
+        # (örn. "OPENSHIFT_VIRT") gönderir, "openshift_virt" değerini değil — bu yüzden
+        # DB enum'una üye adıyla aynı (büyük harfli) değer eklenir.
+        for _enum_value in ("OPENSHIFT_VIRT", "PROXMOX"):
+            try:
+                with engine.begin() as _enum_conn:
+                    _enum_conn.execute(_sa_text(
+                        f"ALTER TYPE hypervisortype ADD VALUE IF NOT EXISTS '{_enum_value}'"
+                    ))
+            except Exception as _enum_e:
+                logger.debug(f"hypervisortype enum migration skip ({_enum_value}): {_enum_e}")
         with engine.begin() as _conn:
             _conn.execute(_sa_text(
                 "ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE"

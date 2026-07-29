@@ -88,6 +88,14 @@ services:
       - /data/data/chroma:/app/chroma
       - /data/data/repos:/app/repos
       - /data/data/uploads:/app/uploads
+    # OpenShift cluster (ocp.datatem.local) *.local alanı yerel router DNS'inde çözülüyor
+    # ama container'ın (network_mode: host olsa da kendi /etc/hosts + daemon DNS'i kullanır)
+    # varsayılan DNS'i genel internet sunucularına (8.8.8.8/1.1.1.1) sabit — bu yüzden
+    # cluster hostname'leri burada elle eşleniyor.
+    extra_hosts:
+      - "api.ocp.datatem.local:192.168.1.240"
+      - "console-openshift-console.apps.ocp.datatem.local:192.168.1.240"
+      - "oauth-openshift.apps.ocp.datatem.local:192.168.1.240"
     depends_on:
       db:
         condition: service_healthy

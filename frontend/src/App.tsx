@@ -26,6 +26,7 @@ import {
 } from './pages/PlatformInfraReportsPages'
 import ExecutiveDashboard from './pages/ExecutiveDashboard'
 import ExadataDashboard from './pages/ExadataDashboard'
+import OpenShiftDashboard from './pages/OpenShiftDashboard'
 import IntegrationsHub from './pages/IntegrationsHub'
 import PhysicalHostsPage from './pages/PhysicalHostsPage'
 import WindowsServers from './pages/WindowsServers'
@@ -45,6 +46,7 @@ import {
   LinuxAnalysisPage, VirtAnalysisPage, WindowsAnalysisPage,
   ExadataOpsPage, ExadataEventsPage, ExadataIncidentsPage, ExadataAnalysisPage,
   LinuxChatPage, WindowsChatPage, VirtChatPage, ExadataChatPage,
+  OpenShiftOpsPage, OpenShiftEventsPage, OpenShiftIncidentsPage, OpenShiftAnalysisPage, OpenShiftChatPage,
 } from './pages/PlatformAiopsPages'
 
 const queryClient = new QueryClient({
@@ -113,6 +115,7 @@ const HomeRedirect: React.FC = () => {
   if (hasModule('virtualization')) return <Navigate to="/hypervisors" replace />
   if (hasModule('windows')) return <Navigate to="/windows/dashboard" replace />
   if (hasModule('exadata')) return <Navigate to="/exadata" replace />
+  if (hasModule('openshift')) return <Navigate to="/openshift" replace />
   if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
   if (hasModule('level1')) return <Navigate to="/level1" replace />
   if (hasModule('integrations')) return <Navigate to="/integrations" replace />
@@ -204,6 +207,16 @@ function App() {
                       <Route path="/exadata/rca" element={<Navigate to="/exadata/analysis?tab=rca" replace />} />
                       <Route path="/exadata/baseline" element={<Navigate to="/exadata/analysis?tab=baseline" replace />} />
 
+                      {/* OpenShift Container Platform */}
+                      <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftDashboard /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/chat" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftChatPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/incidents" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/analysis" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/rca" element={<Navigate to="/openshift/analysis?tab=rca" replace />} />
+                      <Route path="/openshift/baseline" element={<Navigate to="/openshift/analysis?tab=baseline" replace />} />
+
                       {/* Eski AIOps yolları → Linux AIOps */}
                       <Route path="/ops" element={<Navigate to="/linux/ops" replace />} />
                       <Route path="/events" element={<Navigate to="/linux/events" replace />} />
@@ -225,6 +238,7 @@ function App() {
                       <Route path="/integrations/hypervisors" element={<RequireAnyModule moduleIds={['integrations', 'virtualization']}><ErrorBoundary><Hypervisors allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/physical-hosts" element={<RequireModule moduleId="integrations"><ErrorBoundary><PhysicalHostsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/exadata" element={<RequireAnyModule moduleIds={['integrations', 'exadata']}><ErrorBoundary><ExadataDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
+                      <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/:category" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />

@@ -8,13 +8,17 @@ from datetime import datetime
 class HypervisorCreate(BaseModel):
     """Hypervisor creation schema"""
     name: str
-    type: str  # vmware, hyperv, kvm, xen (required, maps to hypervisor_type enum)
+    type: str  # vmware, hyperv, kvm, xen, proxmox, openshift_virt (required, maps to hypervisor_type enum)
     hostname: Optional[str] = None
     ip_address: Optional[str] = None
     port: Optional[int] = None
     username: Optional[str] = None
     password: Optional[str] = None
     connection_config: Optional[Dict[str, Any]] = {}
+    # OpenShift Virtualization (token tabanlı kimlik doğrulama) — kolaylık alanları,
+    # sunucu tarafında hostname/password/connection_config'e eşlenir.
+    api_url: Optional[str] = None
+    token: Optional[str] = None
 
 class HypervisorUpdate(BaseModel):
     """Hypervisor update schema"""
@@ -26,6 +30,8 @@ class HypervisorUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     connection_config: Optional[Dict[str, Any]] = None
+    api_url: Optional[str] = None
+    token: Optional[str] = None
 
 class HypervisorResponse(BaseModel):
     """Hypervisor response schema"""

@@ -19,6 +19,7 @@ interface SystemEvent {
 interface EventStats {
   total: number; unresolved: number; critical: number; warning: number
   emergency: number; acknowledged: number; known: number
+  actionable_total?: number; critical_only?: number
 }
 interface EventGroup {
   event_type: string; title: string; severity: string
@@ -47,8 +48,8 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
-  const [ackFilter, setAckFilter] = useState<string>('') // '' | 'true' | 'false'
-  const [knownFilter, setKnownFilter] = useState<string>('') // '' | 'true'
+  const [ackFilter, setAckFilter] = useState<string>('false') // actionable: onaylı olmayan
+  const [knownFilter, setKnownFilter] = useState<string>('false') // actionable: bilinen olmayan
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -184,6 +185,13 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['events'] })
     queryClient.invalidateQueries({ queryKey: ['eventStats'] })
+    queryClient.invalidateQueries({ queryKey: ['ops-summary-nav'] })
+    queryClient.invalidateQueries({ queryKey: ['windows-ops-summary'] })
+    queryClient.invalidateQueries({ queryKey: ['virt-ops-summary'] })
+    queryClient.invalidateQueries({ queryKey: ['exadata-ops-summary'] })
+    queryClient.invalidateQueries({ queryKey: ['openshift-ops-summary'] })
+    queryClient.invalidateQueries({ queryKey: ['ops-command-center'] })
+    queryClient.invalidateQueries({ queryKey: ['openshift-command-center'] })
   }
 
   const handleScan = async () => {
@@ -401,17 +409,19 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       {/* KPI row — tıklayınca filtreler */}
       <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
         <Kpi label="Toplam" value={stats?.total ?? 0} accent={NEON.cyan}
-          active={!severityFilter && resolvedFilter === '' && !ackFilter && !knownFilter}
+          active={!severityFilter && resolvedFilter === '' && ackFilter === '' && knownFilter === ''}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />
-        <Kpi label="Aktif" value={stats?.unresolved ?? 0} accent={NEON.orange}
-          active={resolvedFilter === 'false' && !severityFilter && !ackFilter && !knownFilter}
-          onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setExcludeKnown(true); setPage(0) }} />
+        <Kpi label="Aktif" value={stats?.actionable_total ?? ((stats?.critical ?? 0) + (stats?.warning ?? 0))} accent={NEON.orange}
+          active={resolvedFilter === 'false' && ackFilter === 'false' && knownFilter === 'false' && !severityFilter}
+          onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setExcludeKnown(true); setPage(0) }} />
         <Kpi label="Kritik" value={stats?.critical ?? 0} accent={NEON.red}
-          active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
+          active={severityFilter === 'critical,emergency' || severityFilter === 'critical'}
+          onClick={() => { setSeverityFilter('critical,emergency'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
         <Kpi label="Acil" value={stats?.emergency ?? 0} accent={NEON.pink}
-          active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
+          active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
         <Kpi label="Uyarı" value={stats?.warning ?? 0} accent={NEON.orange}
-          active={severityFilter === 'warning' && !ackFilter} onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setAckFilter(''); setKnownFilter(''); setPage(0) }} />
+          active={severityFilter === 'warning' && ackFilter === 'false'}
+          onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
         <Kpi label="Onaylanan" value={stats?.acknowledged ?? 0} accent={NEON.blue}
           active={ackFilter === 'true'}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter('true'); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />

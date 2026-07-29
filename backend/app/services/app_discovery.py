@@ -83,72 +83,158 @@ echo '=== SERVICES ==='
 systemctl list-units --type=service --state=running --no-pager --plain 2>/dev/null | grep -Ei '{_PRODUCT_GREP}|^mssql|^oracle'
 echo '=== PACKAGES ==='
 (rpm -qa 2>/dev/null || dpkg -l 2>/dev/null | awk '{{print $2}}') 2>/dev/null | grep -Ei \
-  '^postgresql-server|^postgresql[0-9]|^mysql-server|^mariadb-server|^mongodb-org|^redis|^nginx|^httpd|^apache2$|^tomcat|^kafka|^rabbitmq-server|^elasticsearch|^haproxy|^mssql-server|^oracle-database|^docker-ce|^kubelet'
+  '^postgresql-server|^postgresql[0-9]|^mysql-server|^mariadb-server|^mongodb-org-server|^redis-server|^nginx|^httpd|^apache2$|^tomcat($|-[0-9])|^kafka|^rabbitmq-server|^elasticsearch|^haproxy|^mssql-server|^oracle-database-(ee|se|xe|standard|enterprise)|^docker-ce($|-)|^kubelet' \
+  | grep -Eiv 'preinstall|-api($|-)|-devel|-client|-jdbc|-libs($|-)|-common($|-)|-cli($|-)'
 echo '=== VERSIONS ==='
-command -v psql >/dev/null 2>&1 && echo "postgres_version: $(psql -U postgres -tAc 'select version()' 2>/dev/null | head -1)"
-command -v mysql >/dev/null 2>&1 && echo "mysql_version: $(mysql -N -e 'select version();' 2>/dev/null || mysql -u root -N -e 'select version();' 2>/dev/null)"
-command -v redis-cli >/dev/null 2>&1 && echo "redis_version: $(redis-cli INFO server 2>/dev/null | grep -i '^redis_version' | tr -d '\\r')"
-command -v mongosh >/dev/null 2>&1 && echo "mongo_version: $(mongosh --quiet --eval 'db.version()' 2>/dev/null)"
-command -v mongo >/dev/null 2>&1 && echo "mongo_version: $(mongo --quiet --eval 'db.version()' 2>/dev/null)"
-command -v nginx >/dev/null 2>&1 && echo "nginx_version: $(nginx -v 2>&1)"
-command -v httpd >/dev/null 2>&1 && echo "apache_version: $(httpd -v 2>/dev/null | head -1)"
-command -v apache2 >/dev/null 2>&1 && echo "apache_version: $(apache2 -v 2>/dev/null | head -1)"
-command -v docker >/dev/null 2>&1 && echo "docker_version: $(docker --version 2>/dev/null)"
-command -v kubectl >/dev/null 2>&1 && echo "kubectl_version: $(kubectl version --client 2>/dev/null | head -1)"
-command -v haproxy >/dev/null 2>&1 && echo "haproxy_version: $(haproxy -v 2>/dev/null | head -1)"
-[ -f /etc/oratab ] && echo "oracle_oratab: $(grep -v '^#' /etc/oratab 2>/dev/null | grep -v '^$' | head -3 | tr '\\n' ';')"
+# Surum: once calisan sunucu/daemon (psql/mysql/redis-cli INFO); yoksa paket surumu.
+_pkg_ver() {{ rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' "$1" 2>/dev/null || dpkg-query -W -f='${{Version}}' "$1" 2>/dev/null; }}
+PV=$(psql -U postgres -tAc 'select version()' 2>/dev/null | head -1)
+[ -z "$PV" ] && PV=$(_pkg_ver postgresql-server)
+[ -z "$PV" ] && PV=$(_pkg_ver postgresql)
+[ -n "$PV" ] && echo "postgres_version: $PV"
+MV=$(mysql -N -e 'select version();' 2>/dev/null || mysql -u root -N -e 'select version();' 2>/dev/null)
+[ -z "$MV" ] && MV=$(_pkg_ver mysql-server)
+[ -z "$MV" ] && MV=$(_pkg_ver mariadb-server)
+[ -n "$MV" ] && echo "mysql_version: $MV"
+RV=$(redis-cli INFO server 2>/dev/null | grep -i '^redis_version:' | cut -d: -f2- | tr -d '\\r ')
+[ -z "$RV" ] && RV=$(_pkg_ver redis)
+[ -z "$RV" ] && RV=$(_pkg_ver redis-server)
+[ -n "$RV" ] && echo "redis_version: $RV"
+MOV=$(mongosh --quiet --eval 'db.version()' 2>/dev/null || mongo --quiet --eval 'db.version()' 2>/dev/null)
+[ -z "$MOV" ] && MOV=$(_pkg_ver mongodb-org-server)
+[ -n "$MOV" ] && echo "mongo_version: $MOV"
+NV=$(nginx -v 2>&1)
+[ -n "$NV" ] && echo "nginx_version: $NV"
+AV=$(httpd -v 2>/dev/null | head -1); [ -z "$AV" ] && AV=$(apache2 -v 2>/dev/null | head -1)
+[ -n "$AV" ] && echo "apache_version: $AV"
+# Docker engine: yalnizca dockerd varsa (cli tek basina sayilmaz)
+if pgrep -x dockerd >/dev/null 2>&1 || systemctl is-active docker >/dev/null 2>&1; then
+  DV=$(docker --version 2>/dev/null || _pkg_ver docker-ce)
+  [ -n "$DV" ] && echo "docker_version: $DV"
+fi
+command -v kubelet >/dev/null 2>&1 && echo "kubelet_version: $(kubelet --version 2>/dev/null | head -1)"
+HV=$(haproxy -v 2>/dev/null | head -1); [ -n "$HV" ] && echo "haproxy_version: $HV"
+TV=$(_pkg_ver tomcat); [ -z "$TV" ] && TV=$(_pkg_ver tomcat9); [ -n "$TV" ] && echo "tomcat_version: $TV"
+# Oracle: yalnizca gercek instance/listener process'i — preinstall paketi DEGIL
 ORA_PMON=$(ps -e -o comm= 2>/dev/null | grep -i '^ora_pmon' | head -1)
 [ -n "$ORA_PMON" ] && echo "oracle_running: yes"
 ORA_LSNR=$(ps -e -o comm= 2>/dev/null | grep -i '^tnslsnr' | head -1)
 [ -n "$ORA_LSNR" ] && echo "oracle_listener_running: yes"
+[ -f /etc/oratab ] && ORA_TAB=$(grep -v '^#' /etc/oratab 2>/dev/null | grep -v '^$' | head -3 | tr '\\n' ';') && [ -n "$ORA_TAB" ] && echo "oracle_oratab: $ORA_TAB"
 systemctl is-active mssql-server >/dev/null 2>&1 && echo "mssql_active: yes"
-(rpm -q mssql-server >/dev/null 2>&1 || dpkg -s mssql-server >/dev/null 2>&1) && echo "mssql_pkg: found"
+MSV=$(_pkg_ver mssql-server); [ -n "$MSV" ] && echo "mssql_version: $MSV"
 echo '=== END ==='
 """.strip()
 
 
-# (name, category, default_port, [process/service/package/version keyword'leri])
+# process_keywords / service_keywords → calisiyor kaniti
+# package_keywords → yalnizca "kurulu" (running degil)
+# version_keys → surum zenginlestirme (tek basina tespit YOK)
 _LINUX_FINGERPRINTS: List[Dict[str, Any]] = [
-    {"name": "PostgreSQL", "category": "database", "port": 5432,
-     "keywords": ["postgres", "postgresql"]},
-    {"name": "MySQL/MariaDB", "category": "database", "port": 3306,
-     "keywords": ["mysqld", "mariadbd", "mysql-server", "mariadb-server", "mysql_version"]},
-    {"name": "MongoDB", "category": "database", "port": 27017,
-     "keywords": ["mongod", "mongodb-org", "mongo_version"]},
-    {"name": "Redis", "category": "cache", "port": 6379,
-     "keywords": ["redis-server", "redis_version", "^redis$"]},
-    {"name": "Nginx", "category": "webserver", "port": 80,
-     "keywords": ["nginx"]},
-    {"name": "Apache HTTP Server", "category": "webserver", "port": 80,
-     "keywords": ["httpd", "apache2"]},
-    {"name": "Tomcat", "category": "appserver", "port": 8080,
-     "keywords": ["tomcat", "catalina"]},
-    {"name": "JBoss/WildFly", "category": "appserver", "port": None,
-     "keywords": ["jboss", "wildfly", "glassfish"]},
-    {"name": "Apache Kafka", "category": "messaging", "port": 9092,
-     "keywords": ["kafka"]},
-    {"name": "RabbitMQ", "category": "messaging", "port": 5672,
-     "keywords": ["rabbitmq"]},
-    {"name": "Elasticsearch", "category": "database", "port": 9200,
-     "keywords": ["elasticsearch"]},
-    {"name": "HAProxy", "category": "webserver", "port": None,
-     "keywords": ["haproxy"]},
-    {"name": "Microsoft SQL Server", "category": "database", "port": 1433,
-     "keywords": ["mssql-server", "sqlservr", "mssql_active", "mssql_pkg"]},
-    {"name": "Oracle Database", "category": "database", "port": 1521,
-     "keywords": ["ora_pmon", "oracle_oratab", "oracle_running", "oracle-database"]},
-    {"name": "Oracle Listener", "category": "database", "port": 1521,
-     "keywords": ["tnslsnr", "oracle_listener_running"]},
-    {"name": "Docker", "category": "container_platform", "port": None,
-     "keywords": ["dockerd", "docker-ce", "docker_version"]},
-    {"name": "Kubernetes (kubelet)", "category": "container_platform", "port": None,
-     "keywords": ["kubelet"]},
-    {"name": "Memcached", "category": "cache", "port": 11211,
-     "keywords": ["memcached"]},
-    {"name": "Squid", "category": "webserver", "port": 3128,
-     "keywords": ["squid"]},
-    {"name": "Varnish", "category": "webserver", "port": 6081,
-     "keywords": ["varnish"]},
+    {"name": "PostgreSQL", "category": "database", "listen_ports": [5432],
+     "process_keywords": ["postgres", "postmaster"],
+     "service_keywords": ["postgresql"],
+     "package_keywords": ["postgresql-server", "postgresql"],
+     "version_keys": ["postgres_version"]},
+    {"name": "MySQL/MariaDB", "category": "database", "listen_ports": [3306],
+     "process_keywords": ["mysqld", "mariadbd"],
+     "service_keywords": ["mysqld", "mariadb", "mysql"],
+     "package_keywords": ["mysql-server", "mariadb-server"],
+     "version_keys": ["mysql_version"]},
+    {"name": "MongoDB", "category": "database", "listen_ports": [27017],
+     "process_keywords": ["mongod"],
+     "service_keywords": ["mongod", "mongodb"],
+     "package_keywords": ["mongodb-org-server", "mongodb-org"],
+     "version_keys": ["mongo_version"]},
+    {"name": "Redis", "category": "cache", "listen_ports": [6379],
+     "process_keywords": ["redis-server"],
+     "service_keywords": ["redis"],
+     "package_keywords": ["redis-server", "redis"],
+     "version_keys": ["redis_version"]},
+    {"name": "Nginx", "category": "webserver", "listen_ports": [80, 443],
+     "process_keywords": ["nginx"],
+     "service_keywords": ["nginx"],
+     "package_keywords": ["nginx"],
+     "version_keys": ["nginx_version"],
+     "exclude_substrings": ["ingress", "nginx-ingress"]},
+    {"name": "Apache HTTP Server", "category": "webserver", "listen_ports": [80, 443],
+     "process_keywords": ["httpd", "apache2"],
+     "service_keywords": ["httpd", "apache2"],
+     "package_keywords": ["httpd", "apache2"],
+     "version_keys": ["apache_version"]},
+    {"name": "Tomcat", "category": "appserver", "listen_ports": [8080],
+     "process_keywords": ["tomcat", "catalina"],
+     "service_keywords": ["tomcat"],
+     "package_keywords": ["tomcat"],
+     "version_keys": ["tomcat_version"]},
+    {"name": "JBoss/WildFly", "category": "appserver", "listen_ports": [],
+     "process_keywords": ["jboss", "wildfly", "glassfish"],
+     "service_keywords": ["jboss", "wildfly"],
+     "package_keywords": ["wildfly", "jboss"],
+     "version_keys": []},
+    {"name": "Apache Kafka", "category": "messaging", "listen_ports": [9092],
+     "process_keywords": ["kafka"],
+     "service_keywords": ["kafka"],
+     "package_keywords": ["kafka"],
+     "version_keys": []},
+    {"name": "RabbitMQ", "category": "messaging", "listen_ports": [5672],
+     "process_keywords": ["rabbitmq"],
+     "service_keywords": ["rabbitmq"],
+     "package_keywords": ["rabbitmq-server"],
+     "version_keys": []},
+    {"name": "Elasticsearch", "category": "database", "listen_ports": [9200],
+     "process_keywords": ["elasticsearch"],
+     "service_keywords": ["elasticsearch"],
+     "package_keywords": ["elasticsearch"],
+     "version_keys": []},
+    {"name": "HAProxy", "category": "webserver", "listen_ports": [],
+     "process_keywords": ["haproxy"],
+     "service_keywords": ["haproxy"],
+     "package_keywords": ["haproxy"],
+     "version_keys": ["haproxy_version"]},
+    {"name": "Microsoft SQL Server", "category": "database", "listen_ports": [1433],
+     "process_keywords": ["sqlservr"],
+     "service_keywords": ["mssql-server"],
+     "package_keywords": ["mssql-server"],
+     "version_keys": ["mssql_version"],
+     "flag_keys": ["mssql_active"]},
+    {"name": "Oracle Database", "category": "database", "listen_ports": [1521],
+     "process_keywords": ["ora_pmon"],
+     "service_keywords": [],
+     "package_keywords": [],  # preinstall yanlis pozitif; yalnizca process
+     "version_keys": [],
+     "flag_keys": ["oracle_running"]},
+    {"name": "Oracle Listener", "category": "database", "listen_ports": [1521],
+     "process_keywords": ["tnslsnr"],
+     "service_keywords": [],
+     "package_keywords": [],
+     "version_keys": [],
+     "flag_keys": ["oracle_listener_running"]},
+    {"name": "Docker", "category": "container_platform", "listen_ports": [],
+     "process_keywords": ["dockerd"],
+     "service_keywords": ["docker"],
+     "package_keywords": ["docker-ce"],
+     "version_keys": ["docker_version"]},
+    {"name": "Kubernetes (kubelet)", "category": "container_platform", "listen_ports": [],
+     "process_keywords": ["kubelet"],
+     "service_keywords": ["kubelet"],
+     "package_keywords": ["kubelet"],
+     "version_keys": ["kubelet_version"]},
+    {"name": "Memcached", "category": "cache", "listen_ports": [11211],
+     "process_keywords": ["memcached"],
+     "service_keywords": ["memcached"],
+     "package_keywords": ["memcached"],
+     "version_keys": []},
+    {"name": "Squid", "category": "webserver", "listen_ports": [3128],
+     "process_keywords": ["squid"],
+     "service_keywords": ["squid"],
+     "package_keywords": ["squid"],
+     "version_keys": []},
+    {"name": "Varnish", "category": "webserver", "listen_ports": [6081],
+     "process_keywords": ["varnishd", "varnish"],
+     "service_keywords": ["varnish"],
+     "package_keywords": ["varnish"],
+     "version_keys": []},
 ]
 
 _SECTION_RE = re.compile(r"^===\s*(\w+)\s*===\s*$")
@@ -156,7 +242,12 @@ _SECTION_RE = re.compile(r"^===\s*(\w+)\s*===\s*$")
 _PORT_LINE_RE = re.compile(
     r":(\d+)\s+[\d.:*\[\]]+\s+users:\(\(\"?([\w\-.]+)\"?", re.IGNORECASE
 )
+_PORT_ANY_RE = re.compile(r":(\d+)\s+")
 _VERSION_LINE_RE = re.compile(r"^([a-z_]+):\s*(.+)$", re.IGNORECASE)
+_FALSE_PKG_RE = re.compile(
+    r"preinstall|-api($|-)|-devel|-client|-jdbc|-libs($|-)|-common($|-)|-cli($|-)",
+    re.IGNORECASE,
+)
 
 
 def _split_sections(raw: str) -> Dict[str, str]:
@@ -172,23 +263,100 @@ def _split_sections(raw: str) -> Dict[str, str]:
     return {k: "\n".join(v).strip() for k, v in sections.items()}
 
 
-def _extract_version(versions_text: str, fp_keywords: List[str]) -> Optional[str]:
-    """Sadece gercek '<urun>_version: <deger>' seklindeki satirlardan surum
-    cikarir — 'oracle_running: yes' / 'mssql_pkg: found' gibi varlik-bayragi
-    (boolean flag) satirlari kasitli olarak ATLANIR, cunku bunlarin degeri
-    ('yes'/'found') bir surum degil."""
+def _token_in_text(token: str, text: str) -> bool:
+    """Kelime/token eslesmesi — 'redis' 'pcp-pmda-redis' icinde tutmasin diye
+    sinirli arama; tire/altcizgi ayiricilarina izin verir."""
+    t = (token or "").strip().lower()
+    if not t or not text:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text.lower()) is not None
+
+
+def _first_matching_line(
+    text: str,
+    keywords: List[str],
+    *,
+    package: bool = False,
+    exclude_substrings: Optional[List[str]] = None,
+) -> Optional[str]:
+    excludes = [e.lower() for e in (exclude_substrings or []) if e]
+    for line in (text or "").splitlines():
+        low = line.lower().strip()
+        if not low:
+            continue
+        if excludes and any(ex in low for ex in excludes):
+            continue
+        if package and _FALSE_PKG_RE.search(low):
+            continue
+        for kw in keywords:
+            if _token_in_text(kw, low):
+                return line.strip()[:250]
+    return None
+
+
+def _clean_version(raw: Optional[str]) -> Optional[str]:
+    """Ham surum ciktilarini kisa, okunabilir forma cevirir."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s or s.lower() in {"yes", "no", "found", "true", "false"}:
+        return None
+    # redis_version:6.2.20 / key:value
+    if re.match(r"^[a-z_]+_version\s*:", s, re.I):
+        s = s.split(":", 1)[-1].strip()
+    # nginx version: nginx/1.20.1
+    m = re.search(r"nginx/([\w.\-]+)", s, re.I)
+    if m:
+        return m.group(1)[:120]
+    # Docker version 26.1.3, build ...
+    m = re.search(r"(?i)(?:docker|podman)\s+version\s+([\w.\-]+)", s)
+    if m:
+        return m.group(1)[:120]
+    # Apache/2.4.37 (Unix)
+    m = re.search(r"(?i)Apache/([\w.\-]+)", s)
+    if m:
+        return m.group(1)[:120]
+    # PostgreSQL 13.23 on x86_64-...
+    m = re.search(r"(?i)PostgreSQL\s+([\w.\-]+)", s)
+    if m:
+        return m.group(1)[:120]
+    # kubelet version=v1.34.0
+    m = re.search(r"(?i)version[=:\s]+v?([\w.\-]+)", s)
+    if m and " " not in m.group(1):
+        return m.group(1).lstrip("vV")[:120]
+    # Genel: ilk X.Y.Z benzeri
+    m = re.search(r"\b(\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)\b", s)
+    if m:
+        return m.group(1)[:120]
+    return s[:120]
+
+
+def _extract_version(versions_text: str, version_keys: List[str]) -> Optional[str]:
+    """Sadece ilgili '<key>: <deger>' satirlarindan temiz surum dondurur."""
+    keys = {k.lower() for k in (version_keys or []) if k}
+    if not keys:
+        return None
     for line in versions_text.splitlines():
         m = _VERSION_LINE_RE.match(line.strip())
         if not m:
             continue
         key, val = m.group(1).lower(), m.group(2).strip()
-        if not key.endswith("_version"):
+        if key not in keys:
             continue
-        for kw in fp_keywords:
-            kw_clean = kw.strip("^$").lower()
-            if kw_clean and kw_clean in key:
-                return val[:110] if val else None
+        cleaned = _clean_version(val)
+        if cleaned:
+            return cleaned
     return None
+
+
+def _parse_version_flags(versions_text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for line in versions_text.splitlines():
+        m = _VERSION_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        out[m.group(1).lower()] = m.group(2).strip()
+    return out
 
 
 def _port_map_from_listeners(listen_text: str) -> Dict[str, List[int]]:
@@ -205,10 +373,45 @@ def _port_map_from_listeners(listen_text: str) -> Dict[str, List[int]]:
     return out
 
 
+def _all_listening_ports(listen_text: str) -> set:
+    ports = set()
+    for line in listen_text.splitlines():
+        m = _PORT_ANY_RE.search(line)
+        if m:
+            ports.add(int(m.group(1)))
+    return ports
+
+
+def _find_listen_port(
+    port_map: Dict[str, List[int]],
+    all_ports: set,
+    process_keywords: List[str],
+    preferred: List[int],
+) -> Optional[int]:
+    """Yalnizca dinleyen process adi fingerprint ile eslesince port dondur.
+    Ortak portlara (80/443) process eslesmesi olmadan urun atama."""
+    for kw in process_keywords:
+        kw_l = kw.lower()
+        for proc_name, plist in port_map.items():
+            if _token_in_text(kw_l, proc_name) or kw_l in proc_name:
+                if preferred:
+                    for p in preferred:
+                        if p in plist:
+                            return p
+                if plist:
+                    return plist[0]
+    return None
+
+
 def parse_linux_scan(raw_output: str) -> List[Dict[str, Any]]:
-    """LINUX_SCAN_SCRIPT çıktısını FINGERPRINTS ile eşleştirip yapılandırılmış
-    uygulama listesi döner: [{name, category, version, port, process_or_service,
-    detection_method, evidence}]."""
+    """LINUX_SCAN_SCRIPT ciktiisini fingerprint'lerle eslestirir.
+
+    status:
+      - running  → process VEYA systemd running VEYA aktif bayrak
+      - installed → yalnizca paket (calismiyor)
+    Port yalnizca dinleyen process eslesince yazilir (varsayilan port uydurulmaz).
+    Surum ham banner yerine temizlenmis degerdir.
+    """
     sections = _split_sections(raw_output)
     ports_text = sections.get("LISTENING_PORTS", "")
     proc_text = sections.get("PROCESSES", "")
@@ -216,57 +419,65 @@ def parse_linux_scan(raw_output: str) -> List[Dict[str, Any]]:
     pkg_text = sections.get("PACKAGES", "")
     ver_text = sections.get("VERSIONS", "")
     port_map = _port_map_from_listeners(ports_text)
-
-    haystacks = {
-        "process": proc_text.lower(),
-        "service": svc_text.lower(),
-        "package": pkg_text.lower(),
-        "version": ver_text.lower(),
-    }
+    all_ports = _all_listening_ports(ports_text)
+    flags = _parse_version_flags(ver_text)
 
     results = []
     for fp in _LINUX_FINGERPRINTS:
-        matched_method = None
-        evidence_line = None
-        for method, text in haystacks.items():
-            for kw in fp["keywords"]:
-                kw_clean = kw.strip("^$").lower()
-                if kw_clean and kw_clean in text:
-                    matched_method = method
-                    src_text = {"process": proc_text, "service": svc_text,
-                                "package": pkg_text, "version": ver_text}[method]
-                    for line in src_text.splitlines():
-                        if kw_clean in line.lower():
-                            evidence_line = line.strip()[:250]
-                            break
+        proc_kw = fp.get("process_keywords") or []
+        svc_kw = fp.get("service_keywords") or []
+        pkg_kw = fp.get("package_keywords") or []
+        ver_keys = fp.get("version_keys") or []
+        flag_keys = fp.get("flag_keys") or []
+        preferred_ports = list(fp.get("listen_ports") or [])
+        excludes = fp.get("exclude_substrings") or []
+
+        proc_line = _first_matching_line(proc_text, proc_kw, exclude_substrings=excludes)
+        svc_line = _first_matching_line(svc_text, svc_kw, exclude_substrings=excludes)
+        pkg_line = _first_matching_line(pkg_text, pkg_kw, package=True, exclude_substrings=excludes)
+        flag_hit = any(
+            (flags.get(k.lower()) or "").lower() in {"yes", "true", "1", "found", "active"}
+            for k in flag_keys
+        )
+        listen_port = _find_listen_port(port_map, all_ports, proc_kw, preferred_ports)
+        # Calisan kanit varken preferred port dinleniyorsa (ss users: yoksa) yine yaz
+        if listen_port is None and (proc_line or svc_line or flag_hit):
+            for p in preferred_ports:
+                if p in all_ports:
+                    listen_port = p
                     break
-            if matched_method:
-                break
-        if not matched_method:
+
+        running = bool(proc_line or svc_line or flag_hit)
+        installed_only = bool(pkg_line) and not running
+        if not running and not installed_only:
             continue
 
-        version = _extract_version(ver_text, fp["keywords"])
-        port = fp.get("port")
-        for kw in fp["keywords"]:
-            kw_clean = kw.strip("^$").lower()
-            if not kw_clean:
-                continue
-            matched_port = next(
-                (port_list[0] for proc_name, port_list in port_map.items() if kw_clean in proc_name),
-                None,
+        if proc_line:
+            method, evidence = "process", proc_line
+        elif svc_line:
+            method, evidence = "service", svc_line
+        elif flag_hit:
+            method, evidence = "service", next(
+                (f"{k}={flags.get(k)}" for k in flag_keys if flags.get(k)), "flag"
             )
-            if matched_port is not None:
-                port = matched_port
-                break
+        else:
+            method, evidence = "package", pkg_line
+
+        version = _extract_version(ver_text, ver_keys)
+        if not version and pkg_line:
+            m = re.search(r"[_\-](\d+\.\d+(?:\.\d+)?(?:-[\w.+]+)?)\b", pkg_line)
+            if m:
+                version = m.group(1)[:120]
 
         results.append({
             "name": fp["name"],
             "category": fp["category"],
             "version": version,
-            "port": port,
-            "process_or_service": evidence_line[:200] if evidence_line else None,
-            "detection_method": matched_method,
-            "evidence": evidence_line,
+            "port": listen_port if running else None,
+            "process_or_service": (evidence or "")[:200] if evidence else None,
+            "detection_method": method,
+            "evidence": evidence,
+            "status": "running" if running else "installed",
         })
     return results
 
@@ -361,6 +572,12 @@ def parse_windows_scan(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []
     results: List[Dict[str, Any]] = []
     seen_names = set()
+    listening = set()
+    for p in data.get("listening_ports") or []:
+        try:
+            listening.add(int(p))
+        except (TypeError, ValueError):
+            pass
 
     services = data.get("services") or []
     if isinstance(services, dict):
@@ -372,29 +589,54 @@ def parse_windows_scan(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             haystack = f"{svc_name} {display_name}".lower()
             if any(kw.lower() in haystack for kw in fp["service_keywords"]):
                 if fp["name"] not in seen_names:
+                    pref = fp.get("port")
+                    port = pref if (pref and pref in listening) else None
                     results.append({
-                        "name": fp["name"], "category": fp["category"], "version": None,
-                        "port": fp["port"], "process_or_service": display_name or svc_name,
-                        "detection_method": "service", "evidence": f"Service: {display_name or svc_name}",
+                        "name": fp["name"], "category": fp["category"],
+                        "version": None,
+                        "port": port,
+                        "process_or_service": display_name or svc_name,
+                        "detection_method": "service",
+                        "evidence": f"Service: {display_name or svc_name}",
+                        "status": "running",
                     })
                     seen_names.add(fp["name"])
                 break
 
-    if data.get("iis_installed"):
+    # IIS: yalnizca W3SVC Running iken "calisiyor"
+    iis_status = str(data.get("iis_status") or "").lower()
+    if iis_status == "running":
         results.append({
-            "name": "IIS (Internet Information Services)", "category": "webserver", "version": None,
-            "port": 80, "process_or_service": "W3SVC", "detection_method": "service",
+            "name": "IIS (Internet Information Services)", "category": "webserver",
+            "version": None,
+            "port": 80 if 80 in listening else (443 if 443 in listening else None),
+            "process_or_service": "W3SVC", "detection_method": "service",
             "evidence": f"W3SVC status: {data.get('iis_status')}",
+            "status": "running",
         })
+        seen_names.add("IIS (Internet Information Services)")
+    elif data.get("iis_installed"):
+        results.append({
+            "name": "IIS (Internet Information Services)", "category": "webserver",
+            "version": None, "port": None, "process_or_service": "W3SVC",
+            "detection_method": "service",
+            "evidence": f"W3SVC status: {data.get('iis_status') or 'Stopped'}",
+            "status": "installed",
+        })
+        seen_names.add("IIS (Internet Information Services)")
 
     sql_instances = data.get("sql_instances") or []
     if isinstance(sql_instances, str):
         sql_instances = [sql_instances]
     if sql_instances and "Microsoft SQL Server" not in seen_names:
+        # Registry instance var ama calisan servis yok → kurulu
         results.append({
             "name": "Microsoft SQL Server", "category": "database", "version": None,
-            "port": 1433, "process_or_service": ", ".join(str(i) for i in sql_instances),
-            "detection_method": "registry", "evidence": f"Instances: {', '.join(str(i) for i in sql_instances)}",
+            "port": 1433 if 1433 in listening else None,
+            "process_or_service": ", ".join(str(i) for i in sql_instances),
+            "detection_method": "registry",
+            "evidence": f"Instances: {', '.join(str(i) for i in sql_instances)}",
+            "status": "installed",
         })
         seen_names.add("Microsoft SQL Server")
 
@@ -403,24 +645,24 @@ def parse_windows_scan(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         installed_programs = [installed_programs]
     for prog in installed_programs:
         display_name = str((prog or {}).get("DisplayName") or "").strip()
-        display_version = str((prog or {}).get("DisplayVersion") or "").strip() or None
+        display_version = _clean_version(str((prog or {}).get("DisplayVersion") or "").strip() or None)
         if not display_name:
             continue
-        # Zaten servis/registry ile eşleşmiş ürünlere sürüm bilgisini ekle,
-        # eşleşmemiş yeni bir ürünse ("other" kategori) yeni kayıt aç.
         matched = None
         for r in results:
-            if r["name"].split()[0].lower() in display_name.lower() or display_name.lower() in r["name"].lower():
+            r0 = r["name"].split()[0].lower()
+            if r0 in display_name.lower() or display_name.lower() in r["name"].lower():
                 matched = r
                 break
         if matched:
-            if not matched.get("version"):
+            if not matched.get("version") and display_version:
                 matched["version"] = display_version
         elif display_name not in seen_names:
             results.append({
                 "name": display_name[:120], "category": "other", "version": display_version,
                 "port": None, "process_or_service": None, "detection_method": "registry",
                 "evidence": f"Installed program: {display_name} {display_version or ''}".strip(),
+                "status": "installed",
             })
             seen_names.add(display_name)
 
@@ -467,15 +709,16 @@ def upsert_discovered_apps(db: Session, server: Server, apps: List[Dict[str, Any
     now = datetime.now(timezone.utc)
     touched = 0
     try:
-        # DB kolon sinirlarini asan degerler (ornegin beklenmedik uzun installed
-        # program adlari/versiyonlari) sessizce kirpilir — kolon tasmasi tum
-        # taramayi rollback etmesin.
         for a in apps:
             a["name"] = _clip(a.get("name"), 120) or "unknown"
             a["category"] = _clip(a.get("category"), 40) or "other"
-            a["version"] = _clip(a.get("version"), 120)
+            a["version"] = _clip(_clean_version(a.get("version")) or a.get("version"), 120)
             a["process_or_service"] = _clip(a.get("process_or_service"), 200)
             a["detection_method"] = _clip(a.get("detection_method"), 30)
+            st = (a.get("status") or "running").strip().lower()
+            if st not in {"running", "installed", "stopped"}:
+                st = "running"
+            a["status"] = st
 
         seen_names = {a["name"] for a in apps}
 
@@ -488,12 +731,13 @@ def upsert_discovered_apps(db: Session, server: Server, apps: List[Dict[str, Any
             row = existing_by_name.get(app["name"])
             if row:
                 row.category = app["category"]
-                row.version = app.get("version") or row.version
-                row.port = app.get("port") or row.port
+                # Yeni taramadaki surum/port gercek durumu yansitsin (eski varsayilan port kalmasin)
+                row.version = app.get("version")
+                row.port = app.get("port")
                 row.process_or_service = app.get("process_or_service") or row.process_or_service
                 row.detection_method = app.get("detection_method") or row.detection_method
                 row.evidence = app.get("evidence") or row.evidence
-                row.status = "running"
+                row.status = app["status"]
                 row.last_seen_at = now
                 row.times_confirmed = (row.times_confirmed or 1) + 1
                 row.source = source
@@ -503,7 +747,7 @@ def upsert_discovered_apps(db: Session, server: Server, apps: List[Dict[str, Any
                     version=app.get("version"), port=app.get("port"),
                     process_or_service=app.get("process_or_service"),
                     detection_method=app.get("detection_method"), evidence=app.get("evidence"),
-                    status="running", source=source,
+                    status=app["status"], source=source,
                     first_detected_at=now, last_seen_at=now, times_confirmed=1,
                 ))
             touched += 1
@@ -511,6 +755,7 @@ def upsert_discovered_apps(db: Session, server: Server, apps: List[Dict[str, Any
         for name, row in existing_by_name.items():
             if name not in seen_names and row.status != "stopped":
                 row.status = "stopped"
+                row.port = None
 
         server.app_discovery_last_scan = now
         db.commit()
@@ -524,9 +769,73 @@ def upsert_discovered_apps(db: Session, server: Server, apps: List[Dict[str, Any
     return touched
 
 
+def sanitize_discovered_applications(db: Session) -> int:
+    """Eski yanlis-pozitif / varsayilan-port kayitlarini temizler.
+    package/version-only → installed; uydurma portlari siler; surumleri temizler.
+    Bilinen sahte kanitli satirlar silinir."""
+    from app.models.discovered_application import DiscoveredApplication
+
+    rows = db.query(DiscoveredApplication).all()
+    changed = 0
+    to_delete = []
+    for row in rows:
+        before = (row.status, row.port, row.version, row.detection_method)
+        evid = (row.evidence or "").lower()
+        method = (row.detection_method or "").lower()
+        name = (row.name or "").lower()
+
+        # Sahte / yanlis pozitif — kaydi kaldir
+        fake = (
+            "preinstall" in evid
+            or "tomcat-servlet" in evid
+            or "tomcat-jsp" in evid
+            or "docker-ce-cli" in evid
+            or ("ingress" in evid and "nginx" in name)
+            or (method == "version" and evid.strip().endswith(":") and not (row.version or "").strip())
+        )
+        if fake:
+            to_delete.append(row)
+            changed += 1
+            continue
+
+        if method in {"package", "registry", "version"} and row.status == "running":
+            row.status = "installed"
+            row.port = None
+
+        if row.version:
+            cleaned = _clean_version(row.version)
+            row.version = cleaned
+
+        if row.status == "installed":
+            row.port = None
+        if row.status == "running" and method in {"package", "version", "registry"}:
+            row.status = "installed"
+            row.port = None
+
+        after = (row.status, row.port, row.version, row.detection_method)
+        if after != before:
+            changed += 1
+
+    for row in to_delete:
+        db.delete(row)
+
+    if changed or to_delete:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            return 0
+    return changed
+
+
 def discover_applications_all_servers(db: Session, force: bool = False) -> Dict[str, Any]:
     """Tüm AI Ready sunucularda (rescan aralığı dolmuş olanlar) uygulama
     taraması yapar. Arka plan görevi tarafından periyodik çağrılır."""
+    try:
+        sanitize_discovered_applications(db)
+    except Exception as e:
+        logger.debug("discovered apps sanitize: %s", e)
+
     candidates = (
         db.query(Server)
         .filter(Server.ai_ready == True, Server.ip_address.isnot(None), Server.ip_address != "")  # noqa: E712
@@ -602,9 +911,13 @@ def get_discovered_apps_block(db: Session, server: Server, max_items: int = 20) 
         for r in rows:
             bits = [r.name]
             if r.version:
-                bits.append(f"v{r.version}" if not r.version.lower().startswith(r.name.lower()[:4]) else r.version)
+                ver = r.version
+                bits.append(ver if ver.lower().startswith("v") else f"v{ver}")
             if r.port:
                 bits.append(f"port {r.port}")
+            how = r.detection_method or ""
+            if how:
+                bits.append(how)
             scan_age = ""
             if r.last_seen_at:
                 last = r.last_seen_at if r.last_seen_at.tzinfo else r.last_seen_at.replace(tzinfo=timezone.utc)

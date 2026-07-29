@@ -7,6 +7,7 @@ const ACCESS: Record<PlatformKey, (hasModule: (id: string) => boolean) => boolea
   virt: (hm) => hm('virtualization'),
   windows: (hm) => hm('windows'),
   exadata: (hm) => hm('exadata'),
+  openshift: (hm) => hm('openshift'),
 }
 
 export const RequirePlatformAiops: React.FC<{

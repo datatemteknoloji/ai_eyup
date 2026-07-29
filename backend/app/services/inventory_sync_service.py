@@ -288,6 +288,24 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
             errors.append("Hyper-V client modülü bulunamadı")
         except Exception as e:
             errors.append(f"Hyper-V bağlantı hatası: {str(e)}")
+    elif htype == "openshift_virt":
+        try:
+            from app.services.openshift.kubevirt_client import KubeVirtClient
+            cc = hypervisor.connection_config or {}
+            use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+            client = KubeVirtClient(
+                api_url=cc.get("api_url") or hypervisor.hostname or hypervisor.ip_address,
+                token="" if use_creds else (cc.get("token") or hypervisor.password or ""),
+                username=cc.get("username") or "",
+                password=cc.get("password") or "",
+                verify_ssl=bool(cc.get("verify_ssl", False)),
+            )
+            _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
+            vms = client.list_vms()
+        except ImportError:
+            errors.append("OpenShift Virtualization client modülü bulunamadı")
+        except Exception as e:
+            errors.append(f"OpenShift Virtualization bağlantı hatası: {str(e)}")
     else:
         errors.append(f"Desteklenmeyen hypervisor tipi: {htype}")
 

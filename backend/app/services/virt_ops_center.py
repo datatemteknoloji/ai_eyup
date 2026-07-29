@@ -26,6 +26,7 @@ PLATFORM_LABELS = {
     "hyperv": "Hyper-V",
     "proxmox": "Proxmox",
     "xen": "Xen",
+    "openshift_virt": "OpenShift Virtualization",
 }
 
 
@@ -465,9 +466,12 @@ def _suggest_host_actions(issues: List[Dict[str, Any]], platform: str) -> List[s
 
 def virt_ops_summary(db: Session) -> Dict[str, Any]:
     data = build_virt_command_center(db)
+    crit = data["critical_count"]
+    warn = data["warning_count"]
     return {
-        "critical": data["critical_count"],
-        "warning": data["warning_count"],
+        "critical": crit,
+        "warning": warn,
+        "total": crit + warn,
         "health_score": data["health"]["score"],
-        "action_needed": data["critical_count"] > 0,
+        "action_needed": crit > 0 or warn > 0,
     }

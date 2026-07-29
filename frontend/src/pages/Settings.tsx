@@ -59,6 +59,13 @@ interface RagStatus {
   incidents: number
   metrics: number
   knowledge?: number
+  sources?: {
+    incidents_db?: number
+    events_db?: number
+    learned_facts_db?: number
+    linux_inventory_db?: number
+    default_metrics?: number
+  }
 }
 
 interface RunbookDocument {
@@ -93,15 +100,23 @@ interface GeneralSettings {
 const RagTab: React.FC = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfTitle, setPdfTitle] = useState('')
+  const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
-  const { data: status, refetch: refetchStatus } = useQuery<RagStatus>({
+  const { data: status, refetch: refetchStatus, isError: statusIsError, error: statusQueryError } = useQuery<RagStatus>({
     queryKey: ['rag-status'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/status`)
-      if (!res.ok) return { runbook: 0, incidents: 0, metrics: 0, knowledge: 0 }
-      return res.json()
-    }
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const detail = typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`
+        setStatusError(detail)
+        throw new Error(detail)
+      }
+      setStatusError(null)
+      return body
+    },
+    retry: 1,
   })
   const uploadPdf = useMutation({
     mutationFn: async () => {
@@ -120,44 +135,73 @@ const RagTab: React.FC = () => {
   const seedMetrics = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/metrics/seed`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Metrik yükleme hatası')
+      if (!r.chunks_added) throw new Error('0 chunk eklendi — Ollama embedding çalışıyor mu?')
       return r
     },
-    onSuccess: () => { refetchStatus(); alert('Metrik açıklamaları eklendi.') }
+    onSuccess: (d) => { refetchStatus(); alert(`Metrik açıklamaları eklendi: ${d.chunks_added} chunk.`) },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
   })
   const reindexIncidents = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/incidents/reindex`, { method: 'POST' })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Incident'lar indexlendi: ${d.chunks_added} kayıt.`) }
+    onSuccess: (d) => { refetchStatus(); alert(`Incident'lar indexlendi: ${d.chunks_added} kayıt.`) },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
   })
   const reindexEvents = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/events/reindex`, { method: 'POST' })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Event'ler eklendi: ${d.chunks_added} kayıt.`) }
+    onSuccess: (d) => { refetchStatus(); alert(`Event'ler eklendi: ${d.chunks_added} kayıt.`) },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
   })
   const reindexKnowledge = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/knowledge/reindex`, { method: 'POST' })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Bilgi Bankası indexlendi: ${d.chunks_added} chunk.`) }
+    onSuccess: (d) => {
+      refetchStatus()
+      if (!d.chunks_added) {
+        alert('Bilgi Bankası boş: learned_facts ve linux_inventory kaynağı yok. Önce envanter toplama / Chat SSH çalıştırın.')
+      } else {
+        alert(`Bilgi Bankası indexlendi: ${d.chunks_added} chunk.`)
+      }
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+  })
+  const reindexAll = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/reindex-all`, { method: 'POST' })
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Toplu reindex hatası')
+      return r
+    },
+    onSuccess: (d) => {
+      refetchStatus()
+      const c = d.chunks || {}
+      alert(`RAG yenilendi — metrik ${c.metrics ?? 0}, incident ${c.incidents ?? 0}, event ${c.events ?? 0}, bilgi ${c.knowledge ?? 0} (toplam ${d.total ?? 0})`)
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
   })
   const { data: runbookDocsData, refetch: refetchRunbookDocs } = useQuery<{ success: boolean; documents: RunbookDocument[] }>({
     queryKey: ['rag-runbook-documents'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/runbook/documents`)
-      if (!res.ok) return { success: false, documents: [] }
+      if (!res.ok) {
+        const r = await res.json().catch(() => ({}))
+        throw new Error(r.detail || `HTTP ${res.status}`)
+      }
       return res.json()
     }
   })
@@ -172,17 +216,25 @@ const RagTab: React.FC = () => {
     onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası')
   })
   const runbookDocs = runbookDocsData?.documents ?? []
+  const src = status?.sources
   return (
     <div>
       <h2 className="text-xl font-semibold text-white mb-2">RAG (Bilgi Tabanı)</h2>
       <p className="text-slate-400 text-sm mb-6">AI Chat sorularına yanıt verirken runbook PDF&apos;leri, Bilgi Bankası, geçmiş olaylar ve metrik açıklamaları kullanılır.</p>
 
+      {(statusError || statusIsError) && (
+        <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
+          RAG durumu okunamadı: {statusError || (statusQueryError as Error)?.message || 'bilinmeyen hata'}.
+          Oturum süresi dolmuş olabilir — yeniden giriş yapıp sayfayı yenileyin.
+        </div>
+      )}
+
       {/* PDF Ekle - en üstte, belirgin */}
       <div className="mb-6 p-5 bg-cyber-deep/70 rounded-xl border-2 border-emerald-500/40">
         <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
-          Runbook'a PDF Ekle
+          Runbook&apos;a PDF Ekle
         </h3>
-        <p className="text-slate-400 text-xs mb-4">PDF yükleyin; metin çıkarılıp RAG'e eklenir. Chat'te sorularınıza yanıt verirken kullanılır.</p>
+        <p className="text-slate-400 text-xs mb-4">PDF yükleyin; metin çıkarılıp RAG&apos;e eklenir. Chat&apos;te sorularınıza yanıt verirken kullanılır.</p>
         <div className="flex flex-wrap items-end gap-4">
           <div className="min-w-[200px]">
             <label className="block text-xs font-medium text-slate-400 mb-1">PDF dosyası</label>
@@ -249,49 +301,57 @@ const RagTab: React.FC = () => {
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Runbook</p>
-          <p className="text-2xl font-semibold text-white">{status?.runbook ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
+          <p className="text-2xl font-semibold text-white">{status?.runbook ?? '—'} <span className="text-sm font-normal text-slate-500">chunk</span></p>
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Incidents / Events</p>
-          <p className="text-2xl font-semibold text-white">{status?.incidents ?? 0} <span className="text-sm font-normal text-slate-500">kayıt</span></p>
+          <p className="text-2xl font-semibold text-white">{status?.incidents ?? '—'} <span className="text-sm font-normal text-slate-500">kayıt</span></p>
+          {src && <p className="text-[10px] text-slate-500 mt-1">DB: {src.incidents_db ?? 0} inc · {src.events_db ?? 0} evt</p>}
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Metrik Açıklamaları</p>
-          <p className="text-2xl font-semibold text-white">{status?.metrics ?? 0} <span className="text-sm font-normal text-slate-500">metrik</span></p>
+          <p className="text-2xl font-semibold text-white">{status?.metrics ?? '—'} <span className="text-sm font-normal text-slate-500">metrik</span></p>
+          {src && <p className="text-[10px] text-slate-500 mt-1">varsayılan liste: {src.default_metrics ?? 0}</p>}
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Bilgi Bankası</p>
-          <p className="text-2xl font-semibold text-white">{status?.knowledge ?? 0} <span className="text-sm font-normal text-slate-500">chunk</span></p>
+          <p className="text-2xl font-semibold text-white">{status?.knowledge ?? '—'} <span className="text-sm font-normal text-slate-500">chunk</span></p>
+          {src && <p className="text-[10px] text-slate-500 mt-1">facts {src.learned_facts_db ?? 0} · inv {src.linux_inventory_db ?? 0}</p>}
         </div>
       </div>
-      <div className="space-y-3">
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button onClick={() => reindexAll.mutate()} disabled={reindexAll.isPending}
+          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
+          {reindexAll.isPending ? 'Yenileniyor (birkaç dk sürebilir)...' : "Tümünü RAG'e Yenile"}
+        </button>
         <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-          {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik Açıklamalarını Yükle (varsayılan)'}
+          {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik Açıklamalarını Yükle'}
         </button>
         <button onClick={() => reindexIncidents.mutate()} disabled={reindexIncidents.isPending}
-          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {reindexIncidents.isPending ? 'Indexleniyor...' : "Incident'ları RAG'e Ekle"}
         </button>
         <button onClick={() => reindexEvents.mutate()} disabled={reindexEvents.isPending}
-          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {reindexEvents.isPending ? 'Indexleniyor...' : "Event'leri RAG'e Ekle"}
         </button>
         <button onClick={() => reindexKnowledge.mutate()} disabled={reindexKnowledge.isPending}
-          className="ml-3 px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {reindexKnowledge.isPending ? 'Indexleniyor...' : "Bilgi Bankası'nı RAG'e Ekle"}
         </button>
       </div>
-      <div className="mt-6 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
+      <div className="mt-2 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
         <h4 className="text-sm font-medium text-slate-300 mb-2">Nasıl kullanılır?</h4>
         <ul className="text-xs text-slate-500 space-y-1">
-          <li>• <strong>Metrik açıklamaları:</strong> Chat’te “bu metrik ne?” sorularında kullanılır. Yukarıdan yükleyin.</li>
-          <li>• <strong>Incident’lar:</strong> Veritabanındaki incident’lar RAG’e eklenir; benzer geçmiş olaylar yanıtta kullanılır.</li>
-          <li>• <strong>Runbook:</strong> Yukarıdan <strong>PDF yükleyebilir</strong> veya API’den <code className="bg-cyber-card px-1 rounded">POST /api/v1/rag/runbook/ingest</code> / <code className="bg-cyber-card px-1 rounded">/rag/runbook/ingest-pdf</code> ile metin/PDF ekleyebilirsiniz.</li>
-          <li>• <strong>Bilgi Bankası:</strong> SSH/WinRM’den öğrenilen yapısal sunucu bilgileri indekslenir; Chat semantik aramada kullanır. Periyodik reindex + yukarıdaki düğme.</li>
+          <li>• <strong>Tümünü Yenile:</strong> Metrik + incident + event + envanter/bilgi bankasını tek seferde indexler (önerilen).</li>
+          <li>• <strong>Metrik açıklamaları:</strong> Chat&apos;te “bu metrik ne?” sorularında kullanılır.</li>
+          <li>• <strong>Incident / Event:</strong> Benzer geçmiş olaylar yanıtta kullanılır (event son 2000 kayıt).</li>
+          <li>• <strong>Bilgi Bankası:</strong> learned_facts yoksa linux_inventory + tespit edilen uygulamalardan üretilir.</li>
+          <li>• Embedding için Ollama&apos;da <code className="bg-cyber-card px-1 rounded">nomic-embed-text</code> modeli gerekir.</li>
         </ul>
       </div>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}

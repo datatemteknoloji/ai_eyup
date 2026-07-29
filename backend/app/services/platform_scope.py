@@ -14,7 +14,7 @@ from app.models.server import Server
 
 from app.models.exadata import ExadataNode
 
-VALID_PLATFORMS = frozenset({"linux", "windows", "virt", "exadata"})
+VALID_PLATFORMS = frozenset({"linux", "windows", "virt", "exadata", "openshift"})
 
 # `os_type` henüz toplanmamış (ör. VMware Tools kurulu değil, sync hiç
 # çalışmamış) VM'ler için isim tabanlı son çare tahmini — sadece os_type
@@ -117,6 +117,8 @@ def server_ids_for_platform(db: Session, platform: str) -> List[int]:
         return get_vm_server_ids(db)
     if platform == "exadata":
         return get_exadata_server_ids(db)
+    if platform == "openshift":
+        return []  # Server tablosuna bağlı değil — kendi cluster/node/proje envanteri var
     return []
 
 
@@ -161,10 +163,11 @@ def _platform_json(platform: str):
 # Kaynak (source) bazlı platform eşlemesi — raw_data.platform etiketi eksik olan
 # eski/legacy kayıtlarda bile bir modülün diğerine ait log kaynağını göstermemesi
 # için ek bir güvenlik katmanı (server_id eşleşmesine tek başına güvenilmiyor).
-_VIRT_SOURCES = ("vcenter_event", "vcenter_alarm", "vcenter_task", "virt_collector", "virt_resource")
+_VIRT_SOURCES = ("vcenter_event", "vcenter_alarm", "vcenter_task", "virt_collector", "virt_resource", "openshift_virt_event")
 _WINDOWS_SOURCES = ("windows_collector",)
 _LINUX_SOURCES = ("log_collector",)
 _EXADATA_SOURCES = ("exadata_collector",)
+_OPENSHIFT_SOURCES = ("openshift_collector",)
 
 
 def apply_platform_filter(q: Query, platform: Optional[str], db: Session) -> Query:
@@ -184,6 +187,10 @@ def apply_platform_filter(q: Query, platform: Optional[str], db: Session) -> Que
         if exadata_ids:
             return q.filter(and_(SystemEvent.server_id.in_(exadata_ids), explicit))
         return q.filter(explicit)
+
+    if platform == "openshift":
+        # Server tablosuna bağlı değil — sadece kaynak/raw_data.platform eşleşmesiyle filtrelenir.
+        return q.filter(or_(_platform_json("openshift"), SystemEvent.source.in_(_OPENSHIFT_SOURCES)))
 
     windows_ids = get_windows_server_ids(db)
     linux_module_ids = get_linux_module_server_ids(db)
@@ -261,14 +268,15 @@ def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: 
 
     def _src_flags(src: str) -> tuple:
         s = (src or "").lower()
-        virt = any(k in s for k in ("virt", "hypervisor", "vcenter"))
+        virt = any(k in s for k in ("virt", "hypervisor", "vcenter")) and "openshift" not in s
         exa = "exadata" in s
         win = "windows" in s
-        return virt, exa, win
+        ocp = "openshift" in s and "virt" not in s
+        return virt, exa, win, ocp
 
     def matches(inc) -> bool:
         src = inc.source or ""
-        is_virt_src, is_exa_src, is_win_src = _src_flags(src)
+        is_virt_src, is_exa_src, is_win_src, is_ocp_src = _src_flags(src)
         related_plats = {
             event_platform[eid]
             for eid in (inc.related_events or [])
@@ -285,8 +293,13 @@ def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: 
                 return True
             return "exadata" in related_plats
 
+        if platform == "openshift":
+            if is_ocp_src:
+                return True
+            return "openshift" in related_plats
+
         # OS görünümleri: hypervisor / diğer platform kaynaklarını gösterme
-        if is_virt_src:
+        if is_virt_src or is_ocp_src:
             return False
         if platform == "linux" and (is_win_src or is_exa_src):
             return False
@@ -342,6 +355,8 @@ def infer_event_platform(
         return "virt"
     if src in _EXADATA_SOURCES or "exadata" in src:
         return "exadata"
+    if src in _OPENSHIFT_SOURCES or src.startswith("openshift_") and "virt" not in src:
+        return "openshift"
     if src in _WINDOWS_SOURCES or src.startswith("windows_") or src.startswith("auto_windows"):
         return "windows"
     if src in _LINUX_SOURCES or src.startswith("auto_log") or src == "prometheus":

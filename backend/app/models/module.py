@@ -48,12 +48,14 @@ DEFAULT_MODULES = [
      "icon": "Cloud",    "color": "indigo",  "sort_order": 3},
     {"id": "exadata",        "name": "Exadata",          "description": "Oracle Exadata DB Machine — rack/kabinet, compute node ve storage cell envanteri",
      "icon": "Database", "color": "orange",  "sort_order": 4},
+    {"id": "openshift",      "name": "OpenShift Container Platform", "description": "OpenShift cluster/node/proje/workload envanteri ve AIOps (KubeVirt sanallaştırma Sanallaştırma modülünde)",
+     "icon": "Boxes",    "color": "rose",    "sort_order": 5},
     {"id": "ai_automation",  "name": "AI & Otomasyon",   "description": "AI Chat, AI Agent (çoklu platform otomasyonu)",
-     "icon": "Bot",      "color": "cyan",    "sort_order": 5},
+     "icon": "Bot",      "color": "cyan",    "sort_order": 6},
     {"id": "integrations",   "name": "Entegrasyonlar",   "description": "UCMDB statik import ve dış kaynak entegrasyonları",
-     "icon": "FileUp",   "color": "orange",  "sort_order": 6},
+     "icon": "FileUp",   "color": "orange",  "sort_order": 7},
     {"id": "level1",         "name": "İşletim Level 1",  "description": "Disk, ASM, LVM, servis, kullanıcı runbook'ları",
-     "icon": "Wrench",   "color": "teal",    "sort_order": 7},
+     "icon": "Wrench",   "color": "teal",    "sort_order": 8},
 ]
 
 # 'aiops' modülü kaldırıldı (2026-07) — Komuta Merkezi/Events/Incidents/Anomaly/RCA/Baseline

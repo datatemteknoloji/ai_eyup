@@ -388,10 +388,16 @@ const Chat: React.FC<{
     streamSessionRef.current = selectedSessionId
     const ts = new Date().toISOString()
     try {
+      const liveHint = /canlı|simdi dogrula|şimdi doğrula|live check|ssh ile|ssh at|çalıştır|calistir|journalctl|systemctl|sestatus/i.test(messageText)
       const res = await fetch(`${API_BASE_URL}/ai/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: messageText, model: selectedModel }),
+        body: JSON.stringify({
+          question: messageText,
+          model: selectedModel,
+          live_check: liveHint,
+          server_ids: selectedServers.length ? selectedServers : undefined,
+        }),
         signal: ctrl.signal,
       })
       const data = await res.json().catch(() => ({}))
@@ -402,7 +408,7 @@ const Chat: React.FC<{
       if (data.status === 'success') {
         content = data.answer_markdown || `_Sonuç yok._`
       } else if (data.status === 'unsupported') {
-        content = `Bu soru mevcut envanter alanlarıyla cevaplanamıyor.\n\n${data.reason || ''}`
+        content = `Bu soru mevcut envanter alanlarıyla cevaplanamıyor.\n\n${data.reason || ''}\n\n_İpucu: Teknik SSH/diagnostik için «Envanter sorgu»yu kapatın veya soruya «canlı doğrula» ekleyin._`
       } else if (data.status === 'invalid_query') {
         content = `Sorgu geçersiz: ${data.message || 'bilinmeyen hata'}${data.invalid_field ? ` (alan: ${data.invalid_field})` : ''}`
       } else {
@@ -436,20 +442,39 @@ const Chat: React.FC<{
     }
   }
 
+  /** Envanter modunda bile SSH/diagnostik sorularını normal Chat'e yönlendir */
+  const looksLikeLiveTechQuestion = (text: string) => {
+    const t = text.toLowerCase()
+    const tech = [
+      'ssh', 'journalctl', 'systemctl', 'sestatus', 'getenforce', 'sysctl', 'dmesg',
+      'tcpdump', 'strace', 'perf ', 'iostat', 'vmstat', 'sar ', 'lsof', 'netstat', ' ss ',
+      'df -', 'du -', 'free -', 'top', 'htop', 'ps aux', 'crontab', 'iptables', 'firewalld',
+      'selinux', 'apparmor', 'kernel', 'oom', 'coredump', 'tracepath', 'mtr ',
+      'neden', 'kök neden', 'kok neden', 'root cause', 'teşhis', 'teshis', 'diagnos',
+      'log incele', 'loglara bak', 'çalıştır', 'calistir', 'komut', 'canlı doğrula', 'canli dogrula',
+      'multipath', 'lvm', 'vgdisplay', 'pvdisplay', 'zfs', 'smartctl',
+      'docker', 'kubectl', 'podman', 'container',
+    ]
+    return tech.some(k => t.includes(k.trim()))
+  }
+
   const sendMessage = async (messageText: string) => {
     if (!messageText.trim() || isLoading) return
-    if (inventoryMode) {
+    if (inventoryMode && !looksLikeLiveTechQuestion(messageText)) {
       await sendInventoryQuery(messageText)
       return
     }
-    // SSH: log/process/config + OS/kernel/sistem bilgisi sorularında tetiklenir
+    // SSH: log/process/config + OS/kernel/sistem bilgisi + tanı komutları
     const SSH_ONLY_KEYWORDS = ['log','journal','proses','process','config','konfigür',
       '/etc/','/var/','systemctl','servis restart','service restart','kurulu','paket','version',
       'vmstat','iostat','1 dakika','1 dak','derin analiz','benchmark','io performans',
       'os','işletim','kernel','revision','revizyon','sürüm','release','versiyon','distro',
       'rhel','centos','ubuntu','debian','oracle','servis','service','hostname',
       'selinux','sestatus','getenforce','firewall','firewalld','iptables','güvenlik','security',
-      'uname','kernel versiyonu','çekirdek versiyonu']
+      'uname','kernel versiyonu','çekirdek versiyonu',
+      'sysctl','swappiness','dmesg','tcpdump','strace','perf','lsof','ss ','netstat',
+      'multipath','lvm','vgdisplay','oom','coredump','smartctl','crontab','nftables',
+      'docker','podman','kubectl','container','neden','kök neden','teşhis','diagnos']
     const needsSsh = SSH_ONLY_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
     setIsLoading(true)
     setPendingUserMessage(messageText)
@@ -677,7 +702,7 @@ const Chat: React.FC<{
             <span className="text-slate-300 text-sm">{useRag ? 'Açık' : 'Kapalı'}</span>
           </label>
 
-          <label className="flex items-center gap-2 cursor-pointer" title="LLM yalnızca filtre JSON üretir; cevaplar envanter snapshot'tan gelir">
+          <label className="flex items-center gap-2 cursor-pointer" title="Açıkken liste/filtre soruları envanter snapshot'tan cevaplanır. SSH/diagnostik (journalctl, sestatus, kök neden…) otomatik canlı Chat'e düşer.">
             <span className="text-slate-400 text-sm font-medium">Envanter sorgu:</span>
             <span className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${inventoryMode ? 'bg-emerald-600' : 'bg-white/[0.1]'}`}
               onClick={() => setInventoryMode(v => {
