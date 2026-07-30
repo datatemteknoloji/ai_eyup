@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────
 # RAG embedding için Ollama + nomic-embed-text hazırla.
 #
-# Müşteri / prod sunucusunda (örn. 10.51.13.54) Ayarlar → RAG ekranında
+# Prod sunucusunda (örn. 10.51.13.54) Ayarlar → RAG ekranında
 # "http://127.0.0.1:11434 erişilemedi" görürseniz bu betiği kurulum
 # dizininde çalıştırın.
 #
@@ -51,13 +51,13 @@ if ! probe; then
   echo "▶ Ollama ayağa kalkması bekleniyor..."
   for i in $(seq 1 60); do
     if probe; then
-      echo "✔ Ollama hazır ($i sn)"
+      echo "✔ Ollama hazır (${i} deneme)"
       break
     fi
     sleep 2
     if [[ "$i" -eq 60 ]]; then
       echo "ERROR: Ollama 120 sn içinde ${OLLAMA_URL} üzerinde yanıt vermedi."
-      echo "  - systemctl / docker logs server_management_ollama"
+      echo "  - docker logs server_management_ollama"
       echo "  - .env içinde OLLAMA_URL doğru mu?"
       exit 1
     fi
@@ -76,12 +76,14 @@ else
 fi
 
 echo "▶ Embedding smoke test..."
-curl -sf --max-time 60 "${OLLAMA_URL%/}/api/embeddings" \
+if curl -sf --max-time 60 "${OLLAMA_URL%/}/api/embeddings" \
   -d "{\"model\":\"${EMBED_MODEL}\",\"prompt\":\"rag smoke\"}" \
-  | grep -q embedding && echo "✔ Embedding OK" || {
-    echo "ERROR: embedding isteği başarısız. Model adı ve Ollama loglarını kontrol edin."
-    exit 1
-  }
+  | grep -q embedding; then
+  echo "✔ Embedding OK"
+else
+  echo "ERROR: embedding isteği başarısız. Model adı ve Ollama loglarını kontrol edin."
+  exit 1
+fi
 
 echo
 echo "✔ RAG embedding hazır. Ayarlar → RAG → 'Şimdi tümünü yenile' çalıştırın."

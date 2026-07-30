@@ -12,16 +12,20 @@
 #   ./scripts/build-distribution.sh                 # linux/amd64 (varsayılan)
 #   ./scripts/build-distribution.sh --platform linux/arm64
 #   ./scripts/build-distribution.sh --no-images      # sadece kaynak paketi (registry/GitHub akışı için)
+#   ./scripts/build-distribution.sh --with-ollama    # + ollama image + nomic-embed-text (~+7GB)
 #
 # Çıktı:
 #   dist/ainew-<version>-<platform>.tar.gz
+#   dist/ainew-<version>-<platform>-with-ollama.tar.gz   (--with-ollama)
 #     ├── docker-compose.prod.yml, install-rhel.sh, update-rhel.sh, rollback-rhel.sh
 #     ├── frontend/nginx.prod.conf                    (deploy/ içinden kopyalanır)
 #     ├── (tüm kaynak kod: backend/, frontend/, prometheus/, docs/, ...)
+#     ├── WITH_OLLAMA                                 (--with-ollama işareti)
 #     └── images/*.tar.gz   (docker load ile yüklenecek önceden derlenmiş imajlar;
 #                             90MB üstü olanlar .part01/.part02/... şeklinde
 #                             parçalanır — GitHub'ın LFS'siz 100MB sınırı için;
 #                             install-rhel.sh kurulumdan önce otomatik birleştirir)
+#                             --with-ollama: ollama.tar.gz + ollama-models-nomic-embed-text.tar.gz
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -31,21 +35,29 @@ cd "$ROOT_DIR"
 VERSION="$(cat VERSION 2>/dev/null || echo "0.0.0")"
 PLATFORM="linux/amd64"
 BUILD_IMAGES=1
+WITH_OLLAMA=0
+EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2 ;;
     --no-images) BUILD_IMAGES=0; shift ;;
+    --with-ollama) WITH_OLLAMA=1; shift ;;
+    --embed-model) EMBED_MODEL="$2"; shift 2 ;;
     *) echo "Bilinmeyen argüman: $1"; exit 1 ;;
   esac
 done
 
 PLATFORM_TAG="${PLATFORM//\//-}"   # linux/amd64 -> linux-amd64
 STAGE="dist/ainew-${VERSION}-${PLATFORM_TAG}"
+if [[ "$WITH_OLLAMA" -eq 1 ]]; then
+  STAGE="${STAGE}-with-ollama"
+fi
 IMAGES_DIR="${STAGE}/images"
 
 echo "▶ Sürüm      : ${VERSION}"
 echo "▶ Platform   : ${PLATFORM}"
+echo "▶ With Ollama: ${WITH_OLLAMA} (embed=${EMBED_MODEL})"
 echo "▶ Hedef      : ${STAGE}.tar.gz"
 
 rm -rf "$STAGE"
@@ -176,6 +188,35 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   repack_and_save "prom/prometheus:v2.55.1" "${IMAGES_DIR}/prometheus.tar.gz"
   repack_and_save "prom/pushgateway:v1.11.0" "${IMAGES_DIR}/pushgateway.tar.gz"
 
+  if [[ "$WITH_OLLAMA" -eq 1 ]]; then
+    echo "▶ Ollama imajı paketleniyor (with-ollama)..."
+    if ! docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+      echo "  ollama/ollama:latest yok — çekiliyor..."
+      docker pull --platform "$PLATFORM" ollama/ollama:latest || docker pull ollama/ollama:latest
+    fi
+    repack_and_save "ollama/ollama:latest" "${IMAGES_DIR}/ollama.tar.gz"
+
+    echo "▶ Embedding modeli dışa aktarılıyor: ${EMBED_MODEL}"
+    chmod +x scripts/export-ollama-embed-model.sh
+    scripts/export-ollama-embed-model.sh \
+      "${IMAGES_DIR}/ollama-models-${EMBED_MODEL}.tar.gz" \
+      "" \
+      "$EMBED_MODEL"
+
+    # Kurulum betiğinin ollama'yı otomatik açması için işaret
+    cat > "${STAGE}/WITH_OLLAMA" <<EOF
+1
+EMBED_MODEL=${EMBED_MODEL}
+OLLAMA_IMAGE=ollama/ollama:latest
+EOF
+    cat >> "$STAGE/.env.example" <<EOF
+
+# with-ollama paketi — RAG embedding için Ollama + ${EMBED_MODEL} dahildir
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_EMBED_MODEL=${EMBED_MODEL}
+EOF
+  fi
+
   # install-rhel.sh / docker-compose.prod.yml varsayılan olarak ":latest" imaj adı
   # bekler; offline pakette versiyon etiketli imajı "latest" olarak da işaretleyelim
   # ki docker-compose.prod.yml değişmeden çalışsın.
@@ -193,6 +234,7 @@ EOF
   # (bkz. "Parçalanmış imaj arşivleri birleştiriliyor" adımı). scp/USB ile doğrudan
   # taşıyanlar için bu bölme gereksizdir ama zararsızdır (install-rhel.sh her durumda
   # doğru çalışır).
+  # NOT: ollama-models-*.tar.gz docker load edilmez — parçalama yine de zararsız.
   echo "▶ 90MB üstü imaj arşivleri git-uyumlu parçalara bölünüyor..."
   for f in "$IMAGES_DIR"/*.tar.gz; do
     [[ -e "$f" ]] || continue

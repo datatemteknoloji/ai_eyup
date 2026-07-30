@@ -235,6 +235,8 @@ else
   fill_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
 fi
 fill_env_var "APP_VERSION" "$APP_VERSION"
+fill_env_var "OLLAMA_URL" "http://127.0.0.1:11434"
+fill_env_var "OLLAMA_EMBED_MODEL" "nomic-embed-text"
 
 c_green "$ENV_FILE hazır (mevcut değerler korunur, sadece boş/varsayılanlar dolduruldu)."
 
@@ -288,6 +290,10 @@ load_all_images() {
   local f loaded=0
   for f in "$IMAGES_DIR"/*.tar.gz; do
     [[ -e "$f" ]] || continue
+    # Model tarball'ları docker image değildir — atla
+    case "$(basename "$f")" in
+      ollama-models-*.tar.gz) continue ;;
+    esac
     c_yellow "Yükleniyor: $f"
     if ! gunzip -c "$f" | docker load; then
       c_red "docker load başarısız: $f"
@@ -298,6 +304,9 @@ load_all_images() {
   done
   for f in "$IMAGES_DIR"/*.tar; do
     [[ -e "$f" ]] || continue
+    case "$(basename "$f")" in
+      ollama-models-*.tar) continue ;;
+    esac
     c_yellow "Yükleniyor: $f"
     if ! docker load -i "$f"; then
       c_red "docker load başarısız: $f"
@@ -315,11 +324,17 @@ require_local_images() {
   be="${be:-ainew-backend:latest}"
   fe="${fe:-ainew-frontend:latest}"
   local missing=0 img
-  for img in "$be" "$fe" \
-             "timescale/timescaledb:2.17.2-pg15" \
-             "redis:7-alpine" \
-             "prom/prometheus:v2.55.1" \
-             "prom/pushgateway:v1.11.0"; do
+  local required=(
+    "$be" "$fe"
+    "timescale/timescaledb:2.17.2-pg15"
+    "redis:7-alpine"
+    "prom/prometheus:v2.55.1"
+    "prom/pushgateway:v1.11.0"
+  )
+  if [[ -f ./WITH_OLLAMA ]] || compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1; then
+    required+=("ollama/ollama:latest")
+  fi
+  for img in "${required[@]}"; do
     if ! docker image inspect "$img" >/dev/null 2>&1; then
       c_red "  eksik imaj: $img"
       missing=1
@@ -365,11 +380,74 @@ fi
 # ── 7. Servisleri başlat (asla registry pull / build yok) ───────────────────
 step "Servisler başlatılıyor (--no-build)"
 set -a; source "$ENV_FILE"; set +a
+
+WITH_OLLAMA_PKG=0
+if [[ -f ./WITH_OLLAMA ]] || compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1 \
+   || compgen -G "${IMAGES_DIR}/ollama-models-*.tar.gz*" > /dev/null 2>&1; then
+  WITH_OLLAMA_PKG=1
+fi
+
+# with-ollama paketi: nomic-embed-text modelini DATA_DIR/ollama altına aç
+if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+  step "Ollama embedding modeli hazırlanıyor (with-ollama)"
+  mkdir -p "$DATA_DIR/ollama"
+  # Parçalanmış model arşivlerini birleştir
+  for part1 in "${IMAGES_DIR}"/ollama-models-*.tar.gz.part01; do
+    [[ -e "$part1" ]] || continue
+    target="${part1%.part01}"
+    if [[ ! -e "$target" ]]; then
+      cat "${target}".part* > "$target"
+      c_green "  ✓ $(basename "$target")"
+    fi
+  done
+  for mf in "${IMAGES_DIR}"/ollama-models-*.tar.gz; do
+    [[ -e "$mf" ]] || continue
+    c_yellow "Model içeri aktarılıyor: $(basename "$mf") → $DATA_DIR/ollama"
+    tar xzf "$mf" -C "$DATA_DIR/ollama"
+  done
+  chmod -R 777 "$DATA_DIR/ollama" 2>/dev/null || true
+  EMBED_FROM_MARKER="$(grep '^EMBED_MODEL=' ./WITH_OLLAMA 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  fill_env_var "OLLAMA_EMBED_MODEL" "${EMBED_FROM_MARKER:-nomic-embed-text}"
+  fill_env_var "OLLAMA_URL" "http://127.0.0.1:11434"
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+COMPOSE_PROFILES=()
+if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+  COMPOSE_PROFILES=(--profile ollama)
+  c_yellow "with-ollama paketi: Ollama profili etkin."
+fi
+
 # Compose v2: --pull never desteklenirse kullan; eski sürümlerde sadece --no-build
 if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
-  docker compose -f "$COMPOSE_FILE" up -d --no-build --pull never
+  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never
 else
-  docker compose -f "$COMPOSE_FILE" up -d --no-build
+  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
+fi
+
+if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+  step "Ollama embedding sağlık kontrolü"
+  EMBED_MODEL="$(grep '^OLLAMA_EMBED_MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+  EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
+  OLLAMA_OK=0
+  for i in $(seq 1 45); do
+    if curl -sf --max-time 3 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+      OLLAMA_OK=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$OLLAMA_OK" -eq 1 ]]; then
+    c_green "✔ Ollama hazır (http://127.0.0.1:11434)"
+    if docker exec server_management_ollama ollama list 2>/dev/null | grep -qi "${EMBED_MODEL%%:*}"; then
+      c_green "✔ Embedding modeli listede: $EMBED_MODEL"
+    else
+      c_yellow "⚠ $EMBED_MODEL listede görünmüyor — volume path / import kontrol edin."
+      c_yellow "  docker exec server_management_ollama ollama list"
+    fi
+  else
+    c_yellow "⚠ Ollama henüz yanıt vermiyor. 'docker compose -f $COMPOSE_FILE --profile ollama logs -f ollama'"
+  fi
 fi
 
 # ── 8. Sağlık kontrolü ────────────────────────────────────────────────────────
@@ -402,11 +480,17 @@ echo
 echo " Kurulum dizini : $INSTALL_DIR  (paket + $ENV_FILE)"
 echo " Veri dizini    : $DATA_DIR  (DB, Redis, Chroma, uploads, updates, certs, Ollama)"
 echo " Docker data    : ${DOCKER_DATA_ROOT:-/data/docker}  (imajlar/volume'ler — tek disk)"
+if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+  echo " Ollama        : with-ollama paketi — RAG embedding (${EMBED_MODEL:-nomic-embed-text}) dahil"
+fi
 echo
 c_yellow " ⚠ İlk girişten sonra Ayarlar > Kullanıcılar üzerinden admin parolasını değiştirin."
 c_yellow " ⚠ .env dosyasını güvenli bir yerde yedekleyin — SECRET_KEY ve DB parolasını içerir."
 echo
 echo " Durum      : docker compose -f $COMPOSE_FILE ps"
+if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+  echo " Ollama     : docker compose -f $COMPOSE_FILE --profile ollama ps ollama"
+fi
 echo " Loglar     : docker compose -f $COMPOSE_FILE logs -f backend"
 echo " Durdurma   : docker compose -f $COMPOSE_FILE down"
 echo

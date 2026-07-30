@@ -199,11 +199,28 @@ if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
   done
   # Eski üçüncü parti imajlar genelde aynı kalır; varsa yükle (zararsız)
   for f in "$IMAGES_DIR"/timescaledb.tar.gz "$IMAGES_DIR"/redis.tar.gz \
-           "$IMAGES_DIR"/prometheus.tar.gz "$IMAGES_DIR"/pushgateway.tar.gz; do
+           "$IMAGES_DIR"/prometheus.tar.gz "$IMAGES_DIR"/pushgateway.tar.gz \
+           "$IMAGES_DIR"/ollama.tar.gz; do
     [[ -e "$f" ]] || continue
+    c_yellow "Yükleniyor: $(basename "$f")"
     gunzip -c "$f" | docker load >/dev/null || true
   done
   c_green "İmajlar yüklendi."
+
+  # with-ollama: embedding modeli volume'e
+  if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || compgen -G "${IMAGES_DIR}/ollama-models-*.tar.gz" > /dev/null 2>&1; then
+    step "Ollama embedding modeli güncelleniyor (with-ollama)"
+    mkdir -p "$DATA_DIR/ollama"
+    for mf in "${IMAGES_DIR}"/ollama-models-*.tar.gz; do
+      [[ -e "$mf" ]] || continue
+      c_yellow "Model: $(basename "$mf")"
+      tar xzf "$mf" -C "$DATA_DIR/ollama"
+    done
+    chmod -R 777 "$DATA_DIR/ollama" 2>/dev/null || true
+    set_env "OLLAMA_URL" "http://127.0.0.1:11434" "$INSTALL_DIR/$ENV_FILE"
+    EMBED_FROM_MARKER="$(grep '^EMBED_MODEL=' "$INSTALL_DIR/WITH_OLLAMA" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    set_env "OLLAMA_EMBED_MODEL" "${EMBED_FROM_MARKER:-nomic-embed-text}" "$INSTALL_DIR/$ENV_FILE"
+  fi
 elif [[ "${ALLOW_ONLINE_BUILD:-0}" == "1" ]]; then
   c_yellow "images/ yok — ALLOW_ONLINE_BUILD=1: kaynak derleniyor..."
   ( cd "$INSTALL_DIR" && docker compose -f "$COMPOSE_FILE" -f docker-compose.build.yml build backend frontend )
@@ -227,10 +244,18 @@ fi
 set -a; # shellcheck disable=SC1091
 source "$ENV_FILE"
 set +a
+
+COMPOSE_PROFILES=()
+if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+  if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1; then
+    COMPOSE_PROFILES=(--profile ollama)
+  fi
+fi
+
 if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
-  docker compose -f "$COMPOSE_FILE" up -d --no-build --pull never
+  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never
 else
-  docker compose -f "$COMPOSE_FILE" up -d --no-build
+  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
 fi
 
 step "Sağlık kontrolü"
@@ -258,5 +283,8 @@ echo " Aktif sürüm  : $NEW_VERSION"
 echo " Yedek        : $BACKUP_DIR"
 echo " Geri dönüş   : cd $INSTALL_DIR && sudo ./rollback-rhel.sh"
 echo "               (DB de geri alınacaksa: sudo ./rollback-rhel.sh --restore-db)"
+if [[ ${#COMPOSE_PROFILES[@]} -gt 0 ]]; then
+  echo " Ollama       : with-ollama — docker compose -f $COMPOSE_FILE --profile ollama ps ollama"
+fi
 c_green "════════════════════════════════════════════════════════════════"
 echo
