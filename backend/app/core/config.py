@@ -28,6 +28,11 @@ class Settings:
     OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "gpt-oss:20b")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_AUTO_MODEL_ENABLED: bool = os.getenv("OLLAMA_AUTO_MODEL_ENABLED", "true").lower() == "true"
+    # RAG embedding hedefi — boşsa OLLAMA_URL kullanılır. Chat remote gateway'deyken
+    # bile yerel Ollama embedding için EMBEDDING_URL=http://127.0.0.1:11434 bırakın.
+    EMBEDDING_URL: str = os.getenv("EMBEDDING_URL", "")
+    # REMOTE_LLM /v1/embeddings için model adı (boşsa OLLAMA_EMBED_MODEL)
+    REMOTE_LLM_EMBED_MODEL: str = os.getenv("REMOTE_LLM_EMBED_MODEL", "")
 
     # Uzak AI Gateway (OpenAI-uyumlu, örn. Bifrost) — ayarlıysa ve aktifse tüm chat/agent
     # çağrıları yerel Ollama yerine buraya gider. URL kökü olmalı (örn. .../v1/chat/completions

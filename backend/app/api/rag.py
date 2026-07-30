@@ -174,12 +174,13 @@ async def rag_metrics_seed(body: Optional[MetricDescriptionsSeedRequest] = None)
 
 @router.get("/status")
 async def rag_status(db: Session = Depends(get_db)):
-    """RAG collection sayıları + kaynak DB özeti (UI sıfır maskelemesin diye)."""
+    """RAG collection sayıları + kaynak DB özeti + embedding sağlık kontrolü."""
     try:
         from app.models.event import Incident, SystemEvent
         from app.models.learned_fact import LearnedFact
         from app.models.linux_inventory import LinuxInventory
         from app.data.default_metric_descriptions import DEFAULT_METRIC_DESCRIPTIONS
+        from app.services.embedding import probe_embedding
 
         status = {
             "runbook": count_collection(COLLECTION_RUNBOOK),
@@ -193,6 +194,7 @@ async def rag_status(db: Session = Depends(get_db)):
                 "linux_inventory_db": db.query(LinuxInventory).count(),
                 "default_metrics": len(DEFAULT_METRIC_DESCRIPTIONS),
             },
+            "embedding": await probe_embedding(),
         }
         return status
     except Exception as e:

@@ -66,6 +66,16 @@ interface RagStatus {
     linux_inventory_db?: number
     default_metrics?: number
   }
+  embedding?: {
+    ok?: boolean
+    base_url?: string
+    model?: string
+    model_present?: boolean
+    dim?: number
+    error?: string | null
+    hint?: string
+    remote_llm_fallback?: boolean
+  }
 }
 
 interface RunbookDocument {
@@ -325,6 +335,31 @@ const RagTab: React.FC = () => {
           {src && <p className="text-[10px] text-slate-500 mt-1">facts {src.learned_facts_db ?? 0} · inv {src.linux_inventory_db ?? 0}</p>}
         </div>
       </div>
+      {status?.embedding && !status.embedding.ok && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100/90">
+          <p className="font-medium text-rose-200">Embedding servisi erişilemiyor</p>
+          <p className="text-xs text-rose-100/80 mt-1 break-words">
+            {status.embedding.error || 'Ollama / embedding endpoint yanıt vermiyor.'}
+          </p>
+          <p className="text-xs text-rose-100/60 mt-2">
+            Hedef: <code className="bg-cyber-card px-1 rounded">{status.embedding.base_url}</code>
+            {' · '}model: <code className="bg-cyber-card px-1 rounded">{status.embedding.model}</code>
+          </p>
+          {status.embedding.hint && (
+            <p className="text-[11px] text-rose-100/50 mt-2 whitespace-pre-wrap">{status.embedding.hint}</p>
+          )}
+        </div>
+      )}
+      {status?.embedding?.ok && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-sky-500/10 border border-sky-500/25 text-sm text-sky-100/90">
+          <p className="font-medium text-sky-200">Embedding hazır</p>
+          <p className="text-xs text-sky-200/70 mt-1">
+            {status.embedding.base_url} · {status.embedding.model}
+            {status.embedding.dim ? ` · ${status.embedding.dim} dim` : ''}
+            {status.embedding.model_present === false ? ' · uyarı: model tags listesinde yok, pull gerekebilir' : ''}
+          </p>
+        </div>
+      )}
       <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-sm text-emerald-100/90">
         <p className="font-medium text-emerald-200">Otomatik senkron açık</p>
         <p className="text-xs text-emerald-200/70 mt-1">
