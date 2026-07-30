@@ -437,6 +437,158 @@ interface WipePreview {
 
 const WIPE_CONFIRM_PHRASE = 'TÜM VERİLERİ SİL'
 
+/** Eski ortam → yeni ortam yapılandırma taşıma */
+const ConfigBackupTab: React.FC = () => {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [includeSecrets, setIncludeSecrets] = useState(true)
+  const [applySettings, setApplySettings] = useState(true)
+  const [applyCredentials, setApplyCredentials] = useState(true)
+  const [applyModules, setApplyModules] = useState(true)
+  const [forceHostKeys, setForceHostKeys] = useState(false)
+  const [envHints, setEnvHints] = useState<Record<string, string> | null>(null)
+  const fileRef = React.useRef<HTMLInputElement>(null)
+
+  const downloadBackup = async () => {
+    setBusy(true); setErr(null); setMsg(null)
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/config/backup?include_secrets=${includeSecrets ? 'true' : 'false'}`)
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+      const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+      a.href = url
+      a.download = `ainew-config-backup-${stamp}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setMsg(`Yedek indirildi (${Object.keys(body.app_settings || {}).length} ayar, ${(body.credentials || []).length} credential).`)
+      if (body.env_hints) setEnvHints(body.env_hints)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Yedek alınamadı')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restoreFromFile = async (file: File) => {
+    setBusy(true); setErr(null); setMsg(null)
+    try {
+      const text = await file.text()
+      const payload = JSON.parse(text)
+      const res = await fetch(`${API_BASE_URL}/settings/config/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          apply_settings: applySettings,
+          apply_credentials: applyCredentials,
+          apply_modules: applyModules,
+          force_host_keys: forceHostKeys,
+        }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+      setMsg(body.message || 'Geri yükleme tamam')
+      if (body.env_hints && Object.keys(body.env_hints).length) setEnvHints(body.env_hints)
+      else if (payload.env_hints) setEnvHints(payload.env_hints)
+      if (body.stats?.warnings?.length) {
+        setErr(`Uyarılar: ${(body.stats.warnings as string[]).slice(0, 8).join(' · ')}`)
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Geri yükleme başarısız')
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-white mb-2">Yapılandırma Yedek / Taşıma</h2>
+      <p className="text-sm text-slate-400 mb-6 max-w-3xl">
+        Eski ortamdan yedek alıp yeni ortama dönün. Credential ve Remote LLM anahtarları yedekte
+        açık metin olarak gider; hedef ortam kendi <code className="text-slate-300">SECRET_KEY</code> ile
+        yeniden şifreler. <strong className="text-slate-300">SECRET_KEY</strong> ve{' '}
+        <strong className="text-slate-300">POSTGRES_PASSWORD</strong> yedekte yoktur.
+      </p>
+
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
+          <h3 className="text-sm font-semibold text-cyan-300 mb-3">1. Eski ortamda — Yedek al</h3>
+          <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
+            <input type="checkbox" checked={includeSecrets} onChange={e => setIncludeSecrets(e.target.checked)}
+              className="rounded border-slate-600" />
+            Credential / API anahtarlarını dahil et (yeni ortama taşımak için gerekli)
+          </label>
+          <button type="button" disabled={busy} onClick={downloadBackup}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+            {busy ? 'Hazırlanıyor…' : 'JSON yedek indir'}
+          </button>
+        </div>
+
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
+          <h3 className="text-sm font-semibold text-amber-300 mb-3">2. Yeni ortamda — Geri yükle</h3>
+          <div className="space-y-2 text-xs text-slate-400 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={applySettings} onChange={e => setApplySettings(e.target.checked)} />
+              App settings (AI, monitoring, gelişmiş, branding…)
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={applyCredentials} onChange={e => setApplyCredentials(e.target.checked)} />
+              SSH credential’lar
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={applyModules} onChange={e => setApplyModules(e.target.checked)} />
+              Kullanıcı modül atamaları
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={forceHostKeys} onChange={e => setForceHostKeys(e.target.checked)} />
+              Host-özel alanları da yaz (management_server_ip)
+            </label>
+          </div>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) restoreFromFile(f) }} />
+          <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+            {busy ? 'Yükleniyor…' : 'JSON yedek seç ve uygula'}
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div className="mb-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-sm text-emerald-100">{msg}</div>
+      )}
+      {err && (
+        <div className="mb-3 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100">{err}</div>
+      )}
+
+      {envHints && (
+        <div className="bg-cyber-deep/40 rounded-[10px] border border-white/[0.06] p-4">
+          <h4 className="text-sm font-medium text-slate-300 mb-2">.env birleştirme notları (otomatik uygulanmaz)</h4>
+          <p className="text-xs text-slate-500 mb-3">
+            Yeni sunucunun <code className="text-slate-400">.env</code> dosyasına elle ekleyip backend’i yeniden başlatın.
+          </p>
+          <pre className="text-[11px] text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono bg-black/30 rounded-lg p-3">
+{Object.entries(envHints)
+  .filter(([k]) => !k.startsWith('_'))
+  .map(([k, v]) => `${k}=${v}`)
+  .join('\n')}
+          </pre>
+        </div>
+      )}
+
+      <ul className="mt-6 text-xs text-slate-500 space-y-1 list-disc list-inside">
+        <li>Sunucu / hypervisor envanteri bu yedekte yoktur (ayrı DB dump veya yeniden keşif).</li>
+        <li>Hedefte aynı kullanıcı adları yoksa modül atamaları atlanır (uyarı gösterilir).</li>
+        <li>Platform paket güncellemesi için «Platform Güncelleme» sekmesini kullanın.</li>
+      </ul>
+    </div>
+  )
+}
+
 const DangerZoneTab: React.FC = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmText, setConfirmText] = useState('')
@@ -1388,6 +1540,7 @@ const Settings: React.FC = () => {
     { id: 'advanced', name: 'Gelişmiş Ayarlar' },
     { id: 'about', name: 'Hakkında' },
     ...(isAdmin ? [
+      { id: 'config-backup', name: 'Yedek / Taşıma' },
       { id: 'platform-update', name: 'Platform Güncelleme' },
       { id: 'danger', name: 'Tehlikeli Bölge' },
     ] : []),
@@ -2269,6 +2422,10 @@ const Settings: React.FC = () => {
           )}
 
           {/* ═══ Platform Update ═══ */}
+          {activeTab === 'config-backup' && isAdmin && (
+            <ConfigBackupTab />
+          )}
+
           {activeTab === 'platform-update' && isAdmin && (
             <PlatformUpdateTab />
           )}

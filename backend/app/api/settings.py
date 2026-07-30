@@ -930,59 +930,376 @@ async def set_metric_retention(payload: dict, db: Session = Depends(get_db)):
     }
 
 
-# ─── Config Backup / Restore ──────────────────────────
+# ─── Config Backup / Restore (eski ortam → yeni ortam) ─────────────────────
+
+_SENSITIVE_APP_SETTING_KEYS = frozenset({
+    "remote_llm_api_key",
+    "global_winrm_credential",
+    "ucmdb_connection",
+})
+
+# Yeni ortamda genelde hedefe özel kalmalı
+_SKIP_RESTORE_KEYS_DEFAULT = frozenset({
+    "management_server_ip",
+})
+
+
+def _secret_key_fingerprint() -> str:
+    import hashlib
+    from app.core.config import settings as cfg
+    dig = hashlib.sha256((cfg.SECRET_KEY or "").encode()).hexdigest()[:16]
+    return f"sha256:{dig}"
+
+
+def _decrypt_setting_value(key: str, value: str) -> str:
+    """Export için Fernet alanlarını plaintext'e çevir."""
+    if not value:
+        return value
+    if key == "remote_llm_api_key":
+        return decrypt_secret(value) or ""
+    if key == "global_winrm_credential":
+        try:
+            import json
+            obj = json.loads(value)
+            if isinstance(obj, dict) and obj.get("password"):
+                obj = dict(obj)
+                obj["password"] = decrypt_secret(obj["password"]) or ""
+            return json.dumps(obj, ensure_ascii=False)
+        except Exception:
+            return value
+    return value
+
+
+def _encrypt_setting_value(key: str, value: str) -> str:
+    """Restore: plaintext → hedef SECRET_KEY ile Fernet."""
+    if not value:
+        return value
+    if key == "remote_llm_api_key":
+        return encrypt_secret(value) or value
+    if key == "global_winrm_credential":
+        try:
+            import json
+            obj = json.loads(value)
+            if isinstance(obj, dict) and obj.get("password"):
+                obj = dict(obj)
+                # Zaten ciphertext ise decrypt_secret plaintext döner (legacy) veya çözer
+                plain = decrypt_secret(obj["password"]) or obj["password"]
+                obj["password"] = encrypt_secret(plain) or plain
+            return json.dumps(obj, ensure_ascii=False)
+        except Exception:
+            return value
+    return value
+
+
+def _apply_runtime_overlays(db: Session) -> None:
+    """Restore sonrası prometheus / remote_llm / mgmt IP runtime'a yansıt."""
+    try:
+        from app.core.config import settings as cfg
+        import os
+
+        def _get(k: str) -> Optional[str]:
+            row = db.query(AppSettings).filter(AppSettings.key == k).first()
+            return row.value if row and row.value is not None else None
+
+        for env_key, db_key in (
+            ("PROMETHEUS_URL", "prometheus_url"),
+            ("PUSHGATEWAY_URL", "pushgateway_url"),
+            ("MANAGEMENT_SERVER_IP", "management_server_ip"),
+        ):
+            v = _get(db_key)
+            if v:
+                os.environ[env_key] = v
+                if hasattr(cfg, env_key):
+                    setattr(cfg, env_key, v)
+
+        r_en = _get("remote_llm_enabled")
+        if r_en is not None:
+            enabled = str(r_en).lower() in ("1", "true", "yes", "on")
+            os.environ["REMOTE_LLM_ENABLED"] = "true" if enabled else "false"
+            cfg.REMOTE_LLM_ENABLED = enabled
+        for attr, db_key in (
+            ("REMOTE_LLM_URL", "remote_llm_url"),
+            ("REMOTE_LLM_MODEL", "remote_llm_model"),
+            ("REMOTE_LLM_CA_BUNDLE", "remote_llm_ca_bundle"),
+        ):
+            v = _get(db_key)
+            if v is not None:
+                os.environ[attr] = v
+                setattr(cfg, attr, v)
+        api_enc = _get("remote_llm_api_key")
+        if api_enc:
+            plain = decrypt_secret(api_enc) or api_enc
+            os.environ["REMOTE_LLM_API_KEY"] = plain
+            cfg.REMOTE_LLM_API_KEY = plain
+        vs = _get("remote_llm_verify_ssl")
+        if vs is not None:
+            verify = str(vs).lower() in ("1", "true", "yes", "on")
+            os.environ["REMOTE_LLM_VERIFY_SSL"] = "true" if verify else "false"
+            cfg.REMOTE_LLM_VERIFY_SSL = verify
+    except Exception as e:
+        logger.warning("config restore runtime overlay: %s", e)
+
 
 @router.get("/config/backup")
-async def config_backup(db: Session = Depends(get_db)):
-    """Uygulama ayarlarını JSON olarak yedekle (app_settings, credential metadata)."""
-    import datetime
-    app_settings = {}
-    for row in db.query(AppSettings).all():
-        if row.key and row.value is not None:
-            app_settings[row.key] = row.value
+async def config_backup(
+    include_secrets: bool = True,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """
+    Yapılandırma yedeği — eski ortamdan yeni ortama taşımak için.
 
-    credentials_meta = []
+    - app_settings (gelişmiş + AI + monitoring + branding …)
+    - SSH credential'lar (include_secrets=true ise plaintext; hedefte yeniden şifrelenir)
+    - Kullanıcı modül atamaları
+    - env_hints (manuel .env birleştirme notları — SECRET_KEY/DB şifresi yok)
+    """
+    import datetime
+    from app.core.config import settings as cfg
+    from app.models.module import UserModule
+
+    app_settings: Dict[str, Any] = {}
+    for row in db.query(AppSettings).all():
+        if not row.key or row.value is None:
+            continue
+        val = row.value
+        if include_secrets and row.key in _SENSITIVE_APP_SETTING_KEYS:
+            val = _decrypt_setting_value(row.key, val)
+        elif (not include_secrets) and row.key in _SENSITIVE_APP_SETTING_KEYS:
+            # Sırları dışarı verme — placeholder
+            if row.key == "remote_llm_api_key":
+                val = ""
+            elif row.key == "global_winrm_credential":
+                try:
+                    import json
+                    obj = json.loads(val)
+                    if isinstance(obj, dict):
+                        obj = dict(obj)
+                        if obj.get("password"):
+                            obj["password"] = "***"
+                        val = json.dumps(obj, ensure_ascii=False)
+                except Exception:
+                    val = "***"
+        app_settings[row.key] = val
+
+    credentials = []
     for c in db.query(GlobalCredential).order_by(GlobalCredential.name).all():
-        credentials_meta.append({
+        item = {
             "name": c.name,
             "username": c.username,
-            "port": c.port,
-            "is_default": c.is_default,
+            "port": c.port or 22,
+            "is_default": bool(c.is_default),
             "has_password": bool(c.password),
             "has_private_key": bool(c.private_key),
+            "has_sudo_password": bool(c.sudo_password),
+        }
+        if include_secrets:
+            item["password"] = decrypt_secret(c.password) if c.password else ""
+            item["private_key"] = decrypt_secret(c.private_key) if c.private_key else ""
+            item["sudo_password"] = decrypt_secret(c.sudo_password) if c.sudo_password else ""
+        credentials.append(item)
+
+    module_grants = []
+    users = {u.id: u for u in db.query(User).all()}
+    for um in db.query(UserModule).all():
+        u = users.get(um.user_id)
+        if not u:
+            continue
+        module_grants.append({
+            "username": u.username,
+            "module_id": um.module_id,
         })
 
+    cors = getattr(cfg, "CORS_ORIGINS", "") or ""
+    if isinstance(cors, (list, tuple)):
+        cors = ",".join(str(x) for x in cors)
+    env_hints = {
+        "OLLAMA_URL": getattr(cfg, "OLLAMA_URL", "") or "",
+        "OLLAMA_EMBED_MODEL": getattr(cfg, "OLLAMA_EMBED_MODEL", "") or "",
+        "EMBEDDING_URL": getattr(cfg, "EMBEDDING_URL", "") or "",
+        "REMOTE_LLM_ENABLED": str(bool(getattr(cfg, "REMOTE_LLM_ENABLED", False))).lower(),
+        "REMOTE_LLM_URL": getattr(cfg, "REMOTE_LLM_URL", "") or "",
+        "REMOTE_LLM_MODEL": getattr(cfg, "REMOTE_LLM_MODEL", "") or "",
+        "CORS_ORIGINS": str(cors),
+        "_note": (
+            "Bu alanlar bilgilendirme amaçlıdır; yeni ortamın .env dosyasına "
+            "elle birleştirin. SECRET_KEY ve POSTGRES_PASSWORD yedekte YOKTUR — "
+            "yeni ortam kendi anahtarını kullanmalı; credential'lar restore'da "
+            "hedef SECRET_KEY ile yeniden şifrelenir."
+        ),
+    }
+
     return {
-        "version": "1.0",
+        "format_version": "2.0",
         "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "source_secret_key_fingerprint": _secret_key_fingerprint(),
+        "include_secrets": include_secrets,
         "app_settings": app_settings,
-        "credentials_meta": credentials_meta,
+        "credentials": credentials,
+        "module_grants": module_grants,
+        "env_hints": env_hints,
+        # geriye uyumluluk
+        "version": "2.0",
+        "credentials_meta": [
+            {k: c[k] for k in ("name", "username", "port", "is_default", "has_password", "has_private_key") if k in c}
+            for c in credentials
+        ],
     }
 
 
 class ConfigRestoreRequest(BaseModel):
     app_settings: Optional[dict] = None
+    credentials: Optional[List[dict]] = None
+    module_grants: Optional[List[dict]] = None
+    apply_settings: bool = True
+    apply_credentials: bool = True
+    apply_modules: bool = True
+    # management_server_ip gibi host-özel alanları da zorla yaz
+    force_host_keys: bool = False
+    source_secret_key_fingerprint: Optional[str] = None
+    include_secrets: Optional[bool] = None
+    format_version: Optional[str] = None
+    version: Optional[str] = None
+    env_hints: Optional[dict] = None
+    credentials_meta: Optional[List[dict]] = None
+    exported_at: Optional[str] = None
 
 
 @router.post("/config/restore")
-async def config_restore(data: ConfigRestoreRequest, db: Session = Depends(get_db)):
-    """Yedekten app_settings'i geri yükle."""
-    if not data.app_settings:
-        return {"success": True, "message": "Restore edilecek app_settings yok", "restored": 0}
+async def config_restore(
+    data: ConfigRestoreRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """
+    Yedekten yapılandırmayı geri yükle (yeni ortam).
 
-    restored = 0
-    for key, value in data.app_settings.items():
-        if not key or value is None:
-            continue
-        row = db.query(AppSettings).filter(AppSettings.key == key).first()
-        if row:
-            row.value = str(value)
-        else:
-            db.add(AppSettings(key=key, value=str(value)))
-        restored += 1
+    Credential / remote_llm_api_key plaintext geldiyse hedef SECRET_KEY ile şifrelenir.
+    SECRET_KEY ve Postgres şifresi asla üzerine yazılmaz.
+    """
+    from app.models.module import UserModule, Module
+
+    stats = {"settings": 0, "credentials": 0, "modules": 0, "skipped_keys": [], "warnings": []}
+
+    if data.apply_settings and data.app_settings:
+        for key, value in data.app_settings.items():
+            if not key or value is None:
+                continue
+            if key in _SKIP_RESTORE_KEYS_DEFAULT and not data.force_host_keys:
+                stats["skipped_keys"].append(key)
+                continue
+            raw = str(value)
+            if key in _SENSITIVE_APP_SETTING_KEYS:
+                # Export plaintext veya eski ciphertext — hedef key ile yeniden şifrele
+                if key == "remote_llm_api_key" and raw in ("", "***"):
+                    continue
+                store = _encrypt_setting_value(key, raw)
+            else:
+                store = raw
+            row = db.query(AppSettings).filter(AppSettings.key == key).first()
+            if row:
+                row.value = store
+            else:
+                db.add(AppSettings(key=key, value=store))
+            stats["settings"] += 1
+
+    if data.apply_credentials and data.credentials:
+        for item in data.credentials:
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            username = (item.get("username") or "").strip()
+            if not username:
+                stats["warnings"].append(f"credential '{name}': username yok, atlandı")
+                continue
+            password = item.get("password")
+            private_key = item.get("private_key")
+            sudo_password = item.get("sudo_password")
+            # Meta-only backup (eski format): sırlar yok → sadece kullanıcı/port güncelle
+            has_secret_fields = any(k in item for k in ("password", "private_key", "sudo_password"))
+
+            cred = db.query(GlobalCredential).filter(GlobalCredential.name == name).first()
+            if not cred:
+                if not has_secret_fields:
+                    stats["warnings"].append(
+                        f"credential '{name}': yedekte sır yok ve hedefte kayıt yok — atlandı"
+                    )
+                    continue
+                cred = GlobalCredential(
+                    name=name,
+                    username=username,
+                    password=encrypt_secret(password or "") or None,
+                    private_key=encrypt_secret(private_key or "") or None,
+                    sudo_password=encrypt_secret(sudo_password or "") or None,
+                    port=int(item.get("port") or 22),
+                    is_default=bool(item.get("is_default")),
+                )
+                if cred.is_default:
+                    db.query(GlobalCredential).update({GlobalCredential.is_default: False})
+                db.add(cred)
+            else:
+                cred.username = username
+                cred.port = int(item.get("port") or cred.port or 22)
+                if has_secret_fields:
+                    if password is not None:
+                        cred.password = encrypt_secret(password) if password else None
+                    if private_key is not None:
+                        cred.private_key = encrypt_secret(private_key) if private_key else None
+                    if sudo_password is not None:
+                        cred.sudo_password = encrypt_secret(sudo_password) if sudo_password else None
+                if item.get("is_default"):
+                    db.query(GlobalCredential).update({GlobalCredential.is_default: False})
+                    cred.is_default = True
+            stats["credentials"] += 1
+
+    if data.apply_modules and data.module_grants:
+        known_modules = {m.id for m in db.query(Module).all()}
+        for grant in data.module_grants:
+            username = (grant.get("username") or "").strip()
+            module_id = (grant.get("module_id") or "").strip()
+            if not username or not module_id:
+                continue
+            if module_id not in known_modules:
+                stats["warnings"].append(f"modül '{module_id}' hedefte yok — atlandı")
+                continue
+            user = db.query(User).filter(User.username == username).first()
+            if not user:
+                stats["warnings"].append(f"kullanıcı '{username}' hedefte yok — modül ataması atlandı")
+                continue
+            exists = (
+                db.query(UserModule)
+                .filter(UserModule.user_id == user.id, UserModule.module_id == module_id)
+                .first()
+            )
+            if not exists:
+                db.add(UserModule(user_id=user.id, module_id=module_id, granted_by=_admin.id))
+                stats["modules"] += 1
 
     db.commit()
-    return {"success": True, "message": f"{restored} ayar geri yüklendi", "restored": restored}
+    _apply_runtime_overlays(db)
+
+    try:
+        from app.services import runtime_settings as rs
+        rs.invalidate_cache()
+    except Exception:
+        pass
+
+    msg_parts = [
+        f"{stats['settings']} ayar",
+        f"{stats['credentials']} credential",
+        f"{stats['modules']} modül ataması",
+    ]
+    return {
+        "success": True,
+        "message": "Geri yükleme tamam: " + ", ".join(msg_parts),
+        "stats": stats,
+        "target_secret_key_fingerprint": _secret_key_fingerprint(),
+        "env_hints": data.env_hints or {},
+        "env_hints_note": (
+            "env_hints otomatik uygulanmaz. Yeni ortam .env dosyasına OLLAMA_URL / "
+            "REMOTE_LLM_* değerlerini elle ekleyip backend'i yeniden başlatın."
+        ),
+    }
 
 
 class AIProviderRequest(BaseModel):
