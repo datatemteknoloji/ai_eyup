@@ -361,6 +361,8 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "virt_chat_max_tool_steps": {
         "default": 4, "type": "int", "min": 1, "max": 8,
         "group": "virt_chat", "label": "Sanallaştırma Chat maks. araç adımı",
+        "help": "Agentic sanallaştırma sohbetinde bir yanıt üretilmeden önce art arda "
+                "çağrılabilecek en fazla vCenter READ_ONLY araç sayısı.",
         "env": "VIRT_CHAT_MAX_TOOL_STEPS",
     },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
@@ -538,8 +540,8 @@ def list_advanced_settings() -> List[dict]:
             "max": meta.get("max"),
             "group": meta["group"],
             "group_label": GROUP_LABELS.get(meta["group"], meta["group"]),
-            "label": meta["label"],
-            "help": meta["help"],
+            "label": meta.get("label", key),
+            "help": meta.get("help", ""),
             "env": meta.get("env"),
             "choices": meta.get("choices"),
         })

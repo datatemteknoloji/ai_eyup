@@ -792,7 +792,14 @@ const AdvancedSettingsTab: React.FC = () => {
     queryKey: ['advanced-settings'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/settings/advanced`)
-      if (!res.ok) throw new Error('Gelişmiş ayarlar yüklenemedi')
+      if (!res.ok) {
+        let detail = ''
+        try {
+          const j = await res.json()
+          detail = typeof j?.detail === 'string' ? j.detail : ''
+        } catch { /* ignore */ }
+        throw new Error(detail || `Gelişmiş ayarlar yüklenemedi (HTTP ${res.status})`)
+      }
       return res.json()
     },
   })
