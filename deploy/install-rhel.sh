@@ -211,6 +211,16 @@ fill_env_var() {
   fi
 }
 
+# Mevcut değeri her zaman paket sürümüyle değiştir (imaj etiketleri için zorunlu)
+set_env_var() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    echo "${key}=${value}" >> "$ENV_FILE"
+  fi
+}
+
 fill_env_var "SECRET_KEY" "$(openssl rand -hex 32)"
 fill_env_var "POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
 fill_env_var "ADMIN_DEFAULT_PASSWORD" "$(openssl rand -base64 12 | tr -d '=+/')"
@@ -221,20 +231,22 @@ fill_env_var "AINEW_DATA_DIR" "$DATA_DIR"
 fill_env_var "RAG_CHROMA_PATH" "/app/chroma"
 fill_env_var "PLATFORM_UPDATE_ENABLED" "true"
 
-# Paket VERSION dosyasından imaj etiketlerini sabitle (offline load ile uyumlu)
+# Paket VERSION dosyasından imaj etiketlerini ZORLA sabitle.
+# Eski .env'de kalan 1.0.9.11 gibi etiketler korunursa load 1.0.9.12 yapsa bile
+# "eksik imaj: ainew-backend:1.0.9.11" hatası çıkar (ovrinfraaitst1 senaryosu).
 APP_VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
 [[ -z "$APP_VERSION" ]] && APP_VERSION="latest"
-# .env.example içinde zaten doğru etiket olabilir — yine de garanti et
 if grep -q '^BACKEND_IMAGE=' .env.example 2>/dev/null; then
   BE_FROM_EX="$(grep '^BACKEND_IMAGE=' .env.example | head -1 | cut -d= -f2-)"
   FE_FROM_EX="$(grep '^FRONTEND_IMAGE=' .env.example | head -1 | cut -d= -f2-)"
-  fill_env_var "BACKEND_IMAGE" "${BE_FROM_EX:-ainew-backend:${APP_VERSION}}"
-  fill_env_var "FRONTEND_IMAGE" "${FE_FROM_EX:-ainew-frontend:${APP_VERSION}}"
+  set_env_var "BACKEND_IMAGE" "${BE_FROM_EX:-ainew-backend:${APP_VERSION}}"
+  set_env_var "FRONTEND_IMAGE" "${FE_FROM_EX:-ainew-frontend:${APP_VERSION}}"
 else
-  fill_env_var "BACKEND_IMAGE" "ainew-backend:${APP_VERSION}"
-  fill_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
+  set_env_var "BACKEND_IMAGE" "ainew-backend:${APP_VERSION}"
+  set_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
 fi
-fill_env_var "APP_VERSION" "$APP_VERSION"
+set_env_var "APP_VERSION" "$APP_VERSION"
+c_green "İmaj etiketleri paket sürümüne sabitlendi: ainew-backend:${APP_VERSION} / ainew-frontend:${APP_VERSION}"
 fill_env_var "OLLAMA_URL" "http://127.0.0.1:11434"
 fill_env_var "OLLAMA_EMBED_MODEL" "nomic-embed-text"
 
@@ -275,12 +287,26 @@ step "İmajlar hazırlanıyor"
 merge_image_parts() {
   if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
     c_yellow "Parçalanmış imaj arşivleri birleştiriliyor..."
+    local part1 target parts_size target_size sorted
     for part1 in "${IMAGES_DIR}"/*.tar.gz.part01; do
       [[ -e "$part1" ]] || continue
       target="${part1%.part01}"
-      if [[ ! -e "$target" ]]; then
-        cat "${target}".part* > "$target"
-        c_green "  ✓ $(basename "$target")"
+      # Lexical değil versiyon sıralı birleştir (part01…part10)
+      mapfile -t sorted < <(ls -1 "${target}".part* 2>/dev/null | sort -V)
+      [[ ${#sorted[@]} -eq 0 ]] && continue
+      parts_size=0
+      local p
+      for p in "${sorted[@]}"; do
+        parts_size=$((parts_size + $(stat -c%s "$p" 2>/dev/null || echo 0)))
+      done
+      target_size=0
+      [[ -e "$target" ]] && target_size="$(stat -c%s "$target" 2>/dev/null || echo 0)"
+      # Eksik/bozuk birleşik dosyayı yeniden üret
+      if [[ ! -e "$target" || "$target_size" -lt "$parts_size" ]]; then
+        cat "${sorted[@]}" > "$target"
+        c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
+      else
+        c_yellow "  · $(basename "$target") zaten var — atlandı"
       fi
     done
   fi
@@ -288,12 +314,22 @@ merge_image_parts() {
 
 load_all_images() {
   local f loaded=0
-  for f in "$IMAGES_DIR"/*.tar.gz; do
+  local -A seen=()
+  # Önce uygulama imajları (disk dolarsa en azından backend/frontend yüklensin)
+  local queue=()
+  for f in \
+      "$IMAGES_DIR/ainew-backend.tar.gz" \
+      "$IMAGES_DIR/ainew-frontend.tar.gz" \
+      "$IMAGES_DIR"/*.tar.gz; do
     [[ -e "$f" ]] || continue
-    # Model tarball'ları docker image değildir — atla
     case "$(basename "$f")" in
       ollama-models-*.tar.gz) continue ;;
     esac
+    [[ -n "${seen[$f]:-}" ]] && continue
+    seen[$f]=1
+    queue+=("$f")
+  done
+  for f in "${queue[@]}"; do
     c_yellow "Yükleniyor: $f"
     if ! gunzip -c "$f" | docker load; then
       c_red "docker load başarısız: $f"
@@ -315,6 +351,28 @@ load_all_images() {
     loaded=$((loaded + 1))
   done
   [[ "$loaded" -gt 0 ]]
+}
+
+# Paketten yüklenen ainew etiketini .env ile hizala; başka tag varsa retag et
+ensure_ainew_tags() {
+  local be fe repo tag any
+  be="$(grep '^BACKEND_IMAGE=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+  fe="$(grep '^FRONTEND_IMAGE=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+  be="${be:-ainew-backend:${APP_VERSION:-latest}}"
+  fe="${fe:-ainew-frontend:${APP_VERSION:-latest}}"
+  for img in "$be" "$fe"; do
+    if docker image inspect "$img" >/dev/null 2>&1; then
+      continue
+    fi
+    repo="${img%%:*}"
+    tag="${img##*:}"
+    any="$(docker images --format '{{.Repository}}:{{.Tag}}' "$repo" 2>/dev/null | grep -v '<none>' | head -1 || true)"
+    if [[ -n "$any" ]]; then
+      c_yellow "  retag: $any → $img"
+      docker tag "$any" "$img"
+      docker tag "$any" "${repo}:latest" 2>/dev/null || true
+    fi
+  done
 }
 
 require_local_images() {
@@ -342,6 +400,11 @@ require_local_images() {
       c_green "  ✓ $img"
     fi
   done
+  if [[ "$missing" -ne 0 ]]; then
+    c_yellow "Docker'daki ainew imajları:"
+    docker images --format '  {{.Repository}}:{{.Tag}}' 2>/dev/null | grep '^  ainew-' || c_yellow "  (yok)"
+    c_yellow "Onarım: sudo ./fix-load-ainew-images.sh"
+  fi
   [[ "$missing" -eq 0 ]]
 }
 
@@ -353,7 +416,21 @@ if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
 fi
 
 if [[ "$HAS_ARCHIVES" -eq 1 ]]; then
-  load_all_images
+  # ainew arşivleri (birleşik veya parçalı) zorunlu
+  if [[ ! -e "$IMAGES_DIR/ainew-backend.tar.gz" && ! -e "$IMAGES_DIR/ainew-backend.tar.gz.part01" ]]; then
+    c_red "images/ içinde ainew-backend.tar.gz (veya .part*) yok — paket eksik/bozuk."
+    ls -la "$IMAGES_DIR" || true
+    exit 1
+  fi
+  if [[ ! -e "$IMAGES_DIR/ainew-frontend.tar.gz" && ! -e "$IMAGES_DIR/ainew-frontend.tar.gz.part01" ]]; then
+    c_red "images/ içinde ainew-frontend.tar.gz (veya .part*) yok — paket eksik/bozuk."
+    ls -la "$IMAGES_DIR" || true
+    exit 1
+  fi
+  if ! load_all_images; then
+    c_red "İmaj yükleme başarısız."
+    exit 1
+  fi
   c_green "Önceden derlenmiş imajlar yüklendi (offline kurulum)."
 elif [[ "${ALLOW_ONLINE_BUILD:-0}" == "1" ]]; then
   c_yellow "images/ yok — ALLOW_ONLINE_BUILD=1: kaynak derleniyor (registry gerekir)..."
@@ -367,6 +444,7 @@ else
 fi
 
 step "Yerel imajlar doğrulanıyor"
+ensure_ainew_tags
 if ! require_local_images; then
   if [[ "${ALLOW_ONLINE_BUILD:-0}" == "1" ]]; then
     c_yellow "Eksik imajlar var — online build denenecek..."

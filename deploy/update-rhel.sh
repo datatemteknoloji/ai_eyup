@@ -178,9 +178,17 @@ if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
   for part1 in "${IMAGES_DIR}"/*.tar.gz.part01; do
     [[ -e "$part1" ]] || continue
     target="${part1%.part01}"
-    if [[ ! -e "$target" ]]; then
-      cat "${target}".part* > "$target"
-      c_green "  ✓ $(basename "$target")"
+    mapfile -t sorted < <(ls -1 "${target}".part* 2>/dev/null | sort -V)
+    [[ ${#sorted[@]} -eq 0 ]] && continue
+    parts_size=0
+    for p in "${sorted[@]}"; do
+      parts_size=$((parts_size + $(stat -c%s "$p" 2>/dev/null || echo 0)))
+    done
+    target_size=0
+    [[ -e "$target" ]] && target_size="$(stat -c%s "$target" 2>/dev/null || echo 0)"
+    if [[ ! -e "$target" || "$target_size" -lt "$parts_size" ]]; then
+      cat "${sorted[@]}" > "$target"
+      c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
     fi
   done
 fi
