@@ -40,6 +40,7 @@ COMMAND_GROUPS = {
         ("nproc", "cpu_count"),
         ("lscpu 2>/dev/null | grep -E 'Model name|Architecture|CPU.s.|Thread|Core|Socket|Vendor|MHz|Virtualization|NUMA' | head -12", "cpu_detail"),
         ("top -bn1 2>/dev/null | grep 'Cpu' | head -1", "cpu_usage"),
+        ("top -bn1 2>/dev/null | grep -E 'Cpu|%Cpu' | head -1; (mpstat 1 1 2>/dev/null | tail -4) || true", "cpu_steal"),
         ("cat /proc/cpuinfo 2>/dev/null | grep -E '^model name|^cpu MHz|^cache size|^flags' | sort -u | head -8", "cpuinfo"),
         ("grep -c '^processor' /proc/cpuinfo 2>/dev/null", "cpu_logical_count"),
         ("cpupower frequency-info 2>/dev/null | head -6 || cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null", "cpu_governor"),
@@ -61,7 +62,8 @@ COMMAND_GROUPS = {
         ("blkid 2>/dev/null | head -15", "blkid_info"),
         ("cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$'", "fstab"),
         ("findmnt -t nfs,nfs4,cifs 2>/dev/null | head -10", "network_mounts"),
-        ("pvs 2>/dev/null; vgs 2>/dev/null; lvs 2>/dev/null", "lvm_info"),
+        # pvs/vgs/lvs exit!=0 olunca tüm zincir boş kalmasın; lsblk LVM üyesini de göster
+        ("(pvs 2>/dev/null; vgs 2>/dev/null; lvs 2>/dev/null; echo '---'; lsblk -o NAME,TYPE,FSTYPE,SIZE,MOUNTPOINT 2>/dev/null | head -30) || true", "lvm_info"),
         ("mdadm --detail --scan 2>/dev/null | head -15", "raid_info"),
         ("iostat -dx 2>/dev/null | head -15 || vmstat -d 2>/dev/null | head -10", "disk_io"),
         ("du -sh /var/log 2>/dev/null; du -sh /tmp 2>/dev/null; du -sh /home 2>/dev/null", "dir_sizes"),
@@ -141,7 +143,8 @@ COMMAND_GROUPS = {
         ("who 2>/dev/null", "current_users"),
         ("w 2>/dev/null | head -10", "logged_in_users"),
         ("sestatus 2>/dev/null || getenforce 2>/dev/null || echo 'SELinux: not found'", "selinux_status"),
-        ("systemctl is-active firewalld 2>/dev/null && firewall-cmd --list-all 2>/dev/null | head -20 || iptables -L -n 2>/dev/null | head -25 || nft list ruleset 2>/dev/null | head -20", "firewall_status"),
+        ("getenforce 2>/dev/null || echo 'getenforce: n/a'", "getenforce"),
+        ("systemctl is-active firewalld 2>/dev/null; firewall-cmd --state 2>/dev/null; iptables -L -n 2>/dev/null | head -15 || nft list ruleset 2>/dev/null | head -15 || true", "firewall_status"),
         ("ss -tuln 2>/dev/null | head -30", "open_ports"),
         ("grep -v '^#' /etc/sudoers 2>/dev/null | grep -v '^$' | head -20 ; cat /etc/sudoers.d/* 2>/dev/null | grep -v '^#' | head -10", "sudoers"),
         ("cat /etc/passwd 2>/dev/null | grep -v nologin | grep -v false | grep -v halt | grep -v shutdown | grep -v sync", "system_users"),
@@ -316,7 +319,7 @@ COMMAND_GROUPS = {
         ("cat /etc/selinux/config 2>/dev/null | grep -v '^#' | grep -v '^$'; echo '---'; getenforce 2>/dev/null; sestatus 2>/dev/null | head -12", "cfg_selinux"),
         ("(cat /etc/chrony.conf 2>/dev/null || cat /etc/ntp.conf 2>/dev/null || cat /etc/chrony/chrony.conf 2>/dev/null) | grep -v '^#' | grep -v '^$' | head -30", "cfg_time"),
         ("timedatectl 2>/dev/null | head -15", "cfg_timedatectl"),
-        ("(firewall-cmd --list-all 2>/dev/null | head -35) || (iptables -L -n -v 2>/dev/null | head -40) || (nft list ruleset 2>/dev/null | head -40)", "cfg_firewall"),
+        ("firewall-cmd --list-all 2>/dev/null | head -35 || iptables -L -n -v 2>/dev/null | head -40 || nft list ruleset 2>/dev/null | head -40 || echo 'firewall: tools yok veya inactive'", "cfg_firewall"),
         ("(nmcli -f NAME,UUID,TYPE,DEVICE,STATE con show 2>/dev/null | head -20) || (ls /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null; grep -hE '^(DEVICE|NAME|BOOTPROTO|IPADDR|GATEWAY|DNS|ONBOOT|MASTER|SLAVE)=' /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null | head -40)", "cfg_network"),
         ("ip route 2>/dev/null | head -20; echo '---'; ip -br addr 2>/dev/null | head -20", "cfg_ip_route"),
         ("cat /etc/crontab 2>/dev/null | grep -v '^#' | grep -v '^$'; echo '--- cron.d ---'; ls /etc/cron.d/ 2>/dev/null; systemctl list-timers --no-pager 2>/dev/null | head -15", "cfg_cron"),
@@ -373,15 +376,20 @@ KEYWORD_TO_GROUPS: dict = {
     "x86_64": ["cpu", "os"], "aarch64": ["cpu", "os"], "arm": ["cpu", "os"],
     "virtualization": ["cpu"], "sanallaştırma": ["cpu"], "sanallaştirma": ["cpu"],
     "vmx": ["cpu"], "svm": ["cpu"],
+    "steal": ["cpu", "load"], "steal time": ["cpu", "load"], "cpu steal": ["cpu", "load"],
+    "st%": ["cpu", "load"], "hypervisor steal": ["cpu", "load"],
 
     # BELLEK / RAM
     "ram": ["memory"], "bellek": ["memory"], "memory": ["memory"],
     "free": ["memory"], "free -m": ["memory"], "free -h": ["memory"],
-    "toplam ram": ["memory"], "kullanilan bellek": ["memory"], "kullanılan bellek": ["memory"],
+    "toplam ram": ["memory"],     "kullanilan bellek": ["memory"], "kullanılan bellek": ["memory"],
     "swap": ["memory"], "takas": ["memory"], "buffers": ["memory"], "cache": ["memory"],
+    "cached": ["memory"], "cached memory": ["memory"], "pagecache": ["memory"],
     "page cache": ["memory"], "shared memory": ["memory"], "paylasilan bellek": ["memory"],
     "available memory": ["memory"], "kullanilabilir bellek": ["memory"],
     "memory usage": ["memory"], "bellek kullanimi": ["memory"], "bellek kullanımı": ["memory"],
+    "bellek yetersiz": ["memory", "logs"], "bellek yetersizligi": ["memory", "logs"],
+    "bellek yetersizliği": ["memory", "logs"],
     "/proc/meminfo": ["memory"], "hugepages": ["memory", "performance_deep"],
     "transparent hugepage": ["memory", "performance_deep"], "thp": ["memory", "performance_deep"],
     "memory leak": ["memory", "performance_deep"], "bellek sizintisi": ["memory", "performance_deep"],
@@ -416,6 +424,9 @@ KEYWORD_TO_GROUPS: dict = {
     # UPTIME / ÇALIŞMA SÜRESİ
     "uptime": ["uptime", "load"], "calisma": ["uptime", "load"], "çalışma": ["uptime", "load"],
     "ne kadar suredir": ["uptime", "load"], "ne kadar süredir": ["uptime", "load"],
+    "ne zamandir acik": ["uptime", "load"], "ne zamandır açık": ["uptime", "load"],
+    "kac gundur acik": ["uptime", "load"], "kaç gündür açık": ["uptime", "load"],
+    "ne kadar zamandir ayakta": ["uptime", "load"], "ne kadar zamandır ayakta": ["uptime", "load"],
     "sistem suresi": ["uptime"], "sistem süresi": ["uptime"],
     "boot": ["uptime", "kernel"], "son baslangic": ["uptime", "kernel"],
     "son başlangıç": ["uptime", "kernel"], "last boot": ["uptime", "kernel"],
@@ -1024,6 +1035,20 @@ _TOPIC_TOO_GENERIC_STANDALONE = {
 }
 
 
+def _fold_match_text(s: str) -> str:
+    """Mesaj/keyword eşleşmesi için Türkçe-dostu katlama.
+
+    NFKD + combining strip tek başına yetmez: 'açık'→'acık' olur ama keyword
+    sözlükte hâlâ 'açık' kalırsa eşleşmez. Ayrıca noktasız 'ı' ASCII 'i' olmaz.
+    Bu yüzden hem mesajı hem keyword'ü aynı fonksiyondan geçiriyoruz.
+    """
+    import unicodedata
+    s = (s or "").replace("İ", "i").replace("I", "ı").lower()
+    s = s.translate(str.maketrans("ıİşŞğĞüÜöÖçÇ", "iisSgGuUoOcC"))
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
 def has_recognized_topic(message: str) -> bool:
     """
     Mesaj, KEYWORD_TO_GROUPS veya EXTRA_GROUPS_KEYWORDS içindeki herhangi bir
@@ -1039,13 +1064,15 @@ def has_recognized_topic(message: str) -> bool:
     sorunları (yeni bir terim eklendiğinde iki listeyi senkron tutma yükü
     olmadan) kalıcı olarak kapatır.
     """
-    import unicodedata
-    msg = unicodedata.normalize('NFKD', message.lower())
-    msg = ''.join(c for c in msg if not unicodedata.combining(c))
-    if any(kw in msg for kw in KEYWORD_TO_GROUPS if kw not in _TOPIC_TOO_GENERIC_STANDALONE):
+    msg = _fold_match_text(message)
+    if any(
+        _fold_match_text(kw) in msg
+        for kw in KEYWORD_TO_GROUPS
+        if kw not in _TOPIC_TOO_GENERIC_STANDALONE
+    ):
         return True
     for keywords in EXTRA_GROUPS_KEYWORDS.values():
-        if any(kw in msg for kw in keywords):
+        if any(_fold_match_text(kw) in msg for kw in keywords):
             return True
     # "vm.min_free_kbytes" gibi listede olmayan ama sysctl formatına uyan HERHANGİ bir
     # parametre adı geçiyorsa da bir konu tanınmış sayılır — bkz. extract_sysctl_params().
@@ -1063,24 +1090,23 @@ def detect_needed_groups(message: str) -> List[str]:
     Bu sayede 'default gw' sorusu kernel+os+network (3 grup),
     'genel sistem durumu' ise tüm standard grupları çalıştırır.
     """
-    import unicodedata
-    msg = unicodedata.normalize('NFKD', message.lower())
-    msg = ''.join(c for c in msg if not unicodedata.combining(c))
+    msg = _fold_match_text(message)
 
     # 1. Ekstra grupları bul (hem EXTRA_GROUPS_KEYWORDS hem KEYWORD_TO_GROUPS)
     extra_groups: set = set()
     for group, keywords in EXTRA_GROUPS_KEYWORDS.items():
-        if any(kw in msg for kw in keywords):
+        if any(_fold_match_text(kw) in msg for kw in keywords):
             extra_groups.add(group)
 
     # Mesaj zaten belirli bir tek konuya işaret ediyor mu (selinux->security, docker->containers vb.)?
     has_specific_topic = bool(extra_groups)
 
     for keyword, group_list in KEYWORD_TO_GROUPS.items():
-        if keyword in msg:
+        kw = _fold_match_text(keyword)
+        if kw and kw in msg:
             # Çok kısa keyword'ler (du, df, ps…) "durumu" içinde yanlış eşleşmesin
-            if len(keyword) <= 3 and not re.search(
-                rf'(?<![a-z0-9çğıöşü]){re.escape(keyword)}(?![a-z0-9çğıöşü])', msg
+            if len(kw) <= 3 and not re.search(
+                rf'(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])', msg
             ):
                 continue
             # "durum"/"status"/"saglik" gibi ÇOK genel kelimeler, mesajda ZATEN belirli bir
@@ -1102,7 +1128,7 @@ def detect_needed_groups(message: str) -> List[str]:
 
     # Derin performans analizi çok yavaş
     if "performance_deep" in extra_groups and not any(
-        kw in msg for kw in ["vmstat", "iostat", "1 dakika", "1 dak", "benchmark"]
+        _fold_match_text(kw) in msg for kw in ["vmstat", "iostat", "1 dakika", "1 dak", "benchmark"]
     ):
         extra_groups.discard("performance_deep")
 
@@ -1114,7 +1140,7 @@ def detect_needed_groups(message: str) -> List[str]:
     #    a) Açık genel tetikleyici kelimeler varsa ("genel", "rapor", "özet"...)
     #    b) VEYA standart performans/kaynak grupları açıkça isteniyorsa
     #       (cpu, memory, disk, load - NOT sadece kernel/os/services/security)
-    is_explicit_general = any(w in msg for w in _GENERAL_TRIGGER_WORDS)
+    is_explicit_general = any(_fold_match_text(w) in msg for w in _GENERAL_TRIGGER_WORDS)
     perf_groups = extra_groups & {"cpu", "memory", "disk", "load", "uptime", "processes"}
     is_resource_query = bool(perf_groups)
 

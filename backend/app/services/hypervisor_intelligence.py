@@ -125,10 +125,17 @@ _BARE_UNIT_RE = re.compile(r"\b(bugün|dün|geçen\s+hafta|bu\s+hafta|geçen\s+a
 
 
 def _normalize_numbers(s: str) -> str:
-    """Yazı ile sayıları rakama çevirir ("bir ay" -> "1 ay") — regex eşleşmesini
-    ve süre ayrıştırmasını sayı ifadesinden bağımsız hale getirir."""
+    """Yazı ile sayıları rakama çevirir — yalnızca zaman birimi önünde.
+
+    Örn. "bir ay" -> "1 ay", "on gün" -> "10 gün".
+    İngilizce "powered on" içindeki "on" ASLA 10 olmamalı.
+    """
     for word, num in _TR_NUMBER_WORDS.items():
-        s = re.sub(rf"\b{word}\b", str(num), s)
+        s = re.sub(
+            rf"\b{word}\b(?=\s*(?:saat|gün|hafta|ay|yıl|sene)\w*)",
+            str(num),
+            s,
+        )
     return s
 
 
@@ -856,6 +863,92 @@ def h_powered_off_count(db: Session, question: str = "") -> str:
     )
 
 
+def h_count_hosts(db: Session, question: str = "") -> str:
+    hosts = _get_esx_hosts(db)
+    rows = [[
+        h.get("host"),
+        h.get("state") or "-",
+        h.get("vms_running"),
+        h.get("vms_total"),
+        f"%{h.get('cpu_pct')}" if h.get("cpu_pct") is not None else "-",
+        f"%{h.get('mem_pct')}" if h.get("mem_pct") is not None else "-",
+    ] for h in hosts]
+    return (
+        f"### ESX / Hypervisor Host Sayısı\n\n"
+        f"**Toplam host:** {len(hosts)}\n\n"
+        + _md_table(["Host", "Durum", "Çalışan VM", "Toplam VM", "CPU %", "RAM %"], rows, "Host metriği bulunamadı.")
+    )
+
+
+def h_count_vms(db: Session, question: str = "") -> str:
+    vms = _get_vms(db)
+    on = sum(1 for v in vms if _is_on(v))
+    off = sum(1 for v in vms if _is_off(v))
+    sus = sum(1 for v in vms if _is_suspended(v))
+    other = len(vms) - on - off - sus
+    return (
+        "### VM Envanter Özeti\n\n"
+        f"**Toplam VM:** {len(vms)}\n"
+        f"- Çalışan (powered on): **{on}**\n"
+        f"- Kapalı (powered off): **{off}**\n"
+        f"- Suspended: **{sus}**\n"
+        + (f"- Diğer/bilinmeyen power state: **{other}**\n" if other else "")
+    )
+
+
+def h_count_powered_on(db: Session, question: str = "") -> str:
+    vms = _get_vms(db)
+    on = [v for v in vms if _is_on(v)]
+    return (
+        f"### Çalışan (Powered On) VM Sayısı\n\n"
+        f"**{len(on)}** VM çalışıyor (toplam {len(vms)} VM içinde).\n\n"
+        + _md_table(
+            ["VM", "Host/Cluster", "vCPU", "RAM (GB)"],
+            [[v["name"], v.get("cluster") or "-", v.get("cpu_count"), v.get("memory_gb")] for v in on[:40]],
+            "Çalışan VM yok.",
+        )
+    )
+
+
+def h_vm_per_host(db: Session, question: str = "") -> str:
+    hosts = _get_esx_hosts(db)
+    if hosts:
+        rows = [[h.get("host"), h.get("vms_running"), h.get("vms_total"), f"%{h.get('cpu_pct')}", f"%{h.get('mem_pct')}"]
+                for h in sorted(hosts, key=lambda x: -(x.get("vms_total") or 0))]
+        return "### Host Bazında VM Dağılımı\n\n" + _md_table(
+            ["Host", "Çalışan", "Toplam", "CPU %", "RAM %"], rows, "Host metriği yok."
+        )
+    # Fallback: VM kayıtlarındaki cluster alanı
+    groups: Dict[str, Dict[str, int]] = defaultdict(lambda: {"on": 0, "total": 0})
+    for v in _get_vms(db):
+        key = v.get("cluster") or "(cluster alanı boş)"
+        groups[key]["total"] += 1
+        if _is_on(v):
+            groups[key]["on"] += 1
+    rows = [[k, g["on"], g["total"]] for k, g in sorted(groups.items(), key=lambda x: -x[1]["total"])]
+    return "### Host/Grup Bazında VM Dağılımı\n\n" + _md_table(["Host/Grup", "Çalışan", "Toplam"], rows)
+
+
+def h_inventory_flash(db: Session, question: str = "") -> str:
+    """Yönetici için tek bakışta envanter + doluluk."""
+    hosts = _get_esx_hosts(db)
+    vms = _get_vms(db)
+    on = sum(1 for v in vms if _is_on(v))
+    off = sum(1 for v in vms if _is_off(v))
+    avg_cpu = round(sum(h.get("cpu_pct") or 0 for h in hosts) / len(hosts), 1) if hosts else 0
+    avg_mem = round(sum(h.get("mem_pct") or 0 for h in hosts) / len(hosts), 1) if hosts else 0
+    return (
+        "### Ortam Envanter / Anlık Durum\n\n"
+        f"| Metrik | Değer |\n|---|---|\n"
+        f"| Host | {len(hosts)} |\n"
+        f"| Toplam VM | {len(vms)} |\n"
+        f"| Çalışan VM | {on} |\n"
+        f"| Kapalı VM | {off} |\n"
+        f"| Ort. Host CPU | %{avg_cpu} |\n"
+        f"| Ort. Host RAM | %{avg_mem} |\n"
+    )
+
+
 def h_suspended_vms(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
     sus = [v for v in vms if _is_suspended(v)]
@@ -1523,7 +1616,14 @@ def h_host_events_30d(db: Session, question: str = "") -> str:
 def h_cluster_imbalance(db: Session, question: str = "") -> str:
     hosts = _get_esx_hosts(db)
     if len(hosts) < 2:
-        return _na("Karşılaştırma için en az 2 host metriği gerekli.")
+        rows = [[h["host"], f"%{h.get('cpu_pct')}", f"%{h.get('mem_pct')}", h.get("vms_running"), h.get("vms_total")]
+                for h in hosts]
+        return (
+            "### Host'lar Arası Yük Dengesi\n\n"
+            f"**Tek host / karşılaştırılacak ikinci host yok** ({len(hosts)} host metriği). "
+            "Dengesizlik analizi en az 2 host gerektirir; mevcut host özeti aşağıda.\n\n"
+            + _md_table(["Host", "CPU %", "RAM %", "Çalışan VM", "Toplam VM"], rows, "Host metriği yok.")
+        )
     cpu_vals = [h["cpu_pct"] for h in hosts if h.get("cpu_pct") is not None]
     if not cpu_vals:
         return _na("Host CPU metrikleri yok.")
@@ -2149,74 +2249,86 @@ def h_alarm_trend(db: Session, question: str = "") -> str:
 # handler(db) -> str  veya  handler(db) -> Dict (rapor tipi kısayolları için)
 # ═══════════════════════════════════════════════════════════════════════════
 QA_RULES: List[Tuple[str, Any]] = [
-    # VM Durumu
+    # ── Envanter / sayım (önce — LLM'e düşmesin; spesifik kurallar genelden önce) ──
     (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*restart|son.*hafta.*restart\s*edil", h_restart_week),
+    (r"kaç\s*(adet\s*)?(esx|esxi|hypervisor)?\s*host|host\s*sayıs|esx\s*sayıs|how\s*many\s*(esx|host)|toplam\s*host|host\s*adedi|kaç\s*esx", h_count_hosts),
+    (r"kaç\s*(adet\s*)?(çalışan|açık|aktif)\s*vm|powered\s*on\s*(vm\s*)?say|çalışan\s*\(?powered\s*on\)?\s*vm|powered\s*on.*kaç|kaç.*powered\s*on", h_count_powered_on),
+    (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
+    (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
+    (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm", h_vm_per_host),
+    (r"envanter\s*(özet|flash|özeti)|anlık\s*durum|tek\s*bakışta|ortam\s*özeti|kaç\s*host.*kaç\s*vm|genel\s*envanter", h_inventory_flash),
+    (r"en\s*fazla\s*boş\s*(belle[gğk]\w*|ram|hafıza)|boş\s*(belle[gğk]\w*|ram).*(host|en\s*fazla)|ram.?i\s*en\s*boş\s*host|en\s*boş\s*(ram|bellek).*host", h_free_resources),
+    (r"disconnect\s*(olan|olmuş)?\s*host|host\s*disconnect|bağlantısı\s*kop(an|muş)\s*host|bağlantı\s*kesilen\s*host", h_host_disconnected),
+    (r"vmware\s*tools\s*(kurulu|yüklü)\s*olmayan|tools\s*(kurulu|yüklü)\s*olmayan|guest\s*tools\s*(kurulu|yüklü)\s*olmayan", h_no_tools),
+    (r"ortam\s*genel\s*sağlık|genel\s*sağlık\s*değerlendir|sağlık\s*değerlendirmesi|executive\s*summary|yönetici\s*özet", h_health_summary_md),
+
+    # VM Durumu
     (r"son\s*24\s*saat.*kapat.*aç|kapan.p\s*açılan\s*vm", h_toggle_24h),
     (r"en\s*uzun\s*süredir\s*çalışan\s*vm|longest.*uptime|en\s*eski\s*uptime", h_longest_uptime),
     (r"(son|geçen|bu)\s*\d*\s*(saat|gün|hafta|ay|yıl|sene)\w*.*(kurulan|oluşturulan|yeni|eklenen|yüklenen)\s*vm", h_created_30d),
     (r"(son|geçen|bu)\s*\d*\s*(saat|gün|hafta|ay|yıl|sene)\w*.*(silinen|kaldırılan)\s*vm", h_removed_30d),
-    (r"powered\s*off\s*durumda\s*bekleyen|kapalı\s*durumda\s*bekleyen\s*vm\s*say", h_powered_off_count),
-    (r"suspended\s*durumda", h_suspended_vms),
+    (r"powered\s*off\s*durumda\s*bekleyen|kapalı\s*durumda\s*bekleyen\s*vm\s*say|kapalı\s*vm.?ler(\s*hangileri)?|hangi\s*vm.?ler\s*kapalı", h_powered_off_count),
+    (r"suspended\s*durumda|suspend(ed)?\s*(kalan|olan|durum)|suspended\s*vm|suspend\s*edilmiş", h_suspended_vms),
     (r"power\s*state\s*değiş", h_power_state_changes_7d),
     (r"son\s*reboot\s*tarihine\s*göre|ilk\s*20\s*vm.*reboot", h_last_reboot_top20),
     (r"hiç\s*reboot\s*edilmemiş", h_never_rebooted),
 
     # CPU
-    (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer", h_cpu_usage_over_90),
-    (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre", h_cpu_top20_now),
-    (r"cpu\s*ready", h_cpu_ready),
-    (r"cpu\s*hot\s*add", h_cpu_hot_add),
-    (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu", h_highest_vcpu),
-    (r"overcommit\s*oran", h_overcommit_ratio),
-    (r"hangi\s*host\s*cpu\s*açısından\s*en\s*yoğun|cpu.*en\s*yoğun\s*host|cpu\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_cpu),
+    (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer|cpu.?su\s*%?\s*90", h_cpu_usage_over_90),
+    (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre|cpu\s*top\s*20|en\s*yoğun\s*cpu\s*vm", h_cpu_top20_now),
+    (r"cpu\s*ready|ready\s*time|cpu\s*bekleme", h_cpu_ready),
+    (r"cpu\s*hot\s*add|hot.?add.*cpu", h_cpu_hot_add),
+    (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu|en\s*fazla\s*vcpu", h_highest_vcpu),
+    (r"overcommit\s*oran|cpu\s*overcommit|aşırı\s*tahsis", h_overcommit_ratio),
+    (r"hangi\s*host\s*cpu\s*açısından\s*en\s*yoğun|cpu.*en\s*yoğun\s*host|cpu\s*kullanımı\s*en\s*yüksek\s*host|en\s*yoğun\s*esx", h_busiest_host_cpu),
     (r"cpu\s*rezervasyon", h_cpu_reservation),
-    (r"cpu\s*limiti\s*uygulanmış", h_cpu_limit),
+    (r"cpu\s*limiti\s*uygulanmış|cpu\s*limit\s*olan", h_cpu_limit),
 
     # RAM
-    (r"bellek\s*kullanımı\s*%?\s*90|ram\s*kullanımı\s*%?\s*90", h_ram_usage_over_90),
-    (r"ballooning|memory\s*balloon", h_ballooning),
-    (r"swap\s*kullanan", h_swap),
-    (r"memory\s*hot\s*add", h_memory_hot_add),
-    (r"en\s*fazla\s*ram.a\s*sahip|en\s*fazla\s*ram'e\s*sahip", h_highest_ram),
-    (r"ortalama\s*ram\s*kullanımına\s*göre|ram.*ilk\s*20", h_avg_ram_top20),
-    (r"host\s*bazında\s*ram\s*doluluk", h_host_ram_fill),
+    (r"bellek\s*kullanımı\s*%?\s*90|ram\s*kullanımı\s*%?\s*90|ram.?i\s*%?\s*90", h_ram_usage_over_90),
+    (r"ballooning|memory\s*balloon|balon", h_ballooning),
+    (r"swap\s*kullanan|memory\s*swap", h_swap),
+    (r"memory\s*hot\s*add|hot.?add.*?(ram|memory|bellek)", h_memory_hot_add),
+    (r"en\s*fazla\s*ram.a\s*sahip|en\s*fazla\s*ram'e\s*sahip|en\s*çok\s*ram\s*atanmış", h_highest_ram),
+    (r"ortalama\s*ram\s*kullanımına\s*göre|ram.*ilk\s*20|en\s*çok\s*ram\s*tüketen", h_avg_ram_top20),
+    (r"host\s*bazında\s*ram\s*doluluk|host.*ram\s*doluluk", h_host_ram_fill),
     (r"ram\s*kullanımında\s*ani\s*artış", h_ram_usage_over_90),
-    (r"memory\s*reservation", h_memory_reservation),
-    (r"bellek\s*yetersizliği\s*yaşayan\s*host", h_host_ram_insufficient),
+    (r"memory\s*reservation|bellek\s*rezervasyon", h_memory_reservation),
+    (r"bellek\s*yetersizliği\s*yaşayan\s*host|ram\s*yetersiz.*host|memory\s*pressure", h_host_ram_insufficient),
 
     # Disk
-    (r"disk\s*kullanımı\s*%?\s*90", h_guest_disk_usage_over_90),
-    (r"snapshot\s*bulunan\s*vm", h_snapshot_vms),
-    (r"\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*eski\s*snapshot", h_old_snapshots),
+    (r"disk\s*kullanımı\s*%?\s*90|guest\s*disk.*90|disk.?i\s*%?\s*90", h_guest_disk_usage_over_90),
+    (r"snapshot\s*bulunan\s*vm|snapshot.?ı\s*olan|hangi\s*vm.*snapshot", h_snapshot_vms),
+    (r"\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*eski\s*snapshot|eski\s*snapshot", h_old_snapshots),
     (r"en\s*büyük\s*snapshot", h_largest_snapshot),
-    (r"thin\s*provision|thick\s*provision", h_disk_provisioning),
-    (r"en\s*fazla\s*disk\s*io|disk\s*io\s*yoğunluğu", h_disk_iops_top),
-    (r"disk\s*latency", h_disk_latency),
-    (r"boşta\s*duran\s*disk|attached\s*olup\s*kullanılmayan", h_idle_disks),
+    (r"thin\s*provision|thick\s*provision|disk\s*provision", h_disk_provisioning),
+    (r"en\s*fazla\s*disk\s*io|disk\s*io\s*yoğunluğu|iops\s*yüksek", h_disk_iops_top),
+    (r"disk\s*latency|storage\s*latency|disk\s*gecikme", h_disk_latency),
+    (r"boşta\s*duran\s*disk|attached\s*olup\s*kullanılmayan|kullanılmayan\s*disk", h_idle_disks),
 
     # Network
-    (r"aynı\s*ip.yi\s*kullanan|aynı\s*ip'yi\s*kullanan", h_duplicate_ip),
-    (r"ip\s*adresi\s*olmayan\s*çalışan", h_no_ip_running),
-    (r"guest\s*agent\s*çalışmayan", h_guest_agent_down),
+    (r"aynı\s*ip.yi\s*kullanan|aynı\s*ip'yi\s*kullanan|duplicate\s*ip|çakışan\s*ip", h_duplicate_ip),
+    (r"ip\s*adresi\s*olmayan\s*çalışan|ip.?si\s*olmayan\s*vm|ip\s*adresi\s*görünmeyen", h_no_ip_running),
+    (r"guest\s*agent\s*çalışmayan|guest\s*agent\s*down|qemu\s*agent\s*çalışmayan", h_guest_agent_down),
     (r"vlan\s*(id|ids|bilgi)|vm.*vlan|vlan.*vm|port\s*group|portgroup|hangi\s*vlan|vlan.?leri", h_vm_vlans),
-    (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput", h_network_traffic_top),
-    (r"adapter\s*disconnected", h_adapter_disconnected),
-    (r"ağ\s*hatası", h_network_errors),
+    (r"en\s*fazla\s*network\s*trafiği|outbound\s*trafik|inbound\s*trafik|network\s*throughput|ağ\s*trafiği\s*en\s*yüksek", h_network_traffic_top),
+    (r"adapter\s*disconnected|nic\s*disconnected|ağ\s*adaptörü\s*kopuk", h_adapter_disconnected),
+    (r"ağ\s*hatası|network\s*error|packet\s*drop|ağ\s*hatası\s*var\s*mı", h_network_errors),
 
     # Host Sağlığı
-    (r"ram\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_ram),
+    (r"ram\s*kullanımı\s*en\s*yüksek\s*host|en\s*yoğun\s*ram\s*host", h_busiest_host_ram),
     (r"storage\s*kullanımı\s*en\s*yüksek\s*host", h_busiest_host_storage),
-    (r"maintenance\s*modunda\s*host", h_maintenance_hosts),
+    (r"maintenance\s*modunda\s*host|bakım\s*modunda\s*host", h_maintenance_hosts),
     (r"ha.dan\s*çıkan\s*host|ha'dan\s*çıkan\s*host", h_cluster_ha_drs),
     (r"network\s*bağlantısını\s*kaybeden\s*host|host.*disconnect", h_host_disconnected),
-    (r"dengesiz\s*yük\s*dağılımı", h_cluster_imbalance),
-    (r"host\s*hataları\s*neler|host.*hataları", h_host_events_30d),
-    (r"en\s*fazla\s*vm\s*barındıran\s*host", h_host_most_vms),
-    (r"reboot\s*olan\s*host", h_host_events_30d),
+    (r"dengesiz\s*yük\s*dağılımı|yük\s*dengesiz|load\s*imbalance|host.?lar\s*arası\s*yük", h_cluster_imbalance),
+    (r"host\s*hataları\s*neler|host.*hataları|host\s*error", h_host_events_30d),
+    (r"en\s*fazla\s*vm\s*barındıran\s*host|en\s*kalabalık\s*host", h_host_most_vms),
+    (r"reboot\s*olan\s*host|host\s*reboot", h_host_events_30d),
 
     # Cluster
-    (r"cluster\s*bazında\s*cpu|cluster\s*bazında\s*ram", h_cluster_cpu_ram),
-    (r"ha\s*aktif\s*olmayan\s*cluster|drs.*çalışıyor\s*mu|drs.*load\s*balancing|ha\s*/?\s*drs|cluster\s*ha", h_cluster_ha_drs),
+    (r"cluster\s*bazında\s*cpu|cluster\s*bazında\s*ram|cluster.*cpu.*ram", h_cluster_cpu_ram),
+    (r"ha\s*aktif\s*olmayan\s*cluster|drs.*çalışıyor\s*mu|drs.*load\s*balancing|ha\s*/?\s*drs|cluster\s*ha|ha\s*drs\s*durum", h_cluster_ha_drs),
     (r"cluster\s*kapasitesi\s*ne\s*kadar\s*dolu|en\s*yoğun\s*cluster|kapasite\s*yetersizliği\s*riski", h_cluster_cpu_ram),
     (r"cluster\s*alarmı", h_critical_alarms_24h),
     (r"cluster\s*bazında\s*vm\s*say", h_cluster_vm_counts),
@@ -2226,7 +2338,7 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"ne\s*kadar\s*boş|boş\s*kayna[gğk]\w*|free\s*capacity|kaynak\s*boşlu[gğ]u|kapasite\s*boşlu[gğ]u", h_free_resources),
     (r"datastore\s*dağılım|vm.*datastore.*dağılım|datastore.*bazında.*vm|vm.*datastore.*bazında", h_datastore_by_disk),
     (r"datastore\s*kapasite|datastore.*boş|boş\s*datastore|datastore\s*doluluk|ne\s*kadar\s*boş.*(?:disk|datastore|depolama)|(?:disk|datastore|depolama).*(?:ne\s*kadar\s*boş|free)", h_datastore_by_disk),
-    (r"en\s*dolu\s*datastore|%?\s*85\s*üzeri\s*dolu\s*datastore", h_datastore_over_85),
+    (r"en\s*dolu\s*datastore|85\s*%?\s*üzeri\s*dolu\s*datastore|%?\s*85\s*%?\s*üzeri\s*dolu\s*datastore|datastore.*%?\s*85", h_datastore_over_85),
     (r"storage\s*latency\s*yüksek", h_disk_latency),
     (r"storage\s*bağlantı\s*problemi|datastore.a\s*erişemeyen|datastore'a\s*erişemeyen|datastore\s*erişim\s*durumu", h_datastore_accessibility),
     (r"storage\s*alarm", h_storage_alarms_30d),
@@ -2236,40 +2348,38 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"datastore\s*doluluk\s*rapor", h_datastore_by_disk),
 
     # Olaylar ve Alarm
-    (r"oluşan\s*kritik\s*alarm|kritik\s*alarmları\w*\s*göster", h_critical_alarms_24h),
+    (r"oluşan\s*kritik\s*alarm|kritik\s*alarmları\w*\s*göster|son\s*24\s*saat.*kritik\s*alarm|kritik\s*alarm", h_critical_alarms_24h),
     (r"en\s*fazla\s*alarm.*üreten\s*vm", h_vm_most_alarms_7d),
-    (r"alarmı\s*çözülmemiş\s*vm", h_unresolved_alarm_vms),
+    (r"alarmı\s*çözülmemiş\s*vm|açık\s*alarm.*vm", h_unresolved_alarm_vms),
     (r"ha\s*olayları\s*neler|oluşan\s*ha\s*olayları", h_cluster_ha_drs),
-    (r"migration\s*başarısız", h_migration_events),
-    (r"backup\s*başarısız", h_events_keyword_search),
+    (r"migration\s*başarısız|vmotion\s*başarısız", h_migration_events),
+    (r"backup\s*başarısız|yedekleme\s*başarısız", h_events_keyword_search),
     (r"snapshot\s*silme\s*hatası", h_events_keyword_search),
     (r"storage\s*disconnect\s*yaşandı", h_host_disconnect_events),
     (r"host\s*disconnect\s*oldu", h_host_disconnect_events),
-    (r"vm\s*crash\s*tespit", h_events_keyword_search),
+    (r"vm\s*crash\s*tespit|vm\s*çöktü|guest\s*crash", h_events_keyword_search),
 
-    # Envanter
-    (r"işletim\s*sistemi\s*bilinmeyen\s*vm", h_unknown_os),
-    (r"guest\s*tools\s*kurulu\s*olmayan", h_no_tools),
-    (r"tools.*qemu\s*agent\s*güncel\s*olmayan|vmware\s*tools.*güncel\s*olmayan", h_tools_version_outdated),
-    (r"son\s*\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*açıl(mayan|mamış)", h_unbooted_1y),
-    (r"owner\s*bilgisi\s*olmayan", h_no_owner),
-    (r"etiketi?\s*olmayan|tag.?etiket|etiket.*eksik|custom\s*attribute", h_no_tag),
-    (r"aynı\s*isimde\s*birden\s*fazla\s*vm", h_duplicate_names),
-    (r"üretim\s*ortamında\s*test\s*olarak\s*işaretlenmiş", h_prod_marked_test),
+    # Envanter meta
+    (r"işletim\s*sistemi\s*bilinmeyen\s*vm|os.?u\s*bilinmeyen|os\s*bilgisi\s*eksik", h_unknown_os),
+    (r"tools.*qemu\s*agent\s*güncel\s*olmayan|vmware\s*tools.*güncel\s*olmayan|tools\s*güncel\s*olmayan", h_tools_version_outdated),
+    (r"son\s*\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*açıl(mayan|mamış)|1\s*yıldır\s*açılmayan", h_unbooted_1y),
+    (r"owner\s*bilgisi\s*olmayan|sahip\s*bilgisi\s*olmayan", h_no_owner),
+    (r"etiketi?\s*olmayan|tag.?etiket|etiket.*eksik|custom\s*attribute|tag.?i?\s*olmayan", h_no_tag),
+    (r"aynı\s*isimde\s*birden\s*fazla\s*vm|duplicate\s*vm\s*name|çakışan\s*vm\s*adı", h_duplicate_names),
+    (r"üretim\s*ortamında\s*test\s*olarak\s*işaretlenmiş|prod.*test.*isim", h_prod_marked_test),
 
-    # Raporlama kısayolları — aynı verinin "... raporu/raporlar mısın" ifadeli hali
+    # Raporlama kısayolları
     (r"vm\s*restart\s*rapor|restart\s*raporu", h_restart_report_30d),
     (r"alarm\s*trend\s*rapor|en\s*çok\s*tekrar\s*eden\s*alarm", h_alarm_trend),
     (r"host\s*bakım\s*geçmişi|maintenance\s*moda\s*alınan\s*host", h_host_events_30d),
     (r"migration\s*geçmişi\s*rapor", h_migration_events),
     (r"işletim\s*sistemi\s*bilgisi\s*eksik", h_unknown_os),
-    (r"ip\s*adresi\s*görünmeyen\s*vm", h_no_ip_running),
     (r"owner\s*bilgisi\s*olmayan\s*vm\s*rapor", h_no_owner),
     (r"tag.etiket.*eksik\s*vm.*rapor|etiket\s*bilgisi\s*eksik|etiketi?\s*olmayan\s*vm", h_no_tag),
     (r"üretim.test\s*ayrımı\s*yapılmamış", h_prod_marked_test),
     (r"guest\s*agent.tools\s*kurulu\s*olmayan\s*vm\s*rapor", h_no_tools),
     (r"kullanılmayan\s*datastore", h_unused_datastore),
-    (r"kaynak\s+kullanımına\s+göre\s+optimize|optimize\s+edilmesi\s+gereken\s+vm", h_resource_optimization),
+    (r"kaynak\s+kullanımına\s+göre\s+optimize|optimize\s+edilmesi\s+gereken\s+vm|konsolidasyon\s*rapor", h_resource_optimization),
     (r"ortamın\s+genel\s+(sağlık\s+durumunu\s+özetle|durum)|genel\s+sağlık\s+durumunu\s+özetle", h_health_summary_md),
 ]
 
@@ -2323,6 +2433,7 @@ Raporu şu başlıklar altında özetle:
 2. Öne çıkan bulgular (madde madde, somut sayılar ver)
 3. Öneriler (en kritik 3 aksiyon)
 
+KRİTİK: Raporda yazan host/VM/CPU/RAM sayılarını aynen kullan. "Bilinmiyor", "kaç VM host'ta çalışıyor bilinmiyor" gibi ifadeler YASAK — sayılar raporda varsa mutlaka yaz.
 Tabloları doğrudan kopyalama, anlamlı yorum ekle. Cevabı markdown formatında yaz."""
 
     answer = md_preview  # fallback
