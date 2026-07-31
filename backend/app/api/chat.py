@@ -704,7 +704,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 data = await llm_gateway.generate_async(client, model=model, prompt=prompt)
 
                 if not data.get("error"):
-                    ai_response = data.get("response", "Yanıt alınamadı")
+                    from app.services.answer_sanitize import sanitize_llm_answer
+                    ai_response = sanitize_llm_answer(data.get("response", "Yanıt alınamadı") or "")
 
                     if not request.ephemeral:
                         assistant_msg = ChatMessage(
@@ -1986,6 +1987,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             break
 
             # ── 7. Kaydet + Cache ─────────────────────────────────────────
+            from app.services.answer_sanitize import sanitize_llm_answer
+            full_response = sanitize_llm_answer(full_response or "")
             if not ephemeral:
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant",

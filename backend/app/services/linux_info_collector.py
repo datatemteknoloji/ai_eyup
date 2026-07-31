@@ -948,7 +948,7 @@ _MINIMAL_BASE = {"kernel", "os"}
 
 # Filo SSH taramasında eşzamanlı üst sınır (çok büyük filolarda timeout önlemi).
 # Derin admin checklist her ortamda açık; özel olarak 16'ya düşürülmez.
-CHAT_SSH_FLEET_CAP = 48
+CHAT_SSH_FLEET_CAP = 64
 
 
 def _message_wants_dmesg(message: Optional[str]) -> bool:
@@ -1230,6 +1230,9 @@ def collect_server_info(server, groups: List[str], global_cred=None, message: st
         "dmesg_errors", "admin_dmesg_issues", "admin_journal_err", "admin_journal_warn",
         "admin_journal_boot_err", "admin_kernel_journal", "admin_auditlog",
         "admin_web_errorlog", "admin_failed_unit_logs", "admin_cronlog",
+        "lite_dmesg_issues", "lite_journal_err", "lite_authlog", "lite_failed_units",
+        "lvm_info", "raid_info", "network_mounts", "large_logs",
+        "admin_pkg_log", "admin_bootlog", "admin_syslog", "admin_authlog",
     }
     results = {}
     try:

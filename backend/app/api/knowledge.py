@@ -56,6 +56,69 @@ class FactUpdate(BaseModel):
     value: str
 
 
+class FactCorrection(BaseModel):
+    """Yanlış öğrenilmiş bilgiyi düzelt — key yoksa category+key ile yeni kayıt."""
+    server_id: int
+    key: str
+    value: str
+    category: Optional[str] = "correction"
+    note: Optional[str] = None
+
+
+@router.post("/correct")
+def correct_fact(
+    body: FactCorrection,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_knowledge),
+):
+    """Admin feedback: yanlış fact'i düzeltilmiş değerle kaydet (source=manual)."""
+    from app.services.fact_learning import upsert_manual_fact_correction
+
+    server = db.query(Server).filter(Server.id == body.server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Sunucu bulunamadı")
+    result = upsert_manual_fact_correction(
+        db, body.server_id, body.key, body.value, category=body.category or "correction",
+    )
+    if not result:
+        raise HTTPException(status_code=400, detail="Düzeltme kaydedilemedi")
+    record_audit(
+        db, category="knowledge", action="knowledge.correct", status="success",
+        actor=user,
+        summary=f"Bilgi düzeltildi: {body.key}" + (f" ({body.note})" if body.note else ""),
+        target_type="learned_fact", target_id=result.get("id"), server_id=body.server_id,
+        ip_address=client_ip(request),
+    )
+    _schedule_knowledge_rag_reindex()
+    return result
+
+
+@router.post("/{fact_id}/confirm")
+def confirm_fact(
+    fact_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_knowledge),
+):
+    """Doğru bilinen fact'i onayla (times_confirmed++, confidence=1)."""
+    from datetime import datetime, timezone
+    fact = db.query(LearnedFact).filter(LearnedFact.id == fact_id).first()
+    if not fact:
+        raise HTTPException(status_code=404, detail="Kayit bulunamadi")
+    fact.last_confirmed_at = datetime.now(timezone.utc)
+    fact.times_confirmed = (fact.times_confirmed or 1) + 1
+    fact.confidence = 1.0
+    db.commit()
+    record_audit(
+        db, category="knowledge", action="knowledge.confirm", status="success",
+        actor=user, summary=f"Bilgi onaylandı: {fact.key}",
+        target_type="learned_fact", target_id=fact_id, server_id=fact.server_id,
+        ip_address=client_ip(request),
+    )
+    return fact.to_dict()
+
+
 @router.get("")
 @router.get("/")
 def list_facts(

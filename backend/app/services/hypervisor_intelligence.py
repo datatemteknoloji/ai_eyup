@@ -2503,6 +2503,11 @@ def answer_hypervisor_question(
 
     result = _compute_hypervisor_answer(db, question, model, conversation_history)
 
+    # Deterministik cevaplar şablon; LLM serbest metinde bilinmiyor kaçışını temizle
+    if result.get("answer") and result.get("intents") != ["deterministic"]:
+        from app.services.answer_sanitize import sanitize_llm_answer
+        result["answer"] = sanitize_llm_answer(result.get("answer") or "")
+
     is_deterministic = result.get("intents") == ["deterministic"]
     should_cache = (is_deterministic or not conversation_history) and not result.get("error")
     if should_cache:

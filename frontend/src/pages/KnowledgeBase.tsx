@@ -37,13 +37,19 @@ const CATEGORY_LABEL: Record<string, string> = {
   kernel: 'Çekirdek', sysctl: 'Sysctl', os: 'İşletim Sistemi', cpu: 'CPU',
   hardware: 'Donanım', disk: 'Disk / Mount', memory: 'Bellek', network: 'Ağ',
   security: 'Güvenlik', packages: 'Paketler', apps: 'Uygulama Sürümleri',
-  limits: 'Sistem Limitleri', ssl: 'SSL',
+  limits: 'Sistem Limitleri', ssl: 'SSL', cron: 'Cron',
+  chat_discovery: 'Sohbet Keşfi', correction: 'Düzeltme',
+  virt_os: 'Virt OS', virt_power: 'Virt Güç', virt_tools: 'Virt Tools',
+  virt_storage: 'Virt Depolama', virt_cluster: 'Virt Cluster',
+  virt_cpu: 'Virt CPU', virt_memory: 'Virt RAM', virt_network: 'Virt Ağ',
 }
 
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   ssh: { label: 'SSH', color: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/25' },
   winrm: { label: 'WinRM', color: 'text-blue-300 bg-blue-500/10 border-blue-500/25' },
   manual: { label: 'Manuel', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
+  virt_sync: { label: 'Virt Sync', color: 'text-violet-300 bg-violet-500/10 border-violet-500/25' },
+  chat_tool: { label: 'Chat Tool', color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' },
 }
 
 function fmt(dt: string | null) {
@@ -115,6 +121,16 @@ const KnowledgeBase: React.FC = () => {
     },
   })
 
+  const confirmMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await fetch(`${API_BASE_URL}/knowledge/${id}/confirm`, { method: 'POST' })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['knowledge-facts'] })
+      qc.invalidateQueries({ queryKey: ['knowledge-summary'] })
+    },
+  })
+
   const clearServerMutation = useMutation({
     mutationFn: async (sid: number) => {
       await fetch(`${API_BASE_URL}/knowledge/server/${sid}`, { method: 'DELETE' })
@@ -133,10 +149,9 @@ const KnowledgeBase: React.FC = () => {
       <div>
         <h1 className="text-xl font-semibold text-white">Bilgi Bankası</h1>
         <p className="text-sm text-slate-400 mt-1">
-          AI&apos;nin SSH/WinRM taramalarından öğrendiği kalıcı, yapısal sunucu bilgileri (OS/kernel sürümü,
-          disk-mount düzeni, güvenlik yapılandırması, donanım vb). Seçili sunucuda doğrudan prompt&apos;a
-          eklenir; ayrıca Ayarlar → RAG üzerinden indexlenerek Chat semantik aramasında kullanılır.
-          Anlık metrikler (CPU/RAM/disk kullanım %) burada tutulmaz.
+          AI&apos;nin SSH/WinRM ve hypervisor envanter sync&apos;inden öğrendiği kalıcı yapısal bilgiler.
+          Yanlış kayıtları Düzenle ile düzeltin (manuel kaynak) veya Onayla ile güçlendirin.
+          Anlık metrikler (CPU/RAM %) burada tutulmaz.
         </p>
       </div>
 
@@ -255,6 +270,9 @@ const KnowledgeBase: React.FC = () => {
                     <td className="px-3 py-2 whitespace-nowrap">
                       {editing?.id !== f.id && (
                         <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => confirmMutation.mutate(f.id)}
+                            className="text-slate-500 hover:text-emerald-300 text-xs">Onayla</button>
                           <button
                             onClick={() => { setEditing(f); setEditValue(f.value) }}
                             className="text-slate-500 hover:text-blue-300 text-xs">Düzenle</button>

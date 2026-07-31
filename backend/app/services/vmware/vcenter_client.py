@@ -3327,7 +3327,7 @@ class VCenterClient:
     </vim25:CreateCollectorForEvents>
   </soapenv:Body>
 </soapenv:Envelope>"""
-        root = self._soap_post(soap_session, soap_url, create_body, timeout=30)
+        root = self._soap_post(soap_session, soap_url, create_body, timeout=60)
         if root is None:
             return []
 
@@ -3376,7 +3376,7 @@ class VCenterClient:
     </vim25:RetrieveProperties>
   </soapenv:Body>
 </soapenv:Envelope>"""
-                    page_root = self._soap_post(soap_session, soap_url, prop_body, timeout=30)
+                    page_root = self._soap_post(soap_session, soap_url, prop_body, timeout=60)
                 else:
                     prev_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
@@ -3386,7 +3386,7 @@ class VCenterClient:
     </vim25:GetPreviousPage>
   </soapenv:Body>
 </soapenv:Envelope>"""
-                    page_root = self._soap_post(soap_session, soap_url, prev_body, timeout=30)
+                    page_root = self._soap_post(soap_session, soap_url, prev_body, timeout=60)
 
                 if page_root is None:
                     break

@@ -190,6 +190,12 @@ def _upsert_vm_record(
     elif client and needs_enrichment:
         _enrich_server_from_client(client, existing, vm, db)
 
+    try:
+        from app.services.fact_learning import extract_and_store_virt_facts
+        extract_and_store_virt_facts(db, existing)
+    except Exception as exc:
+        logger.debug("Virt fact learning atlandı (%s): %s", existing.name, exc)
+
     return created
 
 

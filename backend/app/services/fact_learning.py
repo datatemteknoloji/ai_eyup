@@ -50,7 +50,8 @@ LINUX_STABLE_FACT_FIELDS: Dict[str, str] = {
     "network_interfaces": "network", "mac_addresses": "network", "resolv_conf": "network",
     "nsswitch_conf": "network", "default_route": "network", "network_config": "network",
     # Guvenlik yapilandirmasi
-    "selinux_status": "security", "firewall_status": "security", "sudoers": "security",
+    "selinux_status": "security", "getenforce": "security", "firewall_status": "security",
+    "sudoers": "security",
     "system_users": "security", "system_groups": "security", "ssh_dirs": "security",
     "audit_rules": "security",
     # Paket / yazilim surumleri
@@ -61,6 +62,15 @@ LINUX_STABLE_FACT_FIELDS: Dict[str, str] = {
     "ulimits": "limits", "file_limits": "limits", "security_limits": "limits", "pid_limits": "limits",
     # SSL
     "cert_files": "ssl", "openssl_version": "ssl",
+    # Admin lite / config (yapısal — anlık doluluk değil)
+    "lite_selinux": "security", "lite_sshd": "security", "lite_fstab": "disk",
+    "lite_sysctl": "sysctl", "lite_net_dns": "network",
+    "cfg_fstab": "disk", "cfg_dns_nss": "network", "cfg_hosts": "network",
+    "cfg_sysctl": "sysctl", "cfg_limits": "limits", "cfg_sshd": "security",
+    "cfg_selinux": "security", "cfg_time": "os", "cfg_firewall": "security",
+    "cfg_network": "network", "cfg_ip_route": "network", "cfg_cron": "cron",
+    "cfg_tuned": "os", "cfg_hostname_target": "os", "cfg_logrotate": "os",
+    "cfg_sudoers_summary": "security",
 }
 
 # ── Windows: collect_server_info() (windows_info_collector.py) sonuc anahtarlari ──
@@ -241,7 +251,7 @@ def extract_facts_from_tool_output(
 
 def _age_label(dt: Optional[datetime]) -> str:
     if not dt:
-        return "bilinmiyor"
+        return "tarih yok"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - dt
@@ -283,3 +293,186 @@ def get_learned_facts_block(db: Session, server, max_items: int = 25) -> str:
     except Exception as e:
         logger.debug(f"Learned facts block olusturulamadi: {e}")
         return ""
+
+
+# ── Virt / VM envanterinden yapısal öğrenme ──────────────────────────────────
+# LearnedFact.server_id → servers satırı (VM kaydı). Hypervisor sync sonrası
+# VM'nin nadiren değişen alanları kalıcı hafızaya yazılır.
+
+VIRT_STABLE_SERVER_FIELDS: Dict[str, str] = {
+    "os_type": "virt_os",
+    "vm_power_state": "virt_power",
+    "vm_tools_status": "virt_tools",
+    "vm_datastore": "virt_storage",
+    "vm_cluster": "virt_cluster",
+    "vm_guest_hostname": "virt_os",
+    "vm_guest_ip": "virt_network",
+    "vm_hardware_version": "virt_os",
+    "cpu_cores": "virt_cpu",
+    "memory_gb": "virt_memory",
+    "vm_disk_gb": "virt_storage",
+    "ip_address": "virt_network",
+    "hostname": "virt_os",
+}
+
+
+def extract_and_store_virt_facts(db: Session, server) -> int:
+    """Inventory sync sonrası VM Server satırından yapısal virt fact'leri upsert eder."""
+    if not server or not getattr(server, "id", None):
+        return 0
+    if not getattr(server, "hypervisor_id", None) and (getattr(server, "server_type", "") or "").upper() != "VIRTUAL":
+        return 0
+
+    now = datetime.now(timezone.utc)
+    touched = 0
+    try:
+        from app.models.learned_fact import LearnedFact
+
+        for attr, category in VIRT_STABLE_SERVER_FIELDS.items():
+            raw = getattr(server, attr, None)
+            if raw is None or raw == "":
+                continue
+            value_str = _stringify(raw)[:_MAX_VALUE_CHARS]
+            if not value_str:
+                continue
+            key = f"virt.{attr}"
+            existing = (
+                db.query(LearnedFact)
+                .filter(
+                    LearnedFact.server_id == server.id,
+                    LearnedFact.category == category,
+                    LearnedFact.key == key,
+                )
+                .first()
+            )
+            if existing:
+                if existing.value == value_str:
+                    existing.last_confirmed_at = now
+                    existing.times_confirmed = (existing.times_confirmed or 1) + 1
+                else:
+                    existing.value = value_str
+                    existing.first_learned_at = now
+                    existing.last_confirmed_at = now
+                    existing.times_confirmed = 1
+                existing.source = "virt_sync"
+            else:
+                db.add(LearnedFact(
+                    server_id=server.id,
+                    category=category,
+                    key=key,
+                    value=value_str,
+                    source="virt_sync",
+                    first_learned_at=now,
+                    last_confirmed_at=now,
+                    times_confirmed=1,
+                ))
+            touched += 1
+
+        if getattr(server, "hypervisor_id", None):
+            hv_name = None
+            try:
+                hv = getattr(server, "hypervisor", None)
+                if hv is not None:
+                    hv_name = getattr(hv, "name", None)
+            except Exception:
+                hv_name = None
+            if not hv_name:
+                try:
+                    from app.models.hypervisor import Hypervisor
+                    hv = db.query(Hypervisor).filter(Hypervisor.id == server.hypervisor_id).first()
+                    hv_name = hv.name if hv else None
+                except Exception:
+                    pass
+            if hv_name:
+                key, category, value_str = "virt.hypervisor_name", "virt_cluster", str(hv_name)[:200]
+                existing = (
+                    db.query(LearnedFact)
+                    .filter(
+                        LearnedFact.server_id == server.id,
+                        LearnedFact.category == category,
+                        LearnedFact.key == key,
+                    )
+                    .first()
+                )
+                if existing:
+                    if existing.value == value_str:
+                        existing.last_confirmed_at = now
+                        existing.times_confirmed = (existing.times_confirmed or 1) + 1
+                    else:
+                        existing.value = value_str
+                        existing.first_learned_at = now
+                        existing.last_confirmed_at = now
+                        existing.times_confirmed = 1
+                    existing.source = "virt_sync"
+                else:
+                    db.add(LearnedFact(
+                        server_id=server.id, category=category, key=key, value=value_str,
+                        source="virt_sync", first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
+                    ))
+                touched += 1
+
+        if touched:
+            db.commit()
+    except Exception as e:
+        logger.debug("Virt fact learning atlandi (%s): %s", getattr(server, "name", "?"), e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+    return touched
+
+
+def upsert_manual_fact_correction(
+    db: Session,
+    server_id: int,
+    key: str,
+    value: str,
+    category: str = "correction",
+) -> Optional[Dict[str, Any]]:
+    """Admin/feedback ile yanlış öğrenilmiş bilgiyi düzeltilmiş değerle kaydet."""
+    if not server_id or not key or value is None:
+        return None
+    now = datetime.now(timezone.utc)
+    value_str = _stringify(value)[:_MAX_VALUE_CHARS]
+    try:
+        from app.models.learned_fact import LearnedFact
+
+        existing = (
+            db.query(LearnedFact)
+            .filter(
+                LearnedFact.server_id == server_id,
+                LearnedFact.key == key,
+            )
+            .first()
+        )
+        if existing:
+            existing.value = value_str
+            existing.category = category or existing.category
+            existing.source = "manual"
+            existing.last_confirmed_at = now
+            existing.confidence = 1.0
+            existing.times_confirmed = (existing.times_confirmed or 1) + 1
+        else:
+            existing = LearnedFact(
+                server_id=server_id,
+                category=category or "correction",
+                key=key,
+                value=value_str,
+                source="manual",
+                first_learned_at=now,
+                last_confirmed_at=now,
+                times_confirmed=1,
+                confidence=1.0,
+            )
+            db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        return existing.to_dict()
+    except Exception as e:
+        logger.warning("Manual fact correction failed: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
