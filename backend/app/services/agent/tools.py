@@ -641,6 +641,33 @@ def _kernel_errors_cmd(args: Dict[str, Any]) -> str:
     )
 
 
+def _admin_diag_snapshot_cmd(args: Dict[str, Any]) -> str:
+    """Kıdemli sysadmin log+config checklist (salt okunur, sırlar süzülmüş)."""
+    hours = max(1, min(int(args.get("hours") or 24), 168))
+    return (
+        f"echo '=== JOURNAL ERR+ (son {hours}s) ==='; "
+        f"journalctl -p err..emerg --since '{hours} hours ago' --no-pager 2>/dev/null | tail -60; "
+        "echo; echo '=== DMESG SORUN ==='; "
+        "(dmesg -T 2>/dev/null || dmesg 2>/dev/null) | "
+        "grep -iE 'error|fail|panic|oops|oom|blocked|I/O error|reset|timeout|segfault' | tail -40; "
+        "echo; echo '=== FAILED UNITS ==='; systemctl --failed --no-pager --plain 2>/dev/null; "
+        "echo; echo '=== AUTH/SECURE (son 40) ==='; "
+        "tail -n 40 /var/log/secure 2>/dev/null || tail -n 40 /var/log/auth.log 2>/dev/null; "
+        "echo; echo '=== FSTAB ==='; cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$'; "
+        "echo; echo '=== SYSCTL (conf) ==='; "
+        "(cat /etc/sysctl.conf 2>/dev/null; for f in /etc/sysctl.d/*.conf; do "
+        "[ -f \"$f\" ] && echo \"# $f\" && grep -v '^#' \"$f\" | grep -v '^$'; done) 2>/dev/null | head -50; "
+        "echo; echo '=== SSHD ÖZET ==='; "
+        "grep -E '^(Port|PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|MaxAuthTries|MaxStartups|ClientAlive)' "
+        "/etc/ssh/sshd_config /etc/ssh/sshd_config.d/* 2>/dev/null | grep -v '^#' | head -30; "
+        "echo; echo '=== SELINUX ==='; getenforce 2>/dev/null; cat /etc/selinux/config 2>/dev/null | grep -v '^#' | grep -v '^$'; "
+        "echo; echo '=== DNS ==='; cat /etc/resolv.conf 2>/dev/null; "
+        "echo; echo '=== FIREWALL ==='; "
+        "(firewall-cmd --list-all 2>/dev/null | head -25) || (iptables -L -n 2>/dev/null | head -25); "
+        "echo; echo '=== NEEDS-RESTART ==='; needs-restarting -r 2>/dev/null || echo 'needs-restarting yok'"
+    )
+
+
 def _security_patch_status_cmd(args: Dict[str, Any]) -> str:
     # NOT: /var/run/reboot-required gibi yollar 'reboot' kelimesini içerdiği için
     # policy engine tarafından yıkıcı sayılıp reddedilir — bu yüzden RHEL/CentOS'ta
@@ -1215,6 +1242,27 @@ TOOLS: Dict[str, Tool] = {
         risk_level=RiskLevel.READ_ONLY,
         build_command=_kernel_errors_cmd,
         timeout=30,
+        allow_sudo=True,
+    ),
+    "get_admin_diag_snapshot": Tool(
+        name="get_admin_diag_snapshot",
+        description=(
+            "Kıdemli Linux sysadmin checklist'ini tek turda SALT-OKUNUR toplar: journal err+, "
+            "dmesg sorun satırları, failed units, auth/secure, fstab, sysctl conf, sshd_config özeti, "
+            "SELinux, DNS, firewall, needs-restarting. 'Analiz et', 'kök neden', 'loglara bak', "
+            "'configleri kontrol et', 'sorun teşhisi', 'dmesg + journal' gibi derin tanı sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Sunucu adı veya IP"},
+                "hours": {"type": "integer", "description": "Journal için saat (1-168, varsayılan 24)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=_admin_diag_snapshot_cmd,
+        timeout=60,
         allow_sudo=True,
     ),
     "get_security_patch_status": Tool(

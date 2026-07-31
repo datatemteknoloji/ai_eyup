@@ -267,6 +267,50 @@ COMMAND_GROUPS = {
         ("stat /boot 2>/dev/null | head -5; df -h /boot 2>/dev/null | tail -1", "boot_partition"),
         ("cat /proc/mounts 2>/dev/null | grep -v 'proc\|sys\|dev\|run' | head -20", "mounts"),
     ],
+    # ── ADMIN LOGLARI (kıdemli sysadmin checklist) ───────────────────────────
+    # Tek sunucu / teşhis sorularında: journal, dmesg, auth, cron, audit, boot,
+    # paket/güncelleme logları ve yaygın app error logları.
+    "admin_logs": [
+        ("journalctl -p err..emerg --since '24 hours ago' --no-pager 2>/dev/null | tail -80", "admin_journal_err"),
+        ("journalctl -p warning --since '6 hours ago' --no-pager 2>/dev/null | tail -40", "admin_journal_warn"),
+        ("journalctl -b -p err..emerg --no-pager 2>/dev/null | tail -40", "admin_journal_boot_err"),
+        ("journalctl --list-boots --no-pager 2>/dev/null | tail -8", "admin_boot_list"),
+        ("(dmesg -T 2>/dev/null || dmesg 2>/dev/null) | tail -80", "admin_dmesg_recent"),
+        ("(dmesg -T 2>/dev/null || dmesg 2>/dev/null) | grep -iE 'error|fail|panic|oops|oom|blocked|I/O error|reset|timeout|segfault' | tail -50", "admin_dmesg_issues"),
+        ("journalctl -k -p err..alert --since '7 days ago' --no-pager -n 50 2>/dev/null", "admin_kernel_journal"),
+        ("tail -n 60 /var/log/messages 2>/dev/null || tail -n 60 /var/log/syslog 2>/dev/null", "admin_syslog"),
+        ("tail -n 50 /var/log/secure 2>/dev/null || tail -n 50 /var/log/auth.log 2>/dev/null", "admin_authlog"),
+        ("tail -n 40 /var/log/cron 2>/dev/null || journalctl -u crond --since '24 hours ago' --no-pager 2>/dev/null | tail -30", "admin_cronlog"),
+        ("tail -n 40 /var/log/boot.log 2>/dev/null || journalctl -b 0 -o short-precise --no-pager 2>/dev/null | head -40", "admin_bootlog"),
+        ("tail -n 40 /var/log/audit/audit.log 2>/dev/null | grep -iE 'denied|failed|AVC|USER_AUTH' | tail -30", "admin_auditlog"),
+        ("systemctl --failed --no-pager --plain 2>/dev/null; echo '---'; systemctl list-units --state=failed --no-pager 2>/dev/null | head -20", "admin_failed_units"),
+        ("for u in $(systemctl list-units --state=failed --no-legend --no-pager 2>/dev/null | awk '{print $1}' | head -5); do echo \"=== journal $u ===\"; journalctl -u \"$u\" --since '24 hours ago' --no-pager 2>/dev/null | tail -15; done", "admin_failed_unit_logs"),
+        ("tail -n 30 /var/log/dnf.log 2>/dev/null || tail -n 30 /var/log/yum.log 2>/dev/null || tail -n 20 /var/log/apt/history.log 2>/dev/null", "admin_pkg_log"),
+        ("(tail -n 25 /var/log/nginx/error.log 2>/dev/null; tail -n 25 /var/log/httpd/error_log 2>/dev/null; tail -n 25 /var/log/apache2/error.log 2>/dev/null) | head -40", "admin_web_errorlog"),
+        ("ls -lah /var/log 2>/dev/null | head -35", "admin_varlog_listing"),
+        ("journalctl --disk-usage 2>/dev/null; df -h /var/log 2>/dev/null | tail -1", "admin_log_disk"),
+    ],
+    # ── ADMIN CONFIGS (salt okunur, hassas sırlar süzülmüş) ──────────────────
+    "admin_configs": [
+        ("cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$'", "cfg_fstab"),
+        ("cat /etc/resolv.conf 2>/dev/null; echo '---'; grep -E '^hosts:|^passwd:|^shadow:|^group:' /etc/nsswitch.conf 2>/dev/null", "cfg_dns_nss"),
+        ("cat /etc/hosts 2>/dev/null | grep -v '^#' | grep -v '^$' | head -40", "cfg_hosts"),
+        ("(cat /etc/sysctl.conf 2>/dev/null; echo '--- /etc/sysctl.d ---'; for f in /etc/sysctl.d/*.conf; do [ -f \"$f\" ] && echo \"# $f\" && grep -v '^#' \"$f\" | grep -v '^$'; done) 2>/dev/null | head -80", "cfg_sysctl"),
+        ("(cat /etc/security/limits.conf 2>/dev/null; ls /etc/security/limits.d/ 2>/dev/null; for f in /etc/security/limits.d/*; do [ -f \"$f\" ] && echo \"# $f\" && grep -v '^#' \"$f\" | grep -v '^$'; done) 2>/dev/null | grep -v '^#' | grep -v '^$' | head -50", "cfg_limits"),
+        ("grep -E '^(Port|PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|AllowUsers|AllowGroups|MaxAuthTries|MaxStartups|ClientAlive|ListenAddress|UsePAM|ChallengeResponse|KbdInteractive)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/* 2>/dev/null | grep -v '^#' | head -40", "cfg_sshd"),
+        ("cat /etc/selinux/config 2>/dev/null | grep -v '^#' | grep -v '^$'; echo '---'; getenforce 2>/dev/null; sestatus 2>/dev/null | head -12", "cfg_selinux"),
+        ("(cat /etc/chrony.conf 2>/dev/null || cat /etc/ntp.conf 2>/dev/null || cat /etc/chrony/chrony.conf 2>/dev/null) | grep -v '^#' | grep -v '^$' | head -30", "cfg_time"),
+        ("timedatectl 2>/dev/null | head -15", "cfg_timedatectl"),
+        ("(firewall-cmd --list-all 2>/dev/null | head -35) || (iptables -L -n -v 2>/dev/null | head -40) || (nft list ruleset 2>/dev/null | head -40)", "cfg_firewall"),
+        ("(nmcli -f NAME,UUID,TYPE,DEVICE,STATE con show 2>/dev/null | head -20) || (ls /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null; grep -hE '^(DEVICE|NAME|BOOTPROTO|IPADDR|GATEWAY|DNS|ONBOOT|MASTER|SLAVE)=' /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null | head -40)", "cfg_network"),
+        ("ip route 2>/dev/null | head -20; echo '---'; ip -br addr 2>/dev/null | head -20", "cfg_ip_route"),
+        ("cat /etc/crontab 2>/dev/null | grep -v '^#' | grep -v '^$'; echo '--- cron.d ---'; ls /etc/cron.d/ 2>/dev/null; systemctl list-timers --no-pager 2>/dev/null | head -15", "cfg_cron"),
+        ("tuned-adm active 2>/dev/null; echo '---'; cat /etc/tuned/active_profile 2>/dev/null", "cfg_tuned"),
+        ("systemctl get-default 2>/dev/null; echo '---'; hostnamectl 2>/dev/null | head -12", "cfg_hostname_target"),
+        ("ls /etc/logrotate.d/ 2>/dev/null | head -25; echo '---'; head -40 /etc/logrotate.conf 2>/dev/null | grep -v '^#'", "cfg_logrotate"),
+        ("needs-restarting -r 2>/dev/null || needs-restarting 2>/dev/null | head -20 || echo 'needs-restarting yok'", "cfg_needs_restart"),
+        ("grep -vE '^(#|$)' /etc/sudoers 2>/dev/null | head -25; ls /etc/sudoers.d/ 2>/dev/null", "cfg_sudoers_summary"),
+    ],
 }
 
 KEYWORD_TO_GROUPS: dict = {
@@ -569,6 +613,34 @@ KEYWORD_TO_GROUPS: dict = {
     "alert": ["logs", "security"], "emergency": ["logs"], "notice": ["logs"],
     "debug": ["logs"],
 
+    # ADMIN TEŞHİS / CONFIG (kıdemli sysadmin checklist)
+    "analiz": ["admin_logs", "admin_configs", "kernel", "logs", "services"],
+    "analysis": ["admin_logs", "admin_configs", "kernel", "logs"],
+    "teşhis": ["admin_logs", "admin_configs", "kernel", "logs", "services", "security"],
+    "teshis": ["admin_logs", "admin_configs", "kernel", "logs", "services", "security"],
+    "diagnos": ["admin_logs", "admin_configs", "kernel", "logs"],
+    "kök neden": ["admin_logs", "admin_configs", "kernel", "logs", "services"],
+    "kok neden": ["admin_logs", "admin_configs", "kernel", "logs", "services"],
+    "root cause": ["admin_logs", "admin_configs", "kernel", "logs"],
+    "sorun": ["admin_logs", "admin_configs", "logs", "services", "kernel"],
+    "problem": ["admin_logs", "admin_configs", "logs", "services"],
+    "arıza": ["admin_logs", "admin_configs", "logs", "kernel", "services"],
+    "ariza": ["admin_logs", "admin_configs", "logs", "kernel", "services"],
+    "troubleshoot": ["admin_logs", "admin_configs", "logs", "kernel"],
+    "config": ["admin_configs", "os", "kernel"],
+    "konfig": ["admin_configs"],
+    "yapılandırma": ["admin_configs", "os"],
+    "yapilandirma": ["admin_configs", "os"],
+    "configuration": ["admin_configs"],
+    "/etc/": ["admin_configs", "filesystem"],
+    "sysctl.conf": ["admin_configs", "kernel"],
+    "sshd_config": ["admin_configs", "security"],
+    "fstab": ["admin_configs", "disk"],
+    "checklist": ["admin_logs", "admin_configs", "kernel", "os", "services", "security"],
+    "health check": ["admin_logs", "admin_configs", "services", "kernel"],
+    "sağlık kontrol": ["admin_logs", "admin_configs", "services", "kernel"],
+    "saglik kontrol": ["admin_logs", "admin_configs", "services", "kernel"],
+
     # PAKETLER
     "paket": ["packages"], "rpm": ["packages"], "yum": ["packages"],
     "apt": ["packages"], "dpkg": ["packages"], "dnf": ["packages"],
@@ -806,6 +878,15 @@ STANDARD_GROUPS = {"kernel", "os", "cpu", "memory", "disk", "uptime", "load", "s
 EXTRA_GROUPS_KEYWORDS = {
     "performance_deep": ["vmstat", "iostat", "1 dakika", "1 dak", "derin analiz", "benchmark", "psi", "pressure"],
     "logs":        ["log", "hata", "error", "journal", "syslog", "auth", "secure", "dmesg"],
+    "admin_logs":  [
+        "dmesg", "analiz", "teşhis", "teshis", "diagnos", "kök neden", "kok neden", "root cause",
+        "sorun", "arıza", "ariza", "troubleshoot", "journalctl", "audit.log", "boot.log",
+        "logları", "loglari", "tüm log", "tum log", "admin log",
+    ],
+    "admin_configs": [
+        "config", "konfig", "yapılandırma", "yapilandirma", "configuration", "sysctl.conf",
+        "sshd_config", "fstab", "limits.conf", "chrony", "tuned", "checklist",
+    ],
     "processes":   ["process", "proses", "ps aux", "calisan", "çalışan", "top", "lsof", "pstree", "fork"],
     "services":    ["servis", "service", "systemctl", "daemon", "unit", "failed unit"],
     "network":     ["network", "ag", "ağ", "port", "ip addr", "arayuz", "arayüz", "interface", "dns", "resolv", "nameserver", "gateway", "ağ geçidi", "route", "arp", "nmcli"],
@@ -831,6 +912,7 @@ EXTRA_GROUPS_KEYWORDS = {
 _FOCUSED_GROUPS = {
     "network", "hardware", "containers", "web", "database", "ntp", "ssl",
     "cron", "users", "apps", "limits", "filesystem", "security", "packages",
+    "admin_logs", "admin_configs", "logs",
 }
 _MINIMAL_BASE = {"kernel", "os"}
 
@@ -851,8 +933,29 @@ def _message_wants_dmesg(message: Optional[str]) -> bool:
     )
 
 
+def _message_wants_admin_diag(message: Optional[str]) -> bool:
+    """Kıdemli admin'in bakacağı log+config paketini tetikle."""
+    if not message:
+        return False
+    m = message.lower()
+    return any(
+        k in m
+        for k in (
+            "dmesg", "analiz", "teşhis", "teshis", "diagnos", "kök neden", "kok neden",
+            "root cause", "sorun", "arıza", "ariza", "troubleshoot", "checklist",
+            "yapılandırma", "yapilandirma", "config", "konfig", "sshd_config",
+            "sysctl.conf", "journalctl", "tüm log", "tum log", "logları incele",
+            "neden yavaş", "neden dolu", "neden düştü", "neden kapandi", "neden kapandı",
+            "bozul", "çök", "coktu", "çöktü", "kesinti",
+        )
+    )
+
+
 def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: int = CHAT_SSH_FLEET_CAP) -> Tuple[List[Any], Optional[str]]:
     """Çok büyük filolarda SSH hedefini sınırla; mesajda adı geçenleri önceliklendir."""
+    # Admin log+config paketi ağır — filoda daha düşük üst sınır
+    if message and _message_wants_admin_diag(message):
+        cap = min(cap, 16)
     if not servers or len(servers) <= cap:
         return list(servers or []), None
     msg = (message or "").lower()
@@ -869,7 +972,8 @@ def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: 
     note = (
         f"NOT: {len(servers)} AI Ready sunucudan filo SSH taraması için {len(picked)} tanesi "
         f"seçildi (üst sınır {cap}). Tüm filoyu veya belirli host'ları taratmak için "
-        f"Hedef menüsünden sunucu seçin ya da soruya sunucu adını yazın."
+        f"Hedef menüsünden sunucu seçin ya da soruya sunucu adını yazın. "
+        f"Derin log/config analizi için tek sunucu seçmek en doğru sonuçları verir."
     )
     return picked, note
 
@@ -967,6 +1071,10 @@ def detect_needed_groups(message: str) -> List[str]:
             if keyword in _GENERIC_BROADENING_WORDS and has_specific_topic:
                 continue
             extra_groups.update(group_list)
+
+    # Kıdemli admin checklist: log + kritik config paketini zorla ekle
+    if _message_wants_admin_diag(message):
+        extra_groups.update({"admin_logs", "admin_configs", "kernel", "logs", "services"})
 
     # Derin performans analizi çok yavaş
     if "performance_deep" in extra_groups and not any(
@@ -1072,14 +1180,26 @@ def collect_server_info(server, groups: List[str], global_cred=None, message: st
         return {"error": f"SSH baglantisi kurulamadi: {server.ip_address}"}
 
     is_deep = "performance_deep" in groups
+    _empty_ok_keys = {
+        "dmesg_errors", "admin_dmesg_issues", "admin_journal_err", "admin_journal_warn",
+        "admin_journal_boot_err", "admin_kernel_journal", "admin_auditlog",
+        "admin_web_errorlog", "admin_failed_unit_logs", "admin_cronlog",
+    }
     results = {}
     try:
         for group_name in groups:
             for cmd, key in COMMAND_GROUPS.get(group_name, []):
                 try:
-                    # Deep performance komutları için biraz daha uzun, normal komutlar kısa
-                    timeout = 45 if group_name == "performance_deep" else 15
-                    use_sudo = key in _SUDO_PREFERRED_KEYS and bool(sudo_password)
+                    # Deep performance / admin log-config biraz daha uzun
+                    if group_name == "performance_deep":
+                        timeout = 45
+                    elif group_name in ("admin_logs", "admin_configs"):
+                        timeout = 25
+                    else:
+                        timeout = 15
+                    use_sudo = (
+                        key in _SUDO_PREFERRED_KEYS or group_name in ("admin_logs", "admin_configs")
+                    ) and bool(sudo_password)
                     success, stdout, stderr = ssh.execute_command(cmd, use_sudo=use_sudo, cmd_timeout=timeout)
                     output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
                     # "dnf history" gibi bazı komutlar root olmadan calisip exit=0 dondurur
@@ -1090,10 +1210,8 @@ def collect_server_info(server, groups: List[str], global_cred=None, message: st
                         output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
                     if output:
                         results[key] = output
-                    elif key == "dmesg_errors":
-                        # Boş = komut çalıştı, kritik satır yok. Anahtarı hiç yazmamak
-                        # LLM'in "dmesg toplanmadı" demesine yol açıyordu.
-                        results[key] = "(err/crit seviyesinde dmesg satırı yok)"
+                    elif key in _empty_ok_keys:
+                        results[key] = f"({key}: ilgili satır yok / temiz)"
                 except Exception as e:
                     logger.debug(f"Cmd failed {cmd}: {e}")
 
@@ -1330,6 +1448,24 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
         "etc_listing": "/etc dizini", "log_listing": "/var/log dizini",
         "tmp_recent": "/tmp (yeni)", "new_logs": "Yeni Log Dosyaları",
         "boot_partition": "Boot Bölümü", "mounts": "Montaj Noktaları",
+        # Admin logs
+        "admin_journal_err": "Journal (err+ 24s)", "admin_journal_warn": "Journal (warning 6s)",
+        "admin_journal_boot_err": "Journal (bu boot err+)", "admin_boot_list": "Boot geçmişi",
+        "admin_dmesg_recent": "dmesg (son)", "admin_dmesg_issues": "dmesg (sorun satırları)",
+        "admin_kernel_journal": "Kernel journal", "admin_syslog": "Syslog/messages",
+        "admin_authlog": "Auth/secure", "admin_cronlog": "Cron log",
+        "admin_bootlog": "Boot log", "admin_auditlog": "Audit (denied/fail)",
+        "admin_failed_units": "Failed units", "admin_failed_unit_logs": "Failed unit journal",
+        "admin_pkg_log": "Paket/güncelleme log", "admin_web_errorlog": "Web error log",
+        "admin_varlog_listing": "/var/log listesi", "admin_log_disk": "Log disk kullanımı",
+        # Admin configs
+        "cfg_fstab": "/etc/fstab", "cfg_dns_nss": "DNS/nsswitch", "cfg_hosts": "/etc/hosts",
+        "cfg_sysctl": "sysctl conf", "cfg_limits": "limits.conf", "cfg_sshd": "sshd_config (özet)",
+        "cfg_selinux": "SELinux config", "cfg_time": "NTP/chrony conf", "cfg_timedatectl": "timedatectl",
+        "cfg_firewall": "Firewall kuralları", "cfg_network": "Ağ bağlantı config",
+        "cfg_ip_route": "IP/route özeti", "cfg_cron": "Cron/timers", "cfg_tuned": "tuned profil",
+        "cfg_hostname_target": "Hostname/default target", "cfg_logrotate": "logrotate",
+        "cfg_needs_restart": "needs-restarting", "cfg_sudoers_summary": "sudoers özeti",
     }
     for key, label in field_labels.items():
         if key in info and info[key]:
