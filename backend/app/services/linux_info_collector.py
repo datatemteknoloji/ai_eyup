@@ -4,7 +4,7 @@ AI Chat icin zengin context olusturur.
 """
 import logging
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from app.services.ssh_manager import SSHManager
 from app.core.encryption import decrypt_secret
 
@@ -19,7 +19,8 @@ COMMAND_GROUPS = {
         ("hostname -f 2>/dev/null || hostname", "hostname_fqdn"),
         ("cat /proc/version 2>/dev/null | head -1", "kernel_proc_version"),
         ("sysctl kernel.hostname kernel.ostype kernel.osrelease kernel.version 2>/dev/null", "sysctl_kernel"),
-        ("dmesg --level=err,crit,alert,emerg 2>/dev/null | tail -10 || dmesg 2>/dev/null | grep -iE 'error|fail|panic|oops|warn' | tail -10", "dmesg_errors"),
+        # Hata yoksa çıktı boş kalır — collect_server_info boş sonucu da kaydeder (aşağıda).
+        ("dmesg --level=err,crit,alert,emerg 2>/dev/null | tail -20 || dmesg 2>/dev/null | grep -iE 'error|fail|panic|oops|warn|oom' | tail -20", "dmesg_errors"),
         ("lsmod 2>/dev/null | head -20", "kernel_modules"),
         ("sysctl vm.swappiness vm.dirty_ratio net.ipv4.ip_forward net.ipv4.tcp_syncookies 2>/dev/null", "sysctl_important"),
     ],
@@ -833,6 +834,46 @@ _FOCUSED_GROUPS = {
 }
 _MINIMAL_BASE = {"kernel", "os"}
 
+# Filo SSH taramasında eşzamanlı üst sınır (269 host'u 20 sn'de patlatmayı önler)
+CHAT_SSH_FLEET_CAP = 48
+
+
+def _message_wants_dmesg(message: Optional[str]) -> bool:
+    if not message:
+        return False
+    m = message.lower()
+    return any(
+        k in m
+        for k in (
+            "dmesg", "kernel log", "kernel hata", "çekirdek log", "cekirdek log",
+            "oom", "oops", "kernel panic", "segfault",
+        )
+    )
+
+
+def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: int = CHAT_SSH_FLEET_CAP) -> Tuple[List[Any], Optional[str]]:
+    """Çok büyük filolarda SSH hedefini sınırla; mesajda adı geçenleri önceliklendir."""
+    if not servers or len(servers) <= cap:
+        return list(servers or []), None
+    msg = (message or "").lower()
+    mentioned = []
+    rest = []
+    for s in servers:
+        name = (getattr(s, "name", None) or "").lower()
+        ip = getattr(s, "ip_address", None) or ""
+        if (name and name in msg) or (ip and ip in (message or "")):
+            mentioned.append(s)
+        else:
+            rest.append(s)
+    picked = (mentioned + rest)[:cap]
+    note = (
+        f"NOT: {len(servers)} AI Ready sunucudan filo SSH taraması için {len(picked)} tanesi "
+        f"seçildi (üst sınır {cap}). Tüm filoyu veya belirli host'ları taratmak için "
+        f"Hedef menüsünden sunucu seçin ya da soruya sunucu adını yazın."
+    )
+    return picked, note
+
+
 # "dnf history" gibi bazı komutlar normal kullanıcıyla exit=0 dönüp anlamsız/eksik çıktı
 # (ör. "readonly database") verebiliyor — bu key'ler icin sudo_password mevcutsa önce
 # sudo ile denenir (veya normal deneme "readonly database"/"not root" ile başarısız
@@ -1049,8 +1090,44 @@ def collect_server_info(server, groups: List[str], global_cred=None, message: st
                         output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
                     if output:
                         results[key] = output
+                    elif key == "dmesg_errors":
+                        # Boş = komut çalıştı, kritik satır yok. Anahtarı hiç yazmamak
+                        # LLM'in "dmesg toplanmadı" demesine yol açıyordu.
+                        results[key] = "(err/crit seviyesinde dmesg satırı yok)"
                 except Exception as e:
                     logger.debug(f"Cmd failed {cmd}: {e}")
+
+        # Açık dmesg/OOM/oops isteği: son satırları da getir (sadece hata filtresi yetmez)
+        if _message_wants_dmesg(message):
+            extra_cmds = [
+                (
+                    "dmesg -T 2>/dev/null | tail -80 || dmesg 2>/dev/null | tail -80",
+                    "dmesg_recent",
+                    "(dmesg son satırları boş / okunamadı)",
+                ),
+                (
+                    "dmesg --level=err,crit,alert,emerg,warn 2>/dev/null | tail -50 "
+                    "|| dmesg 2>/dev/null | grep -iE 'error|fail|panic|oops|oom|warn|segfault|blocked' | tail -50",
+                    "dmesg_errors",
+                    "(err/warn seviyesinde dmesg satırı yok)",
+                ),
+                (
+                    "journalctl -k -p warning..alert --since '7 days ago' --no-pager -n 40 2>/dev/null",
+                    "kernel_logs",
+                    "(journalctl -k uyarı/hata satırı yok)",
+                ),
+            ]
+            for cmd, key, empty_msg in extra_cmds:
+                try:
+                    use_sudo = bool(sudo_password)
+                    success, stdout, stderr = ssh.execute_command(cmd, use_sudo=use_sudo, cmd_timeout=20)
+                    output = stdout.strip() if success and stdout and stdout.strip() else ""
+                    if not output and not success and stderr:
+                        output = stderr.strip()[:500]
+                    results[key] = output if output else empty_msg
+                except Exception as e:
+                    logger.debug(f"dmesg extra cmd failed {key}: {e}")
+                    results.setdefault(key, f"(dmesg toplanamadı: {e})")
 
         # Mesajda "vm.min_free_kbytes" gibi spesifik bir sysctl parametresi geçiyorsa —
         # sysctl_important sabit listesinde (vm.swappiness/dirty_ratio/ip_forward/tcp_syncookies)
@@ -1149,7 +1226,8 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
         "kernel_version": "Kernel", "kernel_full": "Kernel (full)", "kernel_proc_version": "Kernel (/proc)",
         "sysctl_kernel": "sysctl (kernel)", "sysctl_important": "sysctl (önemli)",
         "sysctl_requested": "sysctl (sorulan parametre)", "sysctl_all_dump": "sysctl -a (tüm parametreler, kısmi)",
-        "dmesg_errors": "dmesg Hatalar", "kernel_modules": "Kernel Modülleri",
+        "dmesg_errors": "dmesg Hatalar", "dmesg_recent": "dmesg (son satırlar)",
+        "kernel_modules": "Kernel Modülleri",
         "os_info": "OS", "os_hostnamectl": "OS (hostnamectl)",
         "hostname_short": "Hostname", "hostname_fqdn": "FQDN",
         "datetime_info": "Tarih/Saat", "locale_info": "Locale", "timezone": "Timezone",

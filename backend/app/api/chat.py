@@ -498,6 +498,14 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         if not selected_servers and needs_ssh_ctx:
             selected_servers = _linux_ai_ready_servers(db)
 
+        # Filo taramasını sınırla (269 host × kısa timeout → çoğu zaman aşımı)
+        _fleet_note = None
+        if selected_servers and needs_ssh_ctx:
+            from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh
+            selected_servers, _fleet_note = _cap_ssh(selected_servers, message)
+            n = len(selected_servers)
+            ssh_timeout_ctx = min(90.0, max(float(ssh_timeout_ctx), 25.0 + 0.9 * n))
+
         # Genel sorularda (sunucu niyeti yok + sunucu seçilmedi) otomatik sunucu bağlamı ekleme.
         server_context = ""
         include_server_context = bool(selected_servers) and (needs_ssh_ctx or explicit_server_target)
@@ -597,6 +605,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             model = request.model or get_active_model(db)
             # Basit ve net prompt oluştur
             context_parts = []
+            if _fleet_note:
+                context_parts.append(_fleet_note)
             # SSH'tan gelen gercek veri en oncelikli
             if ssh_context:
                 focused = _extract_focused_summary(message, all_server_contexts)
@@ -852,7 +862,10 @@ _FOCUS_PATTERNS = {
     "iptables":      ["Firewall", "iptables"],
     # Kernel/OS
     "uname":         ["Kernel", "kernel_full", "kernel_version", "uname"],
-    "kernel":        ["Kernel"],
+    "kernel":        ["Kernel", "dmesg", "Kernel Log"],
+    "dmesg":         ["dmesg Hatalar", "dmesg (son satırlar)", "Kernel Logları", "dmesg"],
+    "oom":           ["dmesg", "OOM", "out of memory", "oom-kill"],
+    "oops":          ["dmesg", "oops", "panic", "segfault"],
     "hostname":      ["OS", "hostname", "Hostname", "Static hostname"],
     "os":            ["OS", "PRETTY_NAME", "Oracle", "Red Hat", "Ubuntu", "CentOS"],
     "revision":      ["OS", "PRETTY_NAME", "VERSION"],
@@ -1079,6 +1092,11 @@ def _build_prompt(
         "",
         "ONEMLI: Asla 'SSH yapamam' veya 'dogrudan baglanamam' deme.",
         "Sistem SSH yapabiliyor. Eger veri gelmemisse toplanmamis demektir, toplanamaz degil.",
+        "",
+        "ONEMLI: BAGLAM'da 'dmesg Hatalar: (err/crit ... yok)' veya benzeri '(... yok)' ibaresi",
+        "varsa bu TOPLANMADI demek DEGILDIR — komut calisti ve ilgili satir bulunamadi.",
+        "Bunu 'kritik dmesg satiri yok / temiz' diye ozetle; 'dmesg toplanmadi' deme.",
+        "Gercekten SSH zaman asimi veya 'Hata:' satiri varsa ancak o zaman toplanamadigini soyle.",
         "",
         "ONEMLI: Kullaniciya ASLA 'bunu su komutla siz kontrol edebilirsiniz' / 'asagidaki",
         "yontemleri kullanarak bulabilirsiniz' seklinde bir KILAVUZ/MANUEL TALIMAT LISTESI verme.",
@@ -1587,6 +1605,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
                 'nslookup', 'dig', 'isim çözümleme', 'name resolution',
                 'gateway', 'ağ geçidi', 'default route', 'ip route',
+                'sysctl', 'swappiness', 'dmesg', 'coredump', 'oom', 'oops',
             ]
             DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
             ml = message.lower()
@@ -1609,6 +1628,11 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 needs_prometheus = False
                 selected_servers = []
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
+            # Filo SSH üst sınırı — 200+ host'u tek turda patlatma
+            _fleet_note_stream = None
+            if selected_servers and needs_ssh:
+                from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh_stream
+                selected_servers, _fleet_note_stream = _cap_ssh_stream(selected_servers, message)
             # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
             # düşen sorgular (STANDARD_GROUPS'un tamamı, ~9 grup/60+ komut) tek sunucuda bile
             # ölçümlerde 20-27s sürebiliyor — eski 20s taban bunu sığdırmadan zaman aşımına
@@ -1616,7 +1640,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # sorgusunun "durum" kelimesi yüzünden genel moda düşmesi — artık ayrıca
             # linux_info_collector.detect_needed_groups bu durumu da hafifletiyor).
             base_timeout    = 40.0 if is_deep else 30.0
-            context_timeout = min(60.0, max(base_timeout, 12.0 + 1.5 * len(selected_servers)))
+            context_timeout = min(90.0, max(base_timeout, 20.0 + 1.0 * len(selected_servers)))
 
             # Varsayılan (is_default=True) işaretli bir credential yoksa da ilk tanımlı global
             # credential'a düş (unified_chat.py ile aynı davranış) — tek bir global credential
@@ -1744,6 +1768,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     "EXADATA NOTU: Bu ortamda Exadata node'una bağlı sunucu kaydı yok. "
                     "Cevap uydurma; kullanıcıyı Exadata envanter tanımlamaya yönlendir."
                 )
+            if _fleet_note_stream:
+                context_parts.append(_fleet_note_stream)
             if ssh_ctx:
                 # Per-server contexts for focused summary
                 _ssh_server_ctxs = [c for c in ssh_ctx.split("\n\n") if c.strip()]
