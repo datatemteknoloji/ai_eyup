@@ -872,7 +872,11 @@ KEYWORD_TO_GROUPS: dict = {
 
 }
 
-STANDARD_GROUPS = {"kernel", "os", "cpu", "memory", "disk", "uptime", "load", "services", "security"}
+STANDARD_GROUPS = {
+    "kernel", "os", "cpu", "memory", "disk", "uptime", "load", "services", "security",
+    # Derin arama her ortamda: kıdemli admin log + config checklist (varsayılan)
+    "admin_logs", "admin_configs",
+}
 
 # Sadece spesifik kelimeler gelinceye kadar bekleyen ekstra gruplar
 EXTRA_GROUPS_KEYWORDS = {
@@ -916,7 +920,8 @@ _FOCUSED_GROUPS = {
 }
 _MINIMAL_BASE = {"kernel", "os"}
 
-# Filo SSH taramasında eşzamanlı üst sınır (269 host'u 20 sn'de patlatmayı önler)
+# Filo SSH taramasında eşzamanlı üst sınır (çok büyük filolarda timeout önlemi).
+# Derin admin checklist her ortamda açık; özel olarak 16'ya düşürülmez.
 CHAT_SSH_FLEET_CAP = 48
 
 
@@ -953,9 +958,6 @@ def _message_wants_admin_diag(message: Optional[str]) -> bool:
 
 def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: int = CHAT_SSH_FLEET_CAP) -> Tuple[List[Any], Optional[str]]:
     """Çok büyük filolarda SSH hedefini sınırla; mesajda adı geçenleri önceliklendir."""
-    # Admin log+config paketi ağır — filoda daha düşük üst sınır
-    if message and _message_wants_admin_diag(message):
-        cap = min(cap, 16)
     if not servers or len(servers) <= cap:
         return list(servers or []), None
     msg = (message or "").lower()
@@ -971,9 +973,8 @@ def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: 
     picked = (mentioned + rest)[:cap]
     note = (
         f"NOT: {len(servers)} AI Ready sunucudan filo SSH taraması için {len(picked)} tanesi "
-        f"seçildi (üst sınır {cap}). Tüm filoyu veya belirli host'ları taratmak için "
-        f"Hedef menüsünden sunucu seçin ya da soruya sunucu adını yazın. "
-        f"Derin log/config analizi için tek sunucu seçmek en doğru sonuçları verir."
+        f"seçildi (üst sınır {cap}; derin log/config checklist bu host'larda çalışır). "
+        f"Belirli sunucu için Hedef menüsünden seçin veya soruya adını yazın."
     )
     return picked, note
 
@@ -1072,9 +1073,8 @@ def detect_needed_groups(message: str) -> List[str]:
                 continue
             extra_groups.update(group_list)
 
-    # Kıdemli admin checklist: log + kritik config paketini zorla ekle
-    if _message_wants_admin_diag(message):
-        extra_groups.update({"admin_logs", "admin_configs", "kernel", "logs", "services"})
+    # Kıdemli admin checklist — her ortamda / her SSH bağlamında zorunlu
+    extra_groups.update({"admin_logs", "admin_configs"})
 
     # Derin performans analizi çok yavaş
     if "performance_deep" in extra_groups and not any(
@@ -1093,24 +1093,19 @@ def detect_needed_groups(message: str) -> List[str]:
     perf_groups = extra_groups & {"cpu", "memory", "disk", "load", "uptime", "processes"}
     is_resource_query = bool(perf_groups)
 
+    # Derin arama her zaman: admin_logs + admin_configs odaklı/genel fark etmeksizin eklenir
+    _DEEP_ALWAYS = {"admin_logs", "admin_configs"}
+
     if focused_groups and not is_explicit_general and not is_resource_query:
-        # Odaklı mod: sadece ilgili focused gruplar + minimal base
-        # Security ve services ekle (çoğu sorgu için yararlı)
-        groups = _MINIMAL_BASE | focused_groups | {"services"}
+        # Odaklı mod: ilgili focused gruplar + minimal base + derin checklist
+        groups = _MINIMAL_BASE | focused_groups | {"services"} | _DEEP_ALWAYS
     elif focused_groups and is_resource_query:
-        # Karma sorgu: hem odaklı hem kaynak (ör. "cpu ve gateway")
-        groups = _MINIMAL_BASE | focused_groups | perf_groups | {"services"}
+        groups = _MINIMAL_BASE | focused_groups | perf_groups | {"services"} | _DEEP_ALWAYS
     elif is_resource_query and not is_explicit_general and not focused_groups and len(perf_groups) <= 2:
-        # Dar kaynak sorgusu (ör. sadece "disk" veya "cpu ve disk"): tüm STANDARD_GROUPS'u
-        # (kernel+os+cpu+memory+disk+uptime+load+services+security → ~9 komut grubu)
-        # değil, sadece istenen kaynak grup(lar)ını + minimal temeli getir. Çok sunuculu
-        # filolarda (ör. 10+ sunucu eşzamanlı) tek bir "disk" sorusu için gereksiz
-        # cpu/memory/security/services taraması, toplam SSH süresini şişirip context
-        # timeout'unu aşmasına ve "veri toplanamadı" sonucuna yol açabiliyordu.
-        groups = _MINIMAL_BASE | perf_groups
+        groups = _MINIMAL_BASE | perf_groups | _DEEP_ALWAYS
     else:
-        # Genel mod: tüm standard gruplar + ekstralar
-        groups = set(STANDARD_GROUPS) | extra_groups
+        # Genel mod: tüm standard gruplar + ekstralar (STANDARD zaten admin_* içerir)
+        groups = set(STANDARD_GROUPS) | extra_groups | _DEEP_ALWAYS
 
     return list(groups)
 
