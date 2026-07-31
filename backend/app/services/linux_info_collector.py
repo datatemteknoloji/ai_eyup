@@ -290,6 +290,21 @@ COMMAND_GROUPS = {
         ("ls -lah /var/log 2>/dev/null | head -35", "admin_varlog_listing"),
         ("journalctl --disk-usage 2>/dev/null; df -h /var/log 2>/dev/null | tail -1", "admin_log_disk"),
     ],
+    # Her SSH ortamında çalışan HAFİF derin paket (timeout dostu)
+    "admin_lite": [
+        ("sestatus 2>/dev/null || getenforce 2>/dev/null || echo 'SELinux: n/a'", "lite_selinux"),
+        ("systemctl --failed --no-pager --plain 2>/dev/null | head -15", "lite_failed_units"),
+        ("(dmesg -T 2>/dev/null || dmesg 2>/dev/null) | grep -iE 'error|fail|panic|oops|oom|blocked|I/O error|segfault' | tail -25", "lite_dmesg_issues"),
+        ("journalctl -p err..emerg --since '6 hours ago' --no-pager 2>/dev/null | tail -30", "lite_journal_err"),
+        ("tail -n 20 /var/log/secure 2>/dev/null || tail -n 20 /var/log/auth.log 2>/dev/null", "lite_authlog"),
+        ("df -h 2>/dev/null | head -12", "lite_df"),
+        ("free -h 2>/dev/null | head -5", "lite_free"),
+        ("uptime; cat /proc/loadavg 2>/dev/null", "lite_uptime_load"),
+        ("ip route show default 2>/dev/null | head -3; cat /etc/resolv.conf 2>/dev/null | head -8", "lite_net_dns"),
+        ("grep -E '^(Port|PermitRootLogin|PasswordAuthentication|PubkeyAuthentication)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/* 2>/dev/null | grep -v '^#' | head -15", "lite_sshd"),
+        ("cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$' | head -20", "lite_fstab"),
+        ("sysctl vm.swappiness vm.dirty_ratio fs.file-max 2>/dev/null", "lite_sysctl"),
+    ],
     # ── ADMIN CONFIGS (salt okunur, hassas sırlar süzülmüş) ──────────────────
     "admin_configs": [
         ("cat /etc/fstab 2>/dev/null | grep -v '^#' | grep -v '^$'", "cfg_fstab"),
@@ -874,8 +889,8 @@ KEYWORD_TO_GROUPS: dict = {
 
 STANDARD_GROUPS = {
     "kernel", "os", "cpu", "memory", "disk", "uptime", "load", "services", "security",
-    # Derin arama her ortamda: kıdemli admin log + config checklist (varsayılan)
-    "admin_logs", "admin_configs",
+    # Her ortamda hafif derin checklist (tam admin_logs/configs tanı sorularında)
+    "admin_lite",
 }
 
 # Sadece spesifik kelimeler gelinceye kadar bekleyen ekstra gruplar
@@ -916,7 +931,7 @@ EXTRA_GROUPS_KEYWORDS = {
 _FOCUSED_GROUPS = {
     "network", "hardware", "containers", "web", "database", "ntp", "ssl",
     "cron", "users", "apps", "limits", "filesystem", "security", "packages",
-    "admin_logs", "admin_configs", "logs",
+    "admin_logs", "admin_configs", "admin_lite", "logs",
 }
 _MINIMAL_BASE = {"kernel", "os"}
 
@@ -1063,6 +1078,11 @@ def detect_needed_groups(message: str) -> List[str]:
 
     for keyword, group_list in KEYWORD_TO_GROUPS.items():
         if keyword in msg:
+            # Çok kısa keyword'ler (du, df, ps…) "durumu" içinde yanlış eşleşmesin
+            if len(keyword) <= 3 and not re.search(
+                rf'(?<![a-z0-9çğıöşü]){re.escape(keyword)}(?![a-z0-9çğıöşü])', msg
+            ):
+                continue
             # "durum"/"status"/"saglik" gibi ÇOK genel kelimeler, mesajda ZATEN belirli bir
             # konu varsa (ör. "selinux durumu") cpu/memory/disk/uptime/services'i otomatik
             # eklemesin. Bu genişletme olmasaydı "X durumu" kalıbındaki HER tek-konulu soru
@@ -1073,8 +1093,12 @@ def detect_needed_groups(message: str) -> List[str]:
                 continue
             extra_groups.update(group_list)
 
-    # Kıdemli admin checklist — her ortamda / her SSH bağlamında zorunlu
-    extra_groups.update({"admin_logs", "admin_configs"})
+    # Kıdemli admin checklist
+    # - HER ortamda: admin_lite (hızlı, ~12 komut)
+    # - Tanı/analiz/dmesg/kök neden: tam admin_logs + admin_configs
+    extra_groups.add("admin_lite")
+    if _message_wants_admin_diag(message):
+        extra_groups.update({"admin_logs", "admin_configs", "kernel", "logs", "services"})
 
     # Derin performans analizi çok yavaş
     if "performance_deep" in extra_groups and not any(
@@ -1083,7 +1107,8 @@ def detect_needed_groups(message: str) -> List[str]:
         extra_groups.discard("performance_deep")
 
     # 2. Odaklı grupları ayır (network, containers, ntp, ssl vb.)
-    focused_groups = extra_groups & _FOCUSED_GROUPS
+    # admin_lite her zaman eklenir ama tek başına "focused" sayılmasın
+    focused_groups = (extra_groups & _FOCUSED_GROUPS) - {"admin_lite"}
 
     # 3. Genel mod mu? Şu durumlarda genel mod:
     #    a) Açık genel tetikleyici kelimeler varsa ("genel", "rapor", "özet"...)
@@ -1093,18 +1118,18 @@ def detect_needed_groups(message: str) -> List[str]:
     perf_groups = extra_groups & {"cpu", "memory", "disk", "load", "uptime", "processes"}
     is_resource_query = bool(perf_groups)
 
-    # Derin arama her zaman: admin_logs + admin_configs odaklı/genel fark etmeksizin eklenir
-    _DEEP_ALWAYS = {"admin_logs", "admin_configs"}
+    # Her SSH ortamında lite derin arama
+    _DEEP_ALWAYS = {"admin_lite"}
+    if _message_wants_admin_diag(message):
+        _DEEP_ALWAYS = {"admin_lite", "admin_logs", "admin_configs"}
 
     if focused_groups and not is_explicit_general and not is_resource_query:
-        # Odaklı mod: ilgili focused gruplar + minimal base + derin checklist
         groups = _MINIMAL_BASE | focused_groups | {"services"} | _DEEP_ALWAYS
     elif focused_groups and is_resource_query:
         groups = _MINIMAL_BASE | focused_groups | perf_groups | {"services"} | _DEEP_ALWAYS
     elif is_resource_query and not is_explicit_general and not focused_groups and len(perf_groups) <= 2:
         groups = _MINIMAL_BASE | perf_groups | _DEEP_ALWAYS
     else:
-        # Genel mod: tüm standard gruplar + ekstralar (STANDARD zaten admin_* içerir)
         groups = set(STANDARD_GROUPS) | extra_groups | _DEEP_ALWAYS
 
     return list(groups)
@@ -1188,12 +1213,12 @@ def collect_server_info(server, groups: List[str], global_cred=None, message: st
                     # Deep performance / admin log-config biraz daha uzun
                     if group_name == "performance_deep":
                         timeout = 45
-                    elif group_name in ("admin_logs", "admin_configs"):
-                        timeout = 25
+                    elif group_name in ("admin_logs", "admin_configs", "admin_lite"):
+                        timeout = 25 if group_name != "admin_lite" else 12
                     else:
                         timeout = 15
                     use_sudo = (
-                        key in _SUDO_PREFERRED_KEYS or group_name in ("admin_logs", "admin_configs")
+                        key in _SUDO_PREFERRED_KEYS or group_name in ("admin_logs", "admin_configs", "admin_lite")
                     ) and bool(sudo_password)
                     success, stdout, stderr = ssh.execute_command(cmd, use_sudo=use_sudo, cmd_timeout=timeout)
                     output = stdout.strip() if success and stdout.strip() else (stderr.strip() if not success else "")
@@ -1453,6 +1478,12 @@ def build_server_context(server, info: Dict[str, Any]) -> str:
         "admin_failed_units": "Failed units", "admin_failed_unit_logs": "Failed unit journal",
         "admin_pkg_log": "Paket/güncelleme log", "admin_web_errorlog": "Web error log",
         "admin_varlog_listing": "/var/log listesi", "admin_log_disk": "Log disk kullanımı",
+        # Admin lite (her ortam)
+        "lite_selinux": "SELinux (lite)", "lite_failed_units": "Failed units (lite)",
+        "lite_dmesg_issues": "dmesg sorun (lite)", "lite_journal_err": "Journal err (lite)",
+        "lite_authlog": "Auth (lite)", "lite_df": "Disk (lite)", "lite_free": "Bellek (lite)",
+        "lite_uptime_load": "Uptime/load (lite)", "lite_net_dns": "GW/DNS (lite)",
+        "lite_sshd": "sshd (lite)", "lite_fstab": "fstab (lite)", "lite_sysctl": "sysctl (lite)",
         # Admin configs
         "cfg_fstab": "/etc/fstab", "cfg_dns_nss": "DNS/nsswitch", "cfg_hosts": "/etc/hosts",
         "cfg_sysctl": "sysctl conf", "cfg_limits": "limits.conf", "cfg_sshd": "sshd_config (özet)",
