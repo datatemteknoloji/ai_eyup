@@ -7,7 +7,9 @@ QA_RULES typo'larını kaçırıyordu. Bu suite:
 
   - Linux: admin_intent_router + direct_cmd/inventory guard (Usage/bare-ip = 0)
   - Virt: try_deterministic_answer (datastore typo → Datastore Durum, VM envanter değil)
-  - Kritik HTTP smoke: /chat/stream inventory + /hypervisors ask datastore
+  - Virt: datastore → VM eşlemesi ("hangi datastore'da hangi VM var" → h_datastore_vm_map,
+    status/kapasite handler'ına kaymamalı)
+  - Kritik HTTP smoke: /chat/stream inventory + /hypervisors ask datastore (+ datastore→VM)
 
 Hedef: ≥ %95 PASS; false-positive sınıfı (Usage: ip, yanlış VM Envanter) = 0.
 """
@@ -75,6 +77,15 @@ def build_bank() -> list[dict]:
         "en dolu datastore",
         "datastore erişim durumu",
     ]
+    # Datastore → VM eşlemesi ("hangi datastore'da hangi VM var") — status/kapasite
+    # cevabıyla KARIŞTIRILMAMALI; cevapta VM isimleri olmalı.
+    virt_ds_vm = [
+        "hangi datastorelardan hangi vmler var",
+        "hangi datastore'da hangi vm'ler var",
+        "datastore bazında hangi vm'ler var",
+        "datastorae duurmlarında hangi vmler var",
+        "vmler hangi datastorede",
+    ]
     virt_ok = [
         "kaç vm var",
         "kaç host var",
@@ -101,6 +112,9 @@ def build_bank() -> list[dict]:
     for b in virt_ds:
         for v in _variants(b):
             bank.append({"q": v, "platform": "virt", "expect": "datastore", "base": b})
+    for b in virt_ds_vm:
+        for v in _variants(b):
+            bank.append({"q": v, "platform": "virt", "expect": "datastore_vm", "base": b})
     for b in virt_ok:
         for v in _variants(b):
             bank.append({"q": v, "platform": "virt", "expect": "virt_det", "base": b})
@@ -115,13 +129,14 @@ def build_bank() -> list[dict]:
                 "platform": "virt", "expect": "datastore", "base": b,
             })
             i += 1
-    # Dengeli kırpma: 400 inv-ish linux, 200 cmd, 100 no_bare, 300 virt
+    # Dengeli kırpma: 400 inv-ish linux, 200 cmd, 100 no_bare, 300 virt (ds/ds_vm/diğer)
     linux_inv = [x for x in bank if x["expect"] == "inventory"][:400]
     linux_cmd = [x for x in bank if x["expect"] == "command"][:200]
     linux_nb = [x for x in bank if x["expect"] == "no_bare_cmd"][:100]
-    virt_ds_q = [x for x in bank if x["expect"] == "datastore"][:200]
-    virt_ot = [x for x in bank if x["expect"] == "virt_det"][:100]
-    qs = linux_inv + linux_cmd + linux_nb + virt_ds_q + virt_ot
+    virt_ds_q = [x for x in bank if x["expect"] == "datastore"][:180]
+    virt_ds_vm_q = [x for x in bank if x["expect"] == "datastore_vm"][:30]
+    virt_ot = [x for x in bank if x["expect"] == "virt_det"][:90]
+    qs = linux_inv + linux_cmd + linux_nb + virt_ds_q + virt_ds_vm_q + virt_ot
     i = 0
     while len(qs) < 1000:
         qs.append({
@@ -180,7 +195,10 @@ _VIRT_PROBE_DONE = False
 
 def score_virt(item: dict, db) -> dict:
     """Virt skor: router + seyrek canlı probe (aynı expect için tek vCenter çağrısı)."""
-    from app.services.hypervisor_intelligence import try_deterministic_answer, _normalize_virt_question
+    import re as _re
+    from app.services.hypervisor_intelligence import (
+        try_deterministic_answer, _normalize_virt_question, QA_RULES,
+    )
     from app.services.admin_intent_router import route_admin_question, INTENT_VIRT_QA
 
     global _VIRT_PROBE_DONE
@@ -212,6 +230,36 @@ def score_virt(item: dict, db) -> dict:
             "reason": f"route={route.intent} handler={h} ds={has_ds} vm_inv={has_vm_inv}",
             "intent": route.intent,
             "answer_head": ans[:120],
+        }
+
+    # Datastore → VM eşlemesi: tek canlı probe (VM isimleri var mı) + her varyant için
+    # gerçek regex yönlendirmesi (hızlı, DB'siz) — status handler'a kaymamalı.
+    if expect == "datastore_vm":
+        probe_key = "__datastore_vm_probe__"
+        if probe_key not in _VIRT_ANS_CACHE:
+            _VIRT_ANS_CACHE[probe_key] = try_deterministic_answer(
+                db, "hangi datastorelerden hangi vmler var ?"
+            ) or ""
+        ans = _VIRT_ANS_CACHE[probe_key]
+        has_vm_inv = "VM Envanter Özeti" in ans
+        has_map = "Datastore → VM Haritası" in ans and "VM Disk Detayı" in ans
+        status_only = "### Datastore Durumları" in ans and "VM Disk Detayı" not in ans
+
+        nq = _normalize_virt_question(q)
+        handler_name = None
+        for pat, handler in QA_RULES:
+            if _re.search(pat, nq, _re.IGNORECASE):
+                handler_name = handler.__name__
+                break
+
+        ok = handler_name == "h_datastore_vm_map" and has_map and not has_vm_inv and not status_only
+        fp = has_vm_inv or handler_name == "h_datastore_status"
+        return {
+            "q": q, "expect": expect, "platform": "virt",
+            "ok": ok, "false_positive": fp,
+            "reason": f"handler={handler_name} map={has_map} vm_inv={has_vm_inv} status_only={status_only}",
+            "intent": route.intent,
+            "answer_head": ans[:160],
         }
 
     # Diğer virt: cache by normalized, max ~unique bases
@@ -309,6 +357,23 @@ def http_smoke() -> list[dict]:
         })
     except Exception as e:
         results.append({"q": "smoke-virt-datastore-typo", "ok": False, "false_positive": False, "smoke": True, "reason": str(e)})
+
+    # Virt datastore → VM map (asıl kırık senaryo)
+    try:
+        r = virt_ask("hangi datastorelardan hangi vmler var")
+        ans = r.get("answer") or ""
+        ok = (
+            "Datastore → VM Haritası" in ans
+            and "VM Disk Detayı" in ans
+            and "VM Envanter Özeti" not in ans
+        )
+        results.append({
+            "q": "smoke-virt-datastore-vm-map", "ok": ok,
+            "false_positive": "VM Envanter Özeti" in ans or "Datastore → VM Haritası" not in ans,
+            "smoke": True, "reason": ans[:200],
+        })
+    except Exception as e:
+        results.append({"q": "smoke-virt-datastore-vm-map", "ok": False, "false_positive": False, "smoke": True, "reason": str(e)})
 
     return results
 

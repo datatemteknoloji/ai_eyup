@@ -1995,6 +1995,30 @@ def h_datastore_status(db: Session, question: str = "") -> str:
     return header + body + "\n\n---\n\n" + alloc
 
 
+def h_datastore_vm_map(db: Session, question: str = "") -> str:
+    """Hangi datastore'da hangi VM'ler — isimli dağılım (kapasite özeti değil)."""
+    vms = _get_vms(db)
+    live = _get_live_datastores(db)
+    body = _datastore_vm_disk_summary(vms, _get_esx_hosts(db), live_datastores=live)
+    if not body or not body.strip():
+        return _na(
+            "Datastore→VM eşlemesi yok (`vm_datastore` boş ve vCenter canlı listesi gelmedi)."
+        )
+    # Özet satır: DS başına VM sayısı
+    from collections import defaultdict
+    groups: Dict[str, int] = defaultdict(int)
+    for v in vms:
+        ds = (v.get("datastore") or "").strip()
+        if ds:
+            groups[ds] += 1
+    summary = (
+        f"### Datastore → VM Haritası\n\n"
+        f"**{len(vms)}** VM · **{len(groups) or len(live)}** datastore "
+        f"(isimli liste aşağıda).\n\n"
+    )
+    return summary + body
+
+
 # ── Olaylar ve Alarm ──────────────────────────────────────────────────────────
 
 def h_critical_alarms_24h(db: Session, question: str = "") -> str:
@@ -2314,8 +2338,13 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
     (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
     (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm", h_vm_per_host),
+    # Datastore → VM eşlemesi ("hangi datastore'da hangi VM var") — status kuralından ÖNCE,
+    # yoksa geniş "hangi datastore" kalıbı bunu yutup kapasite/doluluk cevabı döner.
+    (r"hangi\s*datastore.*\bvm\b|hangi\s*datastore.*sanal\s*makine|datastore.*hangi\s*vm|datastore.*hangi\s*sanal\s*makine"
+     r"|datastore.?lar(dan|da).*vm|datastore.?lar(dan|da).*sanal\s*makine|\bvm\b.*hangi\s*datastore"
+     r"|datastore.*dağılım.*vm|datastore.*bazında.*vm|datastore.*bazında.*sanal\s*makine", h_datastore_vm_map),
     # Datastore/storage durum — envanter flash'tan ÖNCE (typo normalize sonrası)
-    (r"datastore\s*(durum|status|kapasite|doluluk|list|özet|ozet|erişim|erisim)|storage\s*(durum|status|doluluk|kapasite)|depolama\s*(durum|doluluk|kapasite)|datastore.?lar(\w*)?\s*(durum|göster|goster|list|ver)|hangi\s*datastore", h_datastore_status),
+    (r"datastore\s*(durum|status|kapasite|doluluk|list|özet|ozet|erişim|erisim)|storage\s*(durum|status|doluluk|kapasite)|depolama\s*(durum|doluluk|kapasite)|datastore.?lar(\w*)?\s*(durum|göster|goster|list|ver)|hangi\s*datastore(?!.*(?:\bvm\b|sanal\s*makine))", h_datastore_status),
     (r"envanter\s*(özet|flash|özeti)|anlık\s*envanter|tek\s*bakışta\s*envanter|ortam\s*özeti|kaç\s*host.*kaç\s*vm|genel\s*envanter", h_inventory_flash),
     (r"en\s*fazla\s*boş\s*(belle[gğk]\w*|ram|hafıza)|boş\s*(belle[gğk]\w*|ram).*(host|en\s*fazla)|ram.?i\s*en\s*boş\s*host|en\s*boş\s*(ram|bellek).*host", h_free_resources),
     (r"disconnect\s*(olan|olmuş)?\s*host|host\s*disconnect|bağlantısı\s*kop(an|muş)\s*host|bağlantı\s*kesilen\s*host", h_host_disconnected),
@@ -2462,7 +2491,7 @@ def try_deterministic_answer(db: Session, question: str) -> Optional[str]:
                 if isinstance(result, str) and result.strip():
                     # Datastore canlı sorgu → learned facts (canlı > learned > DB)
                     hname = getattr(handler, "__name__", "")
-                    if hname in ("h_datastore_status", "h_datastore_by_disk", "h_datastore_accessibility", "h_datastore_over_85"):
+                    if hname in ("h_datastore_status", "h_datastore_by_disk", "h_datastore_accessibility", "h_datastore_over_85", "h_datastore_vm_map"):
                         try:
                             from app.services.fact_learning import store_live_datastore_facts
                             store_live_datastore_facts(db, _get_live_datastores(db))
