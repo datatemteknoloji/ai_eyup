@@ -27,6 +27,94 @@ c_yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 c_red()    { printf '\033[0;31m%s\033[0m\n' "$1"; }
 step()     { printf '\n\033[1;36m▶ %s\033[0m\n' "$1"; }
 
+# Ollama imajı + embedding modeli, uygulama sürümünden bağımsız sabit bir
+# GitHub release'te barınır (nadiren değişirler). Paket içine gömülü değillerse
+# (lean --with-ollama), burada BİR KEREYE MAHSUS indirilip $DATA_DIR altına
+# önbelleklenir — imaj zaten Docker'da / model zaten diskteyse ağ hiç kullanılmaz.
+_download_ollama_runtime_asset() {
+  local name="$1" cache_dir="$2" base_url="$3"
+  local out="${cache_dir}/${name}"
+  [[ -s "$out" ]] && return 0
+  if ! command -v curl >/dev/null 2>&1; then
+    c_red "curl bulunamadı — Ollama runtime indirilemiyor."
+    c_yellow "Manuel: ${base_url}/${name} dosyasını indirip ${cache_dir}/ altına koyup tekrar deneyin."
+    return 1
+  fi
+  local parts_sha="${cache_dir}/${name}.parts.sha256"
+  if curl -fsSL --retry 3 "${base_url}/${name}.parts.sha256" -o "$parts_sha" 2>/dev/null; then
+    c_yellow "İndiriliyor (parçalı): ${name} ..."
+    local partname
+    while read -r _ partname; do
+      [[ -z "$partname" ]] && continue
+      [[ -s "${cache_dir}/${partname}" ]] && continue
+      curl -fL --retry 3 --progress-bar "${base_url}/${partname}" -o "${cache_dir}/${partname}" || {
+        c_red "İndirme başarısız: ${partname}"; return 1; }
+    done < "$parts_sha"
+    (cd "$cache_dir" && sha256sum -c "$(basename "$parts_sha")") || {
+      c_red "Parça bütünlük doğrulaması başarısız: ${name}"; return 1; }
+    rm -f "$parts_sha"
+    # NOT: glob önce ".parts.sha256" silinmeden çalıştırılırsa "part*" deseni
+    # o dosyayı da (part+s...) yanlışlıkla eşleştirir — üstteki rm bu yüzden önce.
+    cat "${cache_dir}/${name}".part* > "$out"
+    rm -f "${cache_dir}/${name}".part*
+  else
+    c_yellow "İndiriliyor: ${name} ..."
+    curl -fL --retry 3 --progress-bar "${base_url}/${name}" -o "$out" || {
+      c_red "İndirme başarısız: ${name}"; return 1; }
+  fi
+  local sha_file="${cache_dir}/${name}.sha256"
+  if curl -fsSL --retry 3 "${base_url}/${name}.sha256" -o "$sha_file" 2>/dev/null; then
+    (cd "$cache_dir" && sha256sum -c "$(basename "$sha_file")") || {
+      c_red "Bütünlük doğrulaması başarısız: ${name}"; rm -f "$out"; return 1; }
+  fi
+}
+
+ensure_ollama_runtime() {
+  local marker="$INSTALL_DIR/WITH_OLLAMA"
+  [[ -f "$marker" ]] || return 0
+  local release_base embed_model cache_dir
+  release_base="$(grep '^OLLAMA_RUNTIME_BASE_URL=' "$marker" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  embed_model="$(grep '^EMBED_MODEL=' "$marker" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  embed_model="${embed_model:-nomic-embed-text}"
+  cache_dir="$DATA_DIR/.ollama-runtime-cache"
+
+  if docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+    c_green "  ✓ ollama/ollama:latest zaten yüklü — indirme atlandı."
+  elif compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1; then
+    c_yellow "  · ollama/ollama:latest paket içinde gömülü (yukarıda yüklendi)."
+  elif [[ -z "$release_base" ]]; then
+    c_yellow "  · WITH_OLLAMA runtime release bilgisi yok, ollama imajı atlanıyor."
+  else
+    mkdir -p "$cache_dir"
+    step "Ollama imajı indiriliyor (bir kereye mahsus)"
+    if _download_ollama_runtime_asset "ollama.tar.gz" "$cache_dir" "$release_base"; then
+      c_yellow "Yükleniyor: ollama.tar.gz"
+      gunzip -c "$cache_dir/ollama.tar.gz" | docker load
+      c_green "✓ ollama/ollama:latest yüklendi ve önbelleklendi: $cache_dir"
+    else
+      c_red "Ollama runtime imajı indirilemedi — with-ollama profili devre dışı kalabilir."
+    fi
+  fi
+
+  if [[ -d "$DATA_DIR/ollama/models" ]] && find "$DATA_DIR/ollama/models" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    c_green "  ✓ Embedding modeli ($embed_model) zaten diskte — indirme atlandı."
+  elif compgen -G "${IMAGES_DIR}/ollama-models-*.tar.gz*" > /dev/null 2>&1; then
+    : # paket içinde gömülü — mevcut akış bunu işleyecek
+  elif [[ -z "$release_base" ]]; then
+    c_yellow "  · WITH_OLLAMA runtime release bilgisi yok, embedding modeli atlanıyor."
+  else
+    mkdir -p "$cache_dir" "$DATA_DIR/ollama"
+    step "Embedding modeli indiriliyor (bir kereye mahsus): ${embed_model}"
+    if _download_ollama_runtime_asset "ollama-models-${embed_model}.tar.gz" "$cache_dir" "$release_base"; then
+      tar xzf "$cache_dir/ollama-models-${embed_model}.tar.gz" -C "$DATA_DIR/ollama"
+      chmod -R 777 "$DATA_DIR/ollama" 2>/dev/null || true
+      c_green "✓ Embedding modeli açıldı ve önbelleklendi: $cache_dir"
+    else
+      c_red "Embedding modeli indirilemedi — RAG embedding çalışmayabilir."
+    fi
+  fi
+}
+
 INSTALL_DIR="${INSTALL_DIR:-}"
 SKIP_DB_BACKUP="${SKIP_DB_BACKUP:-0}"
 
@@ -237,6 +325,9 @@ else
   c_yellow "Tam paket kullanın (ainew-*-linux-amd64.tar.gz). Online: ALLOW_ONLINE_BUILD=1"
   exit 1
 fi
+
+step "Ollama runtime kontrol ediliyor"
+ensure_ollama_runtime
 
 # Eski imajları SİLME — rollback için docker'da kalsınlar.
 c_yellow "Not: Eski imajlar (${OLD_BACKEND:-eski} / ${OLD_FRONTEND:-eski}) rollback için Docker'da bırakıldı."

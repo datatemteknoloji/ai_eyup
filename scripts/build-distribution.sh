@@ -12,20 +12,29 @@
 #   ./scripts/build-distribution.sh                 # linux/amd64 (varsayılan)
 #   ./scripts/build-distribution.sh --platform linux/arm64
 #   ./scripts/build-distribution.sh --no-images      # sadece kaynak paketi (registry/GitHub akışı için)
-#   ./scripts/build-distribution.sh --with-ollama    # + ollama image + nomic-embed-text (~+7GB)
+#   ./scripts/build-distribution.sh --with-ollama    # + WITH_OLLAMA işareti (runtime kurulumda indirilir, ~+birkaç KB)
+#   ./scripts/build-distribution.sh --bundle-ollama  # + ollama image + nomic-embed-text GÖMÜLÜ (~+3.5GB, tam offline)
+#
+# Ollama imajı + embedding modeli sabit, uygulama sürümünden BAĞIMSIZ bir GitHub
+# release'te (ollama-runtime-v1) barınır — neredeyse hiç değişmezler. Varsayılan
+# --with-ollama modu bunları pakete GÖMMEZ; install-rhel.sh/update-rhel.sh
+# kurulum sırasında bir kereye mahsus indirip $DATA_DIR/.ollama-runtime-cache
+# altına önbellekler (imaj zaten Docker'da / model zaten diskteyse hiç ağ
+# erişimi gerekmez). Tam air-gapped hedefler için --bundle-ollama ile eski
+# davranış (imaj+model paketin içine gömülü, internet gerekmez) kullanılabilir.
 #
 # Çıktı:
 #   dist/ainew-<version>-<platform>.tar.gz
-#   dist/ainew-<version>-<platform>-with-ollama.tar.gz   (--with-ollama)
+#   dist/ainew-<version>-<platform>-with-ollama.tar.gz   (--with-ollama / --bundle-ollama)
 #     ├── docker-compose.prod.yml, install-rhel.sh, update-rhel.sh, rollback-rhel.sh
 #     ├── frontend/nginx.prod.conf                    (deploy/ içinden kopyalanır)
 #     ├── (tüm kaynak kod: backend/, frontend/, prometheus/, docs/, ...)
-#     ├── WITH_OLLAMA                                 (--with-ollama işareti)
+#     ├── WITH_OLLAMA                                 (--with-ollama/--bundle-ollama işareti + runtime release bilgisi)
 #     └── images/*.tar.gz   (docker load ile yüklenecek önceden derlenmiş imajlar;
 #                             90MB üstü olanlar .part01/.part02/... şeklinde
 #                             parçalanır — GitHub'ın LFS'siz 100MB sınırı için;
 #                             install-rhel.sh kurulumdan önce otomatik birleştirir)
-#                             --with-ollama: ollama.tar.gz + ollama-models-nomic-embed-text.tar.gz
+#                             --bundle-ollama: + ollama.tar.gz + ollama-models-nomic-embed-text.tar.gz
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -36,13 +45,23 @@ VERSION="$(cat VERSION 2>/dev/null || echo "0.0.0")"
 PLATFORM="linux/amd64"
 BUILD_IMAGES=1
 WITH_OLLAMA=0
+BUNDLE_OLLAMA=0
 EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+# Ollama imajı + embedding modeli sabit, uygulama sürümünden bağımsız bir GitHub
+# release'te barınır (nadiren değişir). --with-ollama paketi bunları GÖMMEZ,
+# yalnızca install-rhel.sh/update-rhel.sh'in kurulum sırasında BİR KEREYE MAHSUS
+# indirip önbellekleyeceği release'i işaret eder (bkz. WITH_OLLAMA dosyası).
+# Tam air-gapped (internetsiz) hedefler için --bundle-ollama ile eski davranış
+# (imaj+model paketin içine gömülür) hâlâ kullanılabilir.
+OLLAMA_RUNTIME_RELEASE="${OLLAMA_RUNTIME_RELEASE:-ollama-runtime-v1}"
+OLLAMA_RUNTIME_BASE_URL="${OLLAMA_RUNTIME_BASE_URL:-https://github.com/datatemteknoloji/ai_eyup/releases/download/${OLLAMA_RUNTIME_RELEASE}}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2 ;;
     --no-images) BUILD_IMAGES=0; shift ;;
     --with-ollama) WITH_OLLAMA=1; shift ;;
+    --bundle-ollama) WITH_OLLAMA=1; BUNDLE_OLLAMA=1; shift ;;
     --embed-model) EMBED_MODEL="$2"; shift 2 ;;
     *) echo "Bilinmeyen argüman: $1"; exit 1 ;;
   esac
@@ -191,25 +210,32 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   repack_and_save "prom/pushgateway:v1.11.0" "${IMAGES_DIR}/pushgateway.tar.gz"
 
   if [[ "$WITH_OLLAMA" -eq 1 ]]; then
-    echo "▶ Ollama imajı paketleniyor (with-ollama)..."
-    if ! docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
-      echo "  ollama/ollama:latest yok — çekiliyor..."
-      docker pull --platform "$PLATFORM" ollama/ollama:latest || docker pull ollama/ollama:latest
+    if [[ "$BUNDLE_OLLAMA" -eq 1 ]]; then
+      echo "▶ Ollama imajı paketleniyor (--bundle-ollama, tam offline)..."
+      if ! docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+        echo "  ollama/ollama:latest yok — çekiliyor..."
+        docker pull --platform "$PLATFORM" ollama/ollama:latest || docker pull ollama/ollama:latest
+      fi
+      repack_and_save "ollama/ollama:latest" "${IMAGES_DIR}/ollama.tar.gz"
+
+      echo "▶ Embedding modeli dışa aktarılıyor: ${EMBED_MODEL}"
+      chmod +x scripts/export-ollama-embed-model.sh
+      scripts/export-ollama-embed-model.sh \
+        "${IMAGES_DIR}/ollama-models-${EMBED_MODEL}.tar.gz" \
+        "" \
+        "$EMBED_MODEL"
+    else
+      echo "▶ Ollama runtime paketin içine gömülmüyor — kurulumda '${OLLAMA_RUNTIME_RELEASE}'"
+      echo "  release'inden bir kereye mahsus indirilip önbelleğe alınacak."
     fi
-    repack_and_save "ollama/ollama:latest" "${IMAGES_DIR}/ollama.tar.gz"
 
-    echo "▶ Embedding modeli dışa aktarılıyor: ${EMBED_MODEL}"
-    chmod +x scripts/export-ollama-embed-model.sh
-    scripts/export-ollama-embed-model.sh \
-      "${IMAGES_DIR}/ollama-models-${EMBED_MODEL}.tar.gz" \
-      "" \
-      "$EMBED_MODEL"
-
-    # Kurulum betiğinin ollama'yı otomatik açması için işaret
+    # Kurulum betiğinin ollama'yı otomatik açması / runtime'ı indirmesi için işaret
     cat > "${STAGE}/WITH_OLLAMA" <<EOF
 1
 EMBED_MODEL=${EMBED_MODEL}
 OLLAMA_IMAGE=ollama/ollama:latest
+OLLAMA_RUNTIME_RELEASE=${OLLAMA_RUNTIME_RELEASE}
+OLLAMA_RUNTIME_BASE_URL=${OLLAMA_RUNTIME_BASE_URL}
 EOF
     cat >> "$STAGE/.env.example" <<EOF
 
