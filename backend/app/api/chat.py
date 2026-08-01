@@ -1281,72 +1281,107 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 yield _sse({"done": True, "session_id": session_id, "from_cache": True})
                 return
 
-            # ── 2a. Direkt komut çalıştırma (AI bypass) ─────────────────
-            # Kullanıcı belirli bir Linux komutu istiyorsa → SSH'dan direkt çalıştır
+            # ── 2a/2b. Niyet yönlendirici (inventory / direct_cmd) ───────
+            from app.services.admin_intent_router import (
+                route_admin_question,
+                resolve_linux_targets,
+                INTENT_INVENTORY,
+                INTENT_DIRECT_CMD,
+            )
+            from app.services.linux_chat_intent import (
+                format_fleet_inventory_answer,
+                load_identity_overlays,
+                collect_live_identity,
+            )
+            _route = route_admin_question(message, platform="linux")
+            logger.info(
+                "[ROUTE] intent=%s conf=%.2f hints=%s",
+                _route.intent, _route.confidence, list((_route.hints or {}).keys()),
+            )
+
+            if chat_platform != "openshift" and _route.intent == INTENT_INVENTORY:
+                _inv_servers, _inv_note = resolve_linux_targets(
+                    db, message,
+                    server_ids=request.server_ids,
+                    server_id=request.server_id,
+                    session_id=session_id,
+                    allow_full_fleet=True,  # hostname/IP listesi filoyu tarayabilir
+                )
+                if not _inv_servers and _inv_note:
+                    for i in range(0, len(_inv_note), 8):
+                        yield _sse({"token": _inv_note[i:i + 8]})
+                    _persist_chat_pair(
+                        db, session_id, ephemeral=ephemeral, user=message, assistant=_inv_note,
+                    )
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
+
+                yield _sse({"token": f"Hostname/IP için {len(_inv_servers)} sunucuda canlı kimlik taranıyor...\n\n"})
+
+                _overlays = load_identity_overlays(db, [s.id for s in _inv_servers])
+                for _sid, _slot in _overlays.items():
+                    _slot.setdefault("source", "learned")
+
+                _cred_inv = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
+                if not _cred_inv:
+                    _cred_inv = db.query(GlobalCredential).first()
+                _live_ok = _live_fail = 0
+                if _inv_servers and _cred_inv:
+                    import asyncio as _aio_inv
+                    _loop_inv = _aio_inv.get_event_loop()
+                    _live_map, _live_ok, _live_fail = await _loop_inv.run_in_executor(
+                        None,
+                        lambda: collect_live_identity(
+                            _inv_servers, _cred_inv, db=db, ephemeral=ephemeral,
+                        ),
+                    )
+                    for _sid, _slot in _live_map.items():
+                        _overlays[_sid] = {**_overlays.get(_sid, {}), **_slot, "source": "ssh"}
+
+                inv_answer = format_fleet_inventory_answer(
+                    _inv_servers, overlays=_overlays, live_ok=_live_ok, live_fail=_live_fail,
+                )
+                for i in range(0, len(inv_answer), 8):
+                    yield _sse({"token": inv_answer[i:i + 8]})
+                _persist_chat_pair(
+                    db, session_id, ephemeral=ephemeral, user=message, assistant=inv_answer,
+                )
+                yield _sse({"done": True, "session_id": session_id})
+                return
+
+            # ── 2b. Direkt komut çalıştırma (AI bypass) ─────────────────
             _LONG_CMDS = ['vmstat', 'iostat', 'sar', 'top -b']
 
-            def _extract_commands_from_msg(msg):
-                """Mesajdan Linux komutlarini token bazli cikar."""
-                _CMD_SPECS = [
-                    ('vmstat', 4), ('iostat', 4), ('sar', 4),
-                    ('netstat', 3), ('ss', 3), ('ps', 3),
-                    ('df', 2), ('du', 2), ('lsblk', 2), ('lscpu', 1),
-                    ('free', 2), ('lsmod', 1), ('uptime', 1),
-                    ('top', 3), ('ifconfig', 2), ('arp', 2),
-                    ('route', 2), ('ip', 3),
-                ]
-                tokens = msg.split()
-                found = []
-                i = 0
-                while i < len(tokens):
-                    tok = tokens[i].lower().rstrip(".,?!")
-                    matched = False
-                    for cmd_name, max_args in _CMD_SPECS:
-                        if tok == cmd_name:
-                            parts = [tokens[i]]
-                            j = i + 1
-                            count = 0
-                            while j < len(tokens) and count < max_args:
-                                arg = tokens[j].rstrip(".,?!")
-                                if arg.startswith("-") or arg.lstrip("-").isdigit():
-                                    parts.append(arg)
-                                    count += 1
-                                    j += 1
-                                else:
-                                    break
-                            cmd = " ".join(parts)
-                            if cmd not in found:
-                                found.append(cmd)
-                            i = j
-                            matched = True
-                            break
-                    if not matched:
-                        i += 1
-                return found
-
-            direct_cmds = _extract_commands_from_msg(message)
+            direct_cmds = list((_route.hints or {}).get("commands") or [])
+            if _route.intent != INTENT_DIRECT_CMD:
+                direct_cmds = []
             logger.info(f"[DIRECT] direct_cmds={direct_cmds!r} server_id={request.server_id!r}")
 
 
             if direct_cmds:
                 logger.info(f"Direkt komut(lar) algılandı: {direct_cmds!r}")
-                # Analiz isteniyor mu?
                 _ANALYZE_KEYWORDS = ['analiz', 'analyze', 'yorumla', 'değerlendir', 'incele',
                                      'açıkla', 'neden', 'sorun', 'problem', 'yavaş', 'yüksek',
                                      'kontrol et', 'ne anlama', 'ne göster', 'raporla', 'rapor']
                 _needs_analysis = any(k in message.lower() for k in _ANALYZE_KEYWORDS)
 
-                # Sunucuları belirle: önce UI'dan seçilen, sonra mesaj içinden, son çare hepsi
-                _all_ai_srv = _linux_ai_ready_servers(db)
-                if request.server_ids:
-                    _target_servers = [s for s in _all_ai_srv if s.id in request.server_ids]
-                elif request.server_id:
-                    _target_servers = [s for s in _all_ai_srv if s.id == request.server_id]
-                else:
-                    ml_dc2 = message.lower()
-                    _target_servers = [s for s in _all_ai_srv if (s.name and s.name.lower() in ml_dc2) or (s.ip_address and s.ip_address in message)]
-                    if not _target_servers:
-                        _target_servers = _all_ai_srv
+                # Tam filo default YOK — seçim / mesaj / session; yoksa sor
+                _target_servers, _tgt_note = resolve_linux_targets(
+                    db, message,
+                    server_ids=request.server_ids,
+                    server_id=request.server_id,
+                    session_id=session_id,
+                    allow_full_fleet=False,
+                )
+                if not _target_servers:
+                    _ask = _tgt_note or "Hangi sunucuda komutu çalıştırayım?"
+                    for i in range(0, len(_ask), 8):
+                        yield _sse({"token": _ask[i:i + 8]})
+                    _persist_chat_pair(
+                        db, session_id, ephemeral=ephemeral, user=message, assistant=_ask,
+                    )
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
 
                 from app.services.ssh_manager import SSHManager
                 from app.core.encryption import decrypt_secret as _dec_secret

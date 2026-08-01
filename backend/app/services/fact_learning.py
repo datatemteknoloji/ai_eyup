@@ -38,6 +38,7 @@ LINUX_STABLE_FACT_FIELDS: Dict[str, str] = {
     "sysctl_important": "sysctl", "sysctl_requested": "sysctl", "sysctl_limits": "sysctl",
     "os_info": "os", "os_hostnamectl": "os", "locale_info": "os", "timezone": "os",
     "hostname_short": "os", "hostname_fqdn": "os", "runlevel": "os",
+    "ip_brief": "network",  # identity grubu — canlı IP özeti
     # CPU / Donanim
     "cpu_count": "cpu", "cpu_detail": "cpu", "cpuinfo": "cpu", "cpu_logical_count": "cpu",
     "hw_system": "hardware", "hw_memory_slots": "hardware", "hw_summary": "hardware",
@@ -415,6 +416,81 @@ def extract_and_store_virt_facts(db: Session, server) -> int:
             db.commit()
     except Exception as e:
         logger.debug("Virt fact learning atlandi (%s): %s", getattr(server, "name", "?"), e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+    return touched
+
+
+def store_live_datastore_facts(db: Session, datastores: List[Dict[str, Any]]) -> int:
+    """Canlı vCenter datastore kapasitesini ilgili VM'lerin learned fact'ine yazar.
+
+    Öncelik zinciri (cevap tarafında): canlı SSH/vCenter → learned → DB.
+    """
+    if not datastores:
+        return 0
+    now = datetime.now(timezone.utc)
+    touched = 0
+    try:
+        from app.models.learned_fact import LearnedFact
+        from app.models.server import Server
+
+        by_name = {str(d.get("name") or "").strip().lower(): d for d in datastores if d.get("name")}
+        if not by_name:
+            return 0
+        servers = (
+            db.query(Server)
+            .filter(Server.vm_datastore.isnot(None), Server.vm_datastore != "")
+            .all()
+        )
+        for s in servers:
+            ds_name = (s.vm_datastore or "").strip()
+            d = by_name.get(ds_name.lower())
+            if not d:
+                continue
+            pairs = [
+                ("virt.datastore_name", "virt_storage", ds_name),
+                ("virt.datastore_usage_pct", "virt_storage", d.get("usage_pct")),
+                ("virt.datastore_free_gb", "virt_storage", d.get("free_gb")),
+                ("virt.datastore_capacity_gb", "virt_storage", d.get("capacity_gb")),
+                ("virt.datastore_accessible", "virt_storage", d.get("accessible")),
+            ]
+            for key, category, raw in pairs:
+                if raw is None or raw == "":
+                    continue
+                value_str = _stringify(raw)[:_MAX_VALUE_CHARS]
+                existing = (
+                    db.query(LearnedFact)
+                    .filter(
+                        LearnedFact.server_id == s.id,
+                        LearnedFact.category == category,
+                        LearnedFact.key == key,
+                    )
+                    .first()
+                )
+                if existing:
+                    if existing.value == value_str:
+                        existing.last_confirmed_at = now
+                        existing.times_confirmed = (existing.times_confirmed or 1) + 1
+                    else:
+                        existing.value = value_str
+                        existing.first_learned_at = now
+                        existing.last_confirmed_at = now
+                        existing.times_confirmed = 1
+                    existing.source = "vcenter_live"
+                else:
+                    db.add(LearnedFact(
+                        server_id=s.id, category=category, key=key, value=value_str,
+                        source="vcenter_live",
+                        first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
+                    ))
+                touched += 1
+        if touched:
+            db.commit()
+    except Exception as e:
+        logger.debug("store_live_datastore_facts: %s", e)
         try:
             db.rollback()
         except Exception:

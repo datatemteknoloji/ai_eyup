@@ -110,6 +110,24 @@ def _tr_lower(s: str) -> str:
     return s.replace("İ", "i").replace("I", "ı").lower()
 
 
+# Sık yazım hataları — "datastorae duurmlarını" (= duurm≠durum) gibi sorular
+_VIRT_TYPO_FIXES = [
+    (re.compile(r"\bdatastor\w*\b", re.I), "datastore"),
+    # durum / duurum / duurmlarını / durm
+    (re.compile(r"\bd[uü]{1,3}r[uü]?m\w*\b", re.I), "durum"),
+    (re.compile(r"\bstorag\w*\b", re.I), "storage"),
+    (re.compile(r"\bdepolam+\w*\b", re.I), "depolama"),
+]
+
+
+def _normalize_virt_question(question: str) -> str:
+    """TR lower + sayı + yaygın typo düzeltmeleri (eşleştirme için)."""
+    q = _normalize_numbers(_tr_lower(question or ""))
+    for pat, repl in _VIRT_TYPO_FIXES:
+        q = pat.sub(repl, q)
+    return q
+
+
 # Yazı ile sayılar ("bir ay", "iki hafta") — sık kullanılan ilk 12 sayı yeterli.
 _TR_NUMBER_WORDS = {
     "bir": 1, "iki": 2, "üç": 3, "dört": 4, "beş": 5, "altı": 6, "yedi": 7,
@@ -1937,6 +1955,46 @@ def h_datastore_accessibility(db: Session, question: str = "") -> str:
     return header + _md_table(["Datastore", "Tip", "Doluluk", "Bağlı Host Sayısı", "Hypervisor"], rows, "Tüm datastore'lar erişilebilir durumda.")
 
 
+def h_datastore_status(db: Session, question: str = "") -> str:
+    """Datastore durumları: erişim + kapasite + doluluk (canlı vCenter)."""
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_datastore_status(db)
+    if r.get("errors") and not r.get("datastores"):
+        return _na(f"vCenter datastore sorgusu başarısız oldu: {'; '.join((r.get('errors') or [])[:2])}")
+    stores = list(r.get("datastores") or [])
+    if not stores:
+        # Fallback: kapasite tablosu (VM tahsis + canlı)
+        return h_datastore_by_disk(db, question)
+
+    inaccessible = [d for d in stores if not d.get("accessible")]
+    rows = []
+    for d in sorted(stores, key=lambda x: -(x.get("usage_pct") or 0)):
+        rows.append([
+            d.get("name") or "-",
+            "OK" if d.get("accessible") else "ERİŞİLEMEZ",
+            d.get("type") or "-",
+            d.get("capacity_gb") if d.get("capacity_gb") is not None else "—",
+            d.get("used_gb") if d.get("used_gb") is not None else "—",
+            d.get("free_gb") if d.get("free_gb") is not None else "—",
+            f"%{d['usage_pct']}" if d.get("usage_pct") is not None else "—",
+            d.get("host_count") if d.get("host_count") is not None else "—",
+            d.get("hypervisor") or "-",
+        ])
+    header = (
+        f"### Datastore Durumları\n\n"
+        f"**Toplam:** {len(stores)} | **Erişilebilir:** {len(stores) - len(inaccessible)} | "
+        f"**Erişilemez:** {len(inaccessible)}\n\n"
+    )
+    body = _md_table(
+        ["Datastore", "Durum", "Tip", "Toplam (GB)", "Kullanılan", "Boş", "Doluluk", "Host", "Hypervisor"],
+        rows,
+        "Datastore bulunamadı.",
+    )
+    # VM tahsis özetini de ekle (kısa)
+    alloc = h_datastore_by_disk(db, question)
+    return header + body + "\n\n---\n\n" + alloc
+
+
 # ── Olaylar ve Alarm ──────────────────────────────────────────────────────────
 
 def h_critical_alarms_24h(db: Session, question: str = "") -> str:
@@ -2256,7 +2314,9 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
     (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
     (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm", h_vm_per_host),
-    (r"envanter\s*(özet|flash|özeti)|anlık\s*durum|tek\s*bakışta|ortam\s*özeti|kaç\s*host.*kaç\s*vm|genel\s*envanter", h_inventory_flash),
+    # Datastore/storage durum — envanter flash'tan ÖNCE (typo normalize sonrası)
+    (r"datastore\s*(durum|status|kapasite|doluluk|list|özet|ozet|erişim|erisim)|storage\s*(durum|status|doluluk|kapasite)|depolama\s*(durum|doluluk|kapasite)|datastore.?lar(\w*)?\s*(durum|göster|goster|list|ver)|hangi\s*datastore", h_datastore_status),
+    (r"envanter\s*(özet|flash|özeti)|anlık\s*envanter|tek\s*bakışta\s*envanter|ortam\s*özeti|kaç\s*host.*kaç\s*vm|genel\s*envanter", h_inventory_flash),
     (r"en\s*fazla\s*boş\s*(belle[gğk]\w*|ram|hafıza)|boş\s*(belle[gğk]\w*|ram).*(host|en\s*fazla)|ram.?i\s*en\s*boş\s*host|en\s*boş\s*(ram|bellek).*host", h_free_resources),
     (r"disconnect\s*(olan|olmuş)?\s*host|host\s*disconnect|bağlantısı\s*kop(an|muş)\s*host|bağlantı\s*kesilen\s*host", h_host_disconnected),
     (r"vmware\s*tools\s*(kurulu|yüklü)\s*olmayan|tools\s*(kurulu|yüklü)\s*olmayan|guest\s*tools\s*(kurulu|yüklü)\s*olmayan", h_no_tools),
@@ -2336,6 +2396,7 @@ QA_RULES: List[Tuple[str, Any]] = [
 
     # Storage
     (r"ne\s*kadar\s*boş|boş\s*kayna[gğk]\w*|free\s*capacity|kaynak\s*boşlu[gğ]u|kapasite\s*boşlu[gğ]u", h_free_resources),
+    (r"datastore\s*(durum|status)|storage\s*durum|depolama\s*durum|datastore.?lar", h_datastore_status),
     (r"datastore\s*dağılım|vm.*datastore.*dağılım|datastore.*bazında.*vm|vm.*datastore.*bazında", h_datastore_by_disk),
     (r"datastore\s*kapasite|datastore.*boş|boş\s*datastore|datastore\s*doluluk|ne\s*kadar\s*boş.*(?:disk|datastore|depolama)|(?:disk|datastore|depolama).*(?:ne\s*kadar\s*boş|free)", h_datastore_by_disk),
     (r"en\s*dolu\s*datastore|85\s*%?\s*üzeri\s*dolu\s*datastore|%?\s*85\s*%?\s*üzeri\s*dolu\s*datastore|datastore.*%?\s*85", h_datastore_over_85),
@@ -2385,17 +2446,35 @@ QA_RULES: List[Tuple[str, Any]] = [
 
 
 def try_deterministic_answer(db: Session, question: str) -> Optional[str]:
-    """QA_RULES tablosunda eşleşen ilk kuralı çalıştırır. Hata olursa None döner (LLM yoluna düşer)."""
-    q = _normalize_numbers(_tr_lower(question))
+    """QA_RULES tablosunda eşleşen ilk kuralı çalıştırır.
+
+    Handler hatasında sonraki kurala devam eder (tek hata tüm deterministic
+    katmanı düşürmez). Eşleşme için typo-normalize edilmiş metin kullanılır;
+    handler'a orijinal soru verilir.
+    """
+    # Agentic dump varsa yalnız kullanıcı kısmını eşleştir
+    user_q = (question or "").split("\n\n[CANLI ARAÇ SONUÇLARI")[0]
+    q = _normalize_virt_question(user_q)
     for pattern, handler in QA_RULES:
         try:
             if re.search(pattern, q, re.IGNORECASE):
-                result = handler(db, question)
+                result = handler(db, user_q)
                 if isinstance(result, str) and result.strip():
+                    # Datastore canlı sorgu → learned facts (canlı > learned > DB)
+                    hname = getattr(handler, "__name__", "")
+                    if hname in ("h_datastore_status", "h_datastore_by_disk", "h_datastore_accessibility", "h_datastore_over_85"):
+                        try:
+                            from app.services.fact_learning import store_live_datastore_facts
+                            store_live_datastore_facts(db, _get_live_datastores(db))
+                        except Exception:
+                            pass
                     return result
         except Exception as exc:
-            logger.warning("[HVIntelligence] deterministic handler error (pattern=%s): %s", pattern, exc, exc_info=True)
-            return None
+            logger.warning(
+                "[HVIntelligence] deterministic handler error (pattern=%s handler=%s): %s — next rule",
+                pattern[:60], getattr(handler, "__name__", "?"), exc,
+            )
+            continue
     return None
 
 
@@ -2466,52 +2545,49 @@ def answer_hypervisor_question(
     question: str,
     model: Optional[str] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
+    skip_deterministic: bool = False,
+    user_question: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Doğal dil sorusunu alır, context oluşturur, Ollama ile yanıtlar.
 
-    Aynı soru tekrar sorulduğunda önbellekten anında döner — LLM'i veya
-    deterministik DB/vCenter sorgusunu tekrar çalıştırmaz. Ne kadar sık
-    sorulursa önbellek süresi o kadar uzar (bkz. `qa_cache.py`).
-
-    Not: Deterministik katmandan gelen cevaplar (şablon tabanlı, konuşma
-    bağlamından bağımsız) konuşma geçmişi olsa bile önbelleğe yazılır —
-    "VM listesi" gibi sorular hangi sohbette sorulursa sorulsun aynıdır.
-    LLM'in ürettiği serbest metin cevaplar ise sadece bağımsız (geçmişsiz)
-    sorularda önbelleğe yazılır; bağlama bağlı takip soruları ("peki ya CPU?")
-    hiç önbelleklenmez.
-
-    Returns:
-        {answer, intents, context_summary, model, latency_ms}
+    skip_deterministic: True ise QA_RULES atlanır (çağıran ham soruda zaten denedi).
+    user_question: intent/report/cache için ham kullanıcı sorusu (agentic dump yok).
     """
     from app.services import qa_cache
 
     t0 = datetime.utcnow()
+    cache_q = user_question or (question or "").split("\n\n[CANLI ARAÇ SONUÇLARI")[0]
 
     # Takip sorularinda (conversation_history varsa) cache'e bakilmiyor — aksi halde
     # "peki cpu?" gibi baglama bagli bir soru, izole/eski bir soruyla metin benzerligi
     # yuzunden yanlislikla eslesip bu oturumun gecmisini yok sayan bir cevap donebilir.
-    cached = qa_cache.get_cached_answer(question, model) if not conversation_history else None
+    cached = qa_cache.get_cached_answer(cache_q, model) if not conversation_history else None
     if cached is not None:
         hits = cached.pop("_cache_hits", None)
         cached["cached"] = True
         cached["latency_ms"] = int((datetime.utcnow() - t0).total_seconds() * 1000)
         logger.info(
-            "[HVIntelligence] cache HIT (hits=%s) q=%r", hits, question[:80]
+            "[HVIntelligence] cache HIT (hits=%s) q=%r", hits, cache_q[:80]
         )
         return cached
 
-    result = _compute_hypervisor_answer(db, question, model, conversation_history)
+    result = _compute_hypervisor_answer(
+        db, question, model, conversation_history,
+        skip_deterministic=skip_deterministic,
+        user_question=cache_q,
+    )
 
     # Deterministik cevaplar şablon; LLM serbest metinde bilinmiyor kaçışını temizle
-    if result.get("answer") and result.get("intents") != ["deterministic"]:
+    intents = result.get("intents") or []
+    if result.get("answer") and "deterministic" not in intents:
         from app.services.answer_sanitize import sanitize_llm_answer
         result["answer"] = sanitize_llm_answer(result.get("answer") or "")
 
-    is_deterministic = result.get("intents") == ["deterministic"]
+    is_deterministic = "deterministic" in intents
     should_cache = (is_deterministic or not conversation_history) and not result.get("error")
     if should_cache:
-        qa_cache.set_cached_answer(question, result, model)
+        qa_cache.set_cached_answer(cache_q, result, model)
 
     return result
 
@@ -2521,31 +2597,34 @@ def _compute_hypervisor_answer(
     question: str,
     model: Optional[str] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
+    skip_deterministic: bool = False,
+    user_question: Optional[str] = None,
 ) -> Dict[str, Any]:
     t0 = datetime.utcnow()
+    intent_q = user_question or (question or "").split("\n\n[CANLI ARAÇ SONUÇLARI")[0]
 
-    # 1) Deterministik katman — "100+ soru" kataloğundaki kesin cevaplanabilir
-    #    sorular için DB/canlı vCenter sorgusuyla hızlı ve %100 veri-doğru yanıt.
-    det_answer = try_deterministic_answer(db, question)
-    if det_answer:
-        latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
-        logger.info(f"[HVIntelligence] deterministic answer latency={latency_ms}ms")
-        return {
-            "answer": det_answer,
-            "intents": ["deterministic"],
-            "context_lines": 0,
-            "vm_count_in_context": len(_get_vms(db)),
-            "model": None,
-            "latency_ms": latency_ms,
-            "error": None,
-        }
+    # 1) Deterministik katman — ham kullanıcı sorusu üzerinde
+    if not skip_deterministic:
+        det_answer = try_deterministic_answer(db, intent_q)
+        if det_answer:
+            latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
+            logger.info(f"[HVIntelligence] deterministic answer latency={latency_ms}ms")
+            return {
+                "answer": det_answer,
+                "intents": ["deterministic"],
+                "context_lines": 0,
+                "vm_count_in_context": len(_get_vms(db)),
+                "model": None,
+                "latency_ms": latency_ms,
+                "error": None,
+            }
 
-    # 2) Rapor sorusu mu kontrol et
-    report_type = detect_report_type(question)
+    # 2) Rapor sorusu mu kontrol et (ham soru — tool dump rapor tetiklemesin)
+    report_type = detect_report_type(intent_q)
     if report_type:
-        return answer_report_question(db, question, report_type, model)
+        return answer_report_question(db, intent_q, report_type, model)
 
-    intents = detect_intent(question)
+    intents = detect_intent(intent_q)
 
     # VM adları soru içinde geçiyor mu?
     from app.services.platform_scope import vm_filter_condition

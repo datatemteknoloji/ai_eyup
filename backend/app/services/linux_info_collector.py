@@ -11,6 +11,12 @@ from app.core.encryption import decrypt_secret
 logger = logging.getLogger(__name__)
 
 COMMAND_GROUPS = {
+    # ── KİMLİK (hafif — filo hostname/IP envanter soruları) ─────────────────
+    "identity": [
+        ("hostname", "hostname_short"),
+        ("hostname -f 2>/dev/null || hostname", "hostname_fqdn"),
+        ("ip -br addr 2>/dev/null | head -30 || ip -o -4 addr show 2>/dev/null | head -30", "ip_brief"),
+    ],
     # ── KERNEL ──────────────────────────────────────────────────────────────
     "kernel": [
         ("uname -r", "kernel_version"),

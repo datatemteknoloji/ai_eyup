@@ -913,51 +913,76 @@ async def ask_hypervisor_question(
         if req.history:
             history = req.history[-8:]
 
-        from app.services.hypervisor_intelligence import answer_hypervisor_question
-        from app.services import runtime_settings as _rts
-
-        # Ortam bağlıyken her soruda canlı araç denemesi — "bilinmiyor" yok.
-        live_hint = True
-        agentic_extra = ""
-        if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
-            try:
-                from app.services.unified_tool_chat import run_read_only_tool_loop
-                from app.services.agent.tools import domains_for_platform
-                from app.core.config import get_active_model
-                model_name = req.model or get_active_model(db)
-                hv_summary = "\n".join(
-                    f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
-                    for h in db.query(Hypervisor).all()
-                )
-                gen = run_read_only_tool_loop(
-                    db, model_name, question, "", hv_summary,
-                    max_steps=_rts.get_int("virt_chat_max_tool_steps"),
-                    domains=domains_for_platform("virt"),
-                    platform="virt",
-                )
-                for item in gen:
-                    if item.get("type") == "final":
-                        agentic_extra = item.get("tool_text") or ""
-                        break
-                    if item.get("type") in ("skipped", "error"):
-                        break
-            except Exception as e:
-                logger.warning(f"[HypervisorAsk] agentic live tools: {e}")
-
-        ask_question = question
-        if agentic_extra:
-            ask_question = (
-                question
-                + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
-                + agentic_extra[:20000]
-            )
-
-        result = answer_hypervisor_question(
-            db=db,
-            question=ask_question,
-            model=req.model,
-            conversation_history=history,
+        from app.services.hypervisor_intelligence import (
+            answer_hypervisor_question,
+            try_deterministic_answer,
         )
+        from app.services import runtime_settings as _rts
+        from app.services.admin_intent_router import route_admin_question
+
+        # 1) Deterministik katman — HAM soru (agentic dump QA_RULES'a ASLA girmez)
+        route = route_admin_question(question, platform="virt")
+        det_answer = try_deterministic_answer(db, question)
+        if det_answer:
+            from app.services import qa_cache as _qa_cache
+            result = {
+                "answer": det_answer,
+                "intents": ["deterministic", route.intent],
+                "context_lines": 0,
+                "model": None,
+                "latency_ms": 0,
+                "error": None,
+                "normalized_q": route.normalized_q,
+            }
+            try:
+                _qa_cache.set_cached_answer(question, result, req.model)
+            except Exception:
+                pass
+        else:
+            # 2) Agentic tool çıktısı yalnız LLM dalına eklenir
+            live_hint = True
+            agentic_extra = ""
+            if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
+                try:
+                    from app.services.unified_tool_chat import run_read_only_tool_loop
+                    from app.services.agent.tools import domains_for_platform
+                    from app.core.config import get_active_model
+                    model_name = req.model or get_active_model(db)
+                    hv_summary = "\n".join(
+                        f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
+                        for h in db.query(Hypervisor).all()
+                    )
+                    gen = run_read_only_tool_loop(
+                        db, model_name, question, "", hv_summary,
+                        max_steps=_rts.get_int("virt_chat_max_tool_steps"),
+                        domains=domains_for_platform("virt"),
+                        platform="virt",
+                    )
+                    for item in gen:
+                        if item.get("type") == "final":
+                            agentic_extra = item.get("tool_text") or ""
+                            break
+                        if item.get("type") in ("skipped", "error"):
+                            break
+                except Exception as e:
+                    logger.warning(f"[HypervisorAsk] agentic live tools: {e}")
+
+            ask_question = question
+            if agentic_extra:
+                ask_question = (
+                    question
+                    + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
+                    + agentic_extra[:20000]
+                )
+
+            result = answer_hypervisor_question(
+                db=db,
+                question=ask_question,
+                model=req.model,
+                conversation_history=history,
+                skip_deterministic=True,  # ham soruda zaten denendi
+                user_question=question,
+            )
 
         assistant_meta = {
             "intents": result.get("intents") or [],
