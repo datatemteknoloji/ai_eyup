@@ -5,6 +5,7 @@ Her 10 dakikada background task olarak calisir.
 Node-exporter yoksa (veya Prometheus boş dönüyorsa) VMware QuickStats ile
 sanal makine CPU/RAM snapshot'ı metric_data'ya yazılır.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
@@ -468,7 +469,13 @@ class MetricSyncService:
         vm_stats = {"servers": 0, "metrics": 0}
         if vm_servers:
             try:
-                vm_stats = MetricSyncService.sync_vmware_fallback_batch(db, vm_servers)
+                # sync_vmware_fallback_batch senkron/bloklayan (requests) vCenter
+                # çağrıları yapar — event loop'u kilitlememesi için thread pool'da
+                # çalıştırılır (bkz. _periodic_esx_metric_sync'teki aynı desen).
+                loop = asyncio.get_event_loop()
+                vm_stats = await loop.run_in_executor(
+                    None, MetricSyncService.sync_vmware_fallback_batch, db, vm_servers
+                )
                 total += vm_stats.get("metrics", 0)
                 synced_servers += vm_stats.get("servers", 0)
             except Exception as e:
