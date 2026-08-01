@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings, apply_promql_job
 from app.models.server import Server
 from app.models.metric import MetricData
-from app.services.platform_scope import is_windows_server
+from app.services.platform_scope import is_windows_server, is_vm
 from app.services.monitoring.prometheus_metrics import WINDOWS_EXPORTER_PORT
 
 logger = logging.getLogger(__name__)
@@ -316,19 +316,14 @@ class MetricSyncService:
     @staticmethod
     def sync_vmware_fallback_batch(db: Session, servers: List[Server]) -> Dict[str, Any]:
         """
-        Node-exporter / Prometheus verisi olmayan VIRTUAL sunucular için
-        vCenter QuickStats → metric_data (cpu/mem). Disk/IOPS QuickStats'ta yok.
+        VM'ler için metrik kaynağı her zaman vCenter'dır (Prometheus/node_exporter
+        kurulu olsa bile) — QuickStats → metric_data (cpu/mem). Disk IOPS de
+        vCenter PerfManager'dan (get_vm_disk_iops) alınır.
         """
         from app.models.hypervisor import Hypervisor, HypervisorType
         from app.services.vmware.vcenter_client import VCenterClient
 
-        candidates = [
-            s for s in servers
-            if (s.server_type or "").upper() == "VIRTUAL"
-            and s.hypervisor_id
-            and not is_windows_server(s)
-            and (not getattr(s, "node_exporter_running", False))
-        ]
+        candidates = [s for s in servers if is_vm(s) and s.hypervisor_id]
         if not candidates:
             return {"servers": 0, "metrics": 0}
 
@@ -343,12 +338,16 @@ class MetricSyncService:
             hyp = db.query(Hypervisor).filter(Hypervisor.id == hyp_id).first()
             if not hyp or hyp.hypervisor_type != HypervisorType.VMWARE:
                 continue
+            # ip_address öncelikli — hostname alanına yanlışlıkla görünen ad
+            # (ör. "Vcenter datatem") girilmiş olabilir; inventory_sync_service
+            # ile aynı öncelik sırası kullanılmalı.
+            vc_host = (hyp.ip_address or hyp.hostname or "").strip()
             vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
-            if not (hyp.hostname and hyp.username and vc_pass):
+            if not (vc_host and hyp.username and vc_pass):
                 continue
             try:
                 vc = VCenterClient(
-                    host=hyp.hostname,
+                    host=vc_host,
                     username=hyp.username,
                     password=vc_pass,
                     port=hyp.port or 443,
@@ -425,71 +424,63 @@ class MetricSyncService:
 
     @staticmethod
     async def sync_all_servers_metrics(db: Session, minutes: int = 12) -> Dict[str, Any]:
-        # ai_ready VEYA node_exporter_running — IOPS kaçmasın diye exporter'ı olan ONLINE Linux dahil
+        """Metrik kaynağı sunucu tipine göre ayrılır — ikisi asla karışmaz:
+          - Fiziksel sunucular (VM olmayan): Prometheus / node_exporter / windows_exporter
+          - VM'ler (hypervisor_id dolu veya server_type=VIRTUAL): daima vCenter QuickStats
+        Bir VM'de node_exporter/windows_exporter çalışıyor olsa bile metrikleri
+        vCenter'dan alınır; Prometheus'a hiç sorgu atılmaz.
+        """
         candidates = db.query(Server).filter(Server.status == "ONLINE").all()
-        servers = []
+
+        physical_servers: List[Server] = []
+        vm_servers: List[Server] = []
         for s in candidates:
+            if is_vm(s):
+                if s.hypervisor_id:
+                    vm_servers.append(s)
+                continue
             if is_windows_server(s):
                 if s.ai_ready and s.windows_exporter_installed:
-                    servers.append(s)
+                    physical_servers.append(s)
             elif s.ai_ready or getattr(s, "node_exporter_running", False):
-                servers.append(s)
+                physical_servers.append(s)
+
         # dedupe by id
         seen = set()
         uniq = []
-        for s in servers:
+        for s in physical_servers:
             if s.id in seen:
                 continue
             seen.add(s.id)
             uniq.append(s)
-        servers = uniq
+        physical_servers = uniq
+
         total, synced_servers = 0, 0
-        need_vmware: List[Server] = []
-        for srv in servers:
+        for srv in physical_servers:
             try:
                 count = await MetricSyncService.sync_server_metrics(db, srv, minutes)
                 if count > 0:
                     total += count
                     synced_servers += 1
-                elif not is_windows_server(srv) and (srv.server_type or "").upper() == "VIRTUAL":
-                    # Prometheus boş veya node_exporter yok → VMware adayı
-                    if not getattr(srv, "node_exporter_running", False) or count == 0:
-                        need_vmware.append(srv)
             except Exception as e:
                 logger.error(f"Metric sync failed {srv.name}: {e}")
-                if not is_windows_server(srv) and (srv.server_type or "").upper() == "VIRTUAL":
-                    need_vmware.append(srv)
-
-        # ai_ready olmayan VIRTUAL + hypervisor bağlı ama ONLINE VM'ler de fallback alsın
-        extra = db.query(Server).filter(
-            Server.status == "ONLINE",
-            Server.server_type == "VIRTUAL",
-            Server.hypervisor_id.isnot(None),
-        ).all()
-        seen = {s.id for s in need_vmware}
-        for s in extra:
-            if s.id in seen or is_windows_server(s):
-                continue
-            if getattr(s, "node_exporter_running", False):
-                continue
-            need_vmware.append(s)
-            seen.add(s.id)
 
         vm_stats = {"servers": 0, "metrics": 0}
-        if need_vmware:
+        if vm_servers:
             try:
-                vm_stats = MetricSyncService.sync_vmware_fallback_batch(db, need_vmware)
+                vm_stats = MetricSyncService.sync_vmware_fallback_batch(db, vm_servers)
                 total += vm_stats.get("metrics", 0)
                 synced_servers += vm_stats.get("servers", 0)
             except Exception as e:
-                logger.error(f"VMware metric fallback batch failed: {e}", exc_info=True)
+                logger.error(f"VMware metric sync batch failed: {e}", exc_info=True)
 
+        total_servers = len(physical_servers) + len(vm_servers)
         logger.info(
-            f"Metric sync: {synced_servers}/{len(servers)} sunucu, {total} kayit "
-            f"(vmware_fallback={vm_stats.get('servers', 0)})"
+            f"Metric sync: {synced_servers}/{total_servers} sunucu, {total} kayit "
+            f"(fiziksel={len(physical_servers)} Prometheus, vm={len(vm_servers)} vCenter)"
         )
         return {
-            "total_servers": len(servers),
+            "total_servers": total_servers,
             "synced_servers": synced_servers,
             "total_metrics": total,
             "vmware_fallback_servers": vm_stats.get("servers", 0),

@@ -892,11 +892,13 @@ def _fetch_vcenter_vm_metrics(server: Server, db: Session) -> dict:
 
     vcenter_stats: dict = {}
     for hyp in hyps:
+        # ip_address öncelikli — hostname alanına yanlışlıkla görünen ad girilmiş olabilir
+        vc_host = (hyp.ip_address or hyp.hostname or "").strip()
         vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
-        if not (hyp.hostname and hyp.username and vc_pass):
+        if not (vc_host and hyp.username and vc_pass):
             continue
         try:
-            vc = VCenterClient(host=hyp.hostname, username=hyp.username, password=vc_pass)
+            vc = VCenterClient(host=vc_host, username=hyp.username, password=vc_pass)
             if not vc.login():
                 continue
             vm_id = server.hypervisor_vm_id

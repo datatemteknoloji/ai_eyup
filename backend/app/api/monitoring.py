@@ -32,21 +32,36 @@ async def list_metric_servers(
         sync_node_exporter_running_from_prometheus,
     )
 
-    from app.services.platform_scope import apply_server_platform_filter
+    from app.services.platform_scope import apply_server_platform_filter, get_physical_host_ids, vm_filter_condition
 
     sync_stats = sync_node_exporter_running_from_prometheus(db)
     up_map = get_node_exporter_up_map()
 
-    query = db.query(Server).filter(
+    base_query = db.query(Server).filter(
         Server.ip_address.isnot(None),
         Server.ip_address != "",
     )
-    query = apply_server_platform_filter(query, platform or "linux", db)
+    requested_platform = platform or "linux"
+    vm_instances_to_exclude: set[str] = set()
+    if requested_platform == "linux":
+        # VM'ler metriklerini vCenter'dan alır (bkz. MetricSyncService) — bu
+        # Prometheus/node_exporter özet ekranı yalnızca fiziksel host'ları göstermeli,
+        # yoksa node_exporter'ı hiç kurulmayan VM'ler "scrape yok" olarak görünür.
+        physical_ids = get_physical_host_ids(db)
+        query = base_query.filter(Server.id.in_(physical_ids)) if physical_ids else base_query.filter(False)
+        # Bazı VM'lerde eski/test amaçlı node_exporter hâlâ çalışıyor olabilir —
+        # bunlar fiziksel özet ekranına "eşleşmeyen canlı hedef" olarak sızmasın.
+        for s in base_query.filter(vm_filter_condition()).all():
+            inst, _live = match_prometheus_instance(up_map, ip=s.ip_address, hostname=s.hostname, name=s.name)
+            if inst:
+                vm_instances_to_exclude.add(inst)
+    else:
+        query = apply_server_platform_filter(base_query, requested_platform, db)
     servers = query.order_by(Server.name).all()
 
     rows = []
     scrape_error_count = 0
-    matched_instances: set[str] = set()
+    matched_instances: set[str] = set(vm_instances_to_exclude)
 
     for s in servers:
         instance, live = match_prometheus_instance(
