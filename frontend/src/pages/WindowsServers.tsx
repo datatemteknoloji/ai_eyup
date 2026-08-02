@@ -326,8 +326,8 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
           {result && (
             <div className={`rounded-lg p-3 text-sm ${result.connection_test?.connected ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
               {result.connection_test?.connected
-                ? '✓ Bağlantı başarılı'
-                : `✗ ${result.connection_test?.message || 'Bağlantı başarısız'}`}
+                ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> Bağlantı başarılı</span>
+                : <span className="inline-flex items-center gap-1.5"><XCircle size={14} strokeWidth={2} /> {result.connection_test?.message || 'Bağlantı başarısız'}</span>}
             </div>
           )}
           <button
@@ -626,7 +626,9 @@ const ServerDetail: React.FC<{
                   )}
                   {installExporter.data && (
                     <div className={`mt-3 p-3 rounded-lg text-sm ${installExporter.data.success ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
-                      {installExporter.data.success ? '✓ Kurulum başarılı' : `✗ ${installExporter.data.error}`}
+                      {installExporter.data.success
+                        ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> Kurulum başarılı</span>
+                        : <span className="inline-flex items-center gap-1.5"><XCircle size={14} strokeWidth={2} /> {installExporter.data.error}</span>}
                       {installExporter.data.steps && (
                         <div className="mt-2 space-y-0.5">
                           {installExporter.data.steps.map((s: any, i: number) => (
@@ -704,7 +706,7 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <p className="text-sm text-slate-200">
-              Tüm Windows sunucularında WinRM bağlantısı test edilecek. Sunucuya özel kimlik bilgisi yoksa global WinRM kimlik bilgisi denenecek. Bağlanabilenler → AI Ready = ✅, bağlanamayanlar → ❌. Devam?
+              Tüm Windows sunucularında WinRM bağlantısı test edilecek. Sunucuya özel kimlik bilgisi yoksa global WinRM kimlik bilgisi denenecek. Bağlanabilenler → AI Ready = Evet, bağlanamayanlar → Hayır. Devam?
             </p>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>

@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { AlertTriangle, CheckCircle2, Lightbulb, XCircle } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Server {
@@ -180,7 +181,9 @@ const Dmesg: React.FC<{ s: string }> = ({ s }) => {
       {rows.map((r, i) => (
         <div key={i} className={`flex gap-2 px-2 py-0.5 rounded ${r.lvl === 'error' ? 'bg-red-500/10 text-red-300' : r.lvl === 'warn' ? 'bg-yellow-500/10 text-yellow-300' : 'text-slate-400'}`}>
           <span className="text-slate-600 shrink-0 w-12 truncate text-[10px]">{r.t}</span>
-          <span className="shrink-0">{r.lvl === 'error' ? '✕' : r.lvl === 'warn' ? '⚠' : '·'}</span>
+          <span className="shrink-0">
+            {r.lvl === 'error' ? <XCircle size={10} strokeWidth={2} /> : r.lvl === 'warn' ? <AlertTriangle size={10} strokeWidth={2} /> : '·'}
+          </span>
           <span className="break-all">{r.msg}</span>
         </div>
       ))}
@@ -424,10 +427,16 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
               {answer ? (
                 <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
                   {answer.split('\n').map((line, i) => {
+                    // Model çıktısı satır başına ⚠/✓/💡 koyabiliyor — renklendirme için
+                    // eşleşmeyi koruyoruz ama kullanıcıya ham emoji yerine ikon gösteriyoruz.
                     const isWarn = /^⚠/.test(line), isOk = /^✓/.test(line), isTip = /^💡/.test(line)
+                    const stripped = line.replace(/^(⚠|✓|💡)\s*/, '')
                     return (
-                      <div key={i} className={`${isWarn ? 'text-yellow-300' : isOk ? 'text-emerald-300' : isTip ? 'text-cyan-300' : ''}`}>
-                        {line || <br />}
+                      <div key={i} className={`flex items-start gap-1.5 ${isWarn ? 'text-yellow-300' : isOk ? 'text-emerald-300' : isTip ? 'text-cyan-300' : ''}`}>
+                        {isWarn && <AlertTriangle size={13} strokeWidth={2} className="flex-shrink-0 mt-0.5" />}
+                        {isOk && <CheckCircle2 size={13} strokeWidth={2} className="flex-shrink-0 mt-0.5" />}
+                        {isTip && <Lightbulb size={13} strokeWidth={2} className="flex-shrink-0 mt-0.5" />}
+                        <span>{stripped || <br />}</span>
                       </div>
                     )
                   })}
@@ -629,7 +638,9 @@ const McpTools: React.FC = () => {
                         {servers.filter(s => selectedIds.has(s.id)).map(s => s.name).join(', ')}
                       </div>
                     ) : (
-                      <div className="text-[10px] text-amber-400 mt-0.5">⚠ Sol panelden sunucu seçin</div>
+                      <div className="flex items-center gap-1 text-[10px] text-amber-400 mt-0.5">
+                        <AlertTriangle size={9} strokeWidth={2} /> Sol panelden sunucu seçin
+                      </div>
                     )}
                   </div>
                 </div>

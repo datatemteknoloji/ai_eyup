@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { AlertTriangle, CheckCircle2, XCircle, Lock, Lightbulb } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface PackageFile {
@@ -308,7 +309,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <span className="text-yellow-400 text-base">⚠</span>
+          <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
           <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
@@ -566,7 +567,10 @@ const PackageManager: React.FC = () => {
             ? 'bg-green-900/90 border-green-500/50 text-green-300'
             : 'bg-red-900/90 border-red-500/50 text-red-300'
         }`}>
-          {toast.type === 'ok' ? '✓ ' : '✗ '}{toast.msg}
+          <span className="inline-flex items-center gap-1.5">
+            {toast.type === 'ok' ? <CheckCircle2 size={14} strokeWidth={2} /> : <XCircle size={14} strokeWidth={2} />}
+            {toast.msg}
+          </span>
         </div>
       )}
 
@@ -700,7 +704,7 @@ const PackageManager: React.FC = () => {
               {/* ── Yetkili Kullanıcı ───────────────────────────────────── */}
               <div className="border border-slate-600 rounded-xl overflow-hidden">
                 <div className="bg-white/[0.07]/50 px-4 py-2.5 flex items-center gap-2 border-b border-slate-600">
-                  <span className="text-xs font-semibold text-slate-300">🔐 Yetkili Kullanıcı</span>
+                  <span className="flex items-center gap-1 text-xs font-semibold text-slate-300"><Lock size={11} strokeWidth={2} /> Yetkili Kullanıcı</span>
                   <span className="text-xs text-slate-500">· kurulum için SSH erişimi</span>
                 </div>
                 <div className="p-3 space-y-2">
@@ -763,8 +767,9 @@ const PackageManager: React.FC = () => {
                               />
                             </div>
                           </div>
-                          <div className="bg-blue-500/8 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
-                            💡 Root kullanıcı ise sudo şifresi boş bırakın.
+                          <div className="flex items-start gap-1.5 bg-blue-500/8 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
+                            <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                            <span>Root kullanıcı ise sudo şifresi boş bırakın.</span>
                           </div>
                         </div>
                       )}

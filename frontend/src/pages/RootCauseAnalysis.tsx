@@ -9,6 +9,7 @@ import {
   SearchInput, Select, Section, EmptyState,
 } from '../components/aiops/ui'
 import { exportRcaSectionsToPrintWindow } from '../utils/pdfExport'
+import { CheckCircle2, FileText } from 'lucide-react'
 
 // ── Tipler ────────────────────────────────────────────────────────────────────
 
@@ -302,7 +303,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
               onChange={e => setSearchA(e.target.value)}
               className={inputCls + " text-xs"}
               style={{ ...inputStyle, fontSize: 12 }}
-              placeholder="🔍  Sunucu ara..." />
+              placeholder="Sunucu ara..." />
             <select
               value={serverIdA}
               onChange={e => { setServerIdA(e.target.value); setSearchA('') }}
@@ -354,7 +355,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
               onChange={e => setSearchB(e.target.value)}
               className={inputCls + " text-xs"}
               style={{ ...inputStyle, fontSize: 12 }}
-              placeholder="🔍  Sunucu ara..." />
+              placeholder="Sunucu ara..." />
             <select
               value={serverIdB}
               onChange={e => { setServerIdB(e.target.value); setSearchB('') }}
@@ -577,8 +578,8 @@ function AWRPanel() {
             className="w-full py-8 rounded-[8px] border-2 border-dashed flex flex-col items-center gap-2 transition-colors cursor-pointer hover:border-cyan-500/40"
             style={{ borderColor: content ? 'rgba(6,182,212,0.3)' : 'rgba(255,255,255,0.08)', background: content ? 'rgba(6,182,212,0.04)' : 'transparent' }}>
             {content
-              ? <><span className="text-lg">✓</span><span className="text-xs" style={{ color: NEON.cyan }}>{filename}</span><span className="text-[10px] opacity-40">{content.length.toLocaleString()} karakter yüklendi</span></>
-              : <><span className="text-2xl opacity-30">📄</span><span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>HTML veya Text AWR yükle</span></>
+              ? <><CheckCircle2 size={18} strokeWidth={2} className="text-current" /><span className="text-xs" style={{ color: NEON.cyan }}>{filename}</span><span className="text-[10px] opacity-40">{content.length.toLocaleString()} karakter yüklendi</span></>
+              : <><FileText size={22} strokeWidth={1.5} className="opacity-30" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>HTML veya Text AWR yükle</span></>
             }
           </button>
           <input ref={fileRef} type="file" accept=".html,.htm,.txt,.log" className="hidden"
@@ -599,8 +600,8 @@ function AWRPanel() {
             className="w-full py-8 rounded-[8px] border-2 border-dashed flex flex-col items-center gap-2 transition-colors cursor-pointer"
             style={{ borderColor: baselineContent ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.06)', background: baselineContent ? 'rgba(251,191,36,0.03)' : 'transparent' }}>
             {baselineContent
-              ? <><span className="text-lg">✓</span><span className="text-xs" style={{ color: NEON.orange }}>{baselineFilename}</span></>
-              : <><span className="text-2xl opacity-20">📄</span><span className="text-xs" style={{ color: 'rgba(148,163,184,0.35)' }}>Baseline AWR (sağlıklı dönem)</span></>
+              ? <><CheckCircle2 size={18} strokeWidth={2} className="text-current" /><span className="text-xs" style={{ color: NEON.orange }}>{baselineFilename}</span></>
+              : <><FileText size={22} strokeWidth={1.5} className="opacity-20" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.35)' }}>Baseline AWR (sağlıklı dönem)</span></>
             }
           </button>
           <input ref={baselineRef} type="file" accept=".html,.htm,.txt,.log" className="hidden"
