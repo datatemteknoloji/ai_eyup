@@ -6,7 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, RadialBarChart, RadialBar,
   AreaChart, Area,
 } from 'recharts'
-import { ShieldOff } from 'lucide-react'
+import { ShieldOff, BarChart3, AlertTriangle } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { ServerDetailDrawer } from './Servers'
 import { useAuth } from '../auth/AuthContext'
@@ -797,13 +797,14 @@ function DigestCard({ digest }: {
       : 'border-gray-700/60 bg-gray-800/30'}`}>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-lg">📊</span>
+          <BarChart3 size={16} className="text-gray-400" strokeWidth={1.8} />
           <h3 className="font-semibold text-gray-100">Günlük Alarm Özeti</h3>
           <span className="text-xs text-gray-500">{digest.date}</span>
         </div>
         {digest.action_required && (
-          <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-1 rounded-full border border-amber-500/30">
-            ⚠ Müdahale Gerekli
+          <span className="flex items-center gap-1 text-xs bg-amber-500/20 text-amber-400 px-2 py-1 rounded-md border border-amber-500/30">
+            <AlertTriangle size={12} strokeWidth={2} />
+            Müdahale Gerekli
           </span>
         )}
       </div>
