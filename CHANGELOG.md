@@ -11,20 +11,65 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
-### Düzeltildi
+## [1.0.9.17] - 2026-08-02
+
+### Düzeltildi — Kritik: 10.000+ sunucu ölçeğinde donma (hang) riskleri
+- Event loop'u bloke eden **tüm** kalan senkron çağrılar thread pool'a taşındı:
+  AI Agent chat/onay/red uçları, RCA (AWR/quick-analyze) LLM çağrıları, Windows
+  AI Chat WinRM toplama, hypervisor/OpenShift bağlantı testleri ve VM senkronu,
+  Ansible/AWX uçları, SSH terminal bağlantısı, sunucu sağlık kontrolü. Bunların
+  hiçbiri artık tek worker'lı event loop'u kilitleyemiyor.
+- `MetricSyncService`: fiziksel sunucu metrik senkronu artık sunucu başına tek
+  tek değil, metrik başına **toplu (batch) PromQL** sorgusu ile çalışıyor
+  (`instance=~"regex"`), sorgu sayısını sunucu sayısından bağımsız hale getirdi.
+  PromQL regex escape hatası (Go string literal `\.` parse hatası) düzeltildi.
+- `system_events` tablosuna `created_at`, `last_seen` ve `(server_id, last_seen)`
+  bileşik indeksleri eklendi (288K satırda 1.4M seq scan'e neden oluyordu);
+  ayarlanabilir otomatik retention (varsayılan 180 gün) eklendi.
+- Postgres `max_connections` 100 → 500, uygulama havuzu `pool_size`/`max_overflow`
+  50/100'e yükseltildi; SSH/WinRM/log toplama worker sayıları artık sabit kod
+  yerine ayarlanabilir (`bulk_ssh_workers()`), Windows log toplama ve uygulama
+  keşfi paralelleştirildi.
+- WinRM canlı metrik uçlarına single-flight cache (TTL'li) eklendi — 30 sn'lik
+  frontend polling'i artık sunucu sayısı kadar eşzamanlı WinRM çağrısı üretmiyor.
+- uCMDB senkronu: O(N²) Python taraması yerine O(1) doğrudan SQL sorgusu.
+
+### Düzeltildi — Metrik kaynağı ayrımı ve vCenter
+- VM'ler artık her zaman vCenter'dan (QuickStats/PerfManager), fiziksel
+  sunucular her zaman Prometheus/node_exporter'dan metrik alıyor.
+- Hypervisor kaydında `hostname` alanı görünen ad olsa bile `ip_address`'e
+  düşülüyor (vCenter bağlantı hatası düzeltmesi).
+- `/monitoring/metrics/servers` artık yalnızca gerçek fiziksel host'ları
+  listeliyor; eski node_exporter'ı çalışan VM'ler bu listeye sızmıyor.
+- Sunucu performans sekmesinde `power_state` (VM açık/kapalı) normalizasyonu
+  tek bir paylaşılan fonksiyona taşındı (`frontend/src/utils/powerState.ts`,
+  birim testleriyle) — vCenter'ın camelCase (`poweredOn`) döndürdüğü durumlarda
+  açık bir VM'in yanlışlıkla "Kapalı" görünmesi düzeltildi.
+
+### Düzeltildi — API hataları ve DevEx
 - Validasyon hataları (Pydantic) artık diğer API hataları gibi Türkçe, tutarlı
   `{"detail": ...}` formatında dönüyor.
 - Kimlik doğrulaması olmadan var olmayan bir API path'ine istek atıldığında
   artık yanıltıcı 401 yerine doğal 404 dönüyor.
-- `power_state` (VM açık/kapalı) normalizasyonu tek bir paylaşılan fonksiyona
-  taşındı (`frontend/src/utils/powerState.ts`) ve birim testleri eklendi —
-  Servers.tsx ve Hypervisors.tsx'teki 6+ tekrarlı/tutarsız kontrol kaldırıldı.
+
+### Değişti — Tasarım tutarlılığı
 - Dashboard: kritik durum başlığı artık severity rengini (kırmızı/yeşil) doğru
-  yansıtıyor; emoji ikonlar (📊, ⚠) `lucide-react` ikonlarıyla değiştirildi.
+  yansıtıyor.
+- Tüm arayüzdeki fonksiyonel emoji ikonlar (`DESIGN.md` ihlali) `lucide-react`
+  ikonlarıyla değiştirildi (~30 dosya).
 
 ### Eklendi
 - `scripts/dev-setup.sh`: yerel geliştirme için `.env` dosyasını otomatik
   `SECRET_KEY`/`POSTGRES_PASSWORD` ile hazırlayan script.
+- Kök `CHANGELOG.md` ve `scripts/release.sh`: air-gapped müşteriler için
+  sürüm geçmişini GitHub Release'lerle senkron tutan otomasyon.
+- Yeni dokümanlar: sanallaştırma yönetimi, Windows platformu, metrik mimarisi
+  açıklaması, 10k+ sunucu ölçek/performans rehberi (`docs/`).
+- Ollama runtime kurulum dokümantasyonu (otomatik ve air-gapped manuel kurulum).
+
+### Değişti — Depo düzeni
+- İç kullanım belgeleri (`MERGE_CONFLICT_COZUMU.md`, `sunum/`) `docs/internal/`
+  altına taşındı.
 
 ## [1.0.9.16] - 2026-08-01
 
