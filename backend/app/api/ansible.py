@@ -41,7 +41,7 @@ class AWXJobLaunchRequest(BaseModel):
 # ─── Ad-Hoc Komut (Ansible) ───────────────────────────
 
 @router.post("/adhoc")
-async def run_adhoc_command(req: AdHocCommandRequest, db: Session = Depends(get_db)):
+def run_adhoc_command(req: AdHocCommandRequest, db: Session = Depends(get_db)):
     """
     Seçili sunucularda Ansible ad-hoc komut çalıştır.
     SADECE IP ADRESI OLAN sunuculara bağlanır (hostname ile değil).
@@ -49,6 +49,11 @@ async def run_adhoc_command(req: AdHocCommandRequest, db: Session = Depends(get_
     Örnekler:
     - module=shell, args="uptime"
     - module=yum, args="name=vim state=present", become=true
+
+    NOT: kasıtlı olarak senkron `def` — AnsibleService subprocess ile
+    ansible/ansible-playbook çalıştırır (dakikalarca sürebilir, tamamen
+    bloklayan I/O). async def olsaydı bu süre boyunca TÜM API (diğer
+    kullanıcılar dahil) donardı.
     """
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     if not servers:
@@ -95,8 +100,8 @@ async def run_adhoc_command(req: AdHocCommandRequest, db: Session = Depends(get_
 
 
 @router.post("/ping")
-async def ansible_ping_servers(server_ids: List[int], db: Session = Depends(get_db)):
-    """Ansible ping modülü ile SSH check (Global Credential kullanılır)"""
+def ansible_ping_servers(server_ids: List[int], db: Session = Depends(get_db)):
+    """Ansible ping modülü ile SSH check (Global Credential kullanılır). Senkron `def` — bkz. run_adhoc_command notu."""
     servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
     if not servers:
         raise HTTPException(status_code=404, detail="Hiç sunucu bulunamadı")
@@ -113,10 +118,12 @@ async def ansible_ping_servers(server_ids: List[int], db: Session = Depends(get_
 
 
 @router.post("/playbook")
-async def run_playbook(req: PlaybookRequest, db: Session = Depends(get_db)):
+def run_playbook(req: PlaybookRequest, db: Session = Depends(get_db)):
     """
     Seçili sunucularda Ansible playbook (YAML) çalıştır.
     YAML içeriği geçici bir dosyaya yazılır ve ansible-playbook komutu çalıştırılır.
+
+    NOT: kasıtlı olarak senkron `def` — bkz. run_adhoc_command notu.
     """
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
     if not servers:
@@ -180,8 +187,8 @@ def _get_awx_client() -> Optional[AWXClient]:
 
 
 @router.get("/awx/templates")
-async def list_awx_job_templates():
-    """AWX'teki job template listesi"""
+def list_awx_job_templates():
+    """AWX'teki job template listesi. Senkron `def` — AWXClient senkron `requests` kullanır."""
     client = _get_awx_client()
     if not client:
         raise HTTPException(status_code=503, detail="AWX yapılandırılmamış (AWX_URL, AWX_USERNAME, AWX_PASSWORD)")
@@ -197,7 +204,7 @@ async def list_awx_job_templates():
 
 
 @router.post("/awx/launch")
-async def launch_awx_job(req: AWXJobLaunchRequest, db: Session = Depends(get_db)):
+def launch_awx_job(req: AWXJobLaunchRequest, db: Session = Depends(get_db)):
     """
     AWX job template çalıştır.
     server_ids belirtilirse: limit parametresi ile hostları sınırla.
@@ -240,7 +247,7 @@ async def launch_awx_job(req: AWXJobLaunchRequest, db: Session = Depends(get_db)
 
 
 @router.get("/awx/job/{job_id}")
-async def get_awx_job_status(job_id: int):
+def get_awx_job_status(job_id: int):
     """AWX job durumu sorgula"""
     client = _get_awx_client()
     if not client:
@@ -254,7 +261,7 @@ async def get_awx_job_status(job_id: int):
 
 
 @router.get("/awx/job/{job_id}/stdout")
-async def get_awx_job_output(job_id: int):
+def get_awx_job_output(job_id: int):
     """AWX job çıktısı (stdout)"""
     client = _get_awx_client()
     if not client:
@@ -269,7 +276,7 @@ async def get_awx_job_output(job_id: int):
 
 
 @router.post("/awx/job/{job_id}/cancel")
-async def cancel_awx_job(job_id: int):
+def cancel_awx_job(job_id: int):
     """Çalışan AWX job'ı iptal et"""
     client = _get_awx_client()
     if not client:

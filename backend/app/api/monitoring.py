@@ -170,7 +170,8 @@ async def bulk_install_node_exporter(
         except Exception as e:
             return srv.id, {"success": False, "message": str(e)}
 
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="bulk-ne") as pool:
+    from app.services.bulk_concurrency import bulk_ssh_workers
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="bulk-ne") as pool:
         from concurrent.futures import as_completed
         futures = {pool.submit(_install_one, s): s for s in servers}
         for f in as_completed(futures):

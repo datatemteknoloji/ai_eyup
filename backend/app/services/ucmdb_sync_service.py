@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.app_settings import AppSettings
@@ -241,11 +242,23 @@ def _guess_node_role(name: str, ci_type: str) -> ExadataNodeRole:
 def _find_by_ucmdb_id(db: Session, ucmdb_id: str) -> Optional[Server]:
     if not ucmdb_id:
         return None
-    for s in db.query(Server).filter(Server.connection_config.isnot(None)).limit(8000).all():
-        cfg = s.connection_config or {}
-        if cfg.get("ucmdb_id") == ucmdb_id or cfg.get("ucmdb_global_id") == ucmdb_id:
-            return s
-    return None
+    # NOT: Önceden en fazla 8000 sunucu Python'a çekilip döngüyle taranıyordu — bu
+    # fonksiyon her uCMDB CI kaydı için (tam senkronda binlerce kez) çağrıldığından
+    # 10k+ sunucu ölçeğinde O(N²) davranış ve bir senkron turunun saatlerce sürmesi
+    # demekti; ayrıca 8000 sınırı üstündeki sunucular hiç eşleşemiyordu (sessiz
+    # veri kaybı → aynı sunucu yinelenen kayıt olarak tekrar oluşturuluyordu).
+    # SQL tarafında JSON alan karşılaştırmasıyla tek sorguda çözülür.
+    return (
+        db.query(Server)
+        .filter(
+            Server.connection_config.isnot(None),
+            or_(
+                Server.connection_config["ucmdb_id"].as_string() == ucmdb_id,
+                Server.connection_config["ucmdb_global_id"].as_string() == ucmdb_id,
+            ),
+        )
+        .first()
+    )
 
 
 def _upsert_physical(db: Session, fields: Dict[str, Any], *, skip_virtual: bool) -> str:

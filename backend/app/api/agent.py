@@ -63,8 +63,12 @@ def _action_to_dict(a: AgentAction) -> dict:
 
 
 @router.post("/chat")
-async def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db),
-                     user: User = Depends(get_current_user)):
+def agent_chat(req: AgentChatRequest, db: Session = Depends(get_db),
+              user: User = Depends(get_current_user)):
+    # NOT: kasıtlı olarak senkron `def` — start_agent() zinciri (LLM tool-calling
+    # turları + SSH komut çalıştırma) tamamen bloklayan/senkron I/O yapar. FastAPI
+    # senkron endpoint'leri otomatik thread pool'da çalıştırır; `async def` olsaydı
+    # bu çağrı doğrudan event loop'u dakikalarca (MAX_STEPS turu) kilitlerdi.
     message = (req.message or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Mesaj boş olamaz")
@@ -99,9 +103,11 @@ async def list_actions(limit: int = 50, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/approve")
-async def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
-                         db: Session = Depends(get_db),
-                         user: User = Depends(get_current_user)):
+def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
+                   db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)):
+    # NOT: senkron `def` — bkz. agent_chat üstündeki not (continue_after_decision
+    # de aynı bloklayan LLM/SSH zincirini tetikler).
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
@@ -119,8 +125,8 @@ async def approve_action(action_id: int, req: ApproveRequest = ApproveRequest(),
 
 
 @router.post("/actions/{action_id}/reject")
-async def reject_action(action_id: int, db: Session = Depends(get_db),
-                        user: User = Depends(get_current_user)):
+def reject_action(action_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")
@@ -130,8 +136,8 @@ async def reject_action(action_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/actions/{action_id}/answer")
-async def answer_action(action_id: int, req: AnswerRequest, db: Session = Depends(get_db),
-                        user: User = Depends(get_current_user)):
+def answer_action(action_id: int, req: AnswerRequest, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
     action = db.query(AgentAction).filter(AgentAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Aksiyon bulunamadı")

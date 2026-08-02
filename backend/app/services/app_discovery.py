@@ -861,8 +861,10 @@ def discover_applications_all_servers(db: Session, force: bool = False) -> Dict[
         apps = scan_server_linux(srv, global_cred)
         return srv, apps
 
+    from app.services.bulk_concurrency import bulk_ssh_workers
+
     if linux_servers:
-        with ThreadPoolExecutor(max_workers=8, thread_name_prefix="app-discovery") as pool:
+        with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="app-discovery") as pool:
             futures = {pool.submit(_linux_one, s): s for s in linux_servers}
             for fut in as_completed(futures):
                 srv = futures[fut]
@@ -876,16 +878,33 @@ def discover_applications_all_servers(db: Session, force: bool = False) -> Dict[
                 except Exception as e:
                     logger.debug(f"Linux app discovery hatasi ({srv.name}): {e}")
 
-    for srv in windows_servers:
+    def _windows_one(srv: Server):
+        # Thread pool içinde çalışır — kendi (salt okunur) DB oturumunu açar;
+        # yazma (upsert_discovered_apps) ana thread'de, ana `db` ile yapılır.
+        from app.core.database import ThreadSessionLocal
+        tdb = ThreadSessionLocal()
         try:
-            apps = scan_server_windows(srv, db)
-            n = upsert_discovered_apps(db, srv, apps, source="winrm")
-            scanned += 1
-            apps_found += n
-            if apps:
-                details.append({"server": srv.name, "found": len(apps)})
-        except Exception as e:
-            logger.debug(f"Windows app discovery hatasi ({srv.name}): {e}")
+            return srv, scan_server_windows(srv, tdb)
+        finally:
+            tdb.close()
+
+    if windows_servers:
+        # NOT: önceden Windows sunucular TAMAMEN SIRALI taranıyordu (WinRM turu
+        # bitmeden diğerine geçilmiyordu) — 10k ölçekte binlerce Windows sunucuda
+        # bir tur saatlerce sürebiliyordu. Artık Linux ile aynı desende paralel.
+        with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="app-discovery-win") as pool:
+            futures = {pool.submit(_windows_one, s): s for s in windows_servers}
+            for fut in as_completed(futures):
+                srv = futures[fut]
+                try:
+                    srv2, apps = fut.result()
+                    n = upsert_discovered_apps(db, srv2, apps, source="winrm")
+                    scanned += 1
+                    apps_found += n
+                    if apps:
+                        details.append({"server": srv.name, "found": len(apps)})
+                except Exception as e:
+                    logger.debug(f"Windows app discovery hatasi ({srv.name}): {e}")
 
     return {"scanned": scanned, "apps_found": apps_found, "details": details}
 

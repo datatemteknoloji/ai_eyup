@@ -75,7 +75,9 @@ def _map_severity(level: str) -> str:
     return LEVEL_TO_SEV.get((level or "").lower(), "warning")
 
 
-def collect_windows_server_logs(server: Server, db: Session, count: int = 60) -> List[Dict[str, Any]]:
+def collect_windows_server_logs(
+    server: Server, db: Session, count: int = 60, since_hours: int = 26
+) -> List[Dict[str, Any]]:
     client = _build_client(server, db)
     if not client:
         return []
@@ -83,7 +85,7 @@ def collect_windows_server_logs(server: Server, db: Session, count: int = 60) ->
     entries: List[Dict[str, Any]] = []
     for log_name in ("System", "Application"):
         try:
-            rows = collector.get_event_logs(log_name=log_name, count=count, min_level=3, hours=26)
+            rows = collector.get_event_logs(log_name=log_name, count=count, min_level=3, hours=since_hours)
             for row in rows:
                 provider = row.get("ProviderName") or log_name
                 eid = row.get("Id") or 0
@@ -103,11 +105,13 @@ def collect_windows_server_logs(server: Server, db: Session, count: int = 60) ->
     return entries
 
 
-def save_windows_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]]) -> int:
+def save_windows_logs_to_db(
+    db: Session, server: Server, logs: List[Dict[str, Any]], since_hours: int = 26
+) -> int:
     if not logs:
         return 0
 
-    since = datetime.utcnow() - timedelta(hours=26)
+    since = datetime.utcnow() - timedelta(hours=since_hours)
     existing = (
         db.query(SystemEvent.id, SystemEvent.title, SystemEvent.raw_data)
         .filter(
@@ -183,40 +187,114 @@ def save_windows_logs_to_db(db: Session, server: Server, logs: List[Dict[str, An
     return saved
 
 
+def _collect_one_windows_server_job(server_id: int, since_hours: int) -> Dict[str, Any]:
+    """Worker thread: kendi DB oturumu ile tek Windows sunucu log topla + kaydet."""
+    from app.core.database import ThreadSessionLocal
+
+    db = ThreadSessionLocal()
+    try:
+        srv = db.query(Server).filter(Server.id == server_id).first()
+        if not srv:
+            return {"server_id": server_id, "server": "?", "saved": 0, "ok": False}
+        try:
+            logs = collect_windows_server_logs(srv, db, since_hours=since_hours)
+            saved = save_windows_logs_to_db(db, srv, logs, since_hours=since_hours) if logs else 0
+            return {"server_id": server_id, "server": srv.name, "saved": saved, "ok": True}
+        except Exception as exc:
+            logger.error("Windows log collection failed %s: %s", srv.name, exc)
+            return {"server_id": server_id, "server": srv.name, "saved": 0, "ok": False}
+    finally:
+        db.close()
+
+
 def collect_all_windows_logs(
     db: Session,
     progress_cb: Optional[Any] = None,
+    since_hours: int = 26,
+    batch_mode: bool = True,
 ) -> Dict[str, Any]:
+    """ONLINE/WARNING Windows sunuculardan PARALEL WinRM ile log toplar.
+
+    NOT: Önceden bu fonksiyon sunucuları tek tek, tamamen sıralı (bir WinRM oturumu
+    bitmeden diğerine geçmeden) işliyordu — 10k ölçekte (örn. 3000 Windows sunucu)
+    bir tur saatlerce sürüyor, windows_log_interval_sec (varsayılan 900sn) içine
+    asla sığmıyor ve arka arkaya turlar üst üste binerek backlog oluşturuyordu.
+    Artık Linux log toplama (log_collector.py) ile aynı desen kullanılıyor:
+    round-robin batch + ThreadPoolExecutor (her worker kendi DB oturumunu açar).
+    """
+    try:
+        from app.services.runtime_settings import get_int
+        batch_size = int(get_int("windows_log_batch_size") or 500)
+    except Exception:
+        batch_size = 500
+
+    from app.services.bulk_concurrency import windows_log_workers
+    from app.services.log_collector import _round_robin_batch
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     servers = (
         db.query(Server)
         .filter(Server.status.in_(["ONLINE", "WARNING"]))
         .all()
     )
     servers = [s for s in servers if is_windows_server(s)]
+    fleet_total = len(servers)
+
+    if batch_mode and fleet_total > batch_size:
+        servers = _round_robin_batch(servers, batch_size, "windows")
+
+    workers = windows_log_workers()
+    server_ids = [s.id for s in servers]
+    total = len(server_ids)
+
+    logger.info(
+        "Windows log collection start: fleet=%s batch=%s workers=%s since_hours=%s",
+        fleet_total, total, workers, since_hours,
+    )
 
     total_saved = 0
     details = []
-    total = len(servers)
-    for idx, srv in enumerate(servers, start=1):
-        saved = 0
-        try:
-            logs = collect_windows_server_logs(srv, db)
-            if logs:
-                saved = save_windows_logs_to_db(db, srv, logs)
+    done = 0
+
+    if total == 0:
+        return {
+            "total_servers": 0,
+            "fleet_total": fleet_total,
+            "servers_with_logs": 0,
+            "total_saved": 0,
+            "workers": workers,
+            "details": [],
+        }
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="win-log") as pool:
+        futures = {
+            pool.submit(_collect_one_windows_server_job, sid, since_hours): sid
+            for sid in server_ids
+        }
+        for fut in as_completed(futures):
+            done += 1
+            saved = 0
+            name = "?"
+            try:
+                result = fut.result()
+                name = result.get("server") or "?"
+                saved = int(result.get("saved") or 0)
                 total_saved += saved
                 if saved:
-                    details.append({"server": srv.name, "saved": saved})
-        except Exception as exc:
-            logger.error("Windows log collection failed %s: %s", srv.name, exc)
-        if progress_cb:
-            try:
-                progress_cb(idx, total, srv.name, saved)
-            except Exception:
-                pass
+                    details.append({"server": name, "saved": saved})
+            except Exception as exc:
+                logger.error("Windows log worker error: %s", exc)
+            if progress_cb:
+                try:
+                    progress_cb(done, total, name, saved)
+                except Exception:
+                    pass
 
     return {
-        "total_servers": len(servers),
+        "total_servers": total,
+        "fleet_total": fleet_total,
         "servers_with_logs": len(details),
         "total_saved": total_saved,
+        "workers": workers,
         "details": details,
     }

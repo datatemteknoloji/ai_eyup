@@ -423,7 +423,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
     winrm_ctx = ""
     if needs_winrm and selected_servers:
-        try:
+        def _collect_winrm_ctx() -> str:
             from app.services.windows.windows_info_collector import detect_needed_groups, collect_server_info, build_server_context
             groups = detect_needed_groups(message)
             ctxs = []
@@ -439,7 +439,12 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                     extract_and_store_facts(db, srv, info, platform="windows")
                 except Exception:
                     pass
-            winrm_ctx = "\n\n".join(ctxs)
+            return "\n\n".join(ctxs)
+        try:
+            # WinRM PowerShell çağrıları senkron/bloklayan I/O yapar (birden fazla
+            # sunucuda kümülatif saniyeler sürebilir) — event loop'u kilitlememesi
+            # için thread pool'da çalıştırılır.
+            winrm_ctx = await asyncio.get_event_loop().run_in_executor(None, _collect_winrm_ctx)
         except Exception as e:
             logger.warning(f"WinRM info collect failed: {e}")
 

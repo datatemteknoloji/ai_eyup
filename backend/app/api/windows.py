@@ -6,6 +6,8 @@ Windows Update, and Windows Exporter management.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +29,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 GLOBAL_WINRM_KEY = "global_winrm_credential"
+
+# /live-metrics "single-flight" cache — bkz. get_live_metrics NOT açıklaması.
+_LIVE_METRICS_CACHE: Dict[str, Any] = {"data": None, "ts": 0.0}
+_LIVE_METRICS_LOCK = threading.Lock()
+_LIVE_METRICS_TTL_SEC = 20
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -475,72 +482,90 @@ def get_live_metrics(db: Session = Depends(get_db)):
     Tüm AI Ready Windows sunucularından WinRM üzerinden CPU/RAM/Disk
     kullanımını paralel olarak toplar (node_exporter/Prometheus gerektirmez).
     AI Ready olmayan sunucular WinRM sorgusuna girmeden 'offline' olarak döner.
+
+    NOT: Sonuç kısa TTL'li (20sn) bir cache + lock ("single-flight") ile
+    paylaşılır. Frontend bu uç noktayı 30sn'de bir polluyor (bkz.
+    WindowsLiveMetrics.tsx); 10k ölçekte binlerce Windows sunucu varsa TEK bir
+    WinRM fan-out turu dakikalar sürebilir. Cache olmadan her yeni istek
+    (birden fazla açık sekme/kullanıcı dahil) kendi fan-out'unu başlatır ve
+    istekler tamamlanan turlardan daha hızlı birikip WinRM bağlantı fırtınasına
+    ve thread havuzu tükenmesine yol açar — cache bayatken gelen ilk istek
+    hesaplar, aynı anda gelenler kilidi bekleyip taze sonucu okur.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    now = time.monotonic()
+    with _LIVE_METRICS_LOCK:
+        if _LIVE_METRICS_CACHE["data"] is not None and (now - _LIVE_METRICS_CACHE["ts"]) < _LIVE_METRICS_TTL_SEC:
+            return _LIVE_METRICS_CACHE["data"]
 
-    from app.services.platform_scope import is_windows_server
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    servers = [s for s in db.query(Server).all() if is_windows_server(s)]
-    gcred = _get_global_winrm(db)
+        from app.services.bulk_concurrency import bulk_ssh_workers
+        from app.services.platform_scope import is_windows_server
 
-    ready = [s for s in servers if s.ai_ready]
-    not_ready = [s for s in servers if not s.ai_ready]
+        servers = [s for s in db.query(Server).all() if is_windows_server(s)]
+        gcred = _get_global_winrm(db)
 
-    def _fetch_one(server: Server):
-        try:
-            client = _build_client(server, db)
-        except HTTPException:
-            return server.id, {"error": "WinRM kimlik bilgisi yok"}
-        collector = WindowsInfoCollector(client)
-        return server.id, collector.get_performance()
+        ready = [s for s in servers if s.ai_ready]
+        not_ready = [s for s in servers if not s.ai_ready]
 
-    perf_by_id: Dict[int, Dict[str, Any]] = {}
-    if ready:
-        with ThreadPoolExecutor(max_workers=20, thread_name_prefix="winrm-live-metrics") as pool:
-            futures = {pool.submit(_fetch_one, s): s for s in ready}
-            for fut in as_completed(futures):
-                sid, perf = fut.result()
-                perf_by_id[sid] = perf
+        def _fetch_one(server: Server):
+            try:
+                client = _build_client(server, db)
+            except HTTPException:
+                return server.id, {"error": "WinRM kimlik bilgisi yok"}
+            collector = WindowsInfoCollector(client)
+            return server.id, collector.get_performance()
 
-    results = []
-    for s in ready:
-        perf = perf_by_id.get(s.id, {})
-        results.append({
-            "id": s.id,
-            "name": s.name or s.hostname or f"#{s.id}",
-            "ip_address": s.ip_address,
-            "status": s.status,
-            "ai_ready": True,
-            "cpu_pct": perf.get("cpu_pct"),
-            "mem_used_pct": perf.get("mem_used_pct"),
-            "mem_total_gb": perf.get("mem_total_gb"),
-            "mem_free_gb": perf.get("mem_free_gb"),
-            "disks": perf.get("disks") or [],
-            "uptime_days": perf.get("uptime_days"),
-            "last_boot": perf.get("last_boot"),
-            "error": perf.get("error"),
-        })
-    for s in not_ready:
-        results.append({
-            "id": s.id,
-            "name": s.name or s.hostname or f"#{s.id}",
-            "ip_address": s.ip_address,
-            "status": s.status,
-            "ai_ready": False,
-            "cpu_pct": None, "mem_used_pct": None, "mem_total_gb": None, "mem_free_gb": None,
-            "disks": [], "uptime_days": None, "last_boot": None,
-            "error": "AI Ready değil — WinRM bağlantısı kurulamadı",
-        })
+        perf_by_id: Dict[int, Dict[str, Any]] = {}
+        if ready:
+            with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="winrm-live-metrics") as pool:
+                futures = {pool.submit(_fetch_one, s): s for s in ready}
+                for fut in as_completed(futures):
+                    sid, perf = fut.result()
+                    perf_by_id[sid] = perf
 
-    results.sort(key=lambda r: (0 if r["ai_ready"] else 1, r["name"] or ""))
-    successful = [r for r in results if r["ai_ready"] and r["cpu_pct"] is not None]
-    return {
-        "servers": results,
-        "total": len(results),
-        "online": len(successful),
-        "avg_cpu_pct": round(sum(r["cpu_pct"] for r in successful) / len(successful), 1) if successful else None,
-        "avg_mem_pct": round(sum(r["mem_used_pct"] for r in successful) / len(successful), 1) if successful else None,
-    }
+        results = []
+        for s in ready:
+            perf = perf_by_id.get(s.id, {})
+            results.append({
+                "id": s.id,
+                "name": s.name or s.hostname or f"#{s.id}",
+                "ip_address": s.ip_address,
+                "status": s.status,
+                "ai_ready": True,
+                "cpu_pct": perf.get("cpu_pct"),
+                "mem_used_pct": perf.get("mem_used_pct"),
+                "mem_total_gb": perf.get("mem_total_gb"),
+                "mem_free_gb": perf.get("mem_free_gb"),
+                "disks": perf.get("disks") or [],
+                "uptime_days": perf.get("uptime_days"),
+                "last_boot": perf.get("last_boot"),
+                "error": perf.get("error"),
+            })
+        for s in not_ready:
+            results.append({
+                "id": s.id,
+                "name": s.name or s.hostname or f"#{s.id}",
+                "ip_address": s.ip_address,
+                "status": s.status,
+                "ai_ready": False,
+                "cpu_pct": None, "mem_used_pct": None, "mem_total_gb": None, "mem_free_gb": None,
+                "disks": [], "uptime_days": None, "last_boot": None,
+                "error": "AI Ready değil — WinRM bağlantısı kurulamadı",
+            })
+
+        results.sort(key=lambda r: (0 if r["ai_ready"] else 1, r["name"] or ""))
+        successful = [r for r in results if r["ai_ready"] and r["cpu_pct"] is not None]
+        payload = {
+            "servers": results,
+            "total": len(results),
+            "online": len(successful),
+            "avg_cpu_pct": round(sum(r["cpu_pct"] for r in successful) / len(successful), 1) if successful else None,
+            "avg_mem_pct": round(sum(r["mem_used_pct"] for r in successful) / len(successful), 1) if successful else None,
+        }
+        _LIVE_METRICS_CACHE["data"] = payload
+        _LIVE_METRICS_CACHE["ts"] = time.monotonic()
+        return payload
 
 
 @router.get("/servers/{server_id}/services")

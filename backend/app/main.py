@@ -86,15 +86,31 @@ except Exception as e:
     
     app.include_router(fallback_router, prefix="/api/v1")
 
-_SSH_EXECUTOR = ThreadPoolExecutor(max_workers=80, thread_name_prefix="ssh_worker")
+_SSH_EXECUTOR = ThreadPoolExecutor(max_workers=150, thread_name_prefix="ssh_worker")
 
 @app.on_event("startup")
 async def startup_tasks():
     """Uygulama başlangıcında yapılacak işlemler"""
-    # Paralel SSH bağlantıları için geniş thread pool (3000–4000 sunucu ölçeği)
+    # Paralel SSH bağlantıları için geniş thread pool (10.000+ sunucu ölçeği —
+    # background_tasks.py'deki run_in_executor(None, ...) çağrılarının tümü,
+    # terminal.py SSH, chat.py/hypervisors.py fan-out'ları bu havuzu paylaşır)
     loop = asyncio.get_event_loop()
     loop.set_default_executor(_SSH_EXECUTOR)
-    logger.info("SSH thread pool başlatıldı (max_workers=80)")
+    logger.info("SSH thread pool başlatıldı (max_workers=150)")
+
+    # FastAPI'nin senkron `def` endpoint'leri (agent chat, hypervisor ask, ansible,
+    # health check vb. — bkz. app/api/agent.py, hypervisors.py, ansible.py) Starlette'in
+    # AnyIO tabanlı thread havuzunda çalışır; bu, yukarıdaki _SSH_EXECUTOR'dan AYRI bir
+    # havuzdur ve varsayılan limiti sadece 40'tır. Bu endpoint'lerin bir kısmı LLM
+    # çağrıları nedeniyle 60-180sn sürebildiğinden, birkaç eşzamanlı kullanıcı bile
+    # havuzu doldurup yeni isteklerin (diğer sync endpoint'ler dahil) kuyrukta
+    # beklemesine (dolaylı "hang" hissi) neden olabilir — limit yükseltildi.
+    try:
+        import anyio.to_thread
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 150
+        logger.info("AnyIO sync-endpoint thread havuzu genişletildi (limit=150)")
+    except Exception as e:
+        logger.warning(f"AnyIO thread limiter ayarlanamadı: {e}")
     # Tabloları oluştur
     from app.core.database import engine, Base
     import app.models  # noqa: F401 - modelleri Base.metadata'ya kaydetmek için
@@ -187,6 +203,13 @@ async def startup_tasks():
                 "CREATE INDEX IF NOT EXISTS ix_fs_metrics_usage ON filesystem_metrics (usage_percent)",
                 "CREATE INDEX IF NOT EXISTS ix_service_status_name ON service_status (service_name)",
                 "CREATE INDEX IF NOT EXISTS ix_service_status_active ON service_status (active_state)",
+                # system_events: last_seen/created_at neredeyse her sorguda ">= since"
+                # ile filtrelenir (ops_center, anomaly detection, log collector, RCA vb.)
+                # ama index'leri yoktu — 288K+ satırda her seferinde tam tablo taraması
+                # oluyordu (DB CPU/IO üzerinden dolaylı "hang" kaynağı).
+                "CREATE INDEX IF NOT EXISTS ix_system_events_created_at ON system_events (created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_system_events_last_seen ON system_events (last_seen)",
+                "CREATE INDEX IF NOT EXISTS ix_system_events_server_last_seen ON system_events (server_id, last_seen)",
             ]:
                 try:
                     _conn.execute(_sa_text(_idx))

@@ -46,6 +46,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
+        self.tasks.append(asyncio.create_task(self._periodic_event_cleanup()))
         self.tasks.append(asyncio.create_task(self._periodic_node_exporter_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_windows_exporter_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
@@ -509,6 +510,38 @@ class BackgroundTaskManager:
                 logger.error(f"Snapshot cleanup task error: {e}")
                 await asyncio.sleep(_rt_sec("snapshot_cleanup_interval_sec", 3600))
 
+
+    async def _periodic_event_cleanup(self):
+        """system_events tablosu sınırsız büyümesin diye eski kayıtları periyodik siler
+        (varsayılan: 180 günden eski, 6 saatte bir kontrol)."""
+        logger.info("Event cleanup task started (interval from Gelişmiş ayarlar)")
+        await asyncio.sleep(300)
+
+        while self.running:
+            try:
+                db = SessionLocal()
+                try:
+                    from app.services.event_retention import cleanup_old_events
+                    retention_days = _rt_sec("event_retention_days", 180)
+                    loop = asyncio.get_event_loop()
+                    stats = await loop.run_in_executor(
+                        None, lambda: cleanup_old_events(db, retention_days=retention_days)
+                    )
+                    if stats.get("deleted"):
+                        logger.info(f"Event cleanup: {stats['deleted']} eski kayıt silindi")
+                except Exception as e:
+                    logger.error(f"Event cleanup error: {e}", exc_info=True)
+                finally:
+                    db.close()
+
+                await asyncio.sleep(_rt_sec("event_cleanup_interval_sec", 21600))
+
+            except asyncio.CancelledError:
+                logger.info("Event cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Event cleanup task error: {e}")
+                await asyncio.sleep(_rt_sec("event_cleanup_interval_sec", 21600))
 
     async def _periodic_system_update_recovery(self):
         """Takılı kalan system update job/planlarını periyodik temizler."""

@@ -370,7 +370,7 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
 
 
 @router.get("/")
-async def list_servers(
+def list_servers(
     db: Session = Depends(get_db),
     include_node_exporter_status: bool = False,
     platform: str | None = None,
@@ -382,6 +382,12 @@ async def list_servers(
     Yöneticisi, Sistem Güncelleme gibi platform-bağımsız araçlar bunu kullanır.
     `platform=linux` — yalnızca Linux modül envanteri (VM, Windows, Exadata hariç).
     `platform=exadata` — Exadata node'larına bağlı sunucular.
+
+    NOT: kasıtlı olarak senkron `def` — include_node_exporter_status=True iken
+    her sunucu için SSH (NodeExporterInstaller) senkron/bloklayan I/O yapar; bu
+    hiç `await` kullanmayan bir gövdeydi ama `async def` olduğu için o SSH turu
+    boyunca event loop'u kilitliyordu (10k sunucuda ciddi bir "hang" riski).
+    FastAPI senkron endpoint'leri otomatik thread pool'da çalıştırır.
     """
     try:
         query = db.query(Server)
@@ -835,8 +841,15 @@ async def check_all_servers_health(
     }
 
 @router.post("/{server_id}/check-health")
-async def check_server_health(server_id: int, db: Session = Depends(get_db)):
-    """Tek bir sunucunun durumunu kontrol et ve güncelle"""
+def check_server_health(server_id: int, db: Session = Depends(get_db)):
+    """
+    Tek bir sunucunun durumunu kontrol et ve güncelle.
+
+    NOT: kasıtlı olarak senkron `def` — deep=True tam SSH/WinRM auth denemesi
+    yapar (senkron/bloklayan); yanlış kimlik bilgisi veya erişilemeyen bir
+    sunucuda timeout'a kadar sürebilir. async def olsaydı bu süre boyunca
+    event loop kilitlenirdi.
+    """
     try:
         server = db.query(Server).filter(Server.id == server_id).first()
         if not server:

@@ -19,6 +19,22 @@ from app.services.monitoring.prometheus_metrics import WINDOWS_EXPORTER_PORT
 
 logger = logging.getLogger(__name__)
 
+_REGEX_SPECIAL_CHARS = ".^$*+?{}[]|()"
+
+
+def _promql_regex_escape(value: str) -> str:
+    """PromQL instance=~"a|b|c" alternation'ı için literal string escape eder.
+
+    NOT: Python'un re.escape() nokta gibi karakterler için ters eğik çizgi
+    (\\.) üretir; ama bu PromQL sorgusu bir Go string literal'ı içine
+    gömüldüğünde ("instance=~\"...\"") Go string lexer'ı \\. öğesini geçerli
+    bir escape sequence olarak tanımaz ve "unknown escape sequence" parse
+    hatası fırlatır (canlı test edildi). Bunun yerine her özel karakter tek
+    elemanlı bir karakter sınıfına ([.] gibi) alınır — ters eğik çizgi hiç
+    kullanılmadığından Go string parse aşamasını sorunsuz geçer.
+    """
+    return "".join(f"[{c}]" if c in _REGEX_SPECIAL_CHARS else c for c in value)
+
 # (prometheus_query_template, db_metric_name, birim, kategori)
 METRICS_TO_SYNC: List[Tuple[str, str, str, str]] = [
     # === CPU ===
@@ -63,33 +79,38 @@ METRICS_TO_SYNC: List[Tuple[str, str, str, str]] = [
     ('node_filefd_maximum{job="node-exporter",instance="{instance}"}', "fd_maximum", "count", "disk"),
 
     # === Disk IO ===
-    ('sum(rate(node_disk_read_bytes_total{job="node-exporter",instance="{instance}"}[5m]))',
+    # NOT: "by (instance)" bilinçli eklendi — toplu (batch) sync'te instance=~"a|b|c"
+    # regex'iyle birden çok sunucu TEK sorguda çekilir (bkz. sync_physical_servers_metrics_batch);
+    # "by (instance)" olmadan sum() tüm eşleşen instance'ları TEK değerde birleştirir ve
+    # sonuçtan instance etiketi düşer (veri hangi sunucuya ait olduğu belli olmaz, kaybolur).
+    # Tekli sorguda (tek instance) davranış/değer aynıdır, sadece sonuçta instance etiketi kalır.
+    ('sum by (instance) (rate(node_disk_read_bytes_total{job="node-exporter",instance="{instance}"}[5m]))',
      "disk_read_bytes_per_sec", "bytes", "io"),
-    ('sum(rate(node_disk_written_bytes_total{job="node-exporter",instance="{instance}"}[5m]))',
+    ('sum by (instance) (rate(node_disk_written_bytes_total{job="node-exporter",instance="{instance}"}[5m]))',
      "disk_write_bytes_per_sec", "bytes", "io"),
-    ('sum(rate(node_disk_reads_completed_total{job="node-exporter",instance="{instance}"}[5m]))',
+    ('sum by (instance) (rate(node_disk_reads_completed_total{job="node-exporter",instance="{instance}"}[5m]))',
      "disk_read_iops", "count", "io"),
-    ('sum(rate(node_disk_writes_completed_total{job="node-exporter",instance="{instance}"}[5m]))',
+    ('sum by (instance) (rate(node_disk_writes_completed_total{job="node-exporter",instance="{instance}"}[5m]))',
      "disk_write_iops", "count", "io"),
-    ('sum(rate(node_disk_io_time_seconds_total{job="node-exporter",instance="{instance}"}[5m])) * 100',
+    ('sum by (instance) (rate(node_disk_io_time_seconds_total{job="node-exporter",instance="{instance}"}[5m])) * 100',
      "disk_io_utilization_percent", "percent", "io"),
 
     # === Network ===
-    ('sum(rate(node_network_receive_bytes_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_receive_bytes_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_rx_bytes_per_sec", "bytes", "network"),
-    ('sum(rate(node_network_transmit_bytes_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_transmit_bytes_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_tx_bytes_per_sec", "bytes", "network"),
-    ('sum(rate(node_network_receive_packets_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_receive_packets_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_rx_packets_per_sec", "count", "network"),
-    ('sum(rate(node_network_transmit_packets_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_transmit_packets_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_tx_packets_per_sec", "count", "network"),
-    ('sum(rate(node_network_receive_errs_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_receive_errs_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_rx_errors_per_sec", "count", "network"),
-    ('sum(rate(node_network_transmit_errs_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_transmit_errs_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_tx_errors_per_sec", "count", "network"),
-    ('sum(rate(node_network_receive_drop_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_receive_drop_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_rx_drops_per_sec", "count", "network"),
-    ('sum(rate(node_network_transmit_drop_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
+    ('sum by (instance) (rate(node_network_transmit_drop_total{job="node-exporter",instance="{instance}",device!~"lo"}[5m]))',
      "network_tx_drops_per_sec", "count", "network"),
 
     # === Sistem ===
@@ -314,6 +335,138 @@ class MetricSyncService:
 
         return synced_count
 
+    # instance regex başına sunucu sayısı — çok büyük regex/URL boyutunu ve tek
+    # Prometheus sorgusunun kapsamını makul tutar (10k+ sunucu ölçeğinde denendi).
+    _BATCH_CHUNK_SIZE = 300
+
+    @staticmethod
+    async def sync_physical_servers_metrics_batch(
+        db: Session, servers: List[Server], minutes: int = 12
+    ) -> Dict[str, Any]:
+        """Fiziksel sunucular için Prometheus metriklerini TOPLU sorgularla çeker.
+
+        Eski yaklaşım (sync_server_metrics tek tek çağrılarak) sunucu başına ~38 ayrı
+        PromQL isteği atıyordu — 10.000 sunucu ölçeğinde bu sunucu×metrik kadar istek
+        demektir (yüz binlerce), bir tur saatlerce sürer ve metric_sync_interval_sec
+        (varsayılan 600sn) içine asla sığmaz, veriler sürekli gecikmiş/eksik kalır.
+        Burada bunun yerine HER METRİK için instance=~"a|b|c" regex'iyle birden çok
+        sunucu TEK sorguda (chunk'lar halinde) çekilir — sorgu sayısı sunucu sayısından
+        bağımsızlaşır (yalnız metrik_sayısı × chunk_sayısı kadar; örn. 10k sunucu /
+        300 = 34 chunk × ~38 metrik ≈ 1300 istek, dakikalar içinde biter).
+        """
+        if not servers:
+            return {"servers": 0, "metrics": 0}
+
+        from app.services.monitoring.prometheus_metrics import (
+            get_node_exporter_up_map,
+            match_prometheus_instance,
+        )
+
+        linux_instances: Dict[str, Server] = {}
+        windows_instances: Dict[str, Server] = {}
+        up_map: Optional[Dict[str, str]] = None
+
+        for srv in servers:
+            if not srv.ip_address and not srv.hostname:
+                continue
+            if is_windows_server(srv):
+                instance = f"{srv.ip_address}:{WINDOWS_EXPORTER_PORT}" if srv.ip_address else None
+                if instance:
+                    windows_instances.setdefault(instance, srv)
+            else:
+                if up_map is None:
+                    up_map = get_node_exporter_up_map()
+                instance = f"{srv.ip_address}:9100" if srv.ip_address else None
+                try:
+                    matched, _up = match_prometheus_instance(
+                        up_map, ip=srv.ip_address, hostname=srv.hostname, name=srv.name,
+                    )
+                    if matched:
+                        instance = matched
+                except Exception as e:
+                    logger.debug("batch instance match skip %s: %s", srv.name, e)
+                if instance:
+                    linux_instances.setdefault(instance, srv)
+
+        total = 0
+        synced_ids: set = set()
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(minutes=minutes)
+        chunk_size = MetricSyncService._BATCH_CHUNK_SIZE
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for kind, instance_map, metrics_list in (
+                ("linux", linux_instances, METRICS_TO_SYNC),
+                ("windows", windows_instances, WINDOWS_METRICS_TO_SYNC),
+            ):
+                if not instance_map:
+                    continue
+                instance_names = list(instance_map.keys())
+                for c_start in range(0, len(instance_names), chunk_size):
+                    chunk = instance_names[c_start:c_start + chunk_size]
+                    regex = "|".join(_promql_regex_escape(i) for i in chunk)
+                    for query_tpl, db_metric_name, unit, category in metrics_list:
+                        query = apply_promql_job(query_tpl, kind=kind)
+                        query = query.replace('instance="{instance}"', f'instance=~"{regex}"')
+                        try:
+                            # POST kullanılır — GET'e göre büyük regex/URL uzunluk
+                            # sınırlarına takılmaz (bkz. Prometheus HTTP API).
+                            resp = await client.post(
+                                f"{settings.PROMETHEUS_URL}/api/v1/query_range",
+                                data={
+                                    "query": query,
+                                    "start": start_time.timestamp(),
+                                    "end": end_time.timestamp(),
+                                    "step": "60s",
+                                },
+                            )
+                            if resp.status_code != 200:
+                                logger.warning(
+                                    "Prometheus batch query_range HTTP %s for %s (chunk=%d): %s",
+                                    resp.status_code, db_metric_name, len(chunk),
+                                    (resp.text or "")[:200],
+                                )
+                                continue
+                            data = resp.json()
+                            if data.get("status") != "success":
+                                logger.warning(
+                                    "Prometheus batch query_range status=%s for %s: %s",
+                                    data.get("status"), db_metric_name,
+                                    (data.get("error") or data.get("errorType") or "")[:200],
+                                )
+                                continue
+                            for result in data.get("data", {}).get("result", []):
+                                inst_label = (result.get("metric") or {}).get("instance")
+                                srv = instance_map.get(inst_label)
+                                if not srv:
+                                    continue
+                                for ts, val in result.get("values", []):
+                                    try:
+                                        float_val = float(val)
+                                        if float_val != float_val or float_val in (float("inf"), float("-inf")):
+                                            continue
+                                        db.add(MetricData(
+                                            server_id=srv.id,
+                                            metric_name=db_metric_name,
+                                            value=float_val,
+                                            unit=unit,
+                                            labels=category,
+                                            timestamp=datetime.utcfromtimestamp(float(ts)),
+                                        ))
+                                        total += 1
+                                        synced_ids.add(srv.id)
+                                    except Exception:
+                                        pass
+                            db.commit()
+                        except Exception as e:
+                            logger.debug("Batch metric sync error %s (chunk=%d): %s", db_metric_name, len(chunk), e)
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+
+        return {"servers": len(synced_ids), "metrics": total}
+
     @staticmethod
     def sync_vmware_fallback_batch(db: Session, servers: List[Server]) -> Dict[str, Any]:
         """
@@ -457,14 +610,15 @@ class MetricSyncService:
         physical_servers = uniq
 
         total, synced_servers = 0, 0
-        for srv in physical_servers:
+        if physical_servers:
             try:
-                count = await MetricSyncService.sync_server_metrics(db, srv, minutes)
-                if count > 0:
-                    total += count
-                    synced_servers += 1
+                phys_stats = await MetricSyncService.sync_physical_servers_metrics_batch(
+                    db, physical_servers, minutes
+                )
+                total += phys_stats.get("metrics", 0)
+                synced_servers += phys_stats.get("servers", 0)
             except Exception as e:
-                logger.error(f"Metric sync failed {srv.name}: {e}")
+                logger.error(f"Physical metric batch sync failed: {e}", exc_info=True)
 
         vm_stats = {"servers": 0, "metrics": 0}
         if vm_servers:

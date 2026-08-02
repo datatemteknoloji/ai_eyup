@@ -109,9 +109,10 @@ async def ssh_terminal(websocket: WebSocket, server_id: int, token: str = ""):
             f"\r\n\033[36mBağlanılıyor: {creds['username']}@{creds['host']}:{creds['port']}\033[0m\r\n"
         )
 
-        # SSH bağlan
+        # SSH bağlan — paramiko.connect() senkron/bloklayan I/O yapar (timeout=10s'a
+        # kadar sürebilir); event loop'u kilitlememesi için thread pool'da çalıştırılır.
         try:
-            ssh_client = _make_ssh(creds)
+            ssh_client = await asyncio.get_event_loop().run_in_executor(None, _make_ssh, creds)
         except Exception as e:
             await websocket.send_text(f"\r\n\033[31mBağlantı hatası: {e}\033[0m\r\n")
             await websocket.close()

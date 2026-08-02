@@ -1,7 +1,7 @@
 """
 AIOps Event Models - SystemEvent, Alert, Incident, AnomalySuppression
 """
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, JSON, Float, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, JSON, Float, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -26,11 +26,21 @@ class SystemEvent(Base):
     known_at = Column(DateTime(timezone=True))
     resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_seen  = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    last_seen  = Column(DateTime(timezone=True), server_default=func.now(), nullable=True, index=True)
     occurrence_count = Column(Integer, default=1)  # kaç kez tetiklendi
 
     server = relationship("Server", back_populates="events")
+
+    # last_seen/created_at neredeyse her sorguda ">= since" ile filtrelenir
+    # (ops_center, anomaly detection, log collector, RCA vb. — bkz. grep) ve
+    # tekli index'leri eksikti; 288K+ satırlık tabloda bu her seferinde tam
+    # tablo taraması demekti (DB CPU/IO üzerinden dolaylı "hang" kaynağı).
+    # server_id+last_seen kombinasyonu da çok sık kullanıldığı için composite
+    # index eklendi.
+    __table_args__ = (
+        Index("ix_system_events_server_last_seen", "server_id", "last_seen"),
+    )
 
 
 class Alert(Base):

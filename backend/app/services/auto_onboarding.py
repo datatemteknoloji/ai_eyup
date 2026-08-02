@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from sqlalchemy import or_
+from app.services.bulk_concurrency import bulk_ssh_workers
 from sqlalchemy.orm import Session
 
 from app.models.server import Server
@@ -103,7 +104,7 @@ def collect_os_release_info(db: Session) -> Dict:
             ssh.close()
 
     results: Dict[int, Optional[Dict[str, str]]] = {}
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="auto-osinfo") as pool:
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-osinfo") as pool:
         futures = {pool.submit(_collect_one, s): s for s in servers}
         for fut in as_completed(futures):
             srv = futures[fut]
@@ -160,7 +161,7 @@ def auto_install_node_exporter(db: Session) -> Dict:
             return srv.id, srv.name, False, str(e)
 
     results = []
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="auto-ne") as pool:
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-ne") as pool:
         futures = {pool.submit(_install_one, s): s for s in servers}
         for f in as_completed(futures):
             results.append(f.result())
@@ -269,7 +270,7 @@ $r | ConvertTo-Json -Compress
             return None
 
     results: Dict[int, Optional[Dict]] = {}
-    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="auto-winupd") as pool:
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-winupd") as pool:
         futures = {pool.submit(_check_one, s): s for s in servers}
         for fut in as_completed(futures):
             srv = futures[fut]
@@ -356,7 +357,7 @@ def collect_linux_security_audit(db: Session) -> Dict:
             ssh.close()
 
     results: Dict[int, Optional[Dict]] = {}
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="auto-secaudit") as pool:
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-secaudit") as pool:
         futures = {pool.submit(_audit_one, s): s for s in servers}
         for fut in as_completed(futures):
             srv = futures[fut]

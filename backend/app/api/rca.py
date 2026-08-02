@@ -144,7 +144,9 @@ async def awr_analyze(
 
     llm_analysis = {}
     try:
-        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        data = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        )
         if not data.get("error"):
             import json
             raw = (data.get("response") or "").strip()
@@ -232,7 +234,9 @@ async def awr_analyze_upload(
 
     llm_analysis = {}
     try:
-        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        data = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=180)
+        )
         if not data.get("error"):
             raw = (data.get("response") or "").strip()
             start = raw.find("{")
@@ -440,7 +444,9 @@ Yalnızca şu JSON formatında yanıt ver:
     from app.services import llm_gateway
     active_model = req.model or get_active_model(db)
     try:
-        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=60)
+        data = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=60)
+        )
         if not data.get("error"):
             raw_text = (data.get("response") or "").strip()
             start = raw_text.find("{")

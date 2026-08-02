@@ -61,8 +61,16 @@ class TestConnectionRequest(BaseModel):
 
 
 @router.post("/test-connection")
-async def test_connection(data: TestConnectionRequest):
-    """Arayüzden bağlantı testi (VMware / oVirt-KVM)."""
+def test_connection(data: TestConnectionRequest):
+    """
+    Arayüzden bağlantı testi (VMware / oVirt-KVM / Proxmox / Hyper-V / OpenShift).
+
+    NOT: kasıtlı olarak senkron `def` — her dal senkron/bloklayan SOAP/REST/WinRM
+    login çağrısı yapar (yanlış host/IP girildiğinde onlarca saniye - vCenter için
+    300s'ye kadar - süren bağlantı timeout'una kadar bloke olabilir). `async def`
+    olsaydı yanlış bir bağlantı bilgisiyle tek bir test isteği event loop'u (ve
+    dolayısıyla TÜM kullanıcıları) o süre boyunca kilitlerdi.
+    """
     htype = (data.type or "").lower()
     host = (data.ip_address or data.hostname or "").strip()
     if not host and htype != "openshift_virt":
@@ -336,8 +344,15 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
         raise HTTPException(status_code=500, detail=f"Error updating hypervisor: {str(e)}")
 
 @router.post("/sync-all-vms")
-async def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db)):
-    """Tüm hypervisor'lardan VM'leri tek seferde senkronize et (manuel — Entegrasyonlar)."""
+def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db)):
+    """
+    Tüm hypervisor'lardan VM'leri tek seferde senkronize et (manuel — Entegrasyonlar).
+
+    NOT: kasıtlı olarak senkron `def` — sync_all_hypervisors() birden fazla
+    hypervisor'a senkron/bloklayan SOAP/REST çağrıları yapar, çok sayıda
+    VM/hypervisor'da dakikalarca sürebilir. async def olsaydı bu süre boyunca
+    event loop kilitlenirdi.
+    """
     require_integrations_inventory(request)
     try:
         from app.services.inventory_sync_service import sync_all_hypervisors
@@ -352,7 +367,7 @@ async def sync_all_hypervisor_vms(request: Request, db: Session = Depends(get_db
 
 
 @router.post("/{hypervisor_id}/sync-vms")
-async def sync_hypervisor_vms(
+def sync_hypervisor_vms(
     hypervisor_id: int,
     request: Request,
     background: bool = True,
@@ -362,6 +377,9 @@ async def sync_hypervisor_vms(
 
     background=true (varsayılan): hemen döner, arka planda tarar — UI ilerleme ekranı.
     background=false: bitene kadar bekler (eski davranış).
+
+    NOT: kasıtlı olarak senkron `def` — background=false dalı senkron/bloklayan
+    _sync_vms() çağırır (event loop'u kilitlemesin diye).
     """
     require_integrations_inventory(request)
     try:
@@ -677,8 +695,13 @@ async def virt_ops_summary_endpoint(db: Session = Depends(get_db)):
 
 
 @router.post("/sync-vcenter-events")
-async def sync_vcenter_events_all(db: Session = Depends(get_db)):
-    """Tüm VMware hypervisor'lardan vCenter event/alarm/task sync."""
+def sync_vcenter_events_all(db: Session = Depends(get_db)):
+    """
+    Tüm VMware hypervisor'lardan vCenter event/alarm/task sync.
+
+    NOT: kasıtlı olarak senkron `def` — vCenter'a senkron/bloklayan SOAP
+    çağrıları yapar (birden fazla hypervisor'da uzun sürebilir).
+    """
     from app.services.vcenter_event_collector import sync_all_vcenter_events
     try:
         return sync_all_vcenter_events(db, hours=48)
@@ -688,8 +711,8 @@ async def sync_vcenter_events_all(db: Session = Depends(get_db)):
 
 
 @router.post("/{hypervisor_id}/sync-vcenter-events")
-async def sync_vcenter_events_one(hypervisor_id: int, db: Session = Depends(get_db)):
-    """Tek hypervisor için vCenter event/alarm/task sync."""
+def sync_vcenter_events_one(hypervisor_id: int, db: Session = Depends(get_db)):
+    """Tek hypervisor için vCenter event/alarm/task sync. Senkron `def` — bkz. sync_vcenter_events_all notu."""
     from app.services.vcenter_event_collector import sync_vcenter_events_for_hypervisor
     hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
     if not hv:
@@ -852,7 +875,7 @@ async def delete_all_hypervisor_sessions(db: Session = Depends(get_db)):
 
 
 @router.post("/ask")
-async def ask_hypervisor_question(
+def ask_hypervisor_question(
     req: HypervisorAskRequest,
     db: Session = Depends(get_db),
 ):
@@ -863,6 +886,12 @@ async def ask_hypervisor_question(
     - "Kaç ESX hostum var?"
     - "Kapasite raporu oluştur"
     - "Executive summary raporu ver"
+
+    NOT: kasıtlı olarak senkron `def` — agentic tool loop ve
+    answer_hypervisor_question() LLM'e senkron/bloklayan `requests` çağrıları
+    yapar (60-180s timeout'a kadar). FastAPI senkron endpoint'leri otomatik
+    thread pool'da çalıştırır; `async def` olsaydı bu süre boyunca event loop
+    (ve dolayısıyla TÜM diğer API istekleri) kilitlenirdi.
     """
     if not req.question or not req.question.strip():
         raise HTTPException(status_code=400, detail="Soru boş olamaz")

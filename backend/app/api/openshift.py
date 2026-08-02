@@ -101,7 +101,11 @@ def _workload_dict(w: OpenShiftWorkload) -> dict:
 # ── Test connection ───────────────────────────────────────────────────────────
 
 @router.post("/test-connection")
-async def test_connection(data: TestConnectionRequest):
+def test_connection(data: TestConnectionRequest):
+    # NOT: kasıtlı olarak senkron `def` — OpenShiftClient.test_connection() senkron/
+    # bloklayan bir REST çağrısı yapar; async def olsaydı yanlış/erişilemeyen bir
+    # API URL'de event loop timeout süresi boyunca kilitlenirdi (bkz. hypervisors.py
+    # /test-connection'daki aynı düzeltme).
     try:
         from app.services.openshift.ocp_client import OpenShiftClient
         token = (data.token or "").strip()
@@ -210,8 +214,13 @@ async def cluster_sync_status(cluster_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/clusters/{cluster_id}/sync")
-async def sync_cluster(cluster_id: int, request: Request, background: bool = True, db: Session = Depends(get_db)):
-    """Cluster envanterini (node/proje/workload) ve olaylarını senkronize et."""
+def sync_cluster(cluster_id: int, request: Request, background: bool = True, db: Session = Depends(get_db)):
+    """
+    Cluster envanterini (node/proje/workload) ve olaylarını senkronize et.
+
+    NOT: kasıtlı olarak senkron `def` — background=false dalı senkron/bloklayan
+    OpenShift REST çağrıları yapar (event loop'u kilitlemesin diye).
+    """
     require_integrations_inventory(request)
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
     if not cluster:

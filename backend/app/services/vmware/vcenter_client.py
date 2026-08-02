@@ -67,7 +67,7 @@ class VCenterClient:
         if self.session_id:
             try:
                 url = f"{self.base_url}/com/vmware/cis/session"
-                self.session.delete(url)
+                self.session.delete(url, timeout=10)
                 logger.info("vCenter logout successful")
             except Exception as e:
                 logger.error(f"vCenter logout error: {e}")
@@ -83,14 +83,19 @@ class VCenterClient:
         
         try:
             url = f"{self.base_url}{endpoint}"
+            # NOT: timeout olmadan requests.Session çağrısı vCenter yanıt vermezse
+            # (ağ sorunu / aşırı yüklü host) thread'i SONSUZA KADAR bloklar — thread
+            # havuzu (bkz. main.py _SSH_EXECUTOR) zamanla tükenir ve dolaylı "hang"e
+            # yol açar. list_vms() dahil çoğu vCenter çağrısı bu fonksiyondan geçtiği
+            # için timeout eklendi.
             if method == "GET":
-                response = self.session.get(url)
+                response = self.session.get(url, timeout=30)
             elif method == "POST":
-                response = self.session.post(url, json=data)
+                response = self.session.post(url, json=data, timeout=30)
             elif method == "PUT":
-                response = self.session.put(url, json=data)
+                response = self.session.put(url, json=data, timeout=30)
             elif method == "DELETE":
-                response = self.session.delete(url)
+                response = self.session.delete(url, timeout=30)
             else:
                 return None
             

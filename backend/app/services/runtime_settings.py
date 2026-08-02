@@ -169,6 +169,18 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "WinRM ile event log çekme.",
         "env": "WINDOWS_LOG_INTERVAL_SEC",
     },
+    "windows_log_workers": {
+        "default": 20, "type": "int", "min": 1, "max": 64,
+        "group": "workers", "label": "Windows log tarama WinRM worker",
+        "help": "Windows Event Log (System/Application) toplama paralelliği. 10k+ ortamda batch boyutuyla birlikte artırın.",
+        "env": "WINDOWS_LOG_WORKERS",
+    },
+    "windows_log_batch_size": {
+        "default": 500, "type": "int", "min": 50, "max": 5000,
+        "group": "logs", "label": "Windows log tarama batch boyutu",
+        "help": "Periyodik turda en fazla N Windows sunucu (round-robin). Linux log batch ile aynı mantık.",
+        "env": "WINDOWS_LOG_BATCH_SIZE",
+    },
     "virt_log_interval_sec": {
         "default": 900, "type": "int", "min": 120, "max": 7200,
         "group": "background", "label": "Sanallaştırma log aralığı (sn)",
@@ -210,6 +222,18 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "group": "background", "label": "Snapshot temizleme aralığı (sn)",
         "help": "Eski uygulama snapshot kayıtlarını temizleme.",
         "env": "SNAPSHOT_CLEANUP_INTERVAL_SEC",
+    },
+    "event_cleanup_interval_sec": {
+        "default": 21600, "type": "int", "min": 3600, "max": 86400,
+        "group": "background", "label": "Eski event temizleme aralığı (sn)",
+        "help": "system_events tablosunda otomatik retention (varsayılan 6 saatte bir).",
+        "env": "EVENT_CLEANUP_INTERVAL_SEC",
+    },
+    "event_retention_days": {
+        "default": 180, "type": "int", "min": 30, "max": 3650,
+        "group": "background", "label": "Event saklama süresi (gün)",
+        "help": "Bu süreden eski system_events kayıtları otomatik silinir (tablo sınırsız büyümesin).",
+        "env": "EVENT_RETENTION_DAYS",
     },
     "sysupdate_recovery_interval_sec": {
         "default": 300, "type": "int", "min": 60, "max": 3600,
