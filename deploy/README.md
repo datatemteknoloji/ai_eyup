@@ -15,6 +15,20 @@ exist once the bundle is assembled).
 | `rollback-rhel.sh` | Roll back to the last (or specified) pre-update backup; optional `--restore-db` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
 
+## Publishing a new version (GitHub Release + CHANGELOG)
+
+`scripts/release.sh` bumps `VERSION`, moves the `CHANGELOG.md` `[Unreleased]` section under a
+new version heading, runs `build-distribution.sh`, and commits + tags — so the CHANGELOG (which
+ships inside every package, for air-gapped customers) and the GitHub Release notes never drift
+apart:
+
+```bash
+./scripts/release.sh 1.0.9.17 "Kısa özet" [--with-ollama]
+git push && git push origin v1.0.9.17
+gh release create v1.0.9.17 dist/ainew-1.0.9.17-linux-amd64.tar.gz* \
+  --notes-file /tmp/ainew-release-notes-1.0.9.17.txt --title "ainew 1.0.9.17"
+```
+
 ## Building and installing a release
 
 ```bash
