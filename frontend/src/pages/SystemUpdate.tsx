@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import {
+  AlertTriangle, CheckCircle2, XCircle, Lock, Zap, RefreshCw, Lightbulb,
+  ClipboardList, Shield, Camera, Globe, Settings as SettingsIcon,
+} from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ServerItem {
@@ -161,7 +165,9 @@ const ServerSelector = ({ servers, selected, onChange }: {
               <div className="flex items-center gap-2">
                 <div className="text-sm font-medium text-white truncate">{srv.name}</div>
                 {srv.reboot_required && (
-                  <span className="text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-1.5 py-0.5 rounded-full flex-shrink-0">⚠ Reboot</span>
+                  <span className="flex items-center gap-1 text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-1.5 py-0.5 rounded-md flex-shrink-0">
+                    <AlertTriangle size={10} strokeWidth={2} /> Reboot
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-2 text-xs flex-wrap">
@@ -173,10 +179,14 @@ const ServerSelector = ({ servers, selected, onChange }: {
                 ) : srv.os_version ? (
                   <span className="text-slate-300 truncate max-w-[200px]">{srv.os_version}</span>
                 ) : (
-                  <span className="text-yellow-500 text-[10px]">⚠ OS bilgisi yok</span>
+                  <span className="flex items-center gap-1 text-yellow-500 text-[10px]">
+                    <AlertTriangle size={10} strokeWidth={2} /> OS bilgisi yok
+                  </span>
                 )}
                 {srv.kernel_version && (
-                  <span className="text-slate-500 font-mono truncate max-w-[160px]">⚙ {srv.kernel_version}</span>
+                  <span className="flex items-center gap-1 text-slate-500 font-mono truncate max-w-[160px]">
+                    <SettingsIcon size={10} strokeWidth={2} /> {srv.kernel_version}
+                  </span>
                 )}
               </div>
             </div>
@@ -374,8 +384,8 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                     <div className="bg-cyber-deep rounded-xl p-3 max-h-40 overflow-y-auto space-y-0.5">
                       {sel.packages_to_update.slice(0,30).map((p,i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
-                          {p.is_security && <span className="text-red-400">🔒</span>}
-                          {p.is_kernel   && <span className="text-blue-400">⚡</span>}
+                          {p.is_security && <Lock size={12} strokeWidth={2} className="text-red-400 flex-shrink-0" />}
+                          {p.is_kernel   && <Zap size={12} strokeWidth={2} className="text-blue-400 flex-shrink-0" />}
                           <span className="text-slate-200 font-mono">{p.name}</span>
                           {p.new_version && <span className="text-slate-400">→ {p.new_version}</span>}
                         </div>
@@ -634,24 +644,31 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
       continue
     }
 
-    // Alert satırları
+    // Alert satırları — backend güncelleme script'leri log satırlarının başına
+    // emoji koyuyor; bunu eşleştirip ayrıştırıyoruz ama kullanıcıya ham emoji
+    // yerine lucide-react ikonu gösteriyoruz (DESIGN.md: "emoji UI elementi olamaz").
     const alertMatch = line.match(/^(⚠️|✅|❌|🔴|🟡|🟢|🔒|⚡|🔄|💡|📋|🛡️)/)
     if (alertMatch) {
       const icon = alertMatch[1]
-      const alertColors: Record<string, string> = {
-        '⚠️': 'bg-yellow-500/10 border-yellow-500/30 text-yellow-200',
-        '✅': 'bg-green-500/10 border-green-500/30 text-green-200',
-        '❌': 'bg-red-500/10 border-red-500/30 text-red-200',
-        '🔴': 'bg-red-500/10 border-red-500/30 text-red-200',
-        '🟡': 'bg-yellow-500/10 border-yellow-500/30 text-yellow-200',
-        '🟢': 'bg-green-500/10 border-green-500/30 text-green-200',
-        '🔒': 'bg-orange-500/10 border-orange-500/30 text-orange-200',
-        '💡': 'bg-blue-500/10 border-blue-500/30 text-blue-200',
+      const alertMeta: Record<string, { cls: string; Icon: typeof AlertTriangle }> = {
+        '⚠️': { cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-200', Icon: AlertTriangle },
+        '✅': { cls: 'bg-green-500/10 border-green-500/30 text-green-200', Icon: CheckCircle2 },
+        '❌': { cls: 'bg-red-500/10 border-red-500/30 text-red-200', Icon: XCircle },
+        '🔴': { cls: 'bg-red-500/10 border-red-500/30 text-red-200', Icon: XCircle },
+        '🟡': { cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-200', Icon: AlertTriangle },
+        '🟢': { cls: 'bg-green-500/10 border-green-500/30 text-green-200', Icon: CheckCircle2 },
+        '🔒': { cls: 'bg-orange-500/10 border-orange-500/30 text-orange-200', Icon: Lock },
+        '⚡': { cls: 'bg-blue-500/10 border-blue-500/30 text-blue-200', Icon: Zap },
+        '🔄': { cls: 'bg-blue-500/10 border-blue-500/30 text-blue-200', Icon: RefreshCw },
+        '💡': { cls: 'bg-blue-500/10 border-blue-500/30 text-blue-200', Icon: Lightbulb },
+        '📋': { cls: 'bg-slate-500/10 border-slate-500/30 text-slate-200', Icon: ClipboardList },
+        '🛡️': { cls: 'bg-orange-500/10 border-orange-500/30 text-orange-200', Icon: Shield },
       }
-      const cls = alertColors[icon] || 'bg-cyber-card/50 border-slate-600 text-slate-200'
+      const meta = alertMeta[icon] || { cls: 'bg-cyber-card/50 border-slate-600 text-slate-200', Icon: AlertTriangle }
+      const AlertIcon = meta.Icon
       nodes.push(
-        <div key={i} className={`flex gap-2.5 border rounded-lg px-3 py-2 my-1 text-xs leading-relaxed ${cls}`}>
-          <span className="flex-shrink-0 text-sm">{icon}</span>
+        <div key={i} className={`flex gap-2.5 border rounded-lg px-3 py-2 my-1 text-xs leading-relaxed ${meta.cls}`}>
+          <AlertIcon size={14} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
           <span>{renderInline(line.replace(alertMatch[0], '').trim())}</span>
         </div>
       )
@@ -803,8 +820,9 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
           </label>
         ))}
       </div>
-      <div className="px-4 py-2.5 bg-yellow-500/5 text-xs text-yellow-600">
-        💡 "Seçiliyi Yeniden Başlat" tıklayınca 1 dakika geri sayım başlar. İptal için "Reboot'u İptal Et" kullanın.
+      <div className="flex items-start gap-1.5 px-4 py-2.5 bg-yellow-500/5 text-xs text-yellow-600">
+        <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+        <span>"Seçiliyi Yeniden Başlat" tıklayınca 1 dakika geri sayım başlar. İptal için "Reboot'u İptal Et" kullanın.</span>
       </div>
     </div>
   )
@@ -1141,7 +1159,12 @@ const SystemUpdate: React.FC = () => {
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl border shadow-lg text-sm font-medium ${
           toast.type==='ok' ? 'bg-green-900/90 border-green-500/50 text-green-300' : 'bg-red-900/90 border-red-500/50 text-red-300'
-        }`}>{toast.type==='ok'?'✓ ':'✗ '}{toast.msg}</div>
+        }`}>
+          <span className="flex items-center gap-1.5">
+            {toast.type==='ok' ? <CheckCircle2 size={14} strokeWidth={2} /> : <XCircle size={14} strokeWidth={2} />}
+            {toast.msg}
+          </span>
+        </div>
       )}
 
       {/* ── WIZARD ────────────────────────────────────────────────────────── */}
@@ -1319,9 +1342,10 @@ const SystemUpdate: React.FC = () => {
                               className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                           </div>
                         </div>
-                        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
-                          💡 Root kullanıcı ise sudo şifresi boş bırakın.
-                          Sudo kullanıcı ise SSH şifresi = sudo şifresi olabilir.
+                        <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
+                          <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                          <span>Root kullanıcı ise sudo şifresi boş bırakın.
+                          Sudo kullanıcı ise SSH şifresi = sudo şifresi olabilir.</span>
                         </div>
                       </div>
                     )}
@@ -1358,8 +1382,9 @@ const SystemUpdate: React.FC = () => {
                   ))}
                 </div>
                 {privMethod === 'dzdo' && (
-                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 text-xs text-blue-300">
-                      💡 <strong>dzdo</strong>: AD hesabınız dzdo ile yetkili ise AD şifrenizi SSH şifresi olarak girin.
+                    <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 text-xs text-blue-300">
+                      <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                      <span><strong>dzdo</strong>: AD hesabınız dzdo ile yetkili ise AD şifrenizi SSH şifresi olarak girin.</span>
                     </div>
                   )}
                   {privMethod === 'direct' && (
@@ -1408,7 +1433,9 @@ const SystemUpdate: React.FC = () => {
                 }`}>
                   <input type="radio" checked={selectedRepo===null} onChange={() => setSelectedRepo(null)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
                   <div>
-                    <div className="text-sm font-semibold text-white">🌐 Varsayılan Repo</div>
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                      <Globe size={14} strokeWidth={2} /> Varsayılan Repo
+                    </div>
                     <div className="text-xs text-slate-400 mt-0.5">Sunucunun /etc/yum.repos.d/ veya apt sources.list kaynakları</div>
                   </div>
                 </label>
@@ -1425,7 +1452,9 @@ const SystemUpdate: React.FC = () => {
                         <div className="text-xs text-slate-400 mt-0.5">
                           {repo.repo_type.toUpperCase()} · Local mirror ·
                           <span className={`ml-1 ${repo.sync_status === 'synced' ? 'text-green-400' : 'text-yellow-400'}`}>
-                            {repo.sync_status === 'synced' ? '✓ Güncel' : '⚠ Kısmi'}
+                            {repo.sync_status === 'synced'
+                            ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} strokeWidth={2} /> Güncel</span>
+                            : <span className="inline-flex items-center gap-1"><AlertTriangle size={11} strokeWidth={2} /> Kısmi</span>}
                           </span>
                         </div>
                       </div>
@@ -1454,7 +1483,9 @@ const SystemUpdate: React.FC = () => {
           {step === 5 && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-base font-semibold text-white">📸 VM Snapshot</h2>
+                <h2 className="flex items-center gap-2 text-base font-semibold text-white">
+                  <Camera size={16} strokeWidth={1.8} /> VM Snapshot
+                </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
                   Güncelleme öncesi hypervisor üzerinden sanal makine snapshot'ı alınabilir (oVirt / vCenter).
                 </p>
@@ -1469,7 +1500,7 @@ const SystemUpdate: React.FC = () => {
                       : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                   }`}
                 >
-                  <div className="text-3xl mb-2">📸</div>
+                  <Camera size={32} strokeWidth={1.5} className="mb-2 text-slate-300" />
                   <div className="text-base font-bold text-white">Snapshot Al</div>
                   <div className="text-xs text-slate-400 mt-1">Güncelleme başlamadan önce VM yedeği oluştur</div>
                 </button>
@@ -1652,8 +1683,8 @@ const SystemUpdate: React.FC = () => {
                         <span className="text-sm font-medium text-white">{data.server_name}</span>
                         <div className="flex items-center gap-2 text-xs">
                           {data.security_count > 0 && (
-                            <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full">
-                              🔒 {data.security_count}
+                            <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-md">
+                              <Lock size={10} strokeWidth={2} /> {data.security_count}
                             </span>
                           )}
                           {data.kernel_count > 0 && (
@@ -1838,10 +1869,10 @@ const SystemUpdate: React.FC = () => {
                     <div className="text-slate-400 text-xs">Repo</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-sm font-medium text-white">
+                    <div className="flex items-center justify-center gap-1 text-sm font-medium text-white">
                       {snapshotMode === 'take'
-                        ? `📸 ${SNAPSHOT_RETENTIONS.find(r => r.key === snapshotRetention)?.label || snapshotRetention}`
-                        : '⏭️ Yok'}
+                        ? <><Camera size={12} strokeWidth={2} /> {SNAPSHOT_RETENTIONS.find(r => r.key === snapshotRetention)?.label || snapshotRetention}</>
+                        : 'Yok'}
                     </div>
                     <div className="text-slate-400 text-xs">Snapshot</div>
                   </div>
@@ -1938,10 +1969,14 @@ const SystemUpdate: React.FC = () => {
                         {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{j.packages_updated.length} paket</span>}
                         {j.reboot_required && <span className="text-xs text-yellow-400">REBOOT</span>}
                         {j.snapshot?.status === 'active' && (
-                          <span className="text-xs text-cyan-400" title={j.snapshot.snapshot_name}>📸 Snap</span>
+                          <span className="inline-flex items-center gap-1 text-xs text-cyan-400" title={j.snapshot.snapshot_name}>
+                            <Camera size={11} strokeWidth={2} /> Snap
+                          </span>
                         )}
                         {j.snapshot?.status === 'failed' && (
-                          <span className="text-xs text-orange-400" title={j.snapshot.error_message || ''}>📸 Hata</span>
+                          <span className="inline-flex items-center gap-1 text-xs text-orange-400" title={j.snapshot.error_message || ''}>
+                            <Camera size={11} strokeWidth={2} /> Hata
+                          </span>
                         )}
                         <span className="text-slate-500 text-xs">{expandedJob === j.id ? '▲' : '▼'}</span>
                       </div>

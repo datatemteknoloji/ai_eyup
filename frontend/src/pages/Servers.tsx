@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import {
   ChevronDown, Settings2, Activity, Wifi,
-  RefreshCw, CheckCircle2, AlertCircle,
+  RefreshCw, CheckCircle2, AlertCircle, AlertTriangle,
+  Cloud, Camera, Tag, Radio,
 } from 'lucide-react'
 const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
@@ -19,7 +20,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <span className="text-yellow-400 text-base">⚠</span>
+          <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
           <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
@@ -71,7 +72,7 @@ const AiReadyUpdateButton: React.FC<{
 
   const handleClick = async () => {
     if (!await showConfirm(
-      'Yalnızca Linux sunucularda SSH testi arka planda çalışacak. Bağlanabilenler AI Ready=✅. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
+      'Yalnızca Linux sunucularda SSH testi arka planda çalışacak. Bağlanabilenler AI Ready=Evet olarak işaretlenir. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
     )) return
 
     setLoading(true); setResult(null)
@@ -405,15 +406,17 @@ const TIER_COLORS: Record<string, string> = {
   development: 'bg-green-500/20 text-green-400 border-green-500/30',
   unknown: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
 }
+// Renk kodlaması zaten TIER_COLORS'taki bg/text/border ile sağlanıyor —
+// eskiden ek olarak duran 🔴/🟡/🟢/⚪ emoji önekleri kaldırıldı (DESIGN.md: "Emoji kullanılmaz").
 const TIER_LABELS: Record<string, string> = {
-  production: '🔴 Production',
-  staging: '🟡 Staging',
-  development: '🟢 Development',
-  unknown: '⚪ Belirsiz',
+  production: 'Production',
+  staging: 'Staging',
+  development: 'Development',
+  unknown: 'Belirsiz',
 }
 function TierBadge({ tier }: { tier: string }) {
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${TIER_COLORS[tier] || TIER_COLORS['unknown']}`}>
+    <span className={`text-xs px-2 py-0.5 rounded-md border font-medium ${TIER_COLORS[tier] || TIER_COLORS['unknown']}`}>
       {TIER_LABELS[tier] || tier}
     </span>
   )
@@ -556,7 +559,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
         }
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError') setAnalyzeText('❌ Analiz başarısız.')
+      if (e?.name !== 'AbortError') setAnalyzeText('**Analiz başarısız.**')
     } finally { setIsAnalyzing(false) }
   }
 
@@ -579,8 +582,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
               {server.hypervisor_name && (
-                <span className="text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
-                  ☁ {server.hypervisor_name}
+                <span className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
+                  <Cloud size={11} strokeWidth={2} /> {server.hypervisor_name}
                 </span>
               )}
             </div>
@@ -629,7 +632,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   ['Sunucu Adı', server.name],
                   ['IP Adresi', server.ip_address || '-'],
                   ['Hostname', server.hostname || '-'],
-                  ...(server.hypervisor_name ? [['Hypervisor', `☁ ${server.hypervisor_name}`]] : []),
+                  ...(server.hypervisor_name ? [['Hypervisor', server.hypervisor_name]] : []),
                   ['Tip', server.server_type || '-'],
                   ['OS Dağıtım', server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
                   ['OS Sürüm', server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
@@ -825,7 +828,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* Header */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-medium text-white">📸 VM Snapshot</h3>
+                      <h3 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                        <Camera size={14} strokeWidth={1.8} /> VM Snapshot
+                      </h3>
                       {vmSnapshots?.platform && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.07] text-slate-400 uppercase">
                           {vmSnapshots.platform}
@@ -888,7 +893,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* VM ID yok uyarısı */}
                   {vmSnapshots?.vm_id_missing && !snapCreating && (
                     <div className="flex items-start gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/20 rounded-lg px-3 py-2">
-                      <span className="flex-shrink-0 mt-0.5">⚠</span>
+                      <AlertTriangle size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
                       <span>VM ID bilinmiyor. "Ara &amp; Snapshot Al" tıklandığında vCenter/oVirt üzerinde arama yapılır ve ID kaydedilir.</span>
                     </div>
                   )}
@@ -953,7 +958,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
                         {vmSnapshots!.external.map((s, i) => (
                           <div key={s.id || i} className="flex items-center gap-2 text-xs bg-white/[0.02] rounded-lg px-3 py-2 border border-white/[0.04]">
-                            <span className="text-slate-400 flex-shrink-0">🔖</span>
+                            <Tag size={12} strokeWidth={2} className="text-slate-400 flex-shrink-0" />
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-300 truncate">{s.name}</div>
                               {s.description && <div className="text-slate-500 text-[10px] truncate">{s.description}</div>}
@@ -1008,7 +1013,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 </div>
               ) : (!metrics?.has_node_exporter && !metrics?.source) ? (
                 <div className="text-center py-10 text-slate-500">
-                  <p className="text-3xl mb-3">📡</p>
+                  <Radio size={32} strokeWidth={1.5} className="mx-auto mb-3" />
                   <p className="text-sm">Node Exporter kurulu değil ve vCenter'dan veri alınamadı.</p>
                   {server.server_type === 'VIRTUAL' && (
                     <p className="text-xs text-slate-600 mt-1">Ayarlar → Hypervisors'dan vCenter bağlantısını kontrol edin.</p>
@@ -1626,7 +1631,7 @@ const Servers: React.FC = () => {
                           <span className="text-xs font-mono text-slate-400">{server.ip_address || '-'}</span>
                           {server.hypervisor_name ? (
                             <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
-                              ☁ {server.hypervisor_name}
+                              <Cloud size={10} strokeWidth={2} /> {server.hypervisor_name}
                             </span>
                           ) : server.hostname && server.hostname !== server.name && server.hostname !== server.ip_address ? (
                             <span className="text-xs text-slate-600 truncate max-w-[100px]">{server.hostname}</span>
