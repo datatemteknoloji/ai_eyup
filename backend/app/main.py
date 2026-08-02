@@ -3,6 +3,8 @@ FastAPI Main Application
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.version import get_app_version
 import logging
@@ -33,10 +35,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Pydantic'in ham (İngilizce, errors.pydantic.dev linkli) validasyon hatalarını
+# uygulamanın geri kalanıyla tutarlı, tek satırlık Türkçe "detail" formatına çevirir.
+# Önceki davranışta auth hataları Türkçe iken (örn. "Kimlik doğrulama gerekli"),
+# 422 validasyon hataları framework-içi İngilizce JSON olarak sızıyordu.
+_FIELD_LABELS_TR = {
+    "username": "Kullanıcı adı", "password": "Parola", "email": "E-posta",
+    "name": "İsim", "ip_address": "IP adresi", "hostname": "Hostname",
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request, exc: RequestValidationError):
+    errors = exc.errors()
+    if not errors:
+        return JSONResponse(status_code=422, content={"detail": "Geçersiz istek"})
+    first = errors[0]
+    loc = [str(p) for p in first.get("loc", []) if p not in ("body", "query", "path")]
+    field = loc[-1] if loc else ""
+    label = _FIELD_LABELS_TR.get(field, field)
+    err_type = first.get("type", "")
+    if err_type == "missing":
+        detail = f"Zorunlu alan eksik: {label}" if label else "Zorunlu alan eksik"
+    elif err_type.startswith("type_error") or err_type.startswith("value_error") or "parsing" in err_type:
+        detail = f"{label}: geçersiz değer" if label else "Geçersiz değer"
+    else:
+        detail = f"{label}: {first.get('msg', 'geçersiz')}" if label else first.get("msg", "Geçersiz istek")
+    extra = {"field": field, "count": len(errors)} if len(errors) > 1 or field else {}
+    return JSONResponse(status_code=422, content={"detail": detail, **extra})
+
+
 # Global kimlik doğrulama: /auth/* ve /public/* dışındaki tüm /api/v1 endpoint'leri token ister.
 # WebSocket (terminal) ve auth/public uçları muaf tutulur.
 _AUTH_EXEMPT_PREFIXES = ("/api/v1/auth/", "/api/v1/public/")
 # Terminal WS kendi JWT doğrulamasını query param üzerinden yapıyor
+
+
+def _path_matches_known_route(request) -> bool:
+    """Path herhangi bir kayıtlı route ile eşleşiyor mu (HTTP metodundan bağımsız)?
+
+    Kimlik doğrulaması olmadan var olmayan bir endpoint'e istek atıldığında
+    (örn. bir admin yanlış yazdığı bir API path'i dener), auth middleware her
+    zaman "401 Kimlik doğrulama gerekli" döndürüyordu — gerçek sorun "bu
+    endpoint yok" olsa bile. Route hiç eşleşmiyorsa auth kontrolünü atlayıp
+    isteğin doğal 404'e düşmesine izin veriyoruz.
+    """
+    from starlette.routing import Match
+    scope = {"type": "http", "path": request.url.path, "method": request.method}
+    for route in request.app.routes:
+        try:
+            match, _ = route.matches(scope)
+        except Exception:
+            continue
+        if match != Match.NONE:
+            return True
+    return False
 
 
 @app.middleware("http")
@@ -58,10 +112,14 @@ async def _require_auth_middleware(request, call_next):
 
     auth_header = request.headers.get("authorization", "")
     token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
-    if not token:
-        return JSONResponse(status_code=401, content={"detail": "Kimlik doğrulama gerekli"})
     from app.core.security import decode_access_token
-    if not decode_access_token(token):
+    token_valid = bool(token) and bool(decode_access_token(token))
+    if not token_valid:
+        if not _path_matches_known_route(request):
+            # Var olmayan bir endpoint — yanıltıcı "giriş yap" yerine doğal 404.
+            return await call_next(request)
+        if not token:
+            return JSONResponse(status_code=401, content={"detail": "Kimlik doğrulama gerekli"})
         return JSONResponse(status_code=401, content={"detail": "Geçersiz veya süresi dolmuş token"})
     return await call_next(request)
 
