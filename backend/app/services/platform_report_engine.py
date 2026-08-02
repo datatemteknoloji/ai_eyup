@@ -146,6 +146,55 @@ def generate_linux_capacity(db: Session) -> Dict[str, Any]:
     }
 
 
+_SEVERITY_RANK = {"emergency": 4, "critical": 4, "error": 3, "warning": 2, "info": 1}
+
+
+def _worst_severity(severities: List[str]) -> str:
+    if not severities:
+        return "info"
+    return max(severities, key=lambda s: _SEVERITY_RANK.get(s or "info", 0))
+
+
+def _events_to_operations_payload(events: List[SystemEvent], period_days: int, platform: str) -> Dict[str, Any]:
+    """`OperationsView` (InfraReports.tsx) için ortak şema: `event_breakdown`
+    ({type,count,severity}) ve `daily_trend` ({day,total,critical}) — virt
+    raporlarıyla aynı alan adları, tek bir görsel component'i paylaşabilsin."""
+    by_day_total: Dict[str, int] = defaultdict(int)
+    by_day_critical: Dict[str, int] = defaultdict(int)
+    by_type_count: Counter = Counter()
+    by_type_severities: Dict[str, List[str]] = defaultdict(list)
+    servers_seen: set = set()
+
+    for ev in events:
+        day = ev.created_at.date().isoformat() if ev.created_at else "unknown"
+        by_day_total[day] += 1
+        sev = ev.severity or "info"
+        if sev in ("critical", "emergency"):
+            by_day_critical[day] += 1
+        etype = ev.event_type or "unknown"
+        by_type_count[etype] += 1
+        by_type_severities[etype].append(sev)
+        if ev.server_id:
+            servers_seen.add(ev.server_id)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "platform": platform,
+        "period_days": period_days,
+        "total_events": len(events),
+        "unique_servers": len(servers_seen),
+        "by_severity": dict(Counter((ev.severity or "info") for ev in events)),
+        "event_breakdown": [
+            {"type": k, "count": v, "severity": _worst_severity(by_type_severities[k])}
+            for k, v in by_type_count.most_common(12)
+        ],
+        "daily_trend": [
+            {"day": d, "total": t, "critical": by_day_critical.get(d, 0)}
+            for d, t in sorted(by_day_total.items())[-14:]
+        ],
+    }
+
+
 def generate_linux_operations(db: Session) -> Dict[str, Any]:
     since = datetime.utcnow() - timedelta(days=30)
     q = apply_platform_filter(
@@ -153,23 +202,7 @@ def generate_linux_operations(db: Session) -> Dict[str, Any]:
         "linux",
         db,
     )
-    events = q.all()
-    by_day: Dict[str, int] = defaultdict(int)
-    by_type: Counter = Counter()
-    for ev in events:
-        day = ev.created_at.date().isoformat() if ev.created_at else "unknown"
-        by_day[day] += 1
-        by_type[ev.event_type or "unknown"] += 1
-
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "platform": "linux",
-        "period_days": 30,
-        "total_events": len(events),
-        "by_severity": dict(Counter((ev.severity or "info") for ev in events)),
-        "top_event_types": [{"type": k, "count": v} for k, v in by_type.most_common(10)],
-        "daily_trend": [{"date": d, "count": c} for d, c in sorted(by_day.items())[-14:]],
-    }
+    return _events_to_operations_payload(q.all(), 30, "linux")
 
 
 def generate_linux_risk(db: Session) -> Dict[str, Any]:
@@ -466,21 +499,13 @@ def generate_windows_executive_summary(db: Session) -> Dict[str, Any]:
 
 
 def generate_windows_operations(db: Session) -> Dict[str, Any]:
-    since = datetime.utcnow() - timedelta(days=14)
+    since = datetime.utcnow() - timedelta(days=30)
     events = apply_platform_filter(
         db.query(SystemEvent).filter(SystemEvent.created_at >= since),
         "windows",
         db,
     ).all()
-    by_type = Counter(ev.event_type or "unknown" for ev in events)
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "platform": "windows",
-        "period_days": 14,
-        "total_events": len(events),
-        "by_severity": dict(Counter((ev.severity or "info") for ev in events)),
-        "top_event_types": [{"type": k, "count": v} for k, v in by_type.most_common(10)],
-    }
+    return _events_to_operations_payload(events, 30, "windows")
 
 
 def generate_windows_risk(db: Session) -> Dict[str, Any]:
@@ -611,6 +636,8 @@ def generate_exadata_executive_summary(db: Session) -> Dict[str, Any]:
     cells = sum(1 for n in nodes if (n.role.value if hasattr(n.role, "value") else str(n.role)) == "storage_cell")
     events = _active_events(db, "exadata", 24)
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
+    warning = sum(1 for e in events if e.severity == "warning")
+    unhealthy_racks = sum(1 for r in racks if (r.status or "").lower() in ("critical", "warning", "degraded", "offline"))
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -621,8 +648,12 @@ def generate_exadata_executive_summary(db: Session) -> Dict[str, Any]:
             "compute_nodes": compute,
             "storage_cells": cells,
         },
-        "health": {"critical_events": critical, "warning_events": sum(1 for e in events if e.severity == "warning")},
-        "risk_level": "Kritik" if critical else "Normal",
+        "health": {
+            "score": _health_score(critical, warning, max(len(nodes), 1)),
+            "critical_events": critical,
+            "warning_events": warning,
+        },
+        "risk_level": "Kritik" if critical or unhealthy_racks else "Normal",
     }
 
 
@@ -654,13 +685,7 @@ def generate_exadata_operations(db: Session) -> Dict[str, Any]:
         "exadata",
         db,
     ).all()
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "platform": "exadata",
-        "period_days": 30,
-        "total_events": len(events),
-        "by_severity": dict(Counter((ev.severity or "info") for ev in events)),
-    }
+    return _events_to_operations_payload(events, 30, "exadata")
 
 
 def generate_exadata_risk(db: Session) -> Dict[str, Any]:
@@ -817,9 +842,9 @@ def format_platform_report_markdown(platform: str, report_type: str, data: Dict[
             section("Kapasite", [[k.replace("_", " ").title() for k in keys]] + [[r.get(k, "") for k in keys] for r in tops[:15]])
     elif report_type == "operations":
         lines.append(f"**Toplam olay:** {data.get('total_events', 0)}")
-        tops = data.get("top_event_types") or []
+        tops = data.get("event_breakdown") or []
         if tops:
-            section("Olay Tipleri", [["Tip", "Adet"]] + [[t["type"], t["count"]] for t in tops])
+            section("Olay Tipleri", [["Tip", "Adet", "Önem"]] + [[t["type"], t["count"], t.get("severity", "")] for t in tops])
     elif report_type == "risk":
         risky = data.get("risky_servers") or data.get("unhealthy_racks") or []
         if risky:

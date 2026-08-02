@@ -17,7 +17,7 @@ from app.models.server import Server
 from app.models.hypervisor import Hypervisor
 from app.models.hypervisor_inventory import HypervisorHostInventory
 from app.models.hypervisor_metric import HypervisorHostMetric
-from app.services.platform_scope import is_windows_server
+from app.services.platform_scope import is_windows_server, server_ids_for_platform
 
 logger = logging.getLogger(__name__)
 
@@ -241,18 +241,21 @@ def list_candidates(db: Session, platform: str, entity_type: str) -> List[Dict[s
             for s in rows
         ]
 
-    # linux / windows servers
-    rows = db.query(Server).order_by(Server.name).limit(500).all()
+    # linux / windows servers — modül envanteriyle aynı kanonik sınıflandırma
+    # (bkz. platform_scope.server_ids_for_platform); eskiden burada ayrı, hatalı
+    # bir filtre vardı (`platform == "virt"` linux/windows ile birlikte asla true
+    # olamayacağı için hep no-op'tu) — bu da Exadata node'ları gibi ilgisiz
+    # sunucuların listeye sızmasına yol açabiliyordu.
+    allowed_ids = set(server_ids_for_platform(db, platform))
+    rows = (
+        db.query(Server)
+        .filter(Server.id.in_(allowed_ids))
+        .order_by(Server.name)
+        .limit(500)
+        .all()
+    ) if allowed_ids else []
     out = []
     for s in rows:
-        win = is_windows_server(s)
-        if platform == "windows" and not win:
-            continue
-        if platform == "linux" and win:
-            continue
-        # virt olmayan fiziksel/VM linux/windows envanteri
-        if platform in ("linux", "windows") and s.hypervisor_id and platform == "virt":
-            continue
         out.append({
             "id": s.id,
             "name": s.name,
@@ -438,6 +441,8 @@ async def ai_interpret(
     question: Optional[str] = None,
 ) -> str:
     """LLM ile karşılaştırma yorumu üret."""
+    import httpx
+
     from app.services.llm_gateway import generate_async
 
     entity = (profiles[0].get("entity_type") if profiles else "server") or "server"
@@ -475,12 +480,14 @@ async def ai_interpret(
     prompt = f"{system}\n\n{context}\n\n## SORU\n{user_q}\n\n## YANIT\n"
     model = get_active_model(db)
     try:
-        data = await generate_async(
-            model=model,
-            prompt=prompt,
-            options={"temperature": 0.2, "num_predict": 1200},
-            timeout=90.0,
-        )
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            data = await generate_async(
+                client,
+                model=model,
+                prompt=prompt,
+                options={"temperature": 0.2, "num_predict": 1200},
+                timeout=90.0,
+            )
         text = (data or {}).get("response") or ""
         if not text and isinstance(data, dict):
             msg = (data.get("message") or {})

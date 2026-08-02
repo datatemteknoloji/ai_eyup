@@ -421,6 +421,22 @@ def generate_executive_summary(db: Session) -> Dict[str, Any]:
     }
 
 
+def _days_to_threshold(current_pct: Optional[float], daily_growth: float, threshold: float = 80) -> Optional[int]:
+    """Doğrusal büyüme trendine göre eşiğe kaç gün kaldığını hesaplar.
+
+    current_pct zaten eşiğin üzerindeyse 0 döner (negatif/anlamsız gün sayısı
+    üretmemek için) — bkz. capacity/forecast raporlarında keşfedilen "-1724 gün"
+    hatası.
+    """
+    if current_pct is None:
+        return None
+    if current_pct >= threshold:
+        return 0
+    if daily_growth and daily_growth > 0.001:
+        return int((threshold - current_pct) / daily_growth)
+    return None
+
+
 def generate_capacity_report(db: Session) -> Dict[str, Any]:
     hosts = _latest_host_metrics(db)
 
@@ -459,9 +475,12 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         ds_daily = (growth.ds_daily_growth or 0) if growth else 0
         mem_daily = (growth.mem_daily_growth or 0) if growth else 0
 
-        # Kaç günde %80 kapasiteye ulaşır?
-        days_to_ds_80 = int((80 - h["ds_pct"]) / ds_daily) if ds_daily > 0.001 else None
-        days_to_mem_80 = int((80 - h["mem_pct"]) / mem_daily) if mem_daily > 0.001 else None
+        # Kaç günde %80 kapasiteye ulaşır? Kullanım zaten %80 üzerindeyse
+        # (80 - kullanım) negatif olur ve bölme negatif/anlamsız bir "gün" üretir
+        # (örn. "-1724 gün içinde %80'e ulaşacak") — bunun yerine 0 döndürülür,
+        # yani eşik zaten geçilmiş demektir.
+        days_to_ds_80 = _days_to_threshold(h["ds_pct"], ds_daily)
+        days_to_mem_80 = _days_to_threshold(h["mem_pct"], mem_daily)
 
         status = "Kritik" if h["mem_pct"] > 85 or h["ds_pct"] > 85 else (
             "Uyarı" if h["mem_pct"] > 70 or h["ds_pct"] > 70 else "Normal"
@@ -500,10 +519,16 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
 
     warnings = []
     for item in capacity_items:
-        if item["memory"]["days_to_80pct"] and item["memory"]["days_to_80pct"] < 30:
-            warnings.append(f"{item['host']} belleği {item['memory']['days_to_80pct']} gün içinde %80'e ulaşacak")
-        if item["storage"]["days_to_80pct"] and item["storage"]["days_to_80pct"] < 30:
-            warnings.append(f"{item['host']} diski {item['storage']['days_to_80pct']} gün içinde %80'e ulaşacak")
+        mem_days = item["memory"]["days_to_80pct"]
+        ds_days = item["storage"]["days_to_80pct"]
+        if mem_days == 0:
+            warnings.append(f"{item['host']} belleği zaten %80'in üzerinde (mevcut %{item['memory']['used_pct']})")
+        elif mem_days is not None and mem_days < 30:
+            warnings.append(f"{item['host']} belleği {mem_days} gün içinde %80'e ulaşacak")
+        if ds_days == 0:
+            warnings.append(f"{item['host']} diski zaten %80'in üzerinde (mevcut %{item['storage']['used_pct']})")
+        elif ds_days is not None and ds_days < 30:
+            warnings.append(f"{item['host']} diski {ds_days} gün içinde %80'e ulaşacak")
 
     # VM bazında disk tahsisatı — datastore varsa datastore, yoksa hypervisor adına göre grupla
     vms = _get_vms(db)
@@ -903,7 +928,9 @@ def generate_forecast_report(db: Session) -> Dict[str, Any]:
     growth_map = {r.host_name: r for r in growth_rows}
 
     def project(current_pct: float, daily_growth: float, days: int) -> float:
-        return round(min(100, current_pct + daily_growth * days), 1)
+        # Düşen trendlerde (negatif growth) uzun vadede kullanım %0'ın altına
+        # inemez — clamp olmadan "-2.3%" gibi anlamsız bir tahmin üretiliyordu.
+        return round(max(0, min(100, current_pct + daily_growth * days)), 1)
 
     forecasts = []
     for h in hosts:

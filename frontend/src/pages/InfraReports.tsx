@@ -565,6 +565,96 @@ function CapacityView({ d }: { d: any }) {
   )
 }
 
+// Linux/Windows (bare-metal sunucu) ve Exadata (node envanteri) kapasite
+// raporları host/VM/datastore kavramı içermez — `CapacityView` (virt) ile
+// aynı görsel şemayı paylaşamaz, bu yüzden ayrı, sunucu/node bazlı bir görsel.
+function ServerCapacityView({ d }: { d: any }) {
+  const servers: any[] = d.top_servers || []
+  const nodes: any[] = d.nodes || []
+
+  if (servers.length > 0 || d.sampled_servers !== undefined) {
+    const maxCpu = Math.max(...servers.map((s) => s.cpu_usage_percent || 0), 1)
+    return (
+      <div className="space-y-5">
+        <div className="grid grid-cols-4 gap-3">
+          <KpiCard label="Örneklenen Sunucu" value={d.sampled_servers ?? servers.length} color="blue" icon={<Server size={12} />} />
+          <KpiCard label="Yüksek CPU (≥%85)" value={d.high_cpu_count ?? 0}
+            color={(d.high_cpu_count ?? 0) > 0 ? 'red' : 'green'} icon={<Cpu size={12} />} />
+          <KpiCard label="Yüksek RAM (≥%85)" value={d.high_memory_count ?? 0}
+            color={(d.high_memory_count ?? 0) > 0 ? 'amber' : 'green'} />
+          <KpiCard label="Yüksek Disk (≥%85)" value={d.high_disk_count ?? 0}
+            color={(d.high_disk_count ?? 0) > 0 ? 'amber' : 'green'} icon={<HardDrive size={12} />} />
+        </div>
+        {servers.length > 0 ? (
+          <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+            <SectionHeader title="En Yüksek CPU Kullanan Sunucular" icon={<Cpu size={14} />} count={servers.length} />
+            <div className="space-y-2 mt-2">
+              {servers.map((s, i) => (
+                <div key={i} className="grid grid-cols-[1fr_auto] items-center gap-3">
+                  <HorzBar value={s.cpu_usage_percent || 0} max={maxCpu} label={s.server} color={s.cpu_usage_percent >= 85 ? 'red' : 'blue'} />
+                  <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                    RAM %{s.memory_usage_percent ?? '—'} · Disk %{s.disk_root_usage_percent ?? '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+            <Info size={14} /> Son 1 saatte örneklenebilecek canlı metrik bulunamadı — Canlı Metrikler modülünün çalıştığından emin olun.
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Exadata: node envanteri (çekirdek/RAM tahsisi) — canlı kullanım metriği yok.
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Toplam Node" value={nodes.length} color="blue" icon={<Server size={12} />} />
+        <KpiCard label="Toplam vCPU" value={nodes.reduce((a, n) => a + (n.cpu_cores || 0), 0)} color="slate" icon={<Cpu size={12} />} />
+        <KpiCard label="Toplam RAM (GB)" value={nodes.reduce((a, n) => a + (n.memory_gb || 0), 0)} color="slate" />
+      </div>
+      {nodes.length > 0 ? (
+        <div className="bg-slate-800/30 rounded-xl border border-slate-700/30 overflow-hidden">
+          <SectionHeader title="Node Envanteri" icon={<HardDrive size={14} />} count={nodes.length} />
+          <div className="overflow-x-auto px-4 pb-4">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-700/40">
+                  <th className="text-left font-medium py-2 pr-3">Node</th>
+                  <th className="text-left font-medium py-2 pr-3">Rol</th>
+                  <th className="text-left font-medium py-2 pr-3">Rack</th>
+                  <th className="text-left font-medium py-2 pr-3">Durum</th>
+                  <th className="text-right font-medium py-2 pr-3">vCPU</th>
+                  <th className="text-right font-medium py-2">RAM (GB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nodes.map((n, i) => (
+                  <tr key={i} className="border-b border-slate-800/60 last:border-0">
+                    <td className="py-2 pr-3 text-slate-200 font-medium whitespace-nowrap">{n.name}</td>
+                    <td className="py-2 pr-3 text-slate-400">{n.role}</td>
+                    <td className="py-2 pr-3 text-slate-400">{n.rack || '—'}</td>
+                    <td className="py-2 pr-3"><SeverityBadge level={n.status || 'Normal'} /></td>
+                    <td className="py-2 pr-3 text-right text-slate-300">{n.cpu_cores}</td>
+                    <td className="py-2 text-right text-slate-300">{n.memory_gb}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+          <Info size={14} /> Kayıtlı Exadata node envanteri bulunamadı.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function RiskView({ d }: { d: any }) {
   const risks = d.risks || {}
   const rs = d.risk_score ?? 0
@@ -573,7 +663,9 @@ function RiskView({ d }: { d: any }) {
       {/* Score + KPIs */}
       <div className="grid grid-cols-4 gap-3 items-start">
         <div className="flex flex-col items-center bg-slate-800/40 rounded-xl p-4 border border-slate-700/30">
-          <ScoreGauge score={100 - rs} max={100} label="Güvenlik Skoru" size={96} />
+          {/* Risk Dashboard'da "Güvenlik Skoru" yanıltıcıydı — bu skor CPU/RAM/storage/tools
+              sağlığından türetiliyor, güvenlik açığı taraması değil. */}
+          <ScoreGauge score={100 - rs} max={100} label="Sağlık Skoru" size={96} />
           <SeverityBadge level={d.risk_level ?? 'Normal'} />
         </div>
         <KpiCard label="Risk Skoru" value={`${rs}/100`} color={rs > 60 ? 'red' : rs > 30 ? 'amber' : 'green'} icon={<Target size={12} />} />
@@ -651,6 +743,67 @@ function RiskView({ d }: { d: any }) {
               <HorzBar key={i} value={s.events} max={Math.max(...risks.top_alarm_servers.map((x: any) => x.events))} label={s.server} color="red" />
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Linux/Windows `risky_servers` ve Exadata `unhealthy_racks` — VM/tools/ESX
+// kavramı olmayan platformlar için `RiskView` (virt) yerine bare-metal
+// sunucu/rack bazlı basit bir risk listesi.
+function ServerRiskView({ d }: { d: any }) {
+  const risky: any[] = d.risky_servers || []
+  const racks: any[] = d.unhealthy_racks || []
+  const isRackBased = !d.risky_servers && !!d.unhealthy_racks
+  const maxEvt = Math.max(...risky.map((r) => r.event_count ?? r.events ?? 0), 1)
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label={isRackBased ? 'Sorunlu Rack' : 'Riskli Sunucu'}
+          value={isRackBased ? racks.length : risky.length}
+          color={(isRackBased ? racks.length : risky.length) > 0 ? 'red' : 'green'}
+          icon={<AlertTriangle size={12} />} />
+        <KpiCard label="Aktif Olay (48s)" value={d.total_active_events ?? d.active_events ?? 0} color="slate" icon={<Activity size={12} />} />
+        <KpiCard label="Kritik Olaylı Sunucu" value={risky.filter((r) => (r.critical_count ?? 0) > 0).length}
+          color="red" />
+      </div>
+      {!isRackBased && risky.length > 0 && (
+        <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+          <SectionHeader title="En Riskli Sunucular (Son 48 Saat)" icon={<AlertTriangle size={14} />} count={risky.length} />
+          <div className="space-y-2 mt-2">
+            {risky.map((r, i) => (
+              <div key={i} className="grid grid-cols-[1fr_auto] items-center gap-3">
+                <HorzBar value={r.event_count ?? r.events ?? 0} max={maxEvt} label={r.server} color={(r.critical_count ?? 0) > 0 ? 'red' : 'amber'} />
+                <span className="text-[10px] text-slate-500 whitespace-nowrap truncate max-w-[220px]" title={r.top_title || ''}>
+                  {(r.critical_count ?? 0) > 0 ? `${r.critical_count} kritik · ` : ''}{r.top_title || ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {isRackBased && (
+        <div className="bg-slate-800/30 rounded-xl border border-slate-700/30 overflow-hidden">
+          <SectionHeader title="Sorunlu Rack'ler" icon={<AlertTriangle size={14} />} count={racks.length} />
+          {racks.length > 0 ? (
+            <div className="px-4 pb-4 space-y-2">
+              {racks.map((r, i) => (
+                <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-700/20 last:border-0">
+                  <span className="text-slate-200 font-medium">{r.rack}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">{r.datacenter || '—'}</span>
+                    <SeverityBadge level={r.health} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 pb-4 text-sm text-slate-500 flex items-center gap-2">
+              <CheckCircle2 size={14} className="text-green-400" /> Tüm rack'ler sağlıklı.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1945,8 +2098,13 @@ function ReportSummaryView({ type, data }: { type: string; data: Record<string, 
     // raporu `infrastructure`/`utilization` şeması kullanır — veriye göre yönlendir.
     return d.inventory ? <PlatformExecSummaryView d={d} /> : <ExecSummaryView d={d} />
   }
-  if (type === 'capacity') return <CapacityView d={d} />
-  if (type === 'risk') return <RiskView d={d} />
+  // Virt (hypervisor) `capacity` host/VM/datastore şeması kullanır;
+  // linux/windows bare-metal sunucu (`top_servers`) ve exadata node envanteri
+  // (`nodes`) farklı bir görsele ihtiyaç duyar — bkz. ServerCapacityView.
+  if (type === 'capacity') return d.capacity_items ? <CapacityView d={d} /> : <ServerCapacityView d={d} />
+  // Aynı şekilde `risk`: virt VM/ESX/tools bazlı; linux/windows sunucu
+  // (`risky_servers`) ve exadata rack (`unhealthy_racks`) bazlı.
+  if (type === 'risk') return d.risks ? <RiskView d={d} /> : <ServerRiskView d={d} />
   if (type === 'vm_health') return <VmHealthView d={d} />
   if (type === 'resource_usage') return <ResourceUsageView d={d} />
   if (type === 'security_compliance') return <SecurityView d={d} />
