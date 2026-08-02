@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -39,7 +40,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <span className="text-yellow-400 text-base">⚠</span>
+          <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
           <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
@@ -662,7 +663,7 @@ const DangerZoneTab: React.FC = () => {
       <div className="bg-red-500/5 border-2 border-red-500/30 rounded-xl p-6">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
-            <span className="text-red-400 text-lg">⚠</span>
+            <AlertTriangle size={20} strokeWidth={2} className="text-red-400" />
           </div>
           <div>
             <h3 className="text-base font-semibold text-white">Veri Sil</h3>
@@ -1430,7 +1431,7 @@ const Settings: React.FC = () => {
       })
       if (r.status === 'done' && r.result) {
         queryClient.invalidateQueries({ queryKey: ['servers'] })
-        alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${r.result.successful}\n❌ Başarısız: ${r.result.failed}\n\n${r.result.message}`)
+        alert(`SSH Test tamamlandı!\n\nBaşarılı: ${r.result.successful}\nBaşarısız: ${r.result.failed}\n\n${r.result.message}`)
       } else if (r.status === 'error') {
         alert(r.error || r.message || 'SSH test hatası')
       }
@@ -1484,7 +1485,7 @@ const Settings: React.FC = () => {
             const ok = result?.successful ?? r.successful ?? 0
             const fail = result?.failed ?? r.failed ?? 0
             const msg = result?.message || r.message || ''
-            alert(`SSH Test tamamlandı!\n\n✅ Başarılı: ${ok}\n❌ Başarısız: ${fail}\n\n${msg}`)
+            alert(`SSH Test tamamlandı!\n\nBaşarılı: ${ok}\nBaşarısız: ${fail}\n\n${msg}`)
           } else {
             alert(r.error || r.message || 'SSH test hatası')
           }
@@ -1618,9 +1619,9 @@ const Settings: React.FC = () => {
                     />
                   </div>
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-                    <span>✅ {sshTest.successful}</span>
-                    <span>❌ {sshTest.failed}</span>
-                    {sshTest.skipped > 0 && <span>⏭ {sshTest.skipped} atlandı</span>}
+                    <span className="inline-flex items-center gap-1"><CheckCircle2 size={12} strokeWidth={2} className="text-green-400" /> {sshTest.successful}</span>
+                    <span className="inline-flex items-center gap-1"><XCircle size={12} strokeWidth={2} className="text-red-400" /> {sshTest.failed}</span>
+                    {sshTest.skipped > 0 && <span>{sshTest.skipped} atlandı</span>}
                     {sshTest.currentServer && sshTestRunning && (
                       <span className="text-slate-300 truncate">Son: {sshTest.currentServer}</span>
                     )}
@@ -1728,7 +1729,7 @@ const Settings: React.FC = () => {
                           </button>
                           {!cred.is_default && (
                             <button onClick={() => setDefault.mutate(cred.id)}
-                              className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20" title="Varsayılan Yap">★</button>
+                              className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20" title="Varsayılan Yap"><Star size={12} strokeWidth={2} /></button>
                           )}
                           <button onClick={() => openEdit(cred)}
                             className="px-3 py-1.5 text-xs bg-white/[0.07] text-slate-300 rounded-lg hover:bg-slate-600" title="Düzenle">✎</button>
@@ -1996,7 +1997,7 @@ const Settings: React.FC = () => {
                         onClick={() => applyWinrm.mutate()}
                         disabled={applyWinrm.isPending}
                         className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
-                        {applyWinrm.isPending ? 'Uygulanıyor...' : '🖥 Tümüne Uygula'}
+                        {applyWinrm.isPending ? 'Uygulanıyor...' : <span className="inline-flex items-center gap-1.5"><Monitor size={14} strokeWidth={2} /> Tümüne Uygula</span>}
                       </button>
                     )}
                     <button
@@ -2416,7 +2417,7 @@ const Settings: React.FC = () => {
                     <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">Metrics & Queries</p></div>
                   </a>
                   <a href={`${window.location.protocol}//${window.location.hostname}:9091`} target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
-                    <span className="text-2xl">📊</span><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">Push Metrics</p></div>
+                    <BarChart3 size={24} strokeWidth={1.8} className="text-slate-300" /><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">Push Metrics</p></div>
                   </a>
                 </div>
               </div>
@@ -2496,7 +2497,7 @@ const Settings: React.FC = () => {
             <div className="flex gap-3 mb-4">
               <button onClick={() => setApplyMode('all')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'all' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
-                🐧 Tüm Linux ({linuxServers.length})
+                Tüm Linux ({linuxServers.length})
               </button>
               <button onClick={() => setApplyMode('select')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'select' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
