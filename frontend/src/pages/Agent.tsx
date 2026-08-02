@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL } from '../config/api'
+import { Shield, HelpCircle } from 'lucide-react'
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string }
 interface AIModel { name: string }
@@ -285,7 +286,7 @@ const Agent: React.FC = () => {
                 <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-3 text-xs text-slate-200 overflow-x-auto">{s.preview}</pre>
                 {s.guard && s.guard.enabled && (
                   <div className="text-xs flex items-start gap-2 bg-cyber-deep/60 border border-white/[0.06] rounded-lg p-2">
-                    <span className="text-slate-400">🛡️ Guard:</span>
+                    <span className="flex items-center gap-1 text-slate-400"><Shield size={12} strokeWidth={2} /> Guard:</span>
                     <span className={s.guard.degraded ? 'text-slate-400' : 'text-emerald-300'}>
                       {s.guard.degraded ? 'erişilemedi (fail-open)' : 'izin verdi'}
                     </span>
@@ -346,7 +347,7 @@ const Agent: React.FC = () => {
             return (
               <div key={i} className="bg-blue-500/5 border border-blue-500/40 rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-blue-300 font-medium">❓ Seçim gerekiyor</span>
+                  <span className="flex items-center gap-1 text-blue-300 font-medium"><HelpCircle size={13} strokeWidth={2} /> Seçim gerekiyor</span>
                   {multi && <span className="text-[10px] text-slate-400">(birden çok seçilebilir)</span>}
                 </div>
                 <div className="text-sm text-slate-200">{s.question}</div>
@@ -392,7 +393,7 @@ const Agent: React.FC = () => {
             return (
               <div key={i} className="bg-red-500/5 border border-red-500/40 rounded-xl p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-red-300 font-medium">🛡️ Guard engelledi</span>
+                  <span className="flex items-center gap-1 text-red-300 font-medium"><Shield size={13} strokeWidth={2} /> Guard engelledi</span>
                   <code className="text-red-200 text-sm">{s.tool}</code>
                 </div>
                 {s.preview && <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-2 text-xs text-slate-300 overflow-x-auto">{s.preview}</pre>}

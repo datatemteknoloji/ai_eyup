@@ -6,7 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, RadialBarChart, RadialBar,
   AreaChart, Area,
 } from 'recharts'
-import { ShieldOff, BarChart3, AlertTriangle } from 'lucide-react'
+import { ShieldOff, BarChart3, AlertTriangle, Zap } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { ServerDetailDrawer } from './Servers'
 import { useAuth } from '../auth/AuthContext'
@@ -859,7 +859,7 @@ function DigestCard({ digest }: {
           </div>
           {digest.storm_incidents > 0 && (
             <div className="mt-2 text-xs text-amber-400 flex items-center gap-1">
-              <span>⚡</span>
+              <Zap size={12} strokeWidth={2} />
               <span>{digest.storm_incidents} alarm fırtınası tespit edildi</span>
             </div>
           )}

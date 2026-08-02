@@ -230,7 +230,7 @@ export function exportMarkdownToPrintWindow(
 
   <div class="no-print" style="margin-bottom:16px;display:flex;gap:8px;">
     <button onclick="window.print()" style="background:#1d4ed8;color:white;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;">
-      🖨️ PDF Olarak Kaydet
+      PDF Olarak Kaydet
     </button>
     <button onclick="window.close()" style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;">
       Kapat

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { CheckCircle2, XCircle } from 'lucide-react'
 
 interface BackgroundJob {
   id: string
@@ -86,8 +87,8 @@ const BackgroundJobs: React.FC = () => {
                   {job.status === 'running' && (
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
                   )}
-                  {job.status === 'completed' && <span className="text-green-400">✅</span>}
-                  {job.status === 'failed' && <span className="text-red-400">❌</span>}
+                  {job.status === 'completed' && <CheckCircle2 size={14} strokeWidth={2} className="text-green-400" />}
+                  {job.status === 'failed' && <XCircle size={14} strokeWidth={2} className="text-red-400" />}
                   <div>
                     <p className={`text-sm font-medium ${
                       job.status === 'running' ? 'text-blue-400' :
