@@ -104,6 +104,10 @@ Full architecture: [docs/architecture.md](docs/architecture.md)
 | [Agentic AI](docs/features/agent.md) | Tool-calling agent, approval flow, guard rails |
 | [Server Management](docs/features/server-management.md) | Adding servers, SSH credentials, metrics |
 | [Package & Repo Management](docs/features/package-management.md) | RPM/DEB deployment, local repos |
+| [Virtualization / Hypervisors](docs/features/virtualization.md) | vCenter, oVirt, Proxmox, Hyper-V, OpenShift Virt |
+| [Windows Platform](docs/features/windows-platform.md) | WinRM, live metrics, event logs, Windows AIOps |
+| [Metrics Architecture](docs/explanation-metrics-architecture.md) | Why VMs use vCenter and physical hosts use Prometheus |
+| [Scale & Performance (10k+ servers)](docs/scale-and-performance.md) | DB pool, worker tuning, batch metric sync, event retention |
 
 ---
 
