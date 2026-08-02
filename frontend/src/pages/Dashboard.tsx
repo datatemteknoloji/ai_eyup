@@ -498,8 +498,8 @@ function DashboardHero({
     { label: 'Sağlık', value: `${healthScore}%`, color: accent },
     ...(showFleet ? [{ label: 'Fleet', value: `${onlineServers}/${totalServers}`, color: NEON.blue }] : []),
     ...(showOps ? [
-      { label: 'Events', value: String(unresolvedEvents), color: unresolvedEvents ? NEON.orange : NEON.green },
-      { label: 'Incidents', value: String(openIncidents), color: openIncidents ? NEON.red : NEON.green },
+      { label: 'Events', value: unresolvedEvents.toLocaleString('tr-TR'), color: unresolvedEvents ? NEON.orange : NEON.green },
+      { label: 'Incidents', value: openIncidents.toLocaleString('tr-TR'), color: openIncidents ? NEON.red : NEON.green },
     ] : []),
   ]
 
@@ -523,8 +523,8 @@ function DashboardHero({
           <h1 className="text-2xl md:text-3xl font-bold mb-2" style={{ color: accent }}>{systemStatus}</h1>
           <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
             {showFleet && `${totalServers} sunucunun ${onlineServers} tanesi çevrimiçi.`}
-            {showOps && unresolvedEvents > 0 && ` ${unresolvedEvents} açık event`}
-            {showOps && openIncidents > 0 && `, ${openIncidents} aktif incident`}
+            {showOps && unresolvedEvents > 0 && ` ${unresolvedEvents.toLocaleString('tr-TR')} açık event`}
+            {showOps && openIncidents > 0 && `, ${openIncidents.toLocaleString('tr-TR')} aktif incident`}
             {showOps && (unresolvedEvents > 0 || openIncidents > 0) && ' takip ediliyor.'}
           </p>
           <div className="flex flex-wrap gap-3 mt-5">

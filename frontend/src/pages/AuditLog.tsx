@@ -512,7 +512,7 @@ const AuditPanel = () => {
 
         {/* Sayfalama */}
         <div className="flex items-center justify-between px-3 py-2.5 border-t border-white/[0.05] text-xs text-slate-400">
-          <span>{total} kayıt{total > 0 ? ` · ${offset + 1}–${Math.min(offset + limit, total)}` : ''}</span>
+          <span>{total.toLocaleString('tr-TR')} kayıt{total > 0 ? ` · ${offset + 1}–${Math.min(offset + limit, total).toLocaleString('tr-TR')}` : ''}</span>
           <div className="flex gap-2">
             <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}
               className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">← Önceki</button>

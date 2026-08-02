@@ -96,7 +96,7 @@ const Log: React.FC = () => {
             </div>
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
-                <span className="text-slate-500 text-sm">{total} kayıt</span>
+                <span className="text-slate-500 text-sm">{total.toLocaleString('tr-TR')} kayıt</span>
                 <div className="flex gap-2">
                   <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
                     className="px-3 py-1 rounded bg-slate-700 text-slate-300 disabled:opacity-50 text-sm">Önceki</button>
