@@ -40,7 +40,7 @@ There are two install paths depending on what you're doing:
 ```bash
 # 1. Clone and configure
 git clone <repo-url> ainew && cd ainew
-cp .env.example .env          # edit SECRET_KEY, POSTGRES_PASSWORD, OLLAMA_URL
+./scripts/dev-setup.sh        # generates .env with a random SECRET_KEY/POSTGRES_PASSWORD; edit OLLAMA_URL after
 
 # 2. Start all services
 docker compose up -d

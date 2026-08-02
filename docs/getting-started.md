@@ -31,25 +31,25 @@ git clone <repo-url> ainew
 cd ainew
 ```
 
-Copy the example env file and edit it:
+Run the setup script — it copies `.env.example` to `.env` and auto-generates a random
+`SECRET_KEY` and `POSTGRES_PASSWORD` (the same way `deploy/install-rhel.sh` does for
+production installs), so you don't have to run `openssl rand -hex 32` by hand:
 
 ```bash
-cp .env.example .env
+./scripts/dev-setup.sh
 ```
 
-Open `.env` and set at minimum:
+Then open `.env` and set:
 
 ```bash
-# Required
-SECRET_KEY=<generate with: openssl rand -hex 32>
-POSTGRES_PASSWORD=<your-db-password>
-
 # Ollama — where your local LLM runs
 OLLAMA_URL=http://127.0.0.1:11434
 
 # CORS — frontend origin (default is fine for local dev)
 CORS_ORIGINS=http://localhost:3000
 ```
+
+(If you'd rather do it manually: `cp .env.example .env` and fill in `SECRET_KEY`/`POSTGRES_PASSWORD` yourself.)
 
 If Ollama is on a different host:
 ```bash
