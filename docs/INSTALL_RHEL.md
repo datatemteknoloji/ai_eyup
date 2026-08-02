@@ -113,10 +113,35 @@ sertifikanızı koyup `docker compose -f docker-compose.prod.yml restart fronten
 5. `.env` dosyasını güvenli bir yere yedekleyin (`SECRET_KEY` ve DB parolasını içerir —
    kaybolursa mevcut kullanıcı parolaları/token'lar geçersiz olur)
 
-## 5. Ollama (opsiyonel yerel LLM)
+## 5. Ollama (opsiyonel yerel LLM / RAG embedding)
 
 AI Chat / AI Agent özellikleri için varsayılan olarak dış bir Ollama sunucusuna
-(`OLLAMA_URL`) bağlanılır. Aynı sunucuda yerel Ollama çalıştırmak isterseniz:
+(`OLLAMA_URL`) bağlanılır. İki farklı senaryo vardır:
+
+### 5.1 Paket türünü seçme: normal vs. "with Ollama"
+
+GitHub'daki her sürüm için iki paket yayınlanır:
+
+- **`ainew-<sürüm>-linux-amd64.tar.gz`** — Ollama içermez. Mevcut/harici bir Ollama
+  sunucunuz varsa (veya AI Chat/RAG kullanmayacaksanız) bunu kullanın.
+- **`ainew-<sürüm>-linux-amd64-with-ollama.tar.gz`** — RAG embedding için gerekli
+  **Ollama + `nomic-embed-text`** profilini otomatik kurar. Chat LLM'leri (ör.
+  `llama3.2:3b`) bu pakete dahil değildir; onları ayrıca `ollama pull` ile
+  indirmeniz gerekir (bkz. 5.2).
+
+`with-ollama` paketiyle kurulum yapıldığında `install-rhel.sh` / `update-rhel.sh`
+paket kökündeki `WITH_OLLAMA` işaret dosyasını görür ve **Ollama imajı ile
+embedding modelini internetten bir kereye mahsus indirip**
+`$DATA_DIR/.ollama-runtime-cache` altına önbellekler; sonraki kurulum/güncellemelerde
+imaj zaten Docker'da veya model zaten diskteyse tekrar ağa çıkılmaz. Bu bileşenler
+uygulama sürümünden bağımsız, sabit bir GitHub release'te
+([`ollama-runtime-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1))
+barınır ve **~3.3 GB** internet erişimi gerektirir.
+
+### 5.2 Ek chat LLM'i kurma (opsiyonel)
+
+`with-ollama` paketiyle kurulduysa (veya `docker compose --profile ollama up -d ollama`
+ile manuel başlattıysanız) bir chat modeli eklemek için:
 
 ```bash
 docker compose -f docker-compose.prod.yml --profile ollama up -d ollama
@@ -126,14 +151,56 @@ docker compose -f docker-compose.prod.yml exec ollama ollama pull llama3.2:3b
 `.env` içindeki `OLLAMA_URL=http://127.0.0.1:11434` değerini bu durumda değiştirmenize
 gerek yoktur (backend host network kullandığı için Ollama'ya localhost üzerinden erişir).
 
-### Air-gapped (internet erişimi olmayan) sunucularda model taşıma
+### 5.3 Air-gapped (internet erişimi olmayan) sunucularda Ollama runtime kurulumu
 
-Modeller pakete/imaja gömülü değildir (multi-GB, imajı gereksiz büyütür). Bunun yerine:
+`with-ollama` paketiyle kurulum yapılan sunucunun internet erişimi yoksa,
+`install-rhel.sh` runtime'ı indiremez ve Ollama profili devre dışı kalır. Bu
+durumda iki seçenek vardır:
+
+**A) `ollama-runtime-v1` release'ini elle indirip önbelleğe koyma** (internet
+erişimi olan başka bir makineden):
+
+```bash
+# İnternetli bir makinede:
+mkdir ollama-runtime && cd ollama-runtime
+gh release download ollama-runtime-v1 --repo datatemteknoloji/ai_eyup
+# veya tarayıcıdan indirin:
+# https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1
+
+# Bütünlüğü doğrulayın ve parçaları birleştirin:
+sha256sum -c ollama.tar.gz.parts.sha256
+cat ollama.tar.gz.part01 ollama.tar.gz.part02 > ollama.tar.gz
+sha256sum -c ollama.tar.gz.sha256
+sha256sum -c ollama-models-nomic-embed-text.tar.gz.sha256
+
+# Bu dosyaları hedef sunucuya taşıyın (scp/USB), sonra orada:
+mkdir -p /data/.ollama-runtime-cache
+cp ollama.tar.gz ollama-models-nomic-embed-text.tar.gz /data/.ollama-runtime-cache/
+gunzip -c ollama.tar.gz | docker load
+tar xzf ollama-models-nomic-embed-text.tar.gz -C /data/.ollama-runtime-cache/
+```
+
+Cache dizini doluyken bir sonraki `install-rhel.sh` / `update-rhel.sh` çalıştırması
+ağa hiç çıkmaz.
+
+**B) Tam gömülü ("bundle") paket üretme** (build makinesinde, internet erişimi olan):
+
+```bash
+./scripts/build-distribution.sh --bundle-ollama
+# -> dist/ainew-<sürüm>-linux-amd64-with-ollama.tar.gz (~+3.5GB, imaj+model paketin İÇİNDE)
+```
+
+Bu paket Ollama imajını ve embedding modelini doğrudan `images/` altına gömer;
+hedef sunucuda hiçbir zaman internete çıkılmaz.
+
+### 5.4 Eski chat LLM export/import akışı (elle model taşıma)
+
+`nomic-embed-text` dışında büyük chat modellerini (ör. `llama3.2:3b`) bir
+makineden diğerine taşımak için hâlâ kullanılabilir:
 
 ```bash
 # İnternet erişimi olan bir makinede, modelleri önceden indirip dışa aktarın:
 ollama pull llama3.2:3b
-ollama pull nomic-embed-text
 ./scripts/export-ollama-models.sh                # -> ollama-models.tar.gz
 
 # Tarball'ı bu sunucuya taşıyın (scp/USB), sonra burada geri yükleyin:
