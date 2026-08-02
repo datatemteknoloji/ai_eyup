@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { CheckCircle2, XCircle } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface RepoSource {
@@ -450,10 +451,10 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                     {/* Mode seçici */}
                     <div className="flex gap-2 flex-wrap">
                       {([
-                        { key: 'date',    label: '📅 Günlük',  example: today.toISOString().slice(0,10) },
-                        { key: 'monthly', label: '📆 Aylık',   example: `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}` },
+                        { key: 'date',    label: 'Günlük',  example: today.toISOString().slice(0,10) },
+                        { key: 'monthly', label: 'Aylık',   example: `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}` },
                         { key: 'custom',  label: 'Özel',    example: '' },
-                        { key: 'none',    label: '🚫 Etiket yok', example: '' },
+                        { key: 'none',    label: 'Etiket yok', example: '' },
                       ] as const).map(m => (
                         <button
                           key={m.key}
@@ -846,7 +847,7 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
                   <div className="mt-3 space-y-1">
                     {Object.entries(pushResults).map(([sid, res]: [string, any]) => (
                       <div key={sid} className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${res.status === 'success' ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
-                        <span>{res.status === 'success' ? '✓' : '✗'}</span>
+                        <span>{res.status === 'success' ? <CheckCircle2 size={13} strokeWidth={2} /> : <XCircle size={13} strokeWidth={2} />}</span>
                         <span className="font-medium">{res.server_name}</span>
                         <span className="text-slate-400">{res.message}</span>
                       </div>
@@ -1234,7 +1235,10 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               ) : (
                 <div>
                   <div className={`font-semibold mb-1 ${testResult.registered ? 'text-green-300' : 'text-red-300'}`}>
-                    {testResult.registered ? '✓ Abonelik aktif' : '✗ Kayıtlı değil / Erişilemiyor'}
+                    <span className="inline-flex items-center gap-1.5">
+                      {testResult.registered ? <CheckCircle2 size={14} strokeWidth={2} /> : <XCircle size={14} strokeWidth={2} />}
+                      {testResult.registered ? 'Abonelik aktif' : 'Kayıtlı değil / Erişilemiyor'}
+                    </span>
                   </div>
                   <pre className="text-slate-300 whitespace-pre-wrap">{testResult.status}</pre>
                 </div>
@@ -1573,7 +1577,10 @@ const Repositories: React.FC = () => {
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl border shadow-lg text-sm font-medium ${
           toast.type === 'ok' ? 'bg-green-900/90 border-green-500/50 text-green-300' : 'bg-red-900/90 border-red-500/50 text-red-300'
         }`}>
-          {toast.type === 'ok' ? '✓ ' : '✗ '}{toast.msg}
+          <span className="inline-flex items-center gap-1.5">
+            {toast.type === 'ok' ? <CheckCircle2 size={14} strokeWidth={2} /> : <XCircle size={14} strokeWidth={2} />}
+            {toast.msg}
+          </span>
         </div>
       )}
 

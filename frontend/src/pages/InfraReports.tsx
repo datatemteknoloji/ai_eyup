@@ -267,9 +267,9 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
 }) {
   const [tab, setTab] = useState<'visual' | 'markdown' | 'raw'>('visual')
   const tabs = [
-    { id: 'visual', label: '📊 Görsel' },
-    { id: 'markdown', label: '📄 Rapor Metni' },
-    { id: 'raw', label: '{ } JSON' },
+    { id: 'visual', label: 'Görsel', Icon: BarChart3 },
+    { id: 'markdown', label: 'Rapor Metni', Icon: FileDown },
+    { id: 'raw', label: '{ } JSON', Icon: null },
   ] as const
 
   return (
@@ -334,7 +334,10 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
                   ? 'border-blue-500 text-blue-400 bg-slate-800/50'
                   : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/30'
               }`}>
-              {t.label}
+              <span className="inline-flex items-center gap-1.5">
+                {t.Icon && <t.Icon size={12} strokeWidth={2} />}
+                {t.label}
+              </span>
             </button>
           ))}
         </div>
@@ -495,13 +498,13 @@ function CapacityView({ d }: { d: any }) {
               <div>
                 <ProgressBar pct={item.memory?.used_pct ?? 0} label="RAM" sub={`${item.memory?.free_gb ?? 0} GB boş`} />
                 {item.memory?.days_to_80pct && (
-                  <p className="text-amber-400 text-xs mt-1">⚡ {item.memory.days_to_80pct}g sonra %80</p>
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {item.memory.days_to_80pct}g sonra %80</p>
                 )}
               </div>
               <div>
                 <ProgressBar pct={item.storage?.used_pct ?? 0} label="Disk" sub={`${item.storage?.free_gb ?? 0} GB boş`} />
                 {item.storage?.days_to_80pct && (
-                  <p className="text-amber-400 text-xs mt-1">⚡ {item.storage.days_to_80pct}g sonra %80</p>
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {item.storage.days_to_80pct}g sonra %80</p>
                 )}
               </div>
             </div>
@@ -691,7 +694,7 @@ function VmHealthView({ d }: { d: any }) {
           {(['critical', 'A', 'B', 'C', 'D', 'F'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`text-xs px-3 py-1 rounded-lg transition-all ${tab === t ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40' : 'bg-slate-800/40 text-slate-500 hover:text-white border border-slate-700/30'}`}>
-              {t === 'critical' ? '⚠ Kritik' : `Not ${t}`}
+              {t === 'critical' ? <span className="inline-flex items-center gap-1"><AlertTriangle size={11} strokeWidth={2} /> Kritik</span> : `Not ${t}`}
             </button>
           ))}
         </div>
@@ -929,7 +932,7 @@ function LifecycleView({ d }: { d: any }) {
                     style={{ width: `${(v / maxCount) * 100}%` }} />
                 </div>
                 <span className="text-slate-300 w-8 text-right">{v}</span>
-                {isOld && <span className="text-amber-500 text-[10px]">⚠ eski</span>}
+                {isOld && <span className="inline-flex items-center gap-0.5 text-amber-500 text-[10px]"><AlertTriangle size={9} strokeWidth={2} /> eski</span>}
               </div>
             )
           })}
@@ -1039,7 +1042,7 @@ function ForecastView({ d }: { d: any }) {
       {d.investment_needed && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-center gap-2">
           <AlertTriangle size={16} className="text-red-400" />
-          <span className="text-red-300 text-sm font-medium">⚡ 6 ay içinde kapasite yatırımı gerekebilir!</span>
+          <span className="text-red-300 text-sm font-medium">6 ay içinde kapasite yatırımı gerekebilir!</span>
         </div>
       )}
       <div className="grid grid-cols-2 gap-4">
