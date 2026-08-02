@@ -6,6 +6,7 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
   SearchInput, Select, Section, EmptyState, Tabs,
 } from '../components/aiops/ui'
+import { BarChart3, CheckCircle2, ClipboardList, Download } from 'lucide-react'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 
 type LogListResponse = {
@@ -167,7 +168,7 @@ export function CorrelationTab() {
       {isLoading ? (
         <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon="📊" text="Korelasyon verisi yok — AIOps döngüsünü çalıştırın." />
+        <EmptyState icon={<BarChart3 size={28} strokeWidth={1.5} />} text="Korelasyon verisi yok — AIOps döngüsünü çalıştırın." />
       ) : (
         <div className="space-y-2">
           {filtered.map(m => {
@@ -226,7 +227,7 @@ export function CorrelationTab() {
                     {/* Kural bilgisi */}
                     {m.suppression && (
                       <div className="text-[11px] flex items-center gap-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>
-                        <span>📋</span>
+                        <ClipboardList size={12} strokeWidth={2} />
                         <span>Kural #{m.suppression.id}:</span>
                         <span style={{ color: NEON.green }}>{m.suppression.reason || 'Suppression aktif'}</span>
                         {m.suppression.scope === 'global' && <span className="px-1 rounded text-[10px]" style={{ background: 'rgba(6,182,212,0.1)', color: NEON.cyan }}>global</span>}
@@ -550,7 +551,7 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
           {metricLoading ? (
             <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Taranıyor...</div>
           ) : filteredMetric.length === 0 ? (
-            <EmptyState icon="✓" text="Şu an metrik anomalisi yok — tüm sistemler normal aralıkta" />
+            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text="Şu an metrik anomalisi yok — tüm sistemler normal aralıkta" />
           ) : (
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table min-w-full text-sm">
@@ -585,7 +586,7 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
                 {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
               </Select>
               <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending}>
-                {backfillMutation.isPending ? 'Yükleniyor...' : '📥 Geçmiş Veri'}
+                {backfillMutation.isPending ? 'Yükleniyor...' : <span className="inline-flex items-center gap-1"><Download size={12} strokeWidth={2} /> Geçmiş Veri</span>}
               </GhostButton>
             </div>
           }>

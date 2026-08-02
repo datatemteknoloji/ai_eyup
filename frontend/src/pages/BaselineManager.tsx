@@ -13,6 +13,7 @@ import {
 } from '../components/aiops/ui'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
+import { Monitor, CheckCircle2, ClipboardList } from 'lucide-react'
 
 // ── Tipler ───────────────────────────────────────────────────────────────────
 
@@ -297,13 +298,13 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
       {activeTab === 'recurrence' && (
         <>
           {!selectedServer ? (
-            <EmptyState icon="🖥️" text="Tekrarlayan alarmları görmek için bir sunucu seçin." />
+            <EmptyState icon={<Monitor size={28} strokeWidth={1.5} />} text="Tekrarlayan alarmları görmek için bir sunucu seçin." />
           ) : recLoading ? (
             <div className="py-16 flex justify-center">
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : metrics.length === 0 ? (
-            <EmptyState icon="✅" text="Bu sunucuda son 14 günde tekrarlayan alarm yok." />
+            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text="Bu sunucuda son 14 günde tekrarlayan alarm yok." />
           ) : (
             <div className="space-y-2">
               {metrics.map(m => (
@@ -362,7 +363,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : rules.length === 0 ? (
-            <EmptyState icon="📋" text="Henüz suppression kuralı yok. Tekrarlayan alarmlar sekmesinden kural ekleyin." />
+            <EmptyState icon={<ClipboardList size={28} strokeWidth={1.5} />} text="Henüz suppression kuralı yok. Tekrarlayan alarmlar sekmesinden kural ekleyin." />
           ) : (
             <div className="space-y-2">
               {rules.map(rule => (

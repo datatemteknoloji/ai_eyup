@@ -10,6 +10,7 @@ import {
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 import { exportMarkdownToPrintWindow, exportMultipleRcaToPrintWindow } from '../utils/pdfExport'
+import { Lock } from 'lucide-react'
 
 interface Server { id: number; name: string; ip: string; status?: string }
 interface RelatedEvent {
@@ -154,7 +155,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     const items = []
     if (inc.status === 'open') items.push({ label: "İncelemeye al", icon: "", accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
     if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
-    if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: '🔒', accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
+    if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: <Lock size={13} strokeWidth={2} />, accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
     items.push({ label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu incident silinecek?')) deleteIncident.mutate(inc.id) } })
     return items
   }

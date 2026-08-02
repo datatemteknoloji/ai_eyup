@@ -7,6 +7,7 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
   SearchInput, Select, ActionMenu, Section, EmptyState, Modal, Pagination, MenuItem,
 } from '../components/aiops/ui'
+import { Eye, BarChart3 } from 'lucide-react'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 
@@ -353,7 +354,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   // group row action menu
   const groupMenu = (grp: EventGroup): MenuItem[] => [
     { label: 'Tümünü gör', icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
-    { label: 'İncelemeye al', icon: '👁', onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
+    { label: 'İncelemeye al', icon: <Eye size={13} strokeWidth={2} />, onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
     { label: 'Onayı kaldır', icon: '↩', hidden: !grp.is_acknowledged, onClick: () => bulkAction.mutate({ action: 'unacknowledge', ids: grp.event_ids }) },
     { label: 'Bilinen olay', icon: '', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
     { label: 'Bilineni kaldır', icon: '↩', hidden: !grp.is_known, onClick: () => bulkAction.mutate({ action: 'unknown', ids: grp.event_ids }) },
@@ -369,11 +370,11 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
 
   const flatMenu = (e: SystemEvent): MenuItem[] => [
     { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
-    { label: 'İncelemeye al', icon: '👁', hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
+    { label: 'İncelemeye al', icon: <Eye size={13} strokeWidth={2} />, hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
     { label: 'Onayı kaldır', icon: '↩', hidden: !e.is_acknowledged || e.resolved, onClick: () => unackEvent.mutate(e.id) },
     { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
     { label: 'Bilineni kaldır', icon: '↩', hidden: !e.is_known, onClick: () => unknownEvent.mutate(e.id) },
-    { label: 'Bu sunucu için normal', icon: '📊', hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
+    { label: 'Bu sunucu için normal', icon: <BarChart3 size={13} strokeWidth={2} />, hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
     { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
     { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
     { label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },

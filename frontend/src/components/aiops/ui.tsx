@@ -136,7 +136,7 @@ export function Select({ value, onChange, children }: {
 }
 
 // ── Action menu (kebab) — fixed positioned to avoid clipping ────────────────
-export type MenuItem = { label: string; icon?: string; onClick: () => void; accent?: string; hidden?: boolean }
+export type MenuItem = { label: string; icon?: React.ReactNode; onClick: () => void; accent?: string; hidden?: boolean }
 export function ActionMenu({ items, label }: { items: MenuItem[]; label?: string }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
@@ -237,10 +237,10 @@ export function Section({ title, accent = NEON.cyan, right, children, className 
 }
 
 // ── Empty state ─────────────────────────────────────────────────────────────
-export function EmptyState({ icon = '📭', text }: { icon?: string; text: string }) {
+export function EmptyState({ icon, text }: { icon?: React.ReactNode; text: string }) {
   return (
     <div className="py-14 text-center">
-      <div className="text-3xl mb-2 opacity-40">{icon}</div>
+      {icon && <div className="mb-2 opacity-40 flex justify-center">{icon}</div>}
       <p className="text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>{text}</p>
     </div>
   )
