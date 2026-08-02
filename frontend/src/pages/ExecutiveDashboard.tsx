@@ -86,7 +86,7 @@ const PLATFORM_META: Record<string, { label: string; icon: React.ReactNode; badg
   virtualization: { label: 'Sanallaştırma', icon: <Cloud size={12} />,  badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30', hex: '#818cf8', glow: 'from-indigo-500/10' },
 }
 
-const MEDAL: Record<number, string> = { 0: '🥇', 1: '🥈', 2: '🥉' }
+const MEDAL_COLOR: Record<number, string> = { 0: '#facc15', 1: '#cbd5e1', 2: '#d97706' }
 
 // ── Küçük yardımcı hook'lar ──────────────────────────────────────────────────
 
@@ -446,7 +446,11 @@ export default function ExecutiveDashboard() {
                 const meta = PLATFORM_META[a.platform]
                 return (
                   <div key={a.event_id} className={`flex items-center gap-3 bg-slate-900/40 border-l-4 ${SEV_STRIPE[a.severity] || SEV_STRIPE.info} border-y border-r border-slate-700/40 rounded-r-lg px-3 py-2.5`}>
-                    <span className="text-base w-6 text-center flex-shrink-0">{MEDAL[i] || `#${i + 1}`}</span>
+                    <span className="w-6 flex items-center justify-center flex-shrink-0">
+                      {MEDAL_COLOR[i]
+                        ? <Trophy size={15} strokeWidth={2} style={{ color: MEDAL_COLOR[i] }} />
+                        : <span className="text-slate-500 text-xs">#{i + 1}</span>}
+                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="text-white text-sm font-medium truncate">{a.server_name}</span>

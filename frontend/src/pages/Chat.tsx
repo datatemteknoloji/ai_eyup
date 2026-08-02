@@ -7,7 +7,7 @@ import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
 import * as XLSX from 'xlsx'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
-import { FileDown, Server as ServerIcon, Boxes, Layers } from 'lucide-react'
+import { FileDown, Server as ServerIcon, Boxes, Layers, Wrench } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
@@ -387,7 +387,7 @@ const Chat: React.FC<{
         setLocalInventoryMessages(prev => [
           ...prev,
           { id: uid, role: 'user', content: messageText, created_at: ts },
-          { id: aid, role: 'assistant', content: `❌ Envanter sorgu hatası: ${err?.message || 'bilinmeyen'}`, created_at: new Date().toISOString() },
+          { id: aid, role: 'assistant', content: `**Envanter sorgu hatası:** ${err?.message || 'bilinmeyen'}`, created_at: new Date().toISOString() },
         ])
       }
       setPendingUserMessage(null)
@@ -511,7 +511,7 @@ const Chat: React.FC<{
               })
             }
             if (chunk.error) {
-              setStreamingText(`❌ Hata: ${chunk.error}`)
+              setStreamingText(`**Hata:** ${chunk.error}`)
               setThinkingPhase('idle')
             }
             if (chunk.done) {
@@ -534,7 +534,7 @@ const Chat: React.FC<{
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        setStreamingText(`❌ Bağlantı hatası. Tekrar deneyin.`)
+        setStreamingText(`**Bağlantı hatası.** Tekrar deneyin.`)
       }
       setThinkingPhase('idle')
     } finally {
@@ -784,8 +784,8 @@ const Chat: React.FC<{
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
                             <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
-                              <span className={tc.done ? 'opacity-60' : 'animate-pulse'}>
-                                🔧 {tc.label}{tc.done ? '' : '…'}
+                              <span className={`inline-flex items-center gap-1 ${tc.done ? 'opacity-60' : 'animate-pulse'}`}>
+                                <Wrench size={11} strokeWidth={2} /> {tc.label}{tc.done ? '' : '…'}
                               </span>
                             </div>
                           ))}

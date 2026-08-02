@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import * as XLSX from 'xlsx'
-import { FileDown, Shield } from 'lucide-react'
+import { FileDown, Shield, Wrench } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
@@ -391,7 +391,7 @@ const WindowsChat: React.FC<{
               })
             }
             if (chunk.error) {
-              setStreamingText(`❌ Hata: ${chunk.error}`)
+              setStreamingText(`**Hata:** ${chunk.error}`)
               setThinkingPhase('idle')
             }
             if (chunk.done) {
@@ -412,7 +412,7 @@ const WindowsChat: React.FC<{
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        setStreamingText(`❌ Bağlantı hatası. Tekrar deneyin.`)
+        setStreamingText(`**Bağlantı hatası.** Tekrar deneyin.`)
       }
       setThinkingPhase('idle')
     } finally {
@@ -660,8 +660,8 @@ const WindowsChat: React.FC<{
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
                             <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
-                              <span className={tc.done ? 'opacity-60' : 'animate-pulse'}>
-                                🔧 {tc.label}{tc.done ? '' : '…'}
+                              <span className={`inline-flex items-center gap-1 ${tc.done ? 'opacity-60' : 'animate-pulse'}`}>
+                                <Wrench size={11} strokeWidth={2} /> {tc.label}{tc.done ? '' : '…'}
                               </span>
                             </div>
                           ))}
