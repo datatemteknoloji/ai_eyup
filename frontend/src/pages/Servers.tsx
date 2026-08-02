@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { isPoweredOn } from '../utils/powerState'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -780,8 +781,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <div className="flex gap-1.5 col-span-2">
                           <span className="text-slate-500 w-24 flex-shrink-0">Güç Durumu</span>
                           <span className={`font-medium ${
-                            ['up', 'poweredon', 'running'].includes((vmDetails.vm_power_state || '').toLowerCase())
-                              ? 'text-green-400' : 'text-red-400'
+                            isPoweredOn(vmDetails.vm_power_state) ? 'text-green-400' : 'text-red-400'
                           }`}>
                             {vmDetails.vm_power_state}
                           </span>
@@ -1024,12 +1024,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">Prometheus / Node Exporter</span>
                     ) : null}
                     {metrics.power_state && (() => {
-                      // vCenter SOAP QuickStats "poweredOn" (camelCase) döner, REST API ise
-                      // "POWERED_ON" (upper+underscore) — ikisini de kabul et (bkz. Servers.tsx:783
-                      // ve Hypervisors.tsx:275'teki aynı normalizasyon deseni).
-                      const isOn = ['powered_on', 'poweredon', 'up', 'running'].includes(
-                        metrics.power_state.toLowerCase()
-                      )
+                      const isOn = isPoweredOn(metrics.power_state)
                       return (
                         <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${isOn ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
                           {isOn ? 'Açık' : 'Kapalı'}

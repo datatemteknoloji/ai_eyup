@@ -10,6 +10,7 @@ import {
   Network, Cloud, ExternalLink,
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
+import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
 
 const NEON = {
   green: '#22c55e', red: '#ef4444', orange: '#f97316',
@@ -272,7 +273,7 @@ const VMDetailDrawer = ({
   hypervisorName: string
   onClose: () => void
 }) => {
-  const isOn = vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+  const isOn = isVmOnline(vm.status, vm.vm_power_state)
 
   const { data: details, isLoading, isError, refetch, isFetching } = useQuery<VmDetailsPayload>({
     queryKey: ['hypervisor-vm-details', vm.id],
@@ -325,7 +326,7 @@ const VMDetailDrawer = ({
   const ramGb = ramMb != null ? ramMb / 1024 : vm.memory_gb
   const diskGb = details?.vm_disk_gb ?? vm.disk_gb
   const power = details?.vm_power_state || vm.vm_power_state || vm.status
-  const powerOn = ['up', 'poweredon', 'running', 'online'].includes((power || '').toLowerCase()) || isOn
+  const powerOn = isPowerStateOn(power) || isOn
 
   const pctColor = (v: number | null | undefined) =>
     v == null ? 'text-slate-500' : v > 85 ? 'text-red-400' : v > 60 ? 'text-amber-400' : 'text-emerald-400'
@@ -591,9 +592,9 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
     }
     
     if (filter === 'online') {
-      list = list.filter(v => v.status === 'ONLINE' || v.vm_power_state?.toLowerCase().includes('on'))
+      list = list.filter(v => isVmOnline(v.status, v.vm_power_state))
     } else if (filter === 'offline') {
-      list = list.filter(v => v.status === 'OFFLINE' || v.vm_power_state?.toLowerCase().includes('off'))
+      list = list.filter(v => !isVmOnline(v.status, v.vm_power_state))
     }
     
     if (sortBy === 'cpu') list.sort((a, b) => (b.cpu_cores || 0) - (a.cpu_cores || 0))
@@ -603,7 +604,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
     return list
   }, [vms, search, filter, sortBy])
 
-  const isPoweredOn = (vm: VM) => vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+  const isPoweredOn = (vm: VM) => isVmOnline(vm.status, vm.vm_power_state)
 
   return (
     <div className="bg-cyber-card rounded-xl border border-white/[0.06] overflow-hidden">
@@ -1485,7 +1486,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   })()
 
   // Stats
-  const poweredOn = vms.filter(v => v.status === 'ONLINE' || v.vm_power_state?.toLowerCase().includes('on')).length
+  const poweredOn = vms.filter(v => isVmOnline(v.status, v.vm_power_state)).length
   const poweredOff = vms.length - poweredOn
   const totalVmCpu = vms.reduce((acc, v) => acc + (v.cpu_cores || 0), 0)
   const totalVmRam = vms.reduce((acc, v) => acc + (v.memory_gb || 0), 0)
@@ -1624,7 +1625,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {vms.slice(0, 8).map(vm => {
-                    const isOn = vm.status === 'ONLINE' || vm.vm_power_state?.toLowerCase().includes('on')
+                    const isOn = isVmOnline(vm.status, vm.vm_power_state)
                     return (
                       <button
                         key={vm.id}
