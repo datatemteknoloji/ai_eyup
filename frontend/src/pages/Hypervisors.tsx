@@ -12,9 +12,12 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
 
+// DESIGN.md: "Mor (purple, violet) kullanılmaz — blue-600 tek aksan rengidir."
+// `info` DESIGN.md'deki --info token'ıyla aynı (#38bdf8) — RAM/VM-sayısı gibi
+// nötr metrikler için mavi ailesinden, accent'ten (blue) ayrışan ikinci ton.
 const NEON = {
   green: '#22c55e', red: '#ef4444', orange: '#f97316',
-  blue: '#3b82f6', cyan: '#06b6d4', purple: '#a855f7',
+  blue: '#3b82f6', cyan: '#06b6d4', info: '#38bdf8',
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -247,12 +250,12 @@ const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
             formatter={(v: number) => [`${v}%`, '']}
           />
           <Bar dataKey="CPU" fill={NEON.cyan} radius={[0, 4, 4, 0]} barSize={8} />
-          <Bar dataKey="RAM" fill={NEON.purple} radius={[0, 4, 4, 0]} barSize={8} />
+          <Bar dataKey="RAM" fill={NEON.info} radius={[0, 4, 4, 0]} barSize={8} />
           <Bar dataKey="Disk" fill={NEON.orange} radius={[0, 4, 4, 0]} barSize={8} />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-4 mt-2">
-        {[{ label: 'CPU', color: NEON.cyan }, { label: 'RAM', color: NEON.purple }, { label: 'Disk', color: NEON.orange }].map(l => (
+        {[{ label: 'CPU', color: NEON.cyan }, { label: 'RAM', color: NEON.info }, { label: 'Disk', color: NEON.orange }].map(l => (
           <div key={l.label} className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />
             <span className="text-xs text-slate-400">{l.label}</span>
@@ -778,7 +781,7 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
           {/* Resource Bars */}
           {[
             { label: 'CPU', used: host.cpu_usage_mhz, total: host.cpu_total_mhz, unit: 'MHz', pct: host.cpu_usage_pct, color: NEON.cyan },
-            { label: 'RAM', used: host.mem_used_mb, total: host.mem_total_mb, unit: 'MB', pct: host.mem_usage_pct, color: NEON.purple },
+            { label: 'RAM', used: host.mem_used_mb, total: host.mem_total_mb, unit: 'MB', pct: host.mem_usage_pct, color: NEON.info },
             { label: 'Disk', used: host.ds_used_gb, total: host.ds_total_gb, unit: 'GB', pct: host.ds_usage_pct, color: NEON.orange },
           ].map(r => (
             <div key={r.label}>
@@ -1554,7 +1557,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
               <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
               <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
-              <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.purple} />
+              <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.info} />
               <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
               <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
               <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
@@ -1605,7 +1608,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             {allHosts.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <ResourceGauge label="CPU Kullanımı" used={usedHostCpu} total={totalHostCpu} unit="MHz" accent={NEON.cyan} />
-                <ResourceGauge label="Bellek Kullanımı" used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.purple} />
+                <ResourceGauge label="Bellek Kullanımı" used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.info} />
                 <ResourceGauge label="Depolama Kullanımı" used={usedHostDisk} total={totalHostDisk} unit="GB" accent={NEON.orange} />
               </div>
             )}
