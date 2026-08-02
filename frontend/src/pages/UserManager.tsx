@@ -49,11 +49,11 @@ const MODULE_ICONS: Record<string, React.ReactNode> = {
 }
 const MOD_COLOR_TEXT: Record<string, string> = {
   green: 'text-green-400', blue: 'text-blue-400', indigo: 'text-indigo-400',
-  purple: 'text-purple-400', cyan: 'text-cyan-400', orange: 'text-orange-400', teal: 'text-teal-400',
+  purple: 'text-sky-400', cyan: 'text-cyan-400', orange: 'text-orange-400', teal: 'text-teal-400',
 }
 const MOD_COLOR_DOT: Record<string, string> = {
   green: 'bg-green-400', blue: 'bg-blue-400', indigo: 'bg-indigo-400',
-  purple: 'bg-purple-400', cyan: 'bg-cyan-400', orange: 'bg-orange-400', teal: 'bg-teal-400',
+  purple: 'bg-sky-400', cyan: 'bg-cyan-400', orange: 'bg-orange-400', teal: 'bg-teal-400',
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

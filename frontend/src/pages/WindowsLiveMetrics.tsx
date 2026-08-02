@@ -111,7 +111,7 @@ const WindowsLiveMetrics: React.FC = () => {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <SummaryCard icon={<Activity size={18} />} label="Canlı Sunucu" value={`${data?.online ?? 0} / ${data?.total ?? 0}`} accent="#22d3ee" />
         <SummaryCard icon={<Cpu size={18} />} label="Ortalama CPU" value={data?.avg_cpu_pct != null ? `%${data.avg_cpu_pct}` : '—'} accent="#3b82f6" />
-        <SummaryCard icon={<MemoryStick size={18} />} label="Ortalama RAM" value={data?.avg_mem_pct != null ? `%${data.avg_mem_pct}` : '—'} accent="#a855f7" />
+        <SummaryCard icon={<MemoryStick size={18} />} label="Ortalama RAM" value={data?.avg_mem_pct != null ? `%${data.avg_mem_pct}` : '—'} accent="#38bdf8" />
         <SummaryCard icon={<Clock size={18} />} label="Son Güncelleme" value={lastUpdated} accent="#94a3b8" />
       </div>
 

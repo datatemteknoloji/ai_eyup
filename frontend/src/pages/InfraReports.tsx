@@ -27,7 +27,7 @@ import {
 
 const COLOR_MAP: Record<string, string> = {
   blue:    'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  purple:  'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  purple:  'bg-sky-500/10 text-sky-400 border-sky-500/20',
   red:     'bg-red-500/10 text-red-400 border-red-500/20',
   green:   'bg-green-500/10 text-green-400 border-green-500/20',
   amber:   'bg-amber-500/10 text-amber-400 border-amber-500/20',
@@ -120,7 +120,7 @@ function KpiCard({ label, value, sub, color = 'slate', icon, trend }: {
     green: 'border-green-500/30 bg-green-500/5',
     red: 'border-red-500/30 bg-red-500/5',
     amber: 'border-amber-500/30 bg-amber-500/5',
-    purple: 'border-purple-500/30 bg-purple-500/5',
+    purple: 'border-sky-500/30 bg-sky-500/5',
     slate: 'border-slate-700/50 bg-slate-800/40',
     emerald: 'border-emerald-500/30 bg-emerald-500/5',
     teal: 'border-teal-500/30 bg-teal-500/5',
@@ -187,7 +187,7 @@ function HorzBar({ value, max, label, color = 'blue' }: {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0
   const colors: Record<string, string> = {
     blue: 'bg-blue-500', red: 'bg-red-500', green: 'bg-green-500',
-    amber: 'bg-amber-500', purple: 'bg-purple-500', emerald: 'bg-emerald-500',
+    amber: 'bg-amber-500', purple: 'bg-sky-500', emerald: 'bg-emerald-500',
   }
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -850,7 +850,7 @@ function ConsolidationView({ d }: { d: any }) {
             <div className="text-slate-500 text-xs mt-1">Geri Alınabilir vCPU</div>
           </div>
           <div className="text-center">
-            <div className="text-3xl font-bold text-purple-400">{pot.reclaimable_ram_gb ?? 0}</div>
+            <div className="text-3xl font-bold text-sky-400">{pot.reclaimable_ram_gb ?? 0}</div>
             <div className="text-slate-500 text-xs mt-1">GB RAM (geri alın.)</div>
           </div>
           <div className="text-center">

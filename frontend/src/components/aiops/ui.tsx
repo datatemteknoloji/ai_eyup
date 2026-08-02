@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 
 // ── Palette ────────────────────────────────────────────────────────────────
 export const NEON = {
-  cyan: '#22d3ee', blue: '#3b82f6', purple: '#a855f7',
+  cyan: '#22d3ee', blue: '#3b82f6', sky: '#38bdf8',
   green: '#10b981', orange: '#f59e0b', red: '#ef4444', pink: '#ec4899', slate: '#64748b',
 }
 export function rgb(hex: string) {

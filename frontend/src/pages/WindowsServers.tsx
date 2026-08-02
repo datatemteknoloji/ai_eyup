@@ -479,12 +479,12 @@ const ServerDetail: React.FC<{
                   </div>
                   <div className="bg-slate-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <MemoryStick size={14} className="text-purple-400" />
+                      <MemoryStick size={14} className="text-sky-400" />
                       <span className="text-xs text-slate-400 font-medium">RAM</span>
                     </div>
                     <div className="text-2xl font-bold text-white">{perfQ.data.mem_used_pct ?? '—'}%</div>
                     <div className="mt-2 h-1.5 bg-slate-600 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${(perfQ.data.mem_used_pct || 0) > 85 ? 'bg-red-500' : 'bg-purple-500'}`}
+                      <div className={`h-full rounded-full transition-all ${(perfQ.data.mem_used_pct || 0) > 85 ? 'bg-red-500' : 'bg-sky-500'}`}
                         style={{ width: `${perfQ.data.mem_used_pct || 0}%` }} />
                     </div>
                   </div>
@@ -982,7 +982,7 @@ const WindowsServers: React.FC = () => {
           { label: 'Aktif', value: online, color: 'text-green-400' },
           { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
           { label: 'AI Ready', value: aiReadyCount, color: 'text-emerald-400' },
-          { label: 'Exporter Çalışıyor', value: exporterRunningCount, color: 'text-purple-400' },
+          { label: 'Exporter Çalışıyor', value: exporterRunningCount, color: 'text-sky-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -1096,7 +1096,7 @@ const WindowsServers: React.FC = () => {
                           </span>
                         )}
                         {srv.windows_exporter_running ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-purple-400">
+                          <span className="inline-flex items-center gap-1 text-[10px] text-sky-400">
                             <Activity size={9} /> Exporter çalışıyor
                           </span>
                         ) : srv.windows_exporter_installed ? (

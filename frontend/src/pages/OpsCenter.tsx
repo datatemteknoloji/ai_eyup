@@ -78,23 +78,25 @@ const TIER_STYLE: Record<string, string> = {
 }
 const TIER_SHORT: Record<string, string> = { production: 'PRD', staging: 'STG', development: 'DEV', unknown: '?' }
 
+// DESIGN.md: mor/violet kullanılmaz. "emergency" (critical'in üstü) aynı
+// kırmızı ailesinde ama daha yoğun (red-600) bir tonla ayrıştırılır.
 const SEV_RING: Record<string, string> = {
-  emergency: 'border-purple-500/60 bg-purple-500/5',
+  emergency: 'border-red-600/70 bg-red-600/10',
   critical:  'border-red-500/50 bg-red-500/5',
   warning:   'border-amber-500/40 bg-amber-500/4',
 }
 const SEV_TEXT: Record<string, string> = {
-  emergency: 'text-purple-300', critical: 'text-red-300',
+  emergency: 'text-red-500 font-bold', critical: 'text-red-300',
   warning: 'text-amber-300', info: 'text-blue-300',
 }
 const SEV_DOT: Record<string, string> = {
-  emergency: 'bg-purple-400 animate-ping',
+  emergency: 'bg-red-600 animate-ping',
   critical:  'bg-red-400 animate-pulse',
   warning:   'bg-amber-400',
   info:      'bg-blue-400',
 }
 const SEV_BADGE: Record<string, string> = {
-  emergency: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+  emergency: 'bg-red-600/30 text-red-400 border-red-600/50',
   critical:  'bg-red-500/20 text-red-300 border-red-500/40',
   warning:   'bg-amber-500/20 text-amber-300 border-amber-500/40',
   info:      'bg-blue-500/20 text-blue-300 border-blue-500/40',
@@ -626,7 +628,7 @@ function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
 
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <Link to={`${PLATFORM_AIOPS_PREFIX[platform as keyof typeof PLATFORM_AIOPS_PREFIX] || '/linux'}/incidents`} onClick={e => e.stopPropagation()}
-              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-purple-500/40 text-purple-300 hover:bg-purple-500/10 transition-colors">
+              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-sky-500/40 text-sky-300 hover:bg-sky-500/10 transition-colors">
               <Siren size={11} /> #{storm.incident_id}
             </Link>
             <button onClick={() => setShowRCA(v => !v)}
@@ -1027,7 +1029,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           <div className="flex gap-3 w-full basis-full order-last">
             {[
               { key: 'cpu', icon: <Cpu size={14} />, label: 'CPU', color: 'text-orange-400' },
-              { key: 'memory', icon: <MemoryStick size={14} />, label: 'RAM', color: 'text-purple-400' },
+              { key: 'memory', icon: <MemoryStick size={14} />, label: 'RAM', color: 'text-sky-400' },
               { key: 'disk', icon: <HardDrive size={14} />, label: 'Disk', color: 'text-blue-400' },
               { key: 'network', icon: <Network size={14} />, label: 'Ağ', color: 'text-teal-400' },
             ].map(({ key, icon, label, color }) => (

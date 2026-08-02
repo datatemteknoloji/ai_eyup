@@ -59,7 +59,7 @@ interface HypervisorChatProps {
 
 const INTENT_LABELS: Record<string, { label: string; color: string }> = {
   count_hosts:   { label: 'Host sayısı',   color: 'bg-blue-500/20 text-blue-300' },
-  vm_per_host:   { label: 'VM dağılımı',   color: 'bg-purple-500/20 text-purple-300' },
+  vm_per_host:   { label: 'VM dağılımı',   color: 'bg-sky-500/20 text-sky-300' },
   capacity:      { label: 'Kapasite',       color: 'bg-amber-500/20 text-amber-300' },
   compare_vms:   { label: 'Karşılaştırma', color: 'bg-green-500/20 text-green-300' },
   tools_status:  { label: 'VMware Tools',  color: 'bg-sky-500/20 text-sky-300' },

@@ -87,7 +87,7 @@ interface AIModel { name: string; size: number; parameter_size: string; family: 
 const ThinkingDots = () => (
   <div className="flex items-center gap-1 py-1">
     {[0, 150, 300].map(d => (
-      <div key={d} className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+      <div key={d} className="w-2 h-2 bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
     ))}
   </div>
 )
@@ -95,7 +95,7 @@ const ThinkingDots = () => (
 const StreamingText = ({ text }: { text: string }) => (
   <div className={chatResponseBody}>
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{text}</ReactMarkdown>
-    <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+    <span className="inline-block w-1.5 h-4 bg-sky-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
   </div>
 )
 
@@ -442,7 +442,7 @@ const UnifiedChat: React.FC<{
         />
         <NlChatPanel>
           <NlTopBar>
-            <span className="px-2.5 py-1 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-200 text-[11px] font-medium">
+            <span className="px-2.5 py-1 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 text-[11px] font-medium">
               Tüm Altyapı
             </span>
             {messages.length > 0 && (
@@ -551,7 +551,7 @@ const UnifiedChat: React.FC<{
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                             <span>{thinkingLabel}</span>
                           </div>
                           <ThinkingDots />

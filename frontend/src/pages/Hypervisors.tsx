@@ -387,7 +387,7 @@ const VMDetailDrawer = ({
               <div className="text-[10px] text-slate-500">vCPU</div>
             </div>
             <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
-              <MemoryStick className="w-4 h-4 text-purple-400 mx-auto mb-1" />
+              <MemoryStick className="w-4 h-4 text-sky-400 mx-auto mb-1" />
               <div className="text-lg font-bold text-white">{ramGb != null ? Number(ramGb).toFixed(ramGb < 10 ? 1 : 0) : '—'}</div>
               <div className="text-[10px] text-slate-500">GB RAM</div>
             </div>

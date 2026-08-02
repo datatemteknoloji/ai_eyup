@@ -583,7 +583,7 @@ function catBadge(color: string) {
   const m: Record<string, string> = {
     blue:   'bg-blue-900/30 text-blue-300 border-blue-700',
     orange: 'bg-orange-900/30 text-orange-300 border-orange-700',
-    purple: 'bg-purple-900/30 text-purple-300 border-purple-700',
+    purple: 'bg-sky-900/30 text-sky-300 border-sky-700',
     green:  'bg-green-900/30 text-green-300 border-green-700',
     teal:   'bg-teal-900/30 text-teal-300 border-teal-700',
     indigo: 'bg-indigo-900/30 text-indigo-300 border-indigo-700',

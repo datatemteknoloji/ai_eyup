@@ -88,7 +88,7 @@ const CAT_LABEL: Record<string, string> = {
 const CAT_COLOR: Record<string, string> = {
   auth: 'text-sky-300', agent: 'text-blue-300', system_update: 'text-blue-300',
   ssh: 'text-emerald-300', rca: 'text-cyan-300', snapshot: 'text-pink-300', package: 'text-orange-300',
-  knowledge: 'text-pink-300', applications: 'text-violet-300',
+  knowledge: 'text-pink-300', applications: 'text-sky-300',
   modules: 'text-amber-300', settings: 'text-slate-300', nlq: 'text-teal-300',
 }
 

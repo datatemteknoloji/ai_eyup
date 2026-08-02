@@ -41,7 +41,7 @@ export default function VirtOverviewPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { icon: Cloud, label: 'Hypervisor', value: hypervisors.length, color: 'text-blue-400' },
-          { icon: Monitor, label: 'VM', value: vmCount, color: 'text-purple-400' },
+          { icon: Monitor, label: 'VM', value: vmCount, color: 'text-sky-400' },
           { icon: Activity, label: 'Kritik', value: opsSummary?.critical ?? 0, color: 'text-red-400' },
           { icon: Server, label: 'Uyarı', value: opsSummary?.warning ?? 0, color: 'text-amber-400' },
         ].map(({ icon: Icon, label, value, color }) => (

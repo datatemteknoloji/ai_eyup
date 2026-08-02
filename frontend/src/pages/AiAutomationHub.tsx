@@ -54,7 +54,7 @@ export default function AiAutomationHub() {
     <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
       <div className="flex-shrink-0 px-4 py-3 bg-cyber-deep/60 border-b border-white/[0.06]">
         <div className="flex items-center gap-2 mb-3">
-          <Bot size={18} className="text-violet-400" />
+          <Bot size={18} className="text-sky-400" />
           <div>
             <h1 className="text-sm font-semibold text-white">AI & Otomasyon — Altyapı Analizi</h1>
             <p className="text-xs text-slate-500">Tüm modüller tek merkezden; platform seçerek analiz yapın</p>
@@ -68,7 +68,7 @@ export default function AiAutomationHub() {
               onClick={() => setPlatform(tab.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 platform === tab.id
-                  ? 'bg-violet-600/30 border border-violet-500/40 text-violet-200'
+                  ? 'bg-sky-600/30 border border-sky-500/40 text-sky-200'
                   : 'bg-white/[0.04] border border-white/[0.06] text-slate-400 hover:text-white hover:border-white/[0.12]'
               }`}
             >

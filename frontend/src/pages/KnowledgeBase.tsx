@@ -48,7 +48,7 @@ const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   ssh: { label: 'SSH', color: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/25' },
   winrm: { label: 'WinRM', color: 'text-blue-300 bg-blue-500/10 border-blue-500/25' },
   manual: { label: 'Manuel', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
-  virt_sync: { label: 'Virt Sync', color: 'text-violet-300 bg-violet-500/10 border-violet-500/25' },
+  virt_sync: { label: 'Virt Sync', color: 'text-sky-300 bg-sky-500/10 border-sky-500/25' },
   chat_tool: { label: 'Chat Tool', color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' },
 }
 

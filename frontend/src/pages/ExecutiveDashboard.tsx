@@ -68,15 +68,17 @@ const GRADE_HEX: Record<string, string> = {
   A: '#4ade80', B: '#60a5fa', C: '#facc15', D: '#fb923c', F: '#f87171',
 }
 
+// DESIGN.md: mor/violet kullanılmaz. "emergency" (critical'in üstü) aynı
+// kırmızı ailesinde ama daha yoğun (red-600) bir tonla ayrıştırılır.
 const SEV_BADGE: Record<string, string> = {
-  emergency: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+  emergency: 'bg-red-600/30 text-red-400 border-red-600/50',
   critical:  'bg-red-500/20 text-red-300 border-red-500/40',
   warning:   'bg-amber-500/20 text-amber-300 border-amber-500/40',
   info:      'bg-blue-500/20 text-blue-300 border-blue-500/40',
 }
 
 const SEV_STRIPE: Record<string, string> = {
-  emergency: 'border-l-purple-500', critical: 'border-l-red-500',
+  emergency: 'border-l-red-600', critical: 'border-l-red-500',
   warning: 'border-l-amber-500', info: 'border-l-blue-500',
 }
 

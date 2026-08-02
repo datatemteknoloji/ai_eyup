@@ -57,8 +57,8 @@ function isWindowsOs(s: DashboardServer) {
 
 // ── Design tokens (aligned with DESIGN.md) ────────────────────────────────
 const NEON = {
-  cyan:   '#38bdf8', blue:   '#3b82f6', purple: '#3b82f6',
-  green:  '#22c55e', orange: '#f59e0b', red:    '#ef4444', pink: '#f59e0b',
+  cyan:   '#38bdf8', blue:   '#3b82f6',
+  green:  '#22c55e', orange: '#f59e0b', red:    '#ef4444',
 }
 
 // ── Neon Stat Card ────────────────────────────────────────────────────────
@@ -789,7 +789,7 @@ function DigestCard({ digest }: {
   }
 }) {
   const sevColor: Record<string, string> = {
-    critical: 'text-red-400', warning: 'text-amber-400', info: 'text-blue-400', emergency: 'text-purple-400'
+    critical: 'text-red-400', warning: 'text-amber-400', info: 'text-blue-400', emergency: 'text-red-500 font-bold'
   }
   return (
     <div className={`rounded-xl border p-4 ${digest.action_required
@@ -837,7 +837,7 @@ function DigestCard({ digest }: {
                 <span className={`text-xs w-16 ${sevColor[sev] || 'text-gray-400'}`}>{sev}</span>
                 <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full ${sev === 'critical' ? 'bg-red-500' : sev === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    className={`h-full rounded-full ${sev === 'critical' || sev === 'emergency' ? 'bg-red-500' : sev === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`}
                     style={{ width: `${Math.min((cnt / digest.total_events) * 100, 100)}%` }}
                   />
                 </div>
@@ -879,7 +879,7 @@ function QuickActionsPanel({ scope = 'admin' }: { scope?: DashboardScope }) {
     { label: 'Metrikler', desc: 'Canlı izleme', to: '/metrics', accent: NEON.green, moduleId: 'linux', scopes: ['admin', 'linux'] },
     { label: 'Ansible', desc: 'Playbook', to: '/ansible', accent: NEON.blue, moduleId: 'linux', scopes: ['admin', 'linux'] },
     { label: 'WinRM', desc: 'Windows sunucular', to: '/windows', accent: NEON.blue, moduleId: 'windows', scopes: ['admin', 'windows'] },
-    { label: 'Hypervisor', desc: 'Sanallaştırma', to: '/hypervisors', accent: NEON.purple, moduleId: 'virtualization', scopes: ['admin'] },
+    { label: 'Hypervisor', desc: 'Sanallaştırma', to: '/hypervisors', accent: NEON.blue, moduleId: 'virtualization', scopes: ['admin'] },
     { label: 'Ayarlar', desc: 'Yapılandırma', to: '/settings', accent: '#94a3b8', adminOnly: true },
   ]
   const actions = allActions.filter(a => {

@@ -174,7 +174,7 @@ function HostAlertCard({ host, onSelect, selected }: {
               {sev.toUpperCase()}
             </span>
             {isPlatform ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
                 Yönetim Platformu
               </span>
             ) : (

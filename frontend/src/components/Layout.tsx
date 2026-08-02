@@ -521,7 +521,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className="h-12 w-auto max-w-full object-contain"
                 />
               ) : (
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-sky-600 rounded-xl flex items-center justify-center">
                   <span className="text-white font-bold text-sm">DT</span>
                 </div>
               )}
@@ -620,7 +620,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <div className="text-[10px] text-slate-400 uppercase">{user?.role || ''}</div>
                   </div>
                 )}
-                <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-sky-500 rounded-full flex items-center justify-center">
                   <span className="text-white text-sm font-medium">
                     {(user?.username || 'A').charAt(0).toUpperCase()}
                   </span>

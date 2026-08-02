@@ -73,7 +73,7 @@ export default function IntegrationsHub() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'Toplam Kayıt', value: inv.total_servers, color: 'text-blue-400' },
-            { label: 'Sanal Makine', value: inv.virtual_machines, color: 'text-purple-400' },
+            { label: 'Sanal Makine', value: inv.virtual_machines, color: 'text-sky-400' },
             { label: 'Fiziksel Host', value: inv.physical_hosts, color: 'text-green-400' },
             { label: 'Mükerrer Grup', value: inv.duplicate_groups, color: inv.duplicate_groups > 0 ? 'text-amber-400' : 'text-slate-500' },
           ].map(k => (

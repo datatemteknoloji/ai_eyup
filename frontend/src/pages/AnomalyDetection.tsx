@@ -113,7 +113,7 @@ interface CorrelationResponse {
   metrics: CorrelationMetric[]
 }
 
-const SEV_COLOR: Record<string, string> = { critical: '#ef4444', warning: '#fb923c', info: '#22d3ee', emergency: '#a855f7' }
+const SEV_COLOR: Record<string, string> = { critical: '#ef4444', warning: '#fb923c', info: '#22d3ee', emergency: '#dc2626' }
 
 export function CorrelationTab() {
   const [search, setSearch] = useState('')
