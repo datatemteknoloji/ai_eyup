@@ -520,7 +520,7 @@ function DashboardHero({
           <p className="text-xs uppercase tracking-[0.2em] mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>
             {title}
           </p>
-          <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{systemStatus}</h1>
+          <h1 className="text-2xl md:text-3xl font-bold mb-2" style={{ color: accent }}>{systemStatus}</h1>
           <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
             {showFleet && `${totalServers} sunucunun ${onlineServers} tanesi çevrimiçi.`}
             {showOps && unresolvedEvents > 0 && ` ${unresolvedEvents} açık event`}
