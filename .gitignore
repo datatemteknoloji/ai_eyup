@@ -33,6 +33,10 @@ ENV/
 # Node
 node_modules/
 frontend/node_modules/
+# node_modules altında olsa da .gitignore'daki node_modules/ kuralından ÖNCE
+# yanlışlıkla commit edilmiş bir vitest cache dosyası vardı — kalıcı olarak
+# yoksay (bkz. gstack-devex-review bulguları).
+frontend/node_modules/.vite/vitest/results.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
