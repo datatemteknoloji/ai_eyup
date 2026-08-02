@@ -1023,11 +1023,19 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     ) : metrics.source === 'prometheus' ? (
                       <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">Prometheus / Node Exporter</span>
                     ) : null}
-                    {metrics.power_state && (
-                      <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${metrics.power_state === 'POWERED_ON' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-                        {metrics.power_state === 'POWERED_ON' ? 'Açık' : 'Kapalı'}
-                      </span>
-                    )}
+                    {metrics.power_state && (() => {
+                      // vCenter SOAP QuickStats "poweredOn" (camelCase) döner, REST API ise
+                      // "POWERED_ON" (upper+underscore) — ikisini de kabul et (bkz. Servers.tsx:783
+                      // ve Hypervisors.tsx:275'teki aynı normalizasyon deseni).
+                      const isOn = ['powered_on', 'poweredon', 'up', 'running'].includes(
+                        metrics.power_state.toLowerCase()
+                      )
+                      return (
+                        <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${isOn ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+                          {isOn ? 'Açık' : 'Kapalı'}
+                        </span>
+                      )
+                    })()}
                   </div>
 
                   {/* Gauge cards */}
