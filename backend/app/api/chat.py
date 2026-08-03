@@ -29,6 +29,57 @@ def _linux_ai_ready_servers(db: Session):
     """AI Ready sunucular — Windows sunucular hariç (Linux AI asistanı yalnızca Linux'ta çalışır)."""
     return [s for s in db.query(Server).filter(Server.ai_ready == True).all() if not is_windows_server(s)]
 
+
+# DİKKAT: kernel_version / os_version / hostname zaten linux_info_collector'ın periyodik
+# arka plan taramasıyla Server tablosuna yazılıyor (bkz. auto_onboarding.py, servers.py,
+# Server modeli). Bu alanlar SORULDUĞUNDA — ve başka canlı/operasyonel bir konu YOKSA —
+# filoya SSH atmaya gerek yok. Kullanıcı bulgusu: "sunucularımızın kernel versiyonları"
+# sorusu tüm AI-Ready filoya paralel SSH atıp 20-90s bekletiyordu, oysa cevap veritabanında
+# zaten kayıtlıydı. NOT: Bu liste MODÜL SEVİYESİNDE tutulur (chat_message VE chat_stream
+# ikisi de kullanır) — daha önce her iki endpoint'te birbirinden bağımsız kopya listeler
+# olduğu için düzeltme yalnızca birine uygulanmış, chat_stream (frontend'in gerçekte
+# kullandığı endpoint) hâlâ eski/yavaş davranışta kalmıştı.
+DB_STATIC_SYSINFO_KEYWORDS = [
+    'os', 'işletim', 'operating system', 'kernel', 'çekirdek', 'cekirdek',
+    'distro', 'distribution', 'revision', 'revizyon', 'sürüm', 'surum', 'release', 'versiyon',
+    'rhel', 'centos', 'ubuntu', 'debian', 'oracle linux', 'oracle',
+    'uname', 'kernel versiyonu', 'çekirdek versiyonu',
+    'hostname', 'makine adi', 'makine adı',
+]
+# Kullanıcı açıkça canlı doğrulama isterse (DB'deki son taramadan beri değişmiş olabilir
+# diye düşünüyorsa) DB kısayolu atlanır, normal SSH akışı çalışır.
+LIVE_VERIFY_KEYWORDS = [
+    'canlı', 'canli', 'şimdi doğrula', 'simdi dogrula', 'live check',
+    'ssh ile', 'ssh at', 'gerçek zamanlı',
+]
+
+
+def _kw_hit(text: str, keyword: str) -> bool:
+    # Kısa/genel kelimeler ('ver', 'os' gibi) naif substring ile "versiyon", "server"
+    # içindeki gibi YANLIŞ eşleşme üretir (bkz. "kernel versiyonları" sorusunun 'ver'
+    # kelimesine çarpıp db_only_answer'ı iptal ettiği bulgu) — 3 karakter ve altı
+    # keyword'ler için kelime sınırı zorunlu tutulur.
+    if len(keyword) <= 3:
+        return bool(re.search(rf'(?<![a-zçğıöşü0-9]){re.escape(keyword)}(?![a-zçğıöşü0-9])', text))
+    return keyword in text
+
+
+def _kw_any(text: str, keywords) -> bool:
+    return any(_kw_hit(text, k) for k in keywords)
+
+
+def _classify_db_only_sysinfo(msg_lower: str, ssh_only_keywords, ssh_sysinfo_keywords):
+    """Mesaj yalnızca DB'de zaten kayıtlı statik alan(lar)ı (kernel/OS sürümü, hostname)
+    soruyorsa ve başka canlı/operasyonel bir konu ya da canlı doğrulama isteği yoksa
+    True döner — bu durumda SSH'a hiç gidilmeden DB verisiyle cevap üretilir.
+    """
+    matched_db_static_topic = _kw_any(msg_lower, DB_STATIC_SYSINFO_KEYWORDS)
+    wants_live_verify = _kw_any(msg_lower, LIVE_VERIFY_KEYWORDS)
+    db_only_answer = matched_db_static_topic and not wants_live_verify and not (
+        _kw_any(msg_lower, ssh_only_keywords) or _kw_any(msg_lower, ssh_sysinfo_keywords)
+    )
+    return db_only_answer, matched_db_static_topic
+
 def _detect_provider(model: str) -> str:
     """Model adından sağlayıcıyı tespit et."""
     m = (model or "").lower()
@@ -455,21 +506,19 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             'last', 'lastb', 'who', 'docker ps', 'podman ps', 'kubectl',
             'crontab', 'cat ', 'grep ', 'tail ', 'head ', 'find ',
         ]
-        # OS/kernel/sistem bilgisi → Prometheus'ta yok, SSH gerekir
+        # OS/kernel/sistem bilgisi → Prometheus'ta yok
         APP_KEYWORDS = [
             'uygulama', 'uygulamalar', 'application', 'applications',
             'çalışıyor', 'calisiyor', 'hangi program', 'installed software',
         ]
+        # DB_STATIC_SYSINFO_KEYWORDS / LIVE_VERIFY_KEYWORDS / _kw_hit / _kw_any modül
+        # seviyesinde tanımlı (bkz. dosya başı) — chat_stream ile paylaşılır.
         SSH_SYSINFO_KEYWORDS = [
-            'os', 'işletim', 'operating system', 'kernel', 'distro', 'distribution',
-            'revision', 'revizyon', 'sürüm', 'release', 'versiyon',
-            'rhel', 'centos', 'ubuntu', 'debian', 'oracle linux', 'oracle',
             'servis', 'service', 'running service', 'failed service',
-            'hostname', 'makine adi', 'sistem bilgi',
+            'sistem bilgi',
             'selinux', 'sestatus', 'getenforce', 'enforcing', 'permissive',
             'firewall', 'firewalld', 'iptables', 'güvenlik', 'security',
             'açık port', 'open port', 'sudo', 'sudoers',
-            'uname', 'kernel versiyonu', 'çekirdek versiyonu',
             'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
             'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
             'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
@@ -489,31 +538,44 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         # "vm.swappiness", "sysctl", "dirty_ratio" gibi kernel tuning terimleri) yine
         # SSH context topla — bkz. has_recognized_topic() docstring'i.
         from app.services.linux_info_collector import has_recognized_topic as _has_topic_ctx
-        needs_ssh_ctx = (
-            any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) or _has_topic_ctx(message)
-        ) and not request.skip_server_context
+
+        db_only_answer, matched_db_static_topic = _classify_db_only_sysinfo(
+            msg_lower_ctx, SSH_ONLY_KEYWORDS, SSH_SYSINFO_KEYWORDS
+        )
+        raw_topic_match = any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) or _has_topic_ctx(message)
+        needs_ssh_ctx = raw_topic_match and not request.skip_server_context and not db_only_answer
+        # DB-only cevaplarda da sunucu bağlamı (kernel/os/hostname) toplanmalı, SSH olmadan.
+        needs_db_sysinfo_ctx = (matched_db_static_topic or raw_topic_match) and not request.skip_server_context
         ssh_timeout_ctx = 40.0 if any(k in msg_lower_ctx for k in DEEP_PERF_KEYWORDS) else 20.0
 
         # Kullanıcı sunucu seçmemişse yalnızca sunucu/altyapı niyeti varsa tüm AI-ready sunucuları ekle.
-        if not selected_servers and needs_ssh_ctx:
+        if not selected_servers and (needs_ssh_ctx or needs_db_sysinfo_ctx):
             selected_servers = _linux_ai_ready_servers(db)
 
-        # Filo taramasını sınırla (269 host × kısa timeout → çoğu zaman aşımı)
+        # Filo taramasını sınırla (269 host × kısa timeout → çoğu zaman aşımı; DB-only
+        # yanıtta SSH/zaman aşımı riski yok ama prompt boyutu için aynı üst sınır uygulanır)
         _fleet_note = None
-        if selected_servers and needs_ssh_ctx:
+        if selected_servers and (needs_ssh_ctx or needs_db_sysinfo_ctx):
             from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh
             selected_servers, _fleet_note = _cap_ssh(selected_servers, message)
-            n = len(selected_servers)
-            ssh_timeout_ctx = min(90.0, max(float(ssh_timeout_ctx), 25.0 + 0.9 * n))
+            if needs_ssh_ctx:
+                n = len(selected_servers)
+                ssh_timeout_ctx = min(90.0, max(float(ssh_timeout_ctx), 25.0 + 0.9 * n))
 
         # Genel sorularda (sunucu niyeti yok + sunucu seçilmedi) otomatik sunucu bağlamı ekleme.
         server_context = ""
-        include_server_context = bool(selected_servers) and (needs_ssh_ctx or explicit_server_target)
+        include_server_context = bool(selected_servers) and (needs_ssh_ctx or needs_db_sysinfo_ctx or explicit_server_target)
         if include_server_context:
             server_context = "Secili sunucular (gercek DB verileri):\n"
             for s in selected_servers:
                 os_info = s.os_version or s.os_type or "Linux"
-                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
+                extra_fields = []
+                if s.kernel_version:
+                    extra_fields.append(f"Kernel={s.kernel_version}")
+                if s.hostname and s.hostname != s.name:
+                    extra_fields.append(f"Hostname={s.hostname}")
+                extra_str = (", " + ", ".join(extra_fields)) if extra_fields else ""
+                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}{extra_str}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
 
         prometheus_context = ""
         if needs_prometheus:
@@ -607,6 +669,13 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             context_parts = []
             if _fleet_note:
                 context_parts.append(_fleet_note)
+            if db_only_answer and selected_servers:
+                context_parts.append(
+                    "NOT: Bu bilgi (kernel/OS sürümü, hostname) periyodik arka plan taramasıyla "
+                    "veritabanında zaten kayıtlı olduğu için sunuculara SSH ile bağlanılmadı, "
+                    "doğrudan veritabanından okundu (daha hızlı yanıt için). Canlı/anlık "
+                    "doğrulama isterseniz sorunuza 'canlı doğrula' ekleyip tekrar sorun."
+                )
             # SSH'tan gelen gercek veri en oncelikli
             if ssh_context:
                 focused = _extract_focused_summary(message, all_server_contexts)
@@ -1574,11 +1643,18 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 except Exception:
                     server_context = ""
             elif selected_servers:
-                lines = [
-                    f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}, "
-                    f"Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB"
-                    for s in selected_servers
-                ]
+                def _srv_line(s):
+                    extra = []
+                    if s.kernel_version:
+                        extra.append(f"Kernel={s.kernel_version}")
+                    if s.hostname and s.hostname != s.name:
+                        extra.append(f"Hostname={s.hostname}")
+                    extra_str = (", " + ", ".join(extra)) if extra else ""
+                    return (
+                        f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}{extra_str}, "
+                        f"Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB"
+                    )
+                lines = [_srv_line(s) for s in selected_servers]
                 server_context = "Seçili sunucular:\n" + "\n".join(lines)
 
             # ── 2c. Grafik/zaman serisi rapor isteği (node_exporter → TimescaleDB) ──
@@ -1640,16 +1716,15 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 'cat ', 'grep ', 'tail ', 'head ', 'less ', 'more ',
                 'find ', 'locate ', 'which ', 'whereis ',
             ]
+            # NOT: 'os'/'kernel'/'versiyon'/'hostname' vb. burada YOK — modül seviyesindeki
+            # DB_STATIC_SYSINFO_KEYWORDS'te (bkz. dosya başı, chat_message ile paylaşılır).
+            # Bu alanlar zaten Server tablosunda kayıtlı, SSH gerektirmez (bkz. db_only_answer).
             SSH_SYSINFO_KEYWORDS = [
-                'os', 'işletim', 'operating system', 'kernel', 'distro', 'distribution',
-                'revision', 'revizyon', 'sürüm', 'release', 'versiyon',
-                'rhel', 'centos', 'ubuntu', 'debian', 'oracle linux', 'oracle',
                 'servis', 'service', 'running service', 'failed service',
-                'hostname', 'makine adi', 'sistem bilgi',
+                'sistem bilgi',
                 'selinux', 'sestatus', 'getenforce', 'enforcing', 'permissive',
                 'firewall', 'firewalld', 'iptables', 'güvenlik', 'security',
                 'açık port', 'open port', 'sudo', 'sudoers',
-                'uname', 'kernel versiyonu', 'çekirdek versiyonu',
                 'mac', 'mac adresi', 'mac address', 'ifconfig', 'donanim adresi',
                 'network', 'ağ arayüz', 'ethernet', 'ip link', 'ip addr', 'arp',
                 'dns', 'nameserver', 'resolv', 'resolve.conf', 'resolv.conf',
@@ -1668,19 +1743,28 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # aksi halde needs_ssh hep False kalır, _collect_ssh() hiç çalışmaz, context boş
             # gider ve LLM context'siz "SSH bağlantısı sağlanamadı" diye cevap verir (SSH
             # aslında hiç denenmemiştir). Bkz. has_recognized_topic() docstring'i.
+            # DİKKAT: has_recognized_topic() "kernel"/"os" gibi terimleri de tanır (bkz.
+            # linux_info_collector KEYWORD_TO_GROUPS) — bu yüzden db_only_answer kısayolu
+            # burada da (chat_message'daki gibi) explicit olarak needs_ssh'i bastırmalı,
+            # aksi halde "kernel versiyonları" sorusu yine filoya SSH atardı (bkz. kullanıcı
+            # bulgusu: bu endpoint frontend'in gerçekte kullandığı /chat/stream'dir).
             from app.services.linux_info_collector import has_recognized_topic as _has_topic
+            db_only_answer, matched_db_static_topic = _classify_db_only_sysinfo(
+                ml, SSH_ONLY_KEYWORDS, SSH_SYSINFO_KEYWORDS
+            )
             needs_ssh = (
                 any(k in ml for k in SERVER_TRIGGER) or _has_topic(message)
-            ) and not request.skip_server_context
+            ) and not request.skip_server_context and not db_only_answer
             # OpenShift sohbeti Linux SSH/Prometheus ile karışmasın
             if chat_platform == "openshift":
                 needs_ssh = False
                 needs_prometheus = False
                 selected_servers = []
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
-            # Filo SSH üst sınırı — 200+ host'u tek turda patlatma
+            # Filo üst sınırı — 200+ host'u tek turda patlatma (SSH) veya prompt'u
+            # şişirme (db_only_answer — tüm filo DB tablosu LLM'e gönderilmesin).
             _fleet_note_stream = None
-            if selected_servers and needs_ssh:
+            if selected_servers and (needs_ssh or db_only_answer):
                 from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh_stream
                 selected_servers, _fleet_note_stream = _cap_ssh_stream(selected_servers, message)
             # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
@@ -1820,6 +1904,13 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 )
             if _fleet_note_stream:
                 context_parts.append(_fleet_note_stream)
+            if db_only_answer and selected_servers:
+                context_parts.append(
+                    "NOT: Bu bilgi (kernel/OS sürümü, hostname) periyodik arka plan taramasıyla "
+                    "veritabanında zaten kayıtlı olduğu için sunuculara SSH ile bağlanılmadı, "
+                    "doğrudan veritabanından okundu (daha hızlı yanıt için). Canlı/anlık "
+                    "doğrulama isterseniz sorunuza 'canlı doğrula' ekleyip tekrar sorun."
+                )
             if ssh_ctx:
                 # Per-server contexts for focused summary
                 _ssh_server_ctxs = [c for c in ssh_ctx.split("\n\n") if c.strip()]

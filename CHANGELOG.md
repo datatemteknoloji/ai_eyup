@@ -11,6 +11,44 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.18] - 2026-08-02
+
+### Düzeltildi — AI Asistan: gereksiz SSH beklemesi
+- "Sunucularımızın kernel versiyonları" gibi sorular, kernel_version/os_version/
+  hostname zaten veritabanında (periyodik taramadan) kayıtlı olmasına rağmen tüm
+  AI Ready filoya paralel canlı SSH bağlantısı açıp 20-90 saniye beklemeye
+  neden oluyordu. AI Asistan artık bu tür statik/yapısal alanları doğrudan
+  veritabanından okuyor; SSH'a yalnızca DB'de olmayan veriler (servis durumu,
+  güvenlik/SELinux, açık portlar, loglar vb.) veya kullanıcı açıkça "canlı
+  doğrula" dediğinde gidiliyor.
+
+### Düzeltildi — Raporlar ve sunucu karşılaştırma
+- Linux/Windows/Exadata operasyon raporları artık frontend'in beklediği
+  `event_breakdown` (severity'li) ve `daily_trend` (critical sayılı) şemasını
+  döndürüyor; bu üç platformun kapasite/risk raporları için sanallaştırmaya
+  özel görünüm yerine kendi verilerini (top_servers/nodes, risky_servers/
+  unhealthy_racks) doğru gösteren ayrı görsel bileşenler eklendi.
+- Sanallaştırma kapasite raporunda kullanım zaten %80 üzerindeyken negatif/
+  anlamsız "-1724 gün içinde %80'e ulaşacak" uyarısı üretiliyordu; artık
+  "zaten %80'in üzerinde" olarak raporlanıyor. Kapasite tahmin raporunda
+  düşen trendlerde negatif kullanım yüzdesi üretilmesi önlendi.
+- Sunucu karşılaştırma: AI yorumu `generate_async`'e eksik `httpx` client
+  argümanı nedeniyle her zaman hata veriyordu, düzeltildi. Candidate
+  filtreleme artık `platform_scope.server_ids_for_platform` kullanıyor
+  (Exadata node'larının Linux/Windows karşılaştırma listesine sızmasını
+  önler).
+- Yukarıdaki "gereksiz SSH beklemesi" düzeltmesi yalnızca `/chat/` (non-
+  streaming) uç noktasına uygulanmıştı; frontend'in gerçekte kullandığı
+  `/chat/stream` (SSE) uç noktası hâlâ eski/yavaş davranıştaydı ("kernel
+  versiyonları" hâlâ tüm filoya SSH atıyordu). İki uç noktanın anahtar
+  kelime/karar mantığı artık modül seviyesinde paylaşılan tek bir yerden
+  (`DB_STATIC_SYSINFO_KEYWORDS`, `_classify_db_only_sysinfo`) yönetiliyor,
+  böylece ileride yalnızca birinin güncellenmesi riski ortadan kalktı.
+- Risk Dashboard'daki yanıltıcı "Güvenlik Skoru" etiketi "Sağlık Skoru"
+  olarak düzeltildi.
+- Exadata executive summary artık gerçek bir sağlık skoru hesaplıyor
+  (önceden hep "Normal" dönüyordu).
+
 ## [1.0.9.17] - 2026-08-02
 
 ### Düzeltildi — Kritik: 10.000+ sunucu ölçeğinde donma (hang) riskleri

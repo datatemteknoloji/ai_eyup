@@ -398,14 +398,20 @@ const Chat: React.FC<{
     }
   }
 
-  /** Envanter modunda bile SSH/diagnostik sorularını normal Chat'e yönlendir */
+  /** Envanter modunda bile SSH/diagnostik sorularını normal Chat'e yönlendir.
+   *
+   * NOT: 'kernel'/'uname'/'os versiyonu'/'hostname' bilerek BURADA YOK — bunlar zaten
+   * Server tablosunda (kernel_version/os_version/hostname) kayıtlı, envanter modunun
+   * hızlı DB sorgu yoluyla (sendInventoryQuery/NLQ) cevaplanabilir. Bkz. kullanıcı
+   * bulgusu: "kernel versiyonları" sorusu bu listeye 'kernel' olduğu için normal
+   * Chat'e (ve oradan filoya SSH'a) yönlendirilip 20-90s bekletiyordu. */
   const looksLikeLiveTechQuestion = (text: string) => {
     const t = text.toLowerCase()
     const tech = [
       'ssh', 'journalctl', 'systemctl', 'sestatus', 'getenforce', 'sysctl', 'dmesg',
       'tcpdump', 'strace', 'perf ', 'iostat', 'vmstat', 'sar ', 'lsof', 'netstat', ' ss ',
       'df -', 'du -', 'free -', 'top', 'htop', 'ps aux', 'crontab', 'iptables', 'firewalld',
-      'selinux', 'apparmor', 'kernel', 'oom', 'coredump', 'tracepath', 'mtr ',
+      'selinux', 'apparmor', 'oom', 'coredump', 'tracepath', 'mtr ',
       'neden', 'kök neden', 'kok neden', 'root cause', 'teşhis', 'teshis', 'diagnos',
       'log incele', 'loglara bak', 'çalıştır', 'calistir', 'komut', 'canlı doğrula', 'canli dogrula',
       'multipath', 'lvm', 'vgdisplay', 'pvdisplay', 'zfs', 'smartctl',
