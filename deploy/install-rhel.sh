@@ -581,9 +581,23 @@ if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
 fi
 
 COMPOSE_PROFILES=()
+# DİKKAT: WITH_OLLAMA_PKG=1 (paket türü) yalnızca "with-ollama paketi indirildi"
+# demektir — ensure_ollama_runtime() ağ/disk hatasıyla sessizce başarısız
+# olabilir (marker dosyası silinmez). Bu durumda --profile ollama'yı yine de
+# eklemek "docker compose up" tüm çalıştırmayı "no such image:
+# docker.io/ollama/ollama:latest" hatasıyla düşürüyordu (bkz. müşteri ortamı
+# bulgusu: internet erişimi olmayan/podman tabanlı sunucuda runtime indirme
+# başarısız oldu). Gerçek koşul: imaj docker/podman'da fiilen var mı?
 if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
-  COMPOSE_PROFILES=(--profile ollama)
-  c_yellow "with-ollama paketi: Ollama profili etkin."
+  if docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+    COMPOSE_PROFILES=(--profile ollama)
+    c_yellow "with-ollama paketi: Ollama profili etkin."
+  else
+    c_red "with-ollama paketi ama ollama/ollama:latest imajı yüklenemedi (yukarıdaki 'Ollama imajı indiriliyor' adımındaki hataya bakın — internet erişimi veya disk alanı sorunu olabilir)."
+    c_yellow "Ollama profili BU ÇALIŞTIRMADA ATLANACAK — diğer servisler normal başlayacak (RAG embedding/Chat LLM devre dışı kalır)."
+    c_yellow "İmajı air-gapped elle yükleme adımları: docs/INSTALL_RHEL.md §5.3. Sonra tekrar etkinleştirmek için:"
+    c_yellow "  docker compose --profile ollama -f $COMPOSE_FILE up -d"
+  fi
 fi
 
 # Compose v2: --pull never desteklenirse kullan; eski sürümlerde sadece --no-build
@@ -593,7 +607,7 @@ else
   docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
 fi
 
-if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
+if [[ ${#COMPOSE_PROFILES[@]} -gt 0 ]]; then
   step "Ollama embedding sağlık kontrolü"
   EMBED_MODEL="$(grep '^OLLAMA_EMBED_MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
   EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"

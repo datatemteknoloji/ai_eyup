@@ -345,10 +345,21 @@ source "$ENV_FILE"
 set +a
 
 COMPOSE_PROFILES=()
-if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
-  if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1; then
-    COMPOSE_PROFILES=(--profile ollama)
-  fi
+# DİKKAT: Sadece WITH_OLLAMA marker dosyasının VARLIĞINA bakıp --profile ollama
+# eklemek yeterli değil — ensure_ollama_runtime() indirme/docker-load hatası
+# sırasında sessizce devam edip marker'ı silmiyor, bu yüzden imaj gerçekte
+# yüklenmemiş olsa da profil eklenip "docker compose up" tüm çalıştırmayı
+# "no such image: docker.io/ollama/ollama:latest" hatasıyla düşürüyordu (bkz.
+# müşteri ortamı bulgusu: internet erişimi olmayan/podman tabanlı sunucuda
+# runtime indirme başarısız oldu ama update yine ollama profilini etkinleştirip
+# çöktü). Gerçek koşul: imaj docker/podman'da fiilen var mı?
+if docker image inspect ollama/ollama:latest >/dev/null 2>&1; then
+  COMPOSE_PROFILES=(--profile ollama)
+elif [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]]; then
+  c_red "with-ollama paketi ama ollama/ollama:latest imajı yüklenemedi (yukarıdaki 'Ollama runtime kontrol ediliyor' adımındaki hataya bakın — internet erişimi veya disk alanı sorunu olabilir)."
+  c_yellow "Ollama profili BU ÇALIŞTIRMADA ATLANACAK — diğer servisler normal başlayacak (RAG embedding/Chat LLM devre dışı kalır)."
+  c_yellow "İmajı air-gapped elle yükleme adımları: docs/INSTALL_RHEL.md §5.3. Sonra tekrar etkinleştirmek için:"
+  c_yellow "  docker compose --profile ollama -f $COMPOSE_FILE up -d"
 fi
 
 if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
