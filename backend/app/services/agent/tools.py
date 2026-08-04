@@ -288,6 +288,40 @@ def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
         return {"ok": False, "error": str(e)}
 
 
+def _vcenter_vms_by_host_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    host = (args.get("host") or "").strip()
+    if not host:
+        return {"ok": False, "error": "host zorunlu (ör. 'opcesxht27.kfs.local' veya kısa adı)"}
+    try:
+        from app.services.hypervisor_intelligence import h_vms_on_host
+        answer = h_vms_on_host(db, host)
+        if not answer:
+            return {"ok": False, "error": f"'{host}' adında/DB'de eşleşen ESX host bulunamadı"}
+        return {"ok": True, "answer": answer, "source": "vm_esx_host (senkronize DB)"}
+    except Exception as e:
+        logger.error(f"[Tool] vcenter_vms_by_host hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _knowledge_base_search_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    query = (args.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query zorunlu"}
+    try:
+        import asyncio
+        from app.services.rag_service import get_knowledge_context
+        # direct_handler sync bir bağlamdan çağrılır (agentic tool loop event loop'u
+        # bloklamaması için zaten thread pool'da çalışır) — burada güvenle yeni bir
+        # event loop açılabilir.
+        context = asyncio.run(get_knowledge_context(query))
+        if not context:
+            return {"ok": True, "answer": "Bilgi bankasında bu sorguyla eşleşen sonuç bulunamadı.", "source": "knowledge_base"}
+        return {"ok": True, "answer": context, "source": "knowledge_base (RAG)"}
+    except Exception as e:
+        logger.error(f"[Tool] knowledge_base_search hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _vcenter_live_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     hv = resolve_hypervisor(db, args, type_filter=HypervisorType.VMWARE)
     if not hv:
@@ -751,6 +785,48 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_vcenter_ask_handler,
         direct_label="vCenter/Hypervisor canlı soru-cevap",
+    ),
+    "vcenter_vms_by_host": Tool(
+        name="vcenter_vms_by_host",
+        description=(
+            "Belirli bir ESX/hypervisor HOST adı verildiğinde, o host üzerinde çalışan VM'lerin "
+            "listesini (ad, güç durumu, vCPU, RAM) döner — senkronize envanterden anında gelir. "
+            "'X host'unda hangi VM'ler var', 'en yoğun host'un VM kırılımı/breakdown'ı' gibi "
+            "sorularda — önce hangi host'un kastedildiğini (ör. vcenter_ask/host CPU sıralamasından) "
+            "belirleyip SONRA bu aracı o host adıyla çağır."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "host": {"type": "string", "description": "ESX host adı (tam veya nokta öncesi kısa ad, ör. 'opcesxht27')"},
+            },
+            "required": ["host"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_vms_by_host_handler,
+        direct_label="Host bazında VM listesi (senkronize)",
+    ),
+    "knowledge_base_search": Tool(
+        name="knowledge_base_search",
+        description=(
+            "Bilgi bankasında (runbook/prosedür, geçmiş olay, mimari/konfigürasyon notu — RAG/semantik "
+            "arama) sorgu yapar. Cevap canlı bir API/DB sorgusuyla DEĞİL, önceden kaydedilmiş "
+            "doküman/not/runbook içeriğiyle verilir. 'Nasıl yapılır', 'prosedür ne', 'bu hata neden "
+            "oluyor', 'geçmişte böyle bir sorun oldu mu' gibi bilgi/prosedür sorularında; anlık metrik "
+            "veya canlı durum sorularında KULLANMA (onlar için ilgili canlı/DB aracını kullan)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Aranacak soru/konu (doğal dil)"},
+            },
+            "required": ["query"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_knowledge_base_search_handler,
+        direct_label="Bilgi bankası (RAG) araması",
     ),
     "vcenter_live_alarms": Tool(
         name="vcenter_live_alarms",
@@ -1339,6 +1415,8 @@ TOOLS: Dict[str, Tool] = {
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
     "vcenter_ask": frozenset({"vcenter"}),
+    "vcenter_vms_by_host": frozenset({"vcenter"}),
+    "knowledge_base_search": frozenset({"infra"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),
     "openshift_ask": frozenset({"openshift"}),

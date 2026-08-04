@@ -369,6 +369,7 @@ def _get_vms(db: Session, hypervisor_id: Optional[int] = None) -> List[Dict[str,
             "tools_status": vm.vm_tools_status or "unknown",
             "cluster": vm.vm_cluster or "",
             "datastore": vm.vm_datastore or "",
+            "esx_host": vm.vm_esx_host or "",
             "hw_version": vm.vm_hardware_version or "",
             "network": net_summary,
             "tier": getattr(vm, "tier", "unknown") or "unknown",
@@ -745,11 +746,15 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
         ) or vm["ip"]
         disk_info = f" Disk:{vm['disk_gb']}GB" if vm.get("disk_gb") else ""
         ds_info   = f" Datastore:{vm['datastore']}" if vm.get("datastore") else ""
+        # ESX Host: VM'in fiilen ÇALIŞTIĞI fiziksel host — vCenter/hypervisor adından
+        # (yukarıdaki hv_name) farklı bir bilgi. Eskiden hiç gösterilmiyordu; "bu VM
+        # hangi host'ta" tarzı sorularda LLM'in veri bloğunda bunu bulabilmesi için eklendi.
+        host_info = f" ESX-Host:{vm['esx_host']}" if vm.get("esx_host") else ""
         lines.append(
             f"  - {vm['name']} | {hv_name} | OS: {vm['os_release'] or vm['os_type'] or '?'} | "
             f"vCPU:{vm['cpu_count']} RAM:{vm['memory_gb']}GB{disk_info} | "
             f"Güç:{vm['power_state']} | Tools:{vm['tools_status'] or '?'} | "
-            f"IP:{net_ips}{ds_info}"
+            f"IP:{net_ips}{ds_info}{host_info}"
         )
 
     total = len(filtered)
@@ -808,6 +813,16 @@ def _na(detail: str) -> str:
         f"**Canlı sorgu sonucu:** {detail}\n\n"
         "_Not: Ortam bağlantısı varsa veri çekilir; 'bilinmiyor' demek yerine "
         "yukarıdaki sorgu/bağlantı sonucuna bakın._"
+    )
+
+
+def _db_empty(detail: str) -> str:
+    """Senkronize (DB) veri setinde eşleşen kayıt yoksa net mesaj — BURADA CANLI SORGU YAPILMAZ,
+    bu yüzden `_na()`'nın 'canlı sorgu' ifadesini kullanmak yanıltıcı olurdu."""
+    return (
+        f"**Senkronize veride sonuç yok:** {detail}\n\n"
+        "_Not: Bu bilgi periyodik envanter/metrik senkronundan gelir (canlı vCenter sorgusu "
+        "değildir); senkron zamanlamasını veya hypervisor bağlantısını kontrol edin._"
     )
 
 
@@ -1023,8 +1038,11 @@ def h_cpu_usage_over_90(db: Session, question: str = "") -> str:
         return _na("Canlı VM CPU sorgusu sonuç döndürmedi.")
     return (
         "### CPU Kullanımı %90 Üzerinde Olan VM'ler (anlık)\n\n"
-        + _md_table(["VM", "CPU %", "vCPU", "Hypervisor"], [[v["name"], v["cpu_usage_pct"], v["num_cpu"], v["hypervisor"]] for v in high],
-                    "Şu anda CPU kullanımı %90'ın üzerinde VM yok.")
+        + _md_table(
+            ["VM", "CPU %", "vCPU", "ESX Host", "Hypervisor"],
+            [[v["name"], v["cpu_usage_pct"], v["num_cpu"], v.get("esx_host") or "-", v["hypervisor"]] for v in high],
+            "Şu anda CPU kullanımı %90'ın üzerinde VM yok.",
+        )
     )
 
 
@@ -1037,7 +1055,48 @@ def h_cpu_top20_now(db: Session, question: str = "") -> str:
         "### En Çok CPU Tüketen 20 VM (anlık ölçüm)\n\n"
         "_Not: Sorulan '24 saat' penceresi için tarihsel VM performans serisi tutulmuyor; "
         "aşağıdaki değerler şu anki canlı ölçümdür._\n\n"
-        + _md_table(["VM", "CPU (MHz)", "CPU %", "Hypervisor"], [[v["name"], round(v["cpu_usage_mhz"]), v.get("cpu_usage_pct"), v["hypervisor"]] for v in vms[:20]])
+        + _md_table(
+            ["VM", "CPU (MHz)", "CPU %", "ESX Host", "Hypervisor"],
+            [[v["name"], round(v["cpu_usage_mhz"]), v.get("cpu_usage_pct"), v.get("esx_host") or "-", v["hypervisor"]] for v in vms[:20]],
+        )
+    )
+
+
+def h_vms_on_host(db: Session, question: str = "") -> str:
+    """Soruda geçen (tam veya kısa/nokta öncesi) ESX host adını DB'deki `vm_esx_host`
+    alanına göre eşleştirip o host'taki VM listesini döner — canlı vCenter sorgusu
+    GEREKMEZ (senkronize veri). Host adı bulunamazsa boş döner (`try_deterministic_answer`
+    bir sonraki kurala geçer — hatalı/yanıltıcı 'bulunamadı' cevabı vermek yerine)."""
+    hosts = _get_esx_hosts(db)
+    host_names = [h.get("host") for h in hosts if h.get("host")]
+    if not host_names:
+        # ESX host metrik senkronu yoksa, VM kayıtlarındaki vm_esx_host'tan da dene.
+        host_names = sorted({v.get("esx_host") for v in _get_vms(db) if v.get("esx_host")})
+    q_l = (question or "").lower()
+    matched = None
+    for hn in host_names:
+        if hn and hn.lower() in q_l:
+            matched = hn
+            break
+    if not matched:
+        for hn in host_names:
+            short = (hn or "").split(".")[0].lower()
+            if short and len(short) >= 4 and short in q_l:
+                matched = hn
+                break
+    if not matched:
+        return ""  # sonraki kurala düş — host adı çıkarılamadı
+
+    vms = [v for v in _get_vms(db) if (v.get("esx_host") or "").lower() == matched.lower()]
+    if not vms:
+        return _db_empty(
+            f"'{matched}' host'unda DB'de eşleşen VM yok. VM↔host eşlemesi (`vm_esx_host`) "
+            "yeni eklendi — bir hypervisor senkron turu gerekiyor olabilir."
+        )
+    vms.sort(key=lambda v: -(v.get("cpu_count") or 0))
+    return f"### {matched} Host'undaki VM'ler ({len(vms)} adet)\n\n" + _md_table(
+        ["VM", "Güç", "vCPU", "RAM (GB)"],
+        [[v["name"], v["power_state"], v.get("cpu_count"), v.get("memory_gb")] for v in vms[:60]],
     )
 
 
@@ -1055,7 +1114,7 @@ def h_overcommit_ratio(db: Session, question: str = "") -> str:
     total_vcpu = sum(v.get("cpu_count") or 0 for v in vms if _is_on(v))
     total_pcpu = sum(h.get("cpu_cores") or 0 for h in hosts)
     if not total_pcpu:
-        return _na("Host CPU çekirdek verisi canlı sorguda yok — ESX host metrik sync / vCenter bağlantısını kontrol edin.")
+        return _db_empty("Host CPU çekirdek verisi senkronize metriklerde yok — ESX host metrik sync / vCenter bağlantısını kontrol edin.")
     ratio = round(total_vcpu / total_pcpu, 2)
     return (
         f"### CPU Overcommit Oranı\n\n"
@@ -1069,9 +1128,30 @@ def h_overcommit_ratio(db: Session, question: str = "") -> str:
 def h_busiest_host_cpu(db: Session, question: str = "") -> str:
     hosts = sorted(_get_esx_hosts(db), key=lambda h: -(h.get("cpu_pct") or 0))
     if not hosts:
-        return _na("ESX host metrikleri canlı sorguda dönmedi — vCenter bağlantısı / host metrik sync kontrol edin.")
+        return _db_empty("ESX host metrikleri senkronize veride yok — vCenter bağlantısı / host metrik sync kontrol edin.")
     rows = [[h["host"], f"%{h['cpu_pct']}", h["cpu_cores"]] for h in hosts[:10]]
-    return "### CPU Açısından En Yoğun Host'lar\n\n" + _md_table(["Host", "CPU %", "Çekirdek"], rows)
+    out = "### CPU Açısından En Yoğun Host'lar\n\n" + _md_table(["Host", "CPU %", "Çekirdek"], rows)
+
+    # "... vm kırılımını/breakdown'ını da ver" gibi bir ek istek varsa, en yoğun
+    # host'un üzerindeki VM listesini de ekle (vm_esx_host senkron edildiyse DB'den
+    # anında gelir — ayrı bir canlı sorgu gerekmez).
+    q_l = _tr_lower(question)
+    if re.search(r"kırılım|breakdown|vm.*liste|hangi\s*vm|vm'?leri", q_l):
+        top_host = hosts[0]["host"]
+        vms_on_top = [v for v in _get_vms(db) if (v.get("esx_host") or "").lower() == (top_host or "").lower()]
+        if vms_on_top:
+            vms_on_top.sort(key=lambda v: -(v.get("cpu_count") or 0))
+            out += f"\n\n### {top_host} Üzerindeki VM'ler ({len(vms_on_top)} adet)\n\n" + _md_table(
+                ["VM", "Güç", "vCPU", "RAM (GB)"],
+                [[v["name"], v["power_state"], v.get("cpu_count"), v.get("memory_gb")] for v in vms_on_top[:40]],
+            )
+        else:
+            out += (
+                f"\n\n_Not: '{top_host}' host'undaki VM listesi senkronize veride yok — "
+                "VM↔host eşlemesi (`vm_esx_host`) yeni eklendi, bir sonraki hypervisor "
+                "senkronundan sonra dolacaktır._"
+            )
+    return out
 
 
 def h_cpu_not_available(db: Session, topic: str) -> str:
@@ -1235,7 +1315,7 @@ def h_avg_ram_top20(db: Session, question: str = "") -> str:
 def h_host_ram_fill(db: Session, question: str = "") -> str:
     hosts = sorted(_get_esx_hosts(db), key=lambda h: -(h.get("mem_pct") or 0))
     if not hosts:
-        return _na("ESX host metrikleri canlı sorguda dönmedi — vCenter bağlantısı / host metrik sync kontrol edin.")
+        return _db_empty("ESX host metrikleri senkronize veride yok — vCenter bağlantısı / host metrik sync kontrol edin.")
     return "### Host Bazında RAM Doluluk Oranı\n\n" + _md_table(
         ["Host", "RAM %", "Boş (GB)", "Toplam (GB)"], [[h["host"], f"%{h['mem_pct']}", h["mem_free_gb"], h["mem_total_gb"]] for h in hosts]
     )
@@ -2337,6 +2417,12 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"kaç\s*(adet\s*)?(çalışan|açık|aktif)\s*vm|powered\s*on\s*(vm\s*)?say|çalışan\s*\(?powered\s*on\)?\s*vm|powered\s*on.*kaç|kaç.*powered\s*on", h_count_powered_on),
     (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
     (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
+    # Belirli bir host adı geçen "bu host'ta hangi VM'ler var" sorusu — genel
+    # "host bazında vm dağılımı" (sayım) kuralından ÖNCE: soruda spesifik bir host
+    # adı varsa (örn. "opcesxht27.kfs.local'da hangi vm'ler var") sayım/toplam yerine
+    # o host'un VM LİSTESİ istenmiş demektir. Host adı bulunamazsa boş döner ve
+    # akış otomatik olarak sıradaki kurala (h_vm_per_host) düşer.
+    (r"host.*hangi\s*vm|hangi\s*vm.*host|esx.*hangi\s*vm|vm\s*listesi.*host|host.*vm\s*listesi|üzerinde.*hangi\s*vm|üzerindeki\s*vm", h_vms_on_host),
     (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm", h_vm_per_host),
     # Datastore → VM eşlemesi ("hangi datastore'da hangi VM var") — status kuralından ÖNCE,
     # yoksa geniş "hangi datastore" kalıbı bunu yutup kapasite/doluluk cevabı döner.
@@ -2364,7 +2450,7 @@ QA_RULES: List[Tuple[str, Any]] = [
 
     # CPU
     (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer|cpu.?su\s*%?\s*90", h_cpu_usage_over_90),
-    (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre|cpu\s*top\s*20|en\s*yoğun\s*cpu\s*vm", h_cpu_top20_now),
+    (r"en\s*(çok|fazla)\s*cpu\s*(tüketen|kullanan)|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre|cpu\s*top\s*20|en\s*yoğun\s*cpu\s*vm", h_cpu_top20_now),
     (r"cpu\s*ready|ready\s*time|cpu\s*bekleme", h_cpu_ready),
     (r"cpu\s*hot\s*add|hot.?add.*cpu", h_cpu_hot_add),
     (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu|en\s*fazla\s*vcpu", h_highest_vcpu),

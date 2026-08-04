@@ -213,6 +213,7 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_network_info JSONB",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_cluster VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_datastore VARCHAR(255)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_esx_host VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_hardware_version VARCHAR(50)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_last_sync TIMESTAMPTZ",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS windows_exporter_installed BOOLEAN DEFAULT FALSE",
@@ -268,6 +269,9 @@ async def startup_tasks():
                 "CREATE INDEX IF NOT EXISTS ix_system_events_created_at ON system_events (created_at)",
                 "CREATE INDEX IF NOT EXISTS ix_system_events_last_seen ON system_events (last_seen)",
                 "CREATE INDEX IF NOT EXISTS ix_system_events_server_last_seen ON system_events (server_id, last_seen)",
+                # "Bu ESX host'ta hangi VM'ler var" sorgusu (AI Q&A) VM sayısı arttıkça
+                # (10.000+ sunucu hedefi) tam tablo taramasına dönmesin.
+                "CREATE INDEX IF NOT EXISTS ix_servers_vm_esx_host ON servers (vm_esx_host)",
             ]:
                 try:
                     _conn.execute(_sa_text(_idx))

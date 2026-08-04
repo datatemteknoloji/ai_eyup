@@ -91,7 +91,7 @@ def _apply_vm_details_to_server(server: Server, details: dict, db: Session) -> N
         "vm_name", "vm_guest_hostname", "vm_guest_ip",
         "vm_cpu_count", "vm_memory_mb", "vm_disk_gb",
         "vm_power_state", "vm_tools_status", "vm_network_info",
-        "vm_cluster", "vm_datastore", "vm_hardware_version",
+        "vm_cluster", "vm_datastore", "vm_esx_host", "vm_hardware_version",
     ):
         val = details.get(field)
         if val is not None and val != "":

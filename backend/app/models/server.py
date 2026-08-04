@@ -44,6 +44,7 @@ class Server(Base):
     vm_network_info   = Column(JSON,        nullable=True)        # [{adapter, mac, ips:[...]}] listesi
     vm_cluster        = Column(String(255), nullable=True)        # Hangi cluster / datacenter
     vm_datastore      = Column(String(255), nullable=True)        # Birincil datastore / storage domain adı
+    vm_esx_host       = Column(String(255), nullable=True, index=True)  # VM'in ÇALIŞTIĞI fiziksel ESX/hypervisor host adı (cluster'dan farklı — runtime.host)
     vm_hardware_version = Column(String(50), nullable=True)       # vmx-19 / v4 vb.
     vm_last_sync      = Column(DateTime(timezone=True), nullable=True)  # Son hypervisor sync zamanı
 

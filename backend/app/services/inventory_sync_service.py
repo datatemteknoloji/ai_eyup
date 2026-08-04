@@ -181,6 +181,7 @@ def _upsert_vm_record(
         not existing.vm_disk_gb
         or not existing.vm_tools_status
         or not existing.vm_datastore
+        or not existing.vm_esx_host
         or not existing.vm_last_sync
     )
     if preloaded_details:
@@ -350,6 +351,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 or not existing.vm_disk_gb
                 or not existing.vm_tools_status
                 or not existing.vm_datastore
+                or not existing.vm_esx_host
                 or not existing.vm_last_sync
             ):
                 need.append(vm)

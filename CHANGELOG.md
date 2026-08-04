@@ -11,6 +11,28 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Düzeltildi — Sanallaştırma asistanı: VM ↔ ESX host eşlemesi eksikti
+- `Server.vm_esx_host` alanı eklendi: her VM'in HANGİ fiziksel ESX host'ta
+  çalıştığı artık senkron sırasında kalıcı olarak kaydediliyor (öncesinde bu
+  bilgi vCenter'dan çekilse de hiçbir yere yazılmıyordu — "en fazla CPU
+  kullanan VM'lerin ESX host kırılımı" gibi bileşik sorular bu yüzden
+  cevaplanamıyordu).
+- `vCenterClient`: host adı çözümlemesi artık `hypervisor_host_metrics`
+  tablosunu besleyen AYNI SOAP kaynağından yapılıyor (REST API'nin bu alanı
+  hiç döndürmediği/host adını farklı formatta (IP/FQDN) döndürebildiği
+  ortamlarda tutarsızlığı önlemek için).
+- Canlı VM performans sorgularına (`fetch_live_vm_stats`) ve "en çok CPU
+  tüketen VM" / "%90 üzeri CPU" tablolarına ESX Host kolonu eklendi.
+- Yeni deterministik soru tipi: "X host'unda hangi VM'ler var" — senkronize
+  veriden anında cevaplanıyor, canlı sorgu gerekmiyor.
+- En yoğun host sorgusuna, istenirse o host'un VM kırılımını da ekleme
+  yeteneği eklendi.
+- Agentic araç setine `vcenter_vms_by_host` (host bazlı VM listesi) ve
+  `knowledge_base_search` (Bilgi Bankası/RAG sorgusu — tüm platformlarda
+  kullanılabilir) araçları eklendi.
+- DB'den (senkronize) gelen host metrik yanıtlarında yanlışlıkla "canlı
+  sorguda dönmedi" diyen yanıltıcı mesajlar düzeltildi.
+
 ## [1.0.9.21] - 2026-08-04
 
 ### Eklendi — `install-rhel.sh` / `update-rhel.sh`: `--ollama-files <dizin>`

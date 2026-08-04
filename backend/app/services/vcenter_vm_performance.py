@@ -62,13 +62,19 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
             continue
 
         # Host başına per-core MHz — VM CPU% hesaplamak için (host_ref → mhz/core)
+        # Aynı çağrıdan host_ref → host_name eşlemesi de çıkarılır: VM'in hangi ESX
+        # host'ta çalıştığını göstermek için ek bir canlı sorgu GEREKMEZ, veri zaten
+        # burada geliyordu ama önceden atılıyordu (bkz. "hangi VM hangi host'ta" bug'ı).
         host_mhz_per_core: Dict[str, float] = {}
+        host_name_by_ref: Dict[str, str] = {}
         try:
             for h in client.get_all_host_stats():
                 cores = h.get("cpu_cores") or 0
                 total_mhz = h.get("cpu_total_mhz") or 0
                 if cores and total_mhz:
                     host_mhz_per_core[h.get("host_ref")] = total_mhz / cores
+                if h.get("host_ref") and h.get("host_name"):
+                    host_name_by_ref[h["host_ref"]] = h["host_name"]
         except Exception as exc:
             logger.warning("get_all_host_stats (VM cpu%% için) başarısız: %s", exc)
 
@@ -119,6 +125,7 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
                 "name": r.get("name"),
                 "server_id": srv.id if srv else None,
                 "hypervisor": hv.name,
+                "esx_host": host_name_by_ref.get(r.get("host_ref")) or (srv.vm_esx_host if srv else None) or "",
                 "power_state": r.get("power_state"),
                 "boot_time": r.get("boot_time"),
                 "uptime_days": uptime_days,
