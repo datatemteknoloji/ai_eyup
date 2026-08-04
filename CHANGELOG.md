@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.21] - 2026-08-04
+
 ### Eklendi — `install-rhel.sh` / `update-rhel.sh`: `--ollama-files <dizin>`
 - Air-gapped sunucularda artık ayrı bir script çalıştırmaya gerek kalmadan,
   ana kurulum/güncelleme script'inin kendisine elle indirilmiş Ollama runtime
