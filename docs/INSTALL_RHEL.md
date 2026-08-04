@@ -154,36 +154,55 @@ gerek yoktur (backend host network kullandığı için Ollama'ya localhost üzer
 ### 5.3 Air-gapped (internet erişimi olmayan) sunucularda Ollama runtime kurulumu
 
 `with-ollama` paketiyle kurulum yapılan sunucunun internet erişimi yoksa,
-`install-rhel.sh` runtime'ı indiremez ve Ollama profili devre dışı kalır. Bu
-durumda iki seçenek vardır:
+`install-rhel.sh` / `update-rhel.sh` runtime'ı indiremez, net bir uyarı basar
+ve Ollama profilini o çalıştırmada atlar (diğer servisler normal başlar). Bu
+durumda üç seçenek vardır:
 
-**A) `ollama-runtime-v1` release'ini elle indirip önbelleğe koyma** (internet
-erişimi olan başka bir makineden):
+**A) `install-ollama-runtime.sh` ile tek komutla kurulum (önerilen):**
 
 ```bash
-# İnternetli bir makinede:
+# 1) İnternet erişimi olan başka bir makinede indirin:
 mkdir ollama-runtime && cd ollama-runtime
 gh release download ollama-runtime-v1 --repo datatemteknoloji/ai_eyup
-# veya tarayıcıdan indirin:
-# https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1
+# veya tarayıcıdan: https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1
 
-# Bütünlüğü doğrulayın ve parçaları birleştirin:
+# 2) İndirilen TÜM dosyaları (ollama.tar.gz.part01/part02, *.sha256,
+#    ollama-models-nomic-embed-text.tar.gz) hedef sunucuya taşıyın (scp/USB)
+
+# 3) Kurulum dizininde (paket kökünde, install-rhel.sh'ın yanında) çalıştırın:
+sudo ./install-ollama-runtime.sh --from /path/to/indirilen-dosyalar
+```
+
+Bu betik parçaları birleştirir, varsa `.sha256` ile bütünlük doğrular, imajı
+docker/podman'a yükler, embedding modelini `$DATA_DIR/ollama` altına açar,
+`.env`'i günceller, servisleri `--profile ollama` ile yeniden başlatır ve
+sağlık kontrolü yapar — hepsi tek adımda. İdempotenttir, güvenle tekrar
+çalıştırılabilir. `--install-dir` (varsayılan `/data`) ve `--embed-model`
+argümanlarını da alır (`./install-ollama-runtime.sh --help`).
+
+**B) Elle adım adım kurulum** (script'i kullanamıyorsanız veya ne yaptığını
+görmek isterseniz — `install-ollama-runtime.sh`'ın içeride yaptığı şeyin aynısı):
+
+```bash
+# İnternetli makinede indirilen dosyaları doğrulayıp birleştirin:
 sha256sum -c ollama.tar.gz.parts.sha256
 cat ollama.tar.gz.part01 ollama.tar.gz.part02 > ollama.tar.gz
 sha256sum -c ollama.tar.gz.sha256
 sha256sum -c ollama-models-nomic-embed-text.tar.gz.sha256
 
-# Bu dosyaları hedef sunucuya taşıyın (scp/USB), sonra orada:
-mkdir -p /data/.ollama-runtime-cache
-cp ollama.tar.gz ollama-models-nomic-embed-text.tar.gz /data/.ollama-runtime-cache/
+# Hedef sunucuda (DATA_DIR'ı .env'den doğrulayın, varsayılan /data/data):
+mkdir -p /data/data/.ollama-runtime-cache
+cp ollama.tar.gz ollama-models-nomic-embed-text.tar.gz /data/data/.ollama-runtime-cache/
 gunzip -c ollama.tar.gz | docker load
-tar xzf ollama-models-nomic-embed-text.tar.gz -C /data/.ollama-runtime-cache/
+tar xzf ollama-models-nomic-embed-text.tar.gz -C /data/data/ollama
+chmod -R 777 /data/data/ollama
+cd /data && docker compose -f docker-compose.prod.yml --profile ollama up -d
 ```
 
 Cache dizini doluyken bir sonraki `install-rhel.sh` / `update-rhel.sh` çalıştırması
 ağa hiç çıkmaz.
 
-**B) Tam gömülü ("bundle") paket üretme** (build makinesinde, internet erişimi olan):
+**C) Tam gömülü ("bundle") paket üretme** (build makinesinde, internet erişimi olan):
 
 ```bash
 ./scripts/build-distribution.sh --bundle-ollama

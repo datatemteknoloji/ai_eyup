@@ -11,6 +11,27 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.19] - 2026-08-04
+
+### Düzeltildi — Ollama runtime indirme hatası tüm servisleri düşürüyordu
+- `with-ollama` paketinde Ollama imajı/embedding modeli internetten
+  indirilemediğinde (ağ erişimi yok, disk dolu vb.) `install-rhel.sh` ve
+  `update-rhel.sh` bunu sessizce geçip yine de `--profile ollama` ile
+  `docker compose up` çalıştırıyordu; bu da TÜM çalıştırmanın
+  `no such image: docker.io/ollama/ollama:latest` hatasıyla düşmesine yol
+  açıyordu (müşteri ortamı bulgusu: podman tabanlı/internet erişimi kısıtlı
+  RHEL 9 sunucusu). Artık Ollama profili yalnızca imaj fiilen yüklüyse
+  eklenir; yüklenemediyse net bir uyarı basılıp o adım atlanır, diğer tüm
+  servisler normal başlar.
+
+### Eklendi — `install-ollama-runtime.sh`: Ollama runtime'ı tek komutla kurma
+- Air-gapped sunucularda, `ollama-runtime-v1` GitHub release'inden internetli
+  bir makinede indirilen dosyaları (imaj parçaları + embedding modeli) TEK
+  KOMUTLA kuran yeni bir betik eklendi: parçaları birleştirir, varsa
+  `.sha256` ile bütünlük doğrular, imajı docker/podman'a yükler, modeli açar,
+  `.env`'i günceller, servisleri Ollama profiliyle başlatır ve sağlık
+  kontrolü yapar. İdempotenttir. Bkz. `docs/INSTALL_RHEL.md` §5.3.
+
 ## [1.0.9.18] - 2026-08-02
 
 ### Düzeltildi — AI Asistan: gereksiz SSH beklemesi
