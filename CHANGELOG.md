@@ -11,6 +11,19 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Eklendi — `install-rhel.sh` / `update-rhel.sh`: `--ollama-files <dizin>`
+- Air-gapped sunucularda artık ayrı bir script çalıştırmaya gerek kalmadan,
+  ana kurulum/güncelleme script'inin kendisine elle indirilmiş Ollama runtime
+  dosyalarının (ollama.tar.gz[.part*] + ollama-models-*.tar.gz) bulunduğu
+  klasör tek argümanla verilebiliyor:
+  `sudo ./install-rhel.sh --ollama-files /path/to/dosyalar` veya
+  `sudo ./update-rhel.sh --install-dir /data --ollama-files /path/to/dosyalar`.
+  İmaj/model zaten yüklü değilse ve otomatik internet indirmesi mümkün
+  değilse önce bu klasöre bakılır — internete hiç çıkılmadan kurulumun/
+  güncellemenin geri kalanıyla aynı tek script akışında tamamlanır.
+  `install-ollama-runtime.sh` (v1.0.9.19'da eklenen ayrı script) hâlâ mevcut
+  ve zaten kurulu bir sistemi sonradan tamamlamak için kullanılabilir.
+
 ## [1.0.9.20] - 2026-08-04
 
 ### Eklendi — Tam gömülü ("bundle") with-ollama paketi

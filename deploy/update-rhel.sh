@@ -10,6 +10,10 @@
 #   tar xzf ainew-1.0.1-linux-amd64.tar.gz
 #   cd ainew-1.0.1-linux-amd64
 #   sudo ./update-rhel.sh --install-dir /data
+#   sudo ./update-rhel.sh --install-dir /data --ollama-files /root/ollama-runtime
+#     (with-ollama paketinde, internet erişimi olmayan sunucularda: elle
+#      indirilen ollama.tar.gz[.part*] + ollama-models-*.tar.gz dosyalarının
+#      bulunduğu klasörü işaret eder — internete hiç çıkılmadan yüklenir)
 #
 # Ortam değişkenleri:
 #   INSTALL_DIR   Hedef kurulum (varsayılan: --install-dir veya /data)
@@ -69,6 +73,65 @@ _download_ollama_runtime_asset() {
   fi
 }
 
+# --ollama-files ile verilen klasörden (elle indirilmiş ollama.tar.gz veya
+# .part parçaları) imajı docker/podman'a yükler — ağa hiç çıkmaz.
+_load_ollama_image_from_dir() {
+  local src_dir="$1" cache_dir="$2"
+  local img_tar=""
+  if [[ -s "${src_dir}/ollama.tar.gz" ]]; then
+    img_tar="${src_dir}/ollama.tar.gz"
+  elif compgen -G "${src_dir}/ollama.tar.gz.part*" > /dev/null 2>&1; then
+    if [[ -s "${src_dir}/ollama.tar.gz.parts.sha256" ]]; then
+      (cd "$src_dir" && sha256sum -c ollama.tar.gz.parts.sha256) || {
+        c_red "Parça bütünlük doğrulaması başarısız: ${src_dir}/ollama.tar.gz.part*"; return 1; }
+      c_green "✓ Parça bütünlüğü doğrulandı."
+    fi
+    mkdir -p "$cache_dir"
+    cat "${src_dir}"/ollama.tar.gz.part* > "${cache_dir}/ollama.tar.gz"
+    img_tar="${cache_dir}/ollama.tar.gz"
+  else
+    c_red "ollama.tar.gz (veya .part parçaları) bulunamadı: ${src_dir}"
+    return 1
+  fi
+  if [[ -s "${img_tar}.sha256" ]]; then
+    (cd "$(dirname "$img_tar")" && sha256sum -c "$(basename "$img_tar").sha256") || {
+      c_red "Bütünlük doğrulaması başarısız: ${img_tar}"; return 1; }
+    c_green "✓ Bütünlük doğrulandı: $(basename "$img_tar")"
+  fi
+  c_yellow "Yükleniyor: $(basename "$img_tar")"
+  gunzip -c "$img_tar" | docker load
+  if [[ "$img_tar" != "${cache_dir}/ollama.tar.gz" ]]; then
+    mkdir -p "$cache_dir"
+    cp -f "$img_tar" "${cache_dir}/ollama.tar.gz" 2>/dev/null || true
+  fi
+}
+
+# --ollama-files ile verilen klasörden embedding modelini açar — ağa hiç çıkmaz.
+_load_ollama_model_from_dir() {
+  local src_dir="$1" cache_dir="$2" embed_model="$3" data_dir="$4"
+  local model_tar=""
+  local cand
+  for cand in "${src_dir}/ollama-models-${embed_model}.tar.gz" "${src_dir}"/ollama-models-*.tar.gz; do
+    [[ -s "$cand" ]] && { model_tar="$cand"; break; }
+  done
+  if [[ -z "$model_tar" ]]; then
+    c_red "ollama-models-*.tar.gz bulunamadı: ${src_dir}"
+    return 1
+  fi
+  if [[ -s "${model_tar}.sha256" ]]; then
+    (cd "$(dirname "$model_tar")" && sha256sum -c "$(basename "$model_tar").sha256") || {
+      c_red "Bütünlük doğrulaması başarısız: ${model_tar}"; return 1; }
+    c_green "✓ Bütünlük doğrulandı: $(basename "$model_tar")"
+  fi
+  mkdir -p "$data_dir/ollama"
+  tar xzf "$model_tar" -C "$data_dir/ollama"
+  chmod -R 777 "$data_dir/ollama" 2>/dev/null || true
+  if [[ "$(dirname "$model_tar")" != "$cache_dir" ]]; then
+    mkdir -p "$cache_dir"
+    cp -f "$model_tar" "${cache_dir}/" 2>/dev/null || true
+  fi
+}
+
 ensure_ollama_runtime() {
   local marker="$INSTALL_DIR/WITH_OLLAMA"
   [[ -f "$marker" ]] || return 0
@@ -82,6 +145,14 @@ ensure_ollama_runtime() {
     c_green "  ✓ ollama/ollama:latest zaten yüklü — indirme atlandı."
   elif compgen -G "${IMAGES_DIR}/ollama.tar.gz*" > /dev/null 2>&1; then
     c_yellow "  · ollama/ollama:latest paket içinde gömülü (yukarıda yüklendi)."
+  elif [[ -n "$OLLAMA_FILES_DIR" ]]; then
+    step "Ollama imajı --ollama-files klasöründen yükleniyor: $OLLAMA_FILES_DIR"
+    mkdir -p "$cache_dir"
+    if _load_ollama_image_from_dir "$OLLAMA_FILES_DIR" "$cache_dir"; then
+      c_green "✓ ollama/ollama:latest yüklendi (--ollama-files, ağa çıkılmadı)."
+    else
+      c_red "Ollama imajı --ollama-files klasöründen yüklenemedi — with-ollama profili devre dışı kalabilir."
+    fi
   elif [[ -z "$release_base" ]]; then
     c_yellow "  · WITH_OLLAMA runtime release bilgisi yok, ollama imajı atlanıyor."
   else
@@ -93,6 +164,7 @@ ensure_ollama_runtime() {
       c_green "✓ ollama/ollama:latest yüklendi ve önbelleklendi: $cache_dir"
     else
       c_red "Ollama runtime imajı indirilemedi — with-ollama profili devre dışı kalabilir."
+      c_yellow "  İnternetsiz kurulum için: sudo ./update-rhel.sh --install-dir $INSTALL_DIR --ollama-files <dizin>"
     fi
   fi
 
@@ -100,6 +172,14 @@ ensure_ollama_runtime() {
     c_green "  ✓ Embedding modeli ($embed_model) zaten diskte — indirme atlandı."
   elif compgen -G "${IMAGES_DIR}/ollama-models-*.tar.gz*" > /dev/null 2>&1; then
     : # paket içinde gömülü — mevcut akış bunu işleyecek
+  elif [[ -n "$OLLAMA_FILES_DIR" ]]; then
+    step "Embedding modeli --ollama-files klasöründen açılıyor: $OLLAMA_FILES_DIR"
+    mkdir -p "$cache_dir"
+    if _load_ollama_model_from_dir "$OLLAMA_FILES_DIR" "$cache_dir" "$embed_model" "$DATA_DIR"; then
+      c_green "✓ Embedding modeli açıldı (--ollama-files, ağa çıkılmadı)."
+    else
+      c_red "Embedding modeli --ollama-files klasöründen açılamadı — RAG embedding çalışmayabilir."
+    fi
   elif [[ -z "$release_base" ]]; then
     c_yellow "  · WITH_OLLAMA runtime release bilgisi yok, embedding modeli atlanıyor."
   else
@@ -111,19 +191,22 @@ ensure_ollama_runtime() {
       c_green "✓ Embedding modeli açıldı ve önbelleklendi: $cache_dir"
     else
       c_red "Embedding modeli indirilemedi — RAG embedding çalışmayabilir."
+      c_yellow "  İnternetsiz kurulum için: sudo ./update-rhel.sh --install-dir $INSTALL_DIR --ollama-files <dizin>"
     fi
   fi
 }
 
 INSTALL_DIR="${INSTALL_DIR:-}"
 SKIP_DB_BACKUP="${SKIP_DB_BACKUP:-0}"
+OLLAMA_FILES_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --skip-db-backup) SKIP_DB_BACKUP=1; shift ;;
+    --ollama-files) OLLAMA_FILES_DIR="$(realpath -m "$2")"; shift 2 ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      sed -n '2,21p' "$0"
       exit 0
       ;;
     *) c_red "Bilinmeyen argüman: $1"; exit 1 ;;

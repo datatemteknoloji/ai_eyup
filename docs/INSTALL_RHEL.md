@@ -156,9 +156,12 @@ gerek yoktur (backend host network kullandığı için Ollama'ya localhost üzer
 `with-ollama` paketiyle kurulum yapılan sunucunun internet erişimi yoksa,
 `install-rhel.sh` / `update-rhel.sh` runtime'ı indiremez, net bir uyarı basar
 ve Ollama profilini o çalıştırmada atlar (diğer servisler normal başlar). Bu
-durumda üç seçenek vardır:
+durumda dört seçenek vardır:
 
-**A) `install-ollama-runtime.sh` ile tek komutla kurulum (önerilen):**
+**A) `--ollama-files` ile tek script, tek komut (önerilen):**
+
+Ana kurulum/güncelleme script'i, dosyaların yerini doğrudan argüman olarak
+alabilir — ayrı bir script çalıştırmaya gerek kalmaz:
 
 ```bash
 # 1) İnternet erişimi olan başka bir makinede indirin:
@@ -169,19 +172,34 @@ gh release download ollama-runtime-v1 --repo datatemteknoloji/ai_eyup
 # 2) İndirilen TÜM dosyaları (ollama.tar.gz.part01/part02, *.sha256,
 #    ollama-models-nomic-embed-text.tar.gz) hedef sunucuya taşıyın (scp/USB)
 
-# 3) Kurulum dizininde (paket kökünde, install-rhel.sh'ın yanında) çalıştırın:
+# 3a) Sıfırdan kurulumda:
+sudo ./install-rhel.sh --ollama-files /path/to/indirilen-dosyalar
+
+# 3b) Zaten kurulu bir sürümü güncellerken:
+sudo ./update-rhel.sh --install-dir /data --ollama-files /path/to/indirilen-dosyalar
+```
+
+`--ollama-files` verildiğinde, imaj/model zaten yüklü değilse önce bu klasöre
+bakılır (parçaları birleştirir, varsa `.sha256` ile bütünlük doğrular, imajı
+docker/podman'a yükler, embedding modelini `$DATA_DIR/ollama` altına açar) —
+internete hiç çıkılmadan kurulumun/güncellemenin geri kalanıyla aynı akışta
+tamamlanır. İdempotenttir.
+
+**B) `install-ollama-runtime.sh` ile tek komutla kurulum** (ana kurulum zaten
+tamamlanmış, sadece Ollama kısmını sonradan eklemeniz gerekiyorsa):
+
+```bash
 sudo ./install-ollama-runtime.sh --from /path/to/indirilen-dosyalar
 ```
 
-Bu betik parçaları birleştirir, varsa `.sha256` ile bütünlük doğrular, imajı
-docker/podman'a yükler, embedding modelini `$DATA_DIR/ollama` altına açar,
-`.env`'i günceller, servisleri `--profile ollama` ile yeniden başlatır ve
-sağlık kontrolü yapar — hepsi tek adımda. İdempotenttir, güvenle tekrar
-çalıştırılabilir. `--install-dir` (varsayılan `/data`) ve `--embed-model`
-argümanlarını da alır (`./install-ollama-runtime.sh --help`).
+Bu betik aynı mantıkla (parçaları birleştirir, doğrular, yükler, açar) çalışır
+ama servisleri de `--profile ollama` ile yeniden başlatıp sağlık kontrolü
+yapar — `install-rhel.sh`'ı tekrar çalıştırmadan, mevcut bir kurulumu
+tamamlamak için idealdir. `--install-dir` (varsayılan `/data`) ve
+`--embed-model` argümanlarını da alır (`./install-ollama-runtime.sh --help`).
 
-**B) Elle adım adım kurulum** (script'i kullanamıyorsanız veya ne yaptığını
-görmek isterseniz — `install-ollama-runtime.sh`'ın içeride yaptığı şeyin aynısı):
+**C) Elle adım adım kurulum** (script'leri kullanamıyorsanız veya ne yaptığını
+görmek isterseniz — yukarıdakilerin içeride yaptığı şeyin aynısı):
 
 ```bash
 # İnternetli makinede indirilen dosyaları doğrulayıp birleştirin:
@@ -202,7 +220,7 @@ cd /data && docker compose -f docker-compose.prod.yml --profile ollama up -d
 Cache dizini doluyken bir sonraki `install-rhel.sh` / `update-rhel.sh` çalıştırması
 ağa hiç çıkmaz.
 
-**C) Tam gömülü ("bundle") paket üretme** (build makinesinde, internet erişimi olan):
+**D) Tam gömülü ("bundle") paket üretme** (build makinesinde, internet erişimi olan):
 
 ```bash
 ./scripts/build-distribution.sh --bundle-ollama
