@@ -11,6 +11,17 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.20] - 2026-08-04
+
+### Eklendi — Tam gömülü ("bundle") with-ollama paketi
+- `ainew-<sürüm>-linux-amd64-with-ollama.tar.gz` paketi artık Ollama imajını
+  ve `nomic-embed-text` embedding modelini doğrudan pakete gömülü olarak
+  içeriyor (`--bundle-ollama` derleme modu). Bu paketle kurulum yapılan
+  sunucu **hiçbir zaman internete çıkmaz** — hedef sunucunun interneti
+  olmayıp yalnızca GitHub Release'ine erişimi olan (dosyaları scp/USB ile
+  taşıyan) müşteriler için, v1.0.9.16+'daki "kurulum sırasında bir kereye
+  mahsus indir" davranışının tamamen offline alternatifi.
+
 ## [1.0.9.19] - 2026-08-04
 
 ### Düzeltildi — Ollama runtime indirme hatası tüm servisleri düşürüyordu
