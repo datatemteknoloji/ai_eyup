@@ -230,7 +230,37 @@ ağa hiç çıkmaz.
 Bu paket Ollama imajını ve embedding modelini doğrudan `images/` altına gömer;
 hedef sunucuda hiçbir zaman internete çıkılmaz.
 
-### 5.4 Eski chat LLM export/import akışı (elle model taşıma)
+### 5.4 Büyük bir chat modelini air-gapped kurma (GPT-OSS 20B örneği)
+
+`nomic-embed-text` dışında büyük bir chat modelini (ör. `gpt-oss:20b`, ~13GB)
+internetsiz bir sunucuya kurmak için ayrı bir GitHub release ve bunun için
+özel yazılmış idempotent bir script vardır:
+[`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1) —
+`gpt-oss:20b` (chat) + `nomic-embed-text` (embedding) birlikte paketlenmiştir.
+
+```bash
+# İnternet erişimi olan bir makinede indirin:
+mkdir ollama-gpt-oss-20b && cd ollama-gpt-oss-20b
+gh release download ollama-gpt-oss-20b-v1 --repo datatemteknoloji/ai_eyup
+# veya tarayıcıdan: https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1
+
+# İndirilen TÜM dosyaları (7 adet .part0N + .sha256 dosyaları +
+# ollama-models-nomic-embed-text.tar.gz) hedef sunucuya taşıyın (scp/USB)
+
+# Hedef sunucuda (Ollama imajı zaten kurulu olmalı — with-ollama paketiyle
+# kurulduysanız zaten kuruludur):
+sudo ./install-ollama-model.sh --model gpt-oss:20b --from /path/to/indirilen-dosyalar --set-default
+```
+
+`install-ollama-model.sh`, `--ollama-files` / `install-ollama-runtime.sh`
+akışından farklı olarak **yalnızca belirtilen modelin** zaten kurulu olup
+olmadığına bakar (diskte BAŞKA bir model olması onu atlamaz) — bu yüzden
+`nomic-embed-text` zaten kurulu, sadece bir chat modeli eklenmek istenen
+sistemlerde de güvenle kullanılabilir. `--set-default` ile `.env`'deki
+`AGENT_MODEL` bu modele çekilir (Ayarlar → AI Model'den de değiştirilebilir).
+Detaylar ve elle kurulum adımları için release'in `README.md`'sine bakın.
+
+### 5.5 Eski chat LLM export/import akışı (elle model taşıma)
 
 `nomic-embed-text` dışında büyük chat modellerini (ör. `llama3.2:3b`) bir
 makineden diğerine taşımak için hâlâ kullanılabilir:

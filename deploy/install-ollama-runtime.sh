@@ -148,34 +148,61 @@ else
   fi
 fi
 
-# ── 3. Embedding modeli ──────────────────────────────────────────────────
+# ── 3. Model(ler) ─────────────────────────────────────────────────────────
+# $FROM_DIR içindeki TÜM ollama-models-*.tar.gz[.part*] paketlerini açar —
+# yalnızca embedding modeliyle sınırlı değildir. Ör. ollama-gpt-oss-20b-v1
+# release'inden indirilen dosyalar (ollama-models-gpt-oss-20b.tar.gz.part01..07
+# + ollama-models-nomic-embed-text.tar.gz) aynı klasöre konursa ikisi de açılır.
+# Büyük/ek bir chat modelini SONRADAN, tekil olarak eklemek için (bu betiği
+# tekrar çalıştırmadan) deploy/install-ollama-model.sh --model <isim> tercih edin.
 EMBED_MODEL="${EMBED_MODEL_ARG:-}"
 [[ -z "$EMBED_MODEL" ]] && EMBED_MODEL="$(grep '^OLLAMA_EMBED_MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 
-step "Embedding modeli kontrol ediliyor ($EMBED_MODEL)"
+step "Model paketleri kontrol ediliyor (embedding: $EMBED_MODEL)"
 if [[ -d "$DATA_DIR/ollama/models" ]] && find "$DATA_DIR/ollama/models" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
-  c_green "✓ Embedding modeli zaten diskte — açma işlemi atlandı."
+  c_green "✓ Model(ler) zaten diskte — açma işlemi atlandı (ek model eklemek için deploy/install-ollama-model.sh kullanın)."
 else
-  MODEL_TAR=""
-  for cand in "$FROM_DIR/ollama-models-${EMBED_MODEL}.tar.gz" "$FROM_DIR"/ollama-models-*.tar.gz; do
-    [[ -s "$cand" ]] && { MODEL_TAR="$cand"; break; }
+  INSTALLED_ANY=0
+
+  # Parçalanmamış tam dosyalar
+  for FULL in "$FROM_DIR"/ollama-models-*.tar.gz; do
+    [[ -s "$FULL" ]] || continue
+    BASE="$(basename "$FULL")"
+    if [[ -s "${FULL}.sha256" ]]; then
+      (cd "$FROM_DIR" && sha256sum -c "${BASE}.sha256") || {
+        c_red "Bütünlük doğrulaması başarısız: ${BASE} — atlanıyor."; continue; }
+      c_green "✓ Bütünlük doğrulandı: ${BASE}"
+    fi
+    mkdir -p "$DATA_DIR/ollama"
+    tar xzf "$FULL" -C "$DATA_DIR/ollama"
+    [[ "$FROM_DIR" != "$CACHE_DIR" ]] && cp -f "$FULL" "$CACHE_DIR/" 2>/dev/null || true
+    c_green "✓ Model açıldı: ${BASE}"
+    INSTALLED_ANY=1
   done
-  if [[ -z "$MODEL_TAR" ]]; then
-    c_red "ollama-models-*.tar.gz bulunamadı: $FROM_DIR"
+
+  # Parçalanmış dosyalar: ollama-models-<isim>.tar.gz.part01, part02, ...
+  for PART1 in "$FROM_DIR"/ollama-models-*.tar.gz.part01; do
+    [[ -s "$PART1" ]] || continue
+    BASE="$(basename "${PART1%.part01}")"
+    if [[ -s "$FROM_DIR/${BASE}.parts.sha256" ]]; then
+      (cd "$FROM_DIR" && sha256sum -c "${BASE}.parts.sha256") || {
+        c_red "Parça bütünlük doğrulaması başarısız: ${BASE} — atlanıyor."; continue; }
+      c_green "✓ Parça bütünlüğü doğrulandı: ${BASE}"
+    fi
+    mkdir -p "$CACHE_DIR" "$DATA_DIR/ollama"
+    cat "$FROM_DIR/${BASE}".part* > "$CACHE_DIR/${BASE}"
+    tar xzf "$CACHE_DIR/${BASE}" -C "$DATA_DIR/ollama"
+    c_green "✓ Model açıldı (parçalardan birleştirildi): ${BASE}"
+    INSTALLED_ANY=1
+  done
+
+  if [[ "$INSTALLED_ANY" -eq 0 ]]; then
+    c_red "ollama-models-*.tar.gz (veya .part parçaları) bulunamadı: $FROM_DIR"
     exit 1
   fi
-  if [[ -s "${MODEL_TAR}.sha256" ]]; then
-    (cd "$(dirname "$MODEL_TAR")" && sha256sum -c "$(basename "$MODEL_TAR").sha256") || {
-      c_red "Bütünlük doğrulaması başarısız: $MODEL_TAR"; exit 1; }
-    c_green "✓ Bütünlük doğrulandı: $(basename "$MODEL_TAR")"
-  fi
-  step "Embedding modeli açılıyor"
-  mkdir -p "$DATA_DIR/ollama"
-  tar xzf "$MODEL_TAR" -C "$DATA_DIR/ollama"
   chmod -R 777 "$DATA_DIR/ollama" 2>/dev/null || true
-  [[ "$(dirname "$MODEL_TAR")" != "$CACHE_DIR" ]] && cp -f "$MODEL_TAR" "$CACHE_DIR/" 2>/dev/null || true
-  c_green "✓ Embedding modeli açıldı: $DATA_DIR/ollama"
+  c_green "✓ Model paketleri açıldı: $DATA_DIR/ollama"
 fi
 
 # ── 4. .env güncelle ──────────────────────────────────────────────────────

@@ -11,6 +11,24 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Eklendi — GPT-OSS 20B air-gapped chat modeli kurulum paketi
+- Yeni, uygulama sürümünden bağımsız GitHub release:
+  [`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1) —
+  `gpt-oss:20b` chat modeli (~13GB, 7 parçaya bölünmüş) + `nomic-embed-text`
+  embedding modeli birlikte paketlendi.
+- Yeni `deploy/install-ollama-model.sh`: mevcut bir kuruluma TEK bir ek Ollama
+  modelini (chat veya embedding) idempotent şekilde ekler — diskte zaten
+  başka modeller olması bu betiği atlamaz (önceki `--ollama-files` /
+  `install-ollama-runtime.sh` akışının aksine). `--set-default` ile
+  `.env`'deki `AGENT_MODEL`'i de güncelleyebilir.
+- `install-rhel.sh` (`--ollama-files`) ve `install-ollama-runtime.sh` artık
+  bir klasördeki TÜM `ollama-models-*.tar.gz[.part*]` paketlerini (yalnızca
+  embedding modeliyle sınırlı değil) açıyor — parçalanmış büyük model
+  paketleri için birleştirme/doğrulama desteği eklendi.
+- `scripts/export-ollama-embed-model.sh`: artık `isim:tag` biçimini (ör.
+  `gpt-oss:20b`) doğru işliyor — önceden aynı ada sahip birden fazla tag'i
+  olan modellerde (ör. `gpt-oss` → 20b/120b) yanlış tag paketlenme riski vardı.
+
 ### Düzeltildi — Sanallaştırma asistanı: VM ↔ ESX host eşlemesi eksikti
 - `Server.vm_esx_host` alanı eklendi: her VM'in HANGİ fiziksel ESX host'ta
   çalıştığı artık senkron sırasında kalıcı olarak kaydediliyor (öncesinde bu

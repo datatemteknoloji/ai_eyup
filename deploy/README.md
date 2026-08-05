@@ -14,6 +14,8 @@ exist once the bundle is assembled).
 | `update-rhel.sh` | In-place upgrade: backs up `.env` + DB + previous image tags, loads new images, retargets `BACKEND_IMAGE`/`FRONTEND_IMAGE`, restarts — never touches `data/` |
 | `rollback-rhel.sh` | Roll back to the last (or specified) pre-update backup; optional `--restore-db` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
+| `install-ollama-runtime.sh` | Standalone Ollama runtime installer (image + models) for an already-installed system — merges/verifies `.part*` archives, extracts model packages, restarts the `ollama` profile |
+| `install-ollama-model.sh` | Adds a **single additional** Ollama model (chat or embedding) to an existing install, idempotently, independent of what's already on disk — e.g. bolting `gpt-oss:20b` onto a system that only has `nomic-embed-text` |
 
 ## Publishing a new version (GitHub Release + CHANGELOG)
 
@@ -87,10 +89,28 @@ Two package variants are published per release: a plain one and an
 embedding model from the separate, version-independent
 [`ollama-runtime-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1)
 release (downloaded once on install/update via the `WITH_OLLAMA` marker file,
-then cached under `$DATA_DIR/.ollama-runtime-cache`). Chat LLMs (e.g.
-`llama3.2:3b`) are never bundled — pull them separately. Full walkthrough,
-including manual/air-gapped Ollama runtime setup: see section 5 of
-[INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).
+then cached under `$DATA_DIR/.ollama-runtime-cache`). Chat LLMs are never
+auto-downloaded by `install-rhel.sh`/`update-rhel.sh` — pull them separately
+(online: `ollama pull <model>`) or air-gapped, via a pre-built model package.
+
+For a large, pre-quantized chat model that's impractical to `ollama pull` on
+an air-gapped host, [`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1)
+bundles **`gpt-oss:20b`** (chat) + **`nomic-embed-text`** (embedding) as a
+single downloadable set of parts:
+
+```bash
+mkdir ollama-gpt-oss-20b && cd ollama-gpt-oss-20b
+gh release download ollama-gpt-oss-20b-v1 --repo datatemteknoloji/ai_eyup
+# scp/USB the folder to the target host, then:
+sudo ./install-ollama-model.sh --model gpt-oss:20b --from ./ollama-gpt-oss-20b --set-default
+```
+
+`install-ollama-model.sh` is idempotent and independent of what's already
+installed (unlike the `--ollama-files` / `install-ollama-runtime.sh` flow,
+which skips entirely once *any* model exists on disk) — safe to run against a
+system that already has `nomic-embed-text` to add just the chat model, or
+vice versa. Full walkthrough, including manual/air-gapped Ollama runtime
+setup: see section 5 of [INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).
 
 ## Why these live outside `docker-compose.yml`
 

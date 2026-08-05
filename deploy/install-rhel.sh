@@ -468,30 +468,55 @@ _load_ollama_image_from_dir() {
   fi
 }
 
-# --ollama-files ile verilen klasörden embedding modelini açar — ağa hiç çıkmaz.
+# --ollama-files ile verilen klasördeki TÜM model paketlerini açar — ağa hiç
+# çıkmaz. Yalnızca embedding modeliyle sınırlı değildir: aynı klasörde ek bir
+# chat modeli (ör. ollama-models-gpt-oss-20b.tar.gz, büyük modeller için
+# .part01/.part02/... şeklinde parçalanmış olabilir) varsa o da kurulur —
+# örn. ollama-gpt-oss-20b-v1 release'inden indirilen dosyalar aynı klasöre
+# konursa embedding modeliyle birlikte otomatik açılır.
 _load_ollama_model_from_dir() {
   local src_dir="$1" cache_dir="$2" embed_model="$3" data_dir="$4"
-  local model_tar=""
-  local cand
-  for cand in "${src_dir}/ollama-models-${embed_model}.tar.gz" "${src_dir}"/ollama-models-*.tar.gz; do
-    [[ -s "$cand" ]] && { model_tar="$cand"; break; }
+  local installed_any=0
+  local full base
+
+  # 1) Parçalanmamış tam dosyalar: ollama-models-<isim>.tar.gz
+  for full in "${src_dir}"/ollama-models-*.tar.gz; do
+    [[ -s "$full" ]] || continue
+    base="$(basename "$full")"
+    if [[ -s "${full}.sha256" ]]; then
+      (cd "$src_dir" && sha256sum -c "${base}.sha256") || {
+        c_red "Bütünlük doğrulaması başarısız: ${base} — atlanıyor."; continue; }
+      c_green "✓ Bütünlük doğrulandı: ${base}"
+    fi
+    mkdir -p "$data_dir/ollama"
+    tar xzf "$full" -C "$data_dir/ollama"
+    c_green "✓ Model açıldı: ${base}"
+    if [[ "$src_dir" != "$cache_dir" ]]; then
+      mkdir -p "$cache_dir"
+      cp -f "$full" "${cache_dir}/" 2>/dev/null || true
+    fi
+    installed_any=1
   done
-  if [[ -z "$model_tar" ]]; then
-    c_red "ollama-models-*.tar.gz bulunamadı: ${src_dir}"
-    return 1
-  fi
-  if [[ -s "${model_tar}.sha256" ]]; then
-    (cd "$(dirname "$model_tar")" && sha256sum -c "$(basename "$model_tar").sha256") || {
-      c_red "Bütünlük doğrulaması başarısız: ${model_tar}"; return 1; }
-    c_green "✓ Bütünlük doğrulandı: $(basename "$model_tar")"
-  fi
-  mkdir -p "$data_dir/ollama"
-  tar xzf "$model_tar" -C "$data_dir/ollama"
+
+  # 2) Parçalanmış dosyalar: ollama-models-<isim>.tar.gz.part01, part02, ...
+  local part1
+  for part1 in "${src_dir}"/ollama-models-*.tar.gz.part01; do
+    [[ -s "$part1" ]] || continue
+    base="$(basename "${part1%.part01}")"
+    if [[ -s "${src_dir}/${base}.parts.sha256" ]]; then
+      (cd "$src_dir" && sha256sum -c "${base}.parts.sha256") || {
+        c_red "Parça bütünlük doğrulaması başarısız: ${base} — atlanıyor."; continue; }
+      c_green "✓ Parça bütünlüğü doğrulandı: ${base}"
+    fi
+    mkdir -p "$cache_dir" "$data_dir/ollama"
+    cat "${src_dir}/${base}".part* > "${cache_dir}/${base}"
+    tar xzf "${cache_dir}/${base}" -C "$data_dir/ollama"
+    c_green "✓ Model açıldı (parçalardan birleştirildi): ${base}"
+    installed_any=1
+  done
+
   chmod -R 777 "$data_dir/ollama" 2>/dev/null || true
-  if [[ "$(dirname "$model_tar")" != "$cache_dir" ]]; then
-    mkdir -p "$cache_dir"
-    cp -f "$model_tar" "${cache_dir}/" 2>/dev/null || true
-  fi
+  [[ "$installed_any" -eq 1 ]]
 }
 
 ensure_ollama_runtime() {
