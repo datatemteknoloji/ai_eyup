@@ -1,8 +1,8 @@
-name: Publish Release
+name: Release check
 
-# Tag push (v1.0.3 vb.) → GitHub Release oluşturur.
-# İndirme dosya adı: ainew-<versiyon>-linux-amd64.tar.gz
-# (Code → Download ZIP "ai_eyup-main" diye gelir; sürüm bu Release asset'inde.)
+# Offline müşteri paketleri git `dist/` içinden üretilmez.
+# Yayın: scripts/build-distribution.sh → scripts/publish-github-release.sh
+# (veya scripts/release.sh). Tag push yalnızca Release'in varlığını doğrular.
 
 on:
   push:
@@ -10,64 +10,33 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: GitHub Release
+  confirm-release:
+    name: Confirm GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build versioned package archive
-        id: pkg
+      - name: Wait for release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          NAME="ainew-${VERSION}-linux-amd64"
-          if [[ ! -d "dist/${NAME}" ]]; then
-            echo "dist/${NAME} bulunamadı — önce build-distribution.sh ile paketi commit edin."
-            ls -la dist/ || true
-            exit 1
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
-          # Release indirme adı = uygulama adı + sürüm
-          tar -C dist -czf "${NAME}.tar.gz" "${NAME}"
-          ls -lh "${NAME}.tar.gz"
-          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ainew ${{ steps.pkg.outputs.version }}
-          generate_release_notes: true
-          body: |
-            ## ainew ${{ steps.pkg.outputs.version }}
-
-            Offline kurulum / güncelleme paketi (Docker imajları dahil).
-
-            ### İndirme
-            Aşağıdaki asset'i indirin (dosya adı sürüm içerir):
-            - **`${{ steps.pkg.outputs.name }}.tar.gz`**
-
-            ### Güncelleme (mevcut kurulum)
-            ```bash
-            tar xzf ${{ steps.pkg.outputs.name }}.tar.gz
-            cd ${{ steps.pkg.outputs.name }}
-            sudo ./update-rhel.sh --install-dir /data
-            ```
-
-            ### İlk kurulum
-            ```bash
-            tar xzf ${{ steps.pkg.outputs.name }}.tar.gz
-            cd ${{ steps.pkg.outputs.name }}
-            sudo ./install-rhel.sh
-            ```
-          files: |
-            ${{ steps.pkg.outputs.name }}.tar.gz
-            ${{ steps.pkg.outputs.name }}.tar.gz.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # publish-github-release.sh önce tag push eder, sonra gh release create —
+          # kısa bir yarış penceresi olabilir; birkaç kez dene.
+          for i in $(seq 1 18); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release bulundu: $TAG"
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY"
+              # En az bir ainew-*.tar.gz asset'i olmalı
+              assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+              echo "$assets" | grep -E '^ainew-.*\.tar\.gz$' >/dev/null \
+                || { echo "Uyarı: ainew-*.tar.gz asset yok (henüz yükleniyor olabilir)."; exit 1; }
+              exit 0
+            fi
+            echo "Deneme $i/18 — release henüz yok, 10s bekleniyor..."
+            sleep 10
+          done
+          echo "::error::Release $TAG bulunamadı. scripts/publish-github-release.sh ile yayınlayın."
+          exit 1

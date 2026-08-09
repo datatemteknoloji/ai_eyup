@@ -1,43 +1,49 @@
 # deploy/
 
 Hand-authored production deployment assets. These are **templates** consumed by
-[`scripts/build-distribution.sh`](../scripts/build-distribution.sh) — don't run them directly from
-here; run the generated bundle in `dist/ainew-<version>-linux-amd64/` instead (the compose file's
-bind mounts are relative to `backend/`, `frontend/`, `prometheus/` sitting next to it, which only
-exist once the bundle is assembled).
+[`scripts/build-distribution.sh`](../scripts/build-distribution.sh) — don't run them
+directly from here; run the generated bundle in `dist/ainew-<version>-linux-amd64/`
+(or the extracted Release tarball) instead. Bind mounts are relative to `backend/`,
+`frontend/`, `prometheus/` sitting next to the compose file, which only exist once
+the bundle is assembled.
 
 | File | Purpose |
 |---|---|
-| `docker-compose.prod.yml` | Offline stack şablonu (pinned images, `pull_policy: never`, Dropt include). `build-distribution.sh` bunu paket köküne **`docker-compose.yml`** adıyla koyar |
+| `docker-compose.prod.yml` | Offline stack template (pinned images, `pull_policy: never`, Dropt include). `build-distribution.sh` copies this to the package root as **`docker-compose.yml`** |
 | `docker-compose.build.yml` | Optional online build overlay (registry required) — not used by default install |
 | `install-rhel.sh` | RHEL installer: requires `images/*.tar.gz`, `docker load`, `up -d --no-build`; creates Docker data-root/tmp if missing |
 | `update-rhel.sh` | In-place upgrade: backs up `.env` + DB + previous image tags, loads new images, retargets `BACKEND_IMAGE`/`FRONTEND_IMAGE`, restarts — never touches `data/` |
 | `rollback-rhel.sh` | Roll back to the last (or specified) pre-update backup; optional `--restore-db` |
 | `nginx.prod.conf` | Nginx config for the frontend container: HTTP→HTTPS redirect, TLS termination, API/WebSocket proxying to the backend |
 | `install-ollama-runtime.sh` | Standalone Ollama runtime installer (image + models) for an already-installed system — merges/verifies `.part*` archives, extracts model packages, restarts the `ollama` profile |
-| `install-ollama-model.sh` | Adds a **single additional** Ollama model (chat or embedding) to an existing install, idempotently, independent of what's already on disk — e.g. bolting `gpt-oss:20b` onto a system that only has `nomic-embed-text` |
+| `install-ollama-model.sh` | Adds a **single additional** Ollama model (chat or embedding) to an existing install, idempotently |
 
-## Publishing a new version (GitHub Release + CHANGELOG)
+## Publishing a new version (GitHub Release)
 
-`scripts/release.sh` bumps `VERSION`, moves the `CHANGELOG.md` `[Unreleased]` section under a
-new version heading, runs `build-distribution.sh`, and commits + tags — so the CHANGELOG (which
-ships inside every package, for air-gapped customers) and the GitHub Release notes never drift
-apart:
+Preferred path (build already done, or after `build-distribution.sh`):
 
 ```bash
-./scripts/release.sh 1.0.9.17 "Kısa özet" [--with-ollama]
-git push && git push origin v1.0.9.17
-gh release create v1.0.9.17 dist/ainew-1.0.9.17-linux-amd64.tar.gz* \
-  --notes-file /tmp/ainew-release-notes-1.0.9.17.txt --title "ainew 1.0.9.17"
+./scripts/build-distribution.sh          # → dist/ainew-<ver>-linux-amd64.tar.gz
+./scripts/publish-github-release.sh      # commit (safe set) + tag + push + gh release upload
 ```
+
+Or bump `VERSION` + `CHANGELOG.md`, build, and publish in one go:
+
+```bash
+./scripts/release.sh 1.0.9.22 "Kısa özet"   # optional: --with-ollama / --bundle-ollama
+```
+
+Customer download is the **Release asset** `ainew-<version>-linux-amd64.tar.gz`
+(plus `.sha256`). Large image trees are **not** required in git for install;
+CI does not pack `dist/` from the repository on tag push.
 
 ## Building and installing a release
 
 ```bash
-# From repo root, on a dev machine with Docker + buildx:
+# From repo root, on a build machine with Docker + buildx:
 ./scripts/build-distribution.sh
 
-# Copy the resulting dist/ainew-<version>-linux-amd64.tar.gz to the target host:
+# Copy the resulting tar to the target host (or download from GitHub Releases):
 scp dist/ainew-<version>-linux-amd64.tar.gz root@<host>:/root/
 ssh root@<host>
 tar xzf ainew-<version>-linux-amd64.tar.gz
@@ -49,8 +55,8 @@ sudo ./install-rhel.sh
 
 ```bash
 # Upgrade (run from the NEW package directory)
-tar xzf ainew-1.0.1-linux-amd64.tar.gz
-cd ainew-1.0.1-linux-amd64
+tar xzf ainew-<version>-linux-amd64.tar.gz
+cd ainew-<version>-linux-amd64
 sudo ./update-rhel.sh --install-dir /data
 
 # Roll back application images to the previous version
@@ -61,61 +67,41 @@ sudo ./rollback-rhel.sh
 sudo ./rollback-rhel.sh --restore-db
 ```
 
-Full walkthrough, requirements, and maintenance commands: [../docs/INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).
+Full walkthrough: [../docs/INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).
 
-## Fully air-gapped install via `git clone` / "Download ZIP"
+## Image parts (`.part01`, …)
 
-The generated `dist/ainew-<version>-linux-amd64/` bundle (including `images/*.tar.gz`) is
-tracked in git — not the standalone `.tar.gz`/`.sha256` (those stay local-only, see
-`.gitignore`). This lets a target host with **no internet/registry access at all** get a
-working install straight from GitHub, either via `git clone` or the web UI's "Download ZIP":
-
-```bash
-git clone <repo-url>          # or unzip a "Download ZIP" archive
-cd <repo>/dist/ainew-<version>-linux-amd64
-sudo ./install-rhel.sh
-```
-
-Image archives over 90MB are split into `*.tar.gz.part01`, `.part02`, ... because GitHub
-rejects files over 100MB without Git LFS (and LFS content isn't included in "Download ZIP"
-archives, which defeats the point for air-gapped transfers). `install-rhel.sh` automatically
-reassembles the parts before `docker load` — no manual step needed. `build-distribution.sh`
-does this splitting automatically whenever it produces an image archive over the threshold.
+Image archives over ~90MB may be split into `*.tar.gz.part01`, `.part02`, …
+(`build-distribution.sh`). `install-rhel.sh` reassembles them before `docker load`.
 
 ## Ollama (optional local LLM / RAG embedding)
 
-Two package variants are published per release: a plain one and an
-`-with-ollama` one that auto-provisions Ollama + the `nomic-embed-text` RAG
-embedding model from the separate, version-independent
-[`ollama-runtime-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-runtime-v1)
-release (downloaded once on install/update via the `WITH_OLLAMA` marker file,
-then cached under `$DATA_DIR/.ollama-runtime-cache`). Chat LLMs are never
-auto-downloaded by `install-rhel.sh`/`update-rhel.sh` — pull them separately
-(online: `ollama pull <model>`) or air-gapped, via a pre-built model package.
+Default release tarball is **without** Ollama images (smaller offline app stack).
 
-For a large, pre-quantized chat model that's impractical to `ollama pull` on
-an air-gapped host, [`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1)
-bundles **`gpt-oss:20b`** (chat) + **`nomic-embed-text`** (embedding) as a
-single downloadable set of parts:
+Optional variants / flows:
+
+| Mode | How |
+|---|---|
+| Marker download at install | `build-distribution.sh --with-ollama` → `*-with-ollama.tar.gz`; install may fetch once from `ollama-runtime-v1` |
+| Fully embedded | `--bundle-ollama` (~+3.5GB): Ollama image + `nomic-embed-text` inside the package |
+| Air-gap files | `sudo ./install-rhel.sh --ollama-files /path/to/files` |
+| After install | `install-ollama-runtime.sh` / `install-ollama-model.sh` |
+
+Chat LLMs are not auto-downloaded by install unless you use a dedicated model
+release (e.g. [`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1)):
 
 ```bash
 mkdir ollama-gpt-oss-20b && cd ollama-gpt-oss-20b
 gh release download ollama-gpt-oss-20b-v1 --repo datatemteknoloji/ai_eyup
-# scp/USB the folder to the target host, then:
+# scp/USB to target, then:
 sudo ./install-ollama-model.sh --model gpt-oss:20b --from ./ollama-gpt-oss-20b --set-default
 ```
 
-`install-ollama-model.sh` is idempotent and independent of what's already
-installed (unlike the `--ollama-files` / `install-ollama-runtime.sh` flow,
-which skips entirely once *any* model exists on disk) — safe to run against a
-system that already has `nomic-embed-text` to add just the chat model, or
-vice versa. Full walkthrough, including manual/air-gapped Ollama runtime
-setup: see section 5 of [INSTALL_RHEL.md](../docs/INSTALL_RHEL.md).
+See [INSTALL_RHEL.md](../docs/INSTALL_RHEL.md) §5.
 
-## Why these live outside `docker-compose.yml`
+## Why these live outside the root `docker-compose.yml`
 
-The root [`docker-compose.yml`](../docker-compose.yml) is for **local development only** — it
-live-mounts `backend/app` for hot-reload, uses `network_mode: host`, and has no TLS or pinned
-image versions. Shipping that file to a customer would mean an editable-in-place backend and no
-HTTPS. `deploy/` exists so the production path is reviewed, versioned, and reproducible from git
-instead of being a one-off manual build.
+The root [`docker-compose.yml`](../docker-compose.yml) is for **local development
+only** — live-mounts, `network_mode: host`, no TLS / pinned customer images.
+`deploy/` keeps the production path reviewed and reproducible; the customer
+package exposes it as `docker-compose.yml` at the bundle root.
