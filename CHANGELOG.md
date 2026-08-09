@@ -11,45 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
-### Eklendi — GPT-OSS 20B air-gapped chat modeli kurulum paketi
-- Yeni, uygulama sürümünden bağımsız GitHub release:
-  [`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1) —
-  `gpt-oss:20b` chat modeli (~13GB, 7 parçaya bölünmüş) + `nomic-embed-text`
-  embedding modeli birlikte paketlendi.
-- Yeni `deploy/install-ollama-model.sh`: mevcut bir kuruluma TEK bir ek Ollama
-  modelini (chat veya embedding) idempotent şekilde ekler — diskte zaten
-  başka modeller olması bu betiği atlamaz (önceki `--ollama-files` /
-  `install-ollama-runtime.sh` akışının aksine). `--set-default` ile
-  `.env`'deki `AGENT_MODEL`'i de güncelleyebilir.
-- `install-rhel.sh` (`--ollama-files`) ve `install-ollama-runtime.sh` artık
-  bir klasördeki TÜM `ollama-models-*.tar.gz[.part*]` paketlerini (yalnızca
-  embedding modeliyle sınırlı değil) açıyor — parçalanmış büyük model
-  paketleri için birleştirme/doğrulama desteği eklendi.
-- `scripts/export-ollama-embed-model.sh`: artık `isim:tag` biçimini (ör.
-  `gpt-oss:20b`) doğru işliyor — önceden aynı ada sahip birden fazla tag'i
-  olan modellerde (ör. `gpt-oss` → 20b/120b) yanlış tag paketlenme riski vardı.
+## [1.0.9.22] - 2026-08-10
 
-### Düzeltildi — Sanallaştırma asistanı: VM ↔ ESX host eşlemesi eksikti
-- `Server.vm_esx_host` alanı eklendi: her VM'in HANGİ fiziksel ESX host'ta
-  çalıştığı artık senkron sırasında kalıcı olarak kaydediliyor (öncesinde bu
-  bilgi vCenter'dan çekilse de hiçbir yere yazılmıyordu — "en fazla CPU
-  kullanan VM'lerin ESX host kırılımı" gibi bileşik sorular bu yüzden
-  cevaplanamıyordu).
-- `vCenterClient`: host adı çözümlemesi artık `hypervisor_host_metrics`
-  tablosunu besleyen AYNI SOAP kaynağından yapılıyor (REST API'nin bu alanı
-  hiç döndürmediği/host adını farklı formatta (IP/FQDN) döndürebildiği
-  ortamlarda tutarsızlığı önlemek için).
-- Canlı VM performans sorgularına (`fetch_live_vm_stats`) ve "en çok CPU
-  tüketen VM" / "%90 üzeri CPU" tablolarına ESX Host kolonu eklendi.
-- Yeni deterministik soru tipi: "X host'unda hangi VM'ler var" — senkronize
-  veriden anında cevaplanıyor, canlı sorgu gerekmiyor.
-- En yoğun host sorgusuna, istenirse o host'un VM kırılımını da ekleme
-  yeteneği eklendi.
-- Agentic araç setine `vcenter_vms_by_host` (host bazlı VM listesi) ve
-  `knowledge_base_search` (Bilgi Bankası/RAG sorgusu — tüm platformlarda
-  kullanılabilir) araçları eklendi.
-- DB'den (senkronize) gelen host metrik yanıtlarında yanlışlıkla "canlı
-  sorguda dönmedi" diyen yanıltıcı mesajlar düzeltildi.
 
 ## [1.0.9.21] - 2026-08-04
 

@@ -1,7 +1,7 @@
 # Opsiyonel online derleme (internet/registry gerekir).
 # Offline müşteri kurulumunda KULLANMAYIN — install-rhel.sh images/ yükler.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml build
+#   docker compose -f docker-compose.prod.yml -f docker-compose.build.yml build
 #
 services:
   backend:

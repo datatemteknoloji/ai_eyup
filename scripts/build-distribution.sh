@@ -26,7 +26,8 @@
 # Çıktı:
 #   dist/ainew-<version>-<platform>.tar.gz
 #   dist/ainew-<version>-<platform>-with-ollama.tar.gz   (--with-ollama / --bundle-ollama)
-#     ├── docker-compose.prod.yml, install-rhel.sh, update-rhel.sh, rollback-rhel.sh
+#     ├── docker-compose.yml   ← offline stack (deploy/docker-compose.prod.yml içeriği; standart ad)
+#     ├── install-rhel.sh, update-rhel.sh, rollback-rhel.sh
 #     ├── frontend/nginx.prod.conf                    (deploy/ içinden kopyalanır)
 #     ├── (tüm kaynak kod: backend/, frontend/, prometheus/, docs/, ...)
 #     ├── WITH_OLLAMA                                 (--with-ollama/--bundle-ollama işareti + runtime release bilgisi)
@@ -125,22 +126,25 @@ rsync -a \
   ./ "$STAGE"/
 
 # ── 2. Production deployment varlıklarını deploy/ içinden yerleştir ─────────
-# docker-compose.prod.yml ve install-rhel.sh, paket kökünde (./backend,
-# ./frontend, ./prometheus ile aynı seviyede) olmalı çünkü bind mount yolları
-# bunlara görecelidir.
+# Offline stack paket kökünde docker-compose.yml adıyla durur (standart compose
+# dosya adı). rsync ile gelen geliştirme docker-compose.yml üzerine yazılır;
+# docker-compose.prod.yml paketten kaldırılır (çift dosya karışıklığı olmasın).
 echo "▶ Production dağıtım varlıkları yerleştiriliyor (deploy/)..."
-cp deploy/docker-compose.prod.yml "$STAGE/docker-compose.prod.yml"
+cp deploy/docker-compose.prod.yml "$STAGE/docker-compose.yml"
+rm -f "$STAGE/docker-compose.prod.yml"
 cp deploy/docker-compose.build.yml "$STAGE/docker-compose.build.yml"
 cp deploy/install-rhel.sh "$STAGE/install-rhel.sh"
-  cp deploy/update-rhel.sh "$STAGE/update-rhel.sh"
-  cp deploy/rollback-rhel.sh "$STAGE/rollback-rhel.sh"
-  cp deploy/ainew-apply-update.sh "$STAGE/ainew-apply-update.sh"
-  cp deploy/fix-load-ainew-images.sh "$STAGE/fix-load-ainew-images.sh"
-  cp deploy/install-ollama-runtime.sh "$STAGE/install-ollama-runtime.sh"
-  cp deploy/nginx.prod.conf "$STAGE/frontend/nginx.prod.conf"
-  chmod +x "$STAGE/install-rhel.sh" "$STAGE/update-rhel.sh" "$STAGE/rollback-rhel.sh" \
-    "$STAGE/ainew-apply-update.sh" "$STAGE/fix-load-ainew-images.sh" \
-    "$STAGE/install-ollama-runtime.sh"
+cp deploy/update-rhel.sh "$STAGE/update-rhel.sh"
+cp deploy/rollback-rhel.sh "$STAGE/rollback-rhel.sh"
+cp deploy/ainew-apply-update.sh "$STAGE/ainew-apply-update.sh"
+cp deploy/fix-load-ainew-images.sh "$STAGE/fix-load-ainew-images.sh"
+cp deploy/install-ollama-runtime.sh "$STAGE/install-ollama-runtime.sh"
+cp deploy/install-ollama-model.sh "$STAGE/install-ollama-model.sh" 2>/dev/null || true
+cp deploy/nginx.prod.conf "$STAGE/frontend/nginx.prod.conf"
+chmod +x "$STAGE/install-rhel.sh" "$STAGE/update-rhel.sh" "$STAGE/rollback-rhel.sh" \
+  "$STAGE/ainew-apply-update.sh" "$STAGE/fix-load-ainew-images.sh" \
+  "$STAGE/install-ollama-runtime.sh"
+[[ -f "$STAGE/install-ollama-model.sh" ]] && chmod +x "$STAGE/install-ollama-model.sh"
 
 # Müşteriye özel/gerçek sunucu verisi içeren dosyaları boş şablonla değiştir
 echo "[]" > "$STAGE/prometheus/targets/node_exporter_targets.json"
@@ -183,7 +187,7 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
 
     # Bu build makinesi ${PLATFORM} dışında bir mimaride (ör. arm64 geliştirme
     # ortamı) olabilir ve "$src_image" etiketi zaten yerel olarak native mimaride
-    # kullanılıyor olabilir (ör. bu makinedeki çalışan dev stack). docker-compose.prod.yml
+    # kullanılıyor olabilir (ör. bu makinedeki çalışan dev stack). Paket docker-compose.yml
     # orijinal imaj adını (ör. timescale/timescaledb:2.17.2-pg15) referans aldığı için
     # tar içine o adla kaydetmemiz gerekiyor — ama işlem bitince orijinal yerel etiketi
     # geri yükleyip bu build makinesindeki mevcut imajları bozmadan bırakıyoruz.
@@ -203,11 +207,21 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   }
 
   echo "▶ Üçüncü parti imajlar hazırlanıyor (${PLATFORM})..."
+  echo "▶ Dropt API imajı derleniyor (Level 1 sidecar, ${PLATFORM})..."
+  docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false \
+    -t "dropt-api:local" --load ./dropt/backend
+
+  # compose varsayılanı :latest da arayabilsin diye aynı digest'e ikinci etiket
+  docker tag "ainew-backend:${VERSION}" "ainew-backend:latest"
+  docker tag "ainew-frontend:${VERSION}" "ainew-frontend:latest"
+
   echo "▶ İmajlar kaydediliyor (docker save)..."
-  docker save "ainew-backend:${VERSION}" | gzip > "${IMAGES_DIR}/ainew-backend.tar.gz"
-  docker save "ainew-frontend:${VERSION}" | gzip > "${IMAGES_DIR}/ainew-frontend.tar.gz"
+  docker save "ainew-backend:${VERSION}" "ainew-backend:latest" | gzip > "${IMAGES_DIR}/ainew-backend.tar.gz"
+  docker save "ainew-frontend:${VERSION}" "ainew-frontend:latest" | gzip > "${IMAGES_DIR}/ainew-frontend.tar.gz"
+  docker save "dropt-api:local" | gzip > "${IMAGES_DIR}/dropt-api.tar.gz"
   repack_and_save "timescale/timescaledb:2.17.2-pg15" "${IMAGES_DIR}/timescaledb.tar.gz"
   repack_and_save "redis:7-alpine" "${IMAGES_DIR}/redis.tar.gz"
+  repack_and_save "postgres:16-alpine" "${IMAGES_DIR}/postgres16.tar.gz"
   repack_and_save "prom/prometheus:v2.55.1" "${IMAGES_DIR}/prometheus.tar.gz"
   repack_and_save "prom/pushgateway:v1.11.0" "${IMAGES_DIR}/pushgateway.tar.gz"
 
@@ -247,14 +261,14 @@ OLLAMA_EMBED_MODEL=${EMBED_MODEL}
 EOF
   fi
 
-  # install-rhel.sh / docker-compose.prod.yml varsayılan olarak ":latest" imaj adı
-  # bekler; offline pakette versiyon etiketli imajı "latest" olarak da işaretleyelim
-  # ki docker-compose.prod.yml değişmeden çalışsın.
+  # install-rhel.sh .env'e bu etiketleri yazar; :latest da tar içinde (yukarıda).
   cat >> "$STAGE/.env.example" <<EOF
 
 # build-distribution.sh tarafından üretildi — bu paketteki imaj etiketleri
 BACKEND_IMAGE=ainew-backend:${VERSION}
 FRONTEND_IMAGE=ainew-frontend:${VERSION}
+DROPT_API_IMAGE=dropt-api:local
+DROPT_PULL_POLICY=never
 EOF
 
   # GitHub'ın LFS'siz push'larda uyguladığı 100MB/dosya sert sınırı nedeniyle,
@@ -275,8 +289,53 @@ EOF
       echo "  ✂ $(basename "$f") -> $(basename "$f").part01, .part02, ..."
     fi
   done
+
+  echo "▶ Paket imaj envanteri kontrol ediliyor..."
+  local_missing=0
+  for need in \
+      ainew-backend.tar.gz \
+      ainew-frontend.tar.gz \
+      dropt-api.tar.gz \
+      timescaledb.tar.gz \
+      redis.tar.gz \
+      postgres16.tar.gz \
+      prometheus.tar.gz \
+      pushgateway.tar.gz; do
+    if [[ -e "${IMAGES_DIR}/${need}" ]] || compgen -G "${IMAGES_DIR}/${need}.part*" > /dev/null 2>&1; then
+      echo "  ✓ ${need}"
+    else
+      echo "  ✗ EKSİK: ${need}"
+      local_missing=1
+    fi
+  done
+  if [[ "$BUNDLE_OLLAMA" -eq 1 ]]; then
+    if [[ -e "${IMAGES_DIR}/ollama.tar.gz" ]] || compgen -G "${IMAGES_DIR}/ollama.tar.gz.part*" > /dev/null 2>&1; then
+      echo "  ✓ ollama.tar.gz"
+    else
+      echo "  ✗ EKSİK: ollama.tar.gz (--bundle-ollama)"
+      local_missing=1
+    fi
+  fi
+  if [[ "$local_missing" -ne 0 ]]; then
+    echo "✖ Zorunlu imaj arşivleri eksik — paket üretilmeyecek."
+    exit 1
+  fi
 else
   echo "▶ --no-images verildi, imaj derleme/kaydetme atlandı (kaynak koddan derlenecek)."
+fi
+
+# Pakette geliştirme compose kalıntısı / yanlış ad olmasın
+if ! grep -q 'pull_policy: never' "$STAGE/docker-compose.yml" 2>/dev/null; then
+  echo "✖ Paket docker-compose.yml offline stack değil (pull_policy: never yok)."
+  exit 1
+fi
+if grep -qE '^\s*build:' "$STAGE/docker-compose.yml" 2>/dev/null; then
+  echo "✖ Paket docker-compose.yml içinde build: var — offline paket için yasak."
+  exit 1
+fi
+if ! grep -q 'docker-compose.dropt.yml' "$STAGE/docker-compose.yml" 2>/dev/null; then
+  echo "✖ Paket docker-compose.yml Dropt include etmiyor."
+  exit 1
 fi
 
 # ── 4. Arşivle ───────────────────────────────────────────────────────────────
@@ -289,6 +348,7 @@ echo
 echo "✔ Paket hazır: ${STAGE}.tar.gz"
 echo "  İlk kurulum:"
 echo "    tar xzf $(basename "${STAGE}.tar.gz") && cd $(basename "$STAGE") && sudo ./install-rhel.sh"
+echo "  Compose dosyası: docker-compose.yml  (docker compose up -d --no-build)"
 echo "  Güncelleme:"
 echo "    tar xzf $(basename "${STAGE}.tar.gz") && cd $(basename "$STAGE")"
 echo "    sudo ./update-rhel.sh --install-dir /data"

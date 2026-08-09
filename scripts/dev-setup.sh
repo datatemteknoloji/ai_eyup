@@ -28,12 +28,20 @@ fi
 
 fill_env_var() {
   local key="$1" value="$2"
+  _is_placeholder_val() {
+    local v="${1:-}"
+    [[ -z "$v" ]] && return 0
+    local u
+    u="$(printf '%s' "$v" | tr '[:lower:]' '[:upper:]')"
+    [[ "$u" == CHANGE_ME* || "$u" == GENERATE_* || "$u" == REPLACE-* || "$u" == TODO* || "$u" == YOUR_* ]] && return 0
+    return 1
+  }
   if grep -q "^${key}=" "$ENV_FILE"; then
     local current
     current="$(grep "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2-)"
-    if [[ -z "$current" || "$current" == CHANGE_ME* || "$current" == GENERATE_* ]]; then
+    if _is_placeholder_val "$current"; then
       sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-      echo "✓ ${key} otomatik üretildi"
+      echo "✓ ${key} otomatik üretildi (placeholder değiştirildi)"
     fi
   else
     echo "${key}=${value}" >> "$ENV_FILE"
@@ -43,10 +51,13 @@ fill_env_var() {
 
 fill_env_var "SECRET_KEY" "$(openssl rand -hex 32)"
 fill_env_var "POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
+fill_env_var "AINEW_BRIDGE_SECRET" "$(openssl rand -hex 24)"
+fill_env_var "DROPT_POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
 
 echo
 echo "Tamamlandı. Sıradaki adımlar:"
 echo "  1. .env içindeki OLLAMA_URL / CORS_ORIGINS değerlerini ihtiyacınıza göre düzenleyin"
 echo "  2. docker compose up -d"
+echo "  3. Canlı ortamda placeholder kalmış SECRET_KEY varsa: ./scripts/rotate-secrets.sh"
 echo
-echo "(bkz. docs/getting-started.md)"
+echo "(bkz. docs/getting-started.md, docs/migration-and-secrets.md)"

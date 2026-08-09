@@ -61,6 +61,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.bak-rotate-*
+.env.bak-*
 
 # Prometheus target files are regenerated at runtime from the DB
 # (sync_node_exporter_targets_from_db / sync_windows_exporter_targets_from_db) —
@@ -90,3 +92,9 @@ postgres_data/
 # Node exporter binaries
 backend/static/node_exporter/
 .gstack/
+
+# RAG seed: büyük vendor PDF'leri repo'ya girmesin (README + manifest kalır)
+docs/rag_seed/**
+!docs/rag_seed/README.md
+!docs/rag_seed/manifest.json
+!docs/rag_seed/.gitkeep

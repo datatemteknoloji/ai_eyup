@@ -8,7 +8,7 @@ exist once the bundle is assembled).
 
 | File | Purpose |
 |---|---|
-| `docker-compose.prod.yml` | Production stack: pinned images, `pull_policy: never`, no `build:` (offline-safe), HTTPS frontend, localhost-only DB/Redis |
+| `docker-compose.prod.yml` | Offline stack şablonu (pinned images, `pull_policy: never`, Dropt include). `build-distribution.sh` bunu paket köküne **`docker-compose.yml`** adıyla koyar |
 | `docker-compose.build.yml` | Optional online build overlay (registry required) — not used by default install |
 | `install-rhel.sh` | RHEL installer: requires `images/*.tar.gz`, `docker load`, `up -d --no-build`; creates Docker data-root/tmp if missing |
 | `update-rhel.sh` | In-place upgrade: backs up `.env` + DB + previous image tags, loads new images, retargets `BACKEND_IMAGE`/`FRONTEND_IMAGE`, restarts — never touches `data/` |

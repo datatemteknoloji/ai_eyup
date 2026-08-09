@@ -100,13 +100,25 @@ else
   echo "UYARI: scripts/build-distribution.sh bulunamadı, paket oluşturma adımı atlanıyor." >&2
 fi
 
-# 5) Commit + tag
-git add VERSION "$CHANGELOG"
-git commit -m "chore(release): v${VERSION}"
-git tag "v${VERSION}"
+# 5) Commit + tag + push + GitHub Release (yeniden build YOK)
+#    Ollama bayrağı verilmişse publish script'ine de iletilir.
+PUBLISH_ARGS=("${VERSION}" --notes-file "${NOTES_FILE}")
+for a in "$@"; do
+  case "$a" in
+    --with-ollama|--bundle-ollama) PUBLISH_ARGS+=("$a") ;;
+  esac
+done
 
-echo
-echo "✓ Commit ve tag oluşturuldu (v${VERSION})."
-echo "  Push etmek için:  git push && git push origin v${VERSION}"
-echo "  GitHub Release için: gh release create v${VERSION} dist/ainew-${VERSION}-linux-amd64.tar.gz* --notes-file '${NOTES_FILE}' --title \"ainew ${VERSION}\""
-echo "  (Release notu ayrıca ${NOTES_FILE} dosyasında duruyor.)"
+if [[ -x scripts/publish-github-release.sh ]]; then
+  echo
+  echo "▶ GitHub'a yayınlanıyor (scripts/publish-github-release.sh)..."
+  ./scripts/publish-github-release.sh "${PUBLISH_ARGS[@]}"
+else
+  git add VERSION "$CHANGELOG"
+  git commit -m "chore(release): v${VERSION}" || true
+  git tag "v${VERSION}" 2>/dev/null || true
+  echo
+  echo "✓ Yerel commit/tag (publish script yok)."
+  echo "  Push: git push && git push origin v${VERSION}"
+  echo "  Release: gh release create v${VERSION} dist/ainew-${VERSION}-linux-amd64.tar.gz* --notes-file '${NOTES_FILE}' --title \"ainew ${VERSION}\""
+fi

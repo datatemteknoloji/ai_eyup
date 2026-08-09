@@ -75,8 +75,15 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-COMPOSE_FILE="$INSTALL_DIR/docker-compose.prod.yml"
-[[ -f "$COMPOSE_FILE" ]] || COMPOSE_FILE="docker-compose.prod.yml"
+if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+  COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
+elif [[ -f "$INSTALL_DIR/docker-compose.prod.yml" ]]; then
+  COMPOSE_FILE="$INSTALL_DIR/docker-compose.prod.yml"
+elif [[ -f "docker-compose.yml" ]]; then
+  COMPOSE_FILE="docker-compose.yml"
+else
+  COMPOSE_FILE="docker-compose.prod.yml"
+fi
 
 DATA_DIR="$(grep '^DATA_DIR=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 [[ -z "$DATA_DIR" ]] && DATA_DIR="$INSTALL_DIR/data"

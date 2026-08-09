@@ -46,7 +46,7 @@ git clone <repo-url> ainew && cd ainew
 docker compose up -d
 
 # 3. Open the UI
-open http://localhost:3000     # default login: admin / admin123 — CHANGE THIS IMMEDIATELY, dev only
+open http://localhost:3000     # default login: admin / Kim13Sun — CHANGE THIS IMMEDIATELY, dev only
 ```
 
 ⚠️ This path uses the root `docker-compose.yml`, live-mounts backend source, and ships with a well-known

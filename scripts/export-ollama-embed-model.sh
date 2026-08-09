@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────
-# Tek bir Ollama modelini (blobs + manifest) dışa aktarır — genelde RAG
-# embedding modeli (nomic-embed-text) için kullanılır, ama herhangi bir chat
-# modeli (ör. "gpt-oss:20b") için de çalışır — dist "with-ollama" paketi ve
-# ayrı chat-model runtime release'leri için.
+# Yalnızca RAG embedding modeli (nomic-embed-text) dışa aktarır.
+# Chat LLM'leri (çok GB) dahil edilmez — dist "with-ollama" paketi için.
 #
 # Kullanım:
-#   ./scripts/export-ollama-embed-model.sh [çıktı.tar.gz] [ollama-models-dir] [model[:tag]]
-#
-# "model:tag" biçiminde tag verilmezse "latest" (yoksa dizindeki ilk tag)
-# kullanılır. Birden fazla tag'i olan modellerde (ör. "gpt-oss" -> 20b/120b)
-# YANLIŞ tag'in paketlenmemesi için tag'i EXPLICIT vermeniz önerilir.
+#   ./scripts/export-ollama-embed-model.sh [çıktı.tar.gz] [ollama-models-dir] [model]
 #
 # Varsayılanlar:
 #   çıktı  : ollama-models-nomic-embed-text.tar.gz
@@ -54,19 +48,10 @@ if [[ -z "${MODELS_DIR:-}" ]]; then
   exit 1
 fi
 
-# "gpt-oss:20b" gibi isim:tag biçimini ayır — ayrılmamış bırakılırsa (ör. "nomic-embed-text")
-# ollama manifest dizin yapısı zaten tag'i ayrı bir alt dizin olarak tutuyor (bkz. aşağıdaki
-# "latest" / ls-ile-ilk-bulunan fallback). İsim:tag ayrılmadan aynı ad altında birden fazla
-# tag varsa (örn. "gpt-oss" -> 20b VE 120b) yanlış (alfabetik ilk) tag'in paketlenmesi riski
-# vardı — bu artık isim:tag açıkça verildiğinde engelleniyor.
-MODEL_BASENAME="${MODEL_NAME%%:*}"
-MODEL_TAG_ARG=""
-[[ "$MODEL_NAME" == *:* ]] && MODEL_TAG_ARG="${MODEL_NAME#*:}"
-
-MANIFEST_DIR="${MODELS_DIR}/manifests/registry.ollama.ai/library/${MODEL_BASENAME}"
+MANIFEST_DIR="${MODELS_DIR}/manifests/registry.ollama.ai/library/${MODEL_NAME}"
 if [[ ! -d "$MANIFEST_DIR" ]]; then
   # HF tarzı path yoksa library altında ara
-  MANIFEST_DIR="$(find "${MODELS_DIR}/manifests" -type d -name "${MODEL_BASENAME}" 2>/dev/null | head -1 || true)"
+  MANIFEST_DIR="$(find "${MODELS_DIR}/manifests" -type d -name "${MODEL_NAME}" 2>/dev/null | head -1 || true)"
 fi
 if [[ -z "${MANIFEST_DIR:-}" || ! -d "$MANIFEST_DIR" ]]; then
   echo "✗ Model manifest bulunamadı: ${MODEL_NAME}" >&2
@@ -76,19 +61,9 @@ if [[ -z "${MANIFEST_DIR:-}" || ! -d "$MANIFEST_DIR" ]]; then
 fi
 
 MANIFEST_FILE=""
-if [[ -n "$MODEL_TAG_ARG" ]]; then
-  if [[ -f "${MANIFEST_DIR}/${MODEL_TAG_ARG}" ]]; then
-    MANIFEST_FILE="${MANIFEST_DIR}/${MODEL_TAG_ARG}"
-  else
-    echo "✗ Tag bulunamadı: ${MODEL_TAG_ARG} (dizin: $MANIFEST_DIR)" >&2
-    echo "  Mevcut tag'ler: $(ls "$MANIFEST_DIR" 2>/dev/null | tr '\n' ' ')" >&2
-    exit 1
-  fi
-else
-  for tag in latest "$(ls "$MANIFEST_DIR" 2>/dev/null | head -1)"; do
-    [[ -f "${MANIFEST_DIR}/${tag}" ]] && { MANIFEST_FILE="${MANIFEST_DIR}/${tag}"; break; }
-  done
-fi
+for tag in latest "$(ls "$MANIFEST_DIR" 2>/dev/null | head -1)"; do
+  [[ -f "${MANIFEST_DIR}/${tag}" ]] && { MANIFEST_FILE="${MANIFEST_DIR}/${tag}"; break; }
+done
 if [[ -z "$MANIFEST_FILE" ]]; then
   echo "✗ Manifest dosyası yok: $MANIFEST_DIR" >&2
   exit 1
@@ -139,11 +114,6 @@ echo "▶ Kaynak  : ${MODELS_DIR}"
 echo "▶ Model   : ${MODEL_NAME}"
 echo "▶ Çıktı   : ${OUT_FILE}"
 tar czf "$OUT_FILE" -C "${TMP}/pack" .
-# .sha256 dosyasına DAİMA sadece dosya adı (relative) yazılır — OUT_FILE mutlak
-# bir yol olarak verilirse (ör. "/tmp/x/model.tar.gz") "sha256sum $OUT_FILE" bu
-# mutlak yolu dosyaya gömer ve "sha256sum -c" başka bir dizinde/makinede
-# (ör. kurulum yapılan müşteri sunucusunda) "No such file or directory" ile
-# başarısız olur. cd + basename ile bu her zaman taşınabilir kalır.
-(cd "$(dirname "$OUT_FILE")" && sha256sum "$(basename "$OUT_FILE")" > "$(basename "$OUT_FILE").sha256")
+sha256sum "$OUT_FILE" > "${OUT_FILE}.sha256"
 du -sh "$OUT_FILE"
 echo "✔ Hazır: $OUT_FILE"
