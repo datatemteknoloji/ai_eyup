@@ -9,7 +9,8 @@ FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev || npm install
+#RUN npm ci --omit=dev || npm install
+RUN npm ci || npm install
 
 COPY . .
 RUN npm run build
@@ -24,6 +25,6 @@ RUN chown -R nginx:nginx /usr/share/nginx/html
 # nginx master process binds to port 80 (requires root); workers run as nginx user
 # via nginx.conf — this is nginx's standard security model.
 
-EXPOSE 80
+EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]

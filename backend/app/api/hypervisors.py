@@ -177,6 +177,114 @@ async def list_hypervisors(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing hypervisors: {str(e)}")
 
+
+def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
+    """Tek hypervisor için son host metrik satırları (özet)."""
+    from app.models.hypervisor_metric import HypervisorHostMetric
+    from app.models.hypervisor_inventory import HypervisorHostInventory
+    from sqlalchemy import func as sa_func
+
+    subq = (
+        db.query(
+            HypervisorHostMetric.host_name,
+            sa_func.max(HypervisorHostMetric.timestamp).label("last_ts"),
+        )
+        .filter(HypervisorHostMetric.hypervisor_id == hypervisor_id)
+        .group_by(HypervisorHostMetric.host_name)
+        .subquery()
+    )
+    rows = (
+        db.query(HypervisorHostMetric)
+        .join(
+            subq,
+            (HypervisorHostMetric.host_name == subq.c.host_name)
+            & (HypervisorHostMetric.timestamp == subq.c.last_ts),
+        )
+        .filter(HypervisorHostMetric.hypervisor_id == hypervisor_id)
+        .order_by(HypervisorHostMetric.host_name)
+        .all()
+    )
+    inv_rows = (
+        db.query(HypervisorHostInventory)
+        .filter(HypervisorHostInventory.hypervisor_id == hypervisor_id)
+        .all()
+    )
+    inv_by_ref = {i.host_ref: i for i in inv_rows}
+
+    def _inv_dict(r):
+        inv = inv_by_ref.get(r.host_ref)
+        if not inv:
+            return None
+        return {
+            "vendor": inv.vendor,
+            "model": inv.model,
+            "uuid": inv.uuid,
+            "cpu_model": inv.cpu_model,
+            "pnics": inv.pnics or [],
+            "vswitches": inv.vswitches or [],
+            "portgroups": inv.portgroups or [],
+            "vnics": inv.vnics or [],
+            "dns": inv.dns or {},
+            "last_synced_at": inv.last_synced_at.isoformat() if inv.last_synced_at else None,
+        }
+
+    return [
+        {
+            "host_name": r.host_name,
+            "host_ref": r.host_ref,
+            "last_updated": r.timestamp.isoformat(),
+            "cpu_usage_pct": r.cpu_usage_pct,
+            "cpu_usage_mhz": r.cpu_usage_mhz,
+            "cpu_total_mhz": r.cpu_total_mhz,
+            "cpu_cores": r.cpu_cores,
+            "mem_used_mb": r.mem_used_mb,
+            "mem_total_mb": r.mem_total_mb,
+            "mem_usage_pct": r.mem_usage_pct,
+            "ds_used_gb": r.ds_used_gb,
+            "ds_total_gb": r.ds_total_gb,
+            "ds_usage_pct": r.ds_usage_pct,
+            "vms_running": r.vms_running,
+            "vms_total": r.vms_total,
+            "connection_state": r.connection_state,
+            "power_state": r.power_state,
+            "maintenance_mode": r.maintenance_mode,
+            "inventory": _inv_dict(r),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/host-metrics")
+def get_all_host_metrics(db: Session = Depends(get_db)):
+    """
+    Tüm VMware hypervisor'ların ESX host metrik özetini tek yanıtta döner.
+    FE N-way /hypervisors/{id}/host-metrics yerine bunu kullanır.
+    """
+    hvs = (
+        db.query(Hypervisor)
+        .filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
+        .order_by(Hypervisor.name.asc())
+        .all()
+    )
+    flat = []
+    by_hv = []
+    for hv in hvs:
+        hosts = _latest_hosts_for_hypervisor(db, hv.id)
+        by_hv.append({
+            "hypervisor_id": hv.id,
+            "hypervisor_name": hv.name,
+            "host_count": len(hosts),
+            "hosts": hosts,
+        })
+        for h in hosts:
+            flat.append({"hvName": hv.name, "hypervisor_id": hv.id, "host": h})
+    return {
+        "hypervisor_count": len(hvs),
+        "host_count": len(flat),
+        "hypervisors": by_hv,
+        "hosts": flat,
+    }
+
 @router.post("/", response_model=HypervisorResponse, status_code=201)
 async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: Session = Depends(get_db)):
     """Yeni hypervisor ekle (yalnızca Entegrasyonlar)"""
@@ -228,6 +336,10 @@ async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: 
             connection_config.setdefault("username", hypervisor.username)
             connection_config.setdefault("password", hypervisor.password)
 
+        from app.services.hypervisor_credentials import sealed, seal_connection_secrets
+        password_val = sealed(password_val) or password_val
+        connection_config = seal_connection_secrets(connection_config)
+
         # Yeni hypervisor oluştur
         db_hypervisor = Hypervisor(
             name=hypervisor.name,
@@ -236,7 +348,7 @@ async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: 
             ip_address=ip_address_val,
             port=hypervisor.port or 443,
             username=username_val,
-            password=password_val,  # Should be encrypted in production
+            password=password_val,
             connection_config=connection_config
         )
         
@@ -318,6 +430,12 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
                 update_data["ip_address"] = api_url[:45]
             if token:
                 update_data["password"] = token
+
+        from app.services.hypervisor_credentials import sealed, seal_connection_secrets
+        if update_data.get("password"):
+            update_data["password"] = sealed(update_data["password"])
+        if "connection_config" in update_data and update_data["connection_config"]:
+            update_data["connection_config"] = seal_connection_secrets(update_data["connection_config"])
 
         for key, value in update_data.items():
             setattr(db_hypervisor, key, value)

@@ -1,0 +1,341 @@
+/* Dialog modal: body pointer-events:none — Radix Select/Dropdown portal'ları body altında.
+   Popper wrapper'a tıklanabilirlik + z-index ver (tüm Level 1 operasyon wizard'ları). */
+[data-radix-popper-content-wrapper] {
+  z-index: 110 !important;
+  pointer-events: auto !important;
+}
+[data-radix-select-content],
+[data-radix-dropdown-menu-content] {
+  pointer-events: auto !important;
+  z-index: 110 !important;
+}
+
+/* Level 1 — ainew chrome over Dropt; theme-aware (dark + light) */
+.level1-dropt-root {
+  --color-background: var(--theme-background);
+  --color-foreground: var(--theme-foreground);
+  --color-card: var(--theme-card);
+  --color-card-foreground: var(--theme-card-foreground);
+  --color-popover: var(--theme-popover);
+  --color-popover-foreground: var(--theme-popover-foreground);
+  --color-primary: var(--theme-primary);
+  --color-primary-foreground: var(--theme-primary-foreground);
+  --color-secondary: var(--theme-secondary);
+  --color-secondary-foreground: var(--theme-secondary-foreground);
+  --color-muted: var(--theme-muted);
+  --color-muted-foreground: var(--theme-muted-foreground);
+  --color-accent: var(--theme-accent);
+  --color-accent-foreground: var(--theme-accent-foreground);
+  --color-destructive: var(--theme-destructive);
+  --color-destructive-foreground: var(--theme-destructive-foreground);
+  --color-border: var(--theme-border);
+  --color-input: var(--theme-input);
+  --color-ring: var(--theme-ring);
+
+  color: var(--theme-foreground);
+  background: transparent;
+  min-height: 100%;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+.level1-dropt-root.level1-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.level1-page-body {
+  min-height: 0;
+}
+
+.level1-page-header h1 {
+  color: var(--text-primary);
+}
+.level1-page-header p {
+  color: var(--text-secondary);
+}
+
+/* Surfaces */
+.level1-dropt-root .rounded-xl,
+.level1-dropt-root .rounded-lg {
+  border-color: var(--border);
+}
+
+.level1-dropt-root table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.level1-dropt-root thead th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.level1-dropt-root tbody td {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border-dim);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.level1-dropt-root tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Inputs — follow theme tokens (never hardcode dark) */
+.level1-dropt-root input:not([type="checkbox"]):not([type="radio"]),
+.level1-dropt-root textarea,
+.level1-dropt-root select {
+  background-color: var(--bg-deep) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-strong) !important;
+  border-radius: 0.5rem !important;
+}
+
+.level1-dropt-root input:focus,
+.level1-dropt-root textarea:focus,
+.level1-dropt-root select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+  border-color: var(--accent) !important;
+}
+
+.level1-dropt-root button[class*="bg-primary"],
+.level1-dropt-root [data-slot="button"].bg-primary {
+  background-color: var(--accent) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+/* Ops wizard */
+.level1-dropt-root .level1-ops-wizard {
+  background: var(--theme-card);
+  color: var(--theme-foreground);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  box-shadow: none;
+}
+
+.level1-dropt-root .level1-ops-wizard label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+.level1-dropt-root .level1-ops-wizard h2,
+.level1-dropt-root .level1-ops-wizard h3 {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.level1-dropt-root .level1-ops-wizard input,
+.level1-dropt-root .level1-ops-wizard textarea,
+.level1-dropt-root .level1-ops-wizard select {
+  background-color: var(--bg-deep);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.ops-wizard-embed > div > h2:first-child {
+  display: none;
+}
+.ops-wizard-embed > div > p:nth-child(2) {
+  margin-top: 0;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+/* —— Server console (Level 1) —— */
+.l1-server-console {
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+.l1-op-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+.l1-op-tile:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+.l1-op-tile:active {
+  transform: scale(0.98);
+}
+.l1-op-tile__icon {
+  display: grid;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  flex-shrink: 0;
+  border-radius: 0.45rem;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.l1-op-tile__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.l1-op-tile--accent {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+}
+.l1-op-tile--accent .l1-op-tile__icon {
+  background: var(--accent);
+  color: #fff;
+}
+.l1-op-tile--danger {
+  border-color: color-mix(in srgb, var(--error) 30%, var(--border));
+}
+.l1-op-tile--danger .l1-op-tile__icon {
+  background: var(--error-bg);
+  color: var(--error);
+}
+.l1-op-tile--info .l1-op-tile__icon {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+/* Wizard dialog + form surfaces (portal — :root tokens) */
+[data-console-wizard].l1-wizard-dialog,
+.l1-wizard-dialog {
+  border-radius: 0.9rem !important;
+}
+[data-console-wizard] .l1-wizard-body .rounded-xl,
+[data-console-wizard] .l1-wizard-body .rounded-lg,
+.l1-wizard-body .rounded-xl,
+.l1-wizard-body .rounded-lg {
+  border-color: var(--border) !important;
+}
+[data-console-wizard] label,
+.ops-wizard-embed label,
+.l1-wizard-body label {
+  color: var(--text-secondary) !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+[data-console-wizard] input:not([type="checkbox"]):not([type="radio"]),
+[data-console-wizard] textarea,
+[data-console-wizard] select,
+.ops-wizard-embed input:not([type="checkbox"]):not([type="radio"]),
+.ops-wizard-embed textarea,
+.ops-wizard-embed select {
+  background-color: var(--bg-deep) !important;
+  border-color: var(--border-strong) !important;
+  border-radius: 0.5rem !important;
+  color: var(--text-primary) !important;
+  min-height: 2.15rem;
+}
+[data-console-wizard] button[class*="bg-primary"],
+.ops-wizard-embed button[class*="bg-primary"],
+.l1-wizard-body button[class*="bg-primary"] {
+  background-color: var(--accent) !important;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+.level1-ops-wizard .rounded-xl,
+.level1-ops-wizard .rounded-lg {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+.level1-ops-wizard label {
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.ops-wizard-embed ol,
+.level1-ops-wizard ol {
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.ops-wizard-embed ol li,
+.level1-ops-wizard ol li {
+  color: var(--text-primary);
+  margin-bottom: 0.65rem;
+}
+
+/* Row selection / hover */
+.level1-dropt-root tr[data-state="selected"] {
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+.level1-dropt-root tr[data-state="selected"] td {
+  color: var(--text-primary);
+}
+.level1-dropt-root tbody tr.ops-row {
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.level1-dropt-root tbody tr.ops-row:hover {
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--accent) 75%, transparent);
+}
+.level1-dropt-root tbody tr.ops-row:hover td {
+  color: var(--text-primary);
+}
+
+/* Strip Dropt page padding when shelled */
+.level1-page-body > .px-6 {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.level1-page-body > .px-6.py-6,
+.level1-page-body > .py-6 {
+  padding-top: 0 !important;
+}
+
+.level1-page-body.level1-has-shell-title > div > h2:first-child {
+  display: none;
+}
+.level1-page-body.level1-has-shell-title > div > p:nth-child(2) {
+  display: none;
+}
+
+.level1-dropt-root [class*="badge"] {
+  border-radius: 0.375rem !important;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Light: muted Dropt tokens that stay too pale */
+html[data-theme="light"] .level1-dropt-root {
+  color: var(--text-primary);
+}
+html[data-theme="light"] .level1-dropt-root .text-muted-foreground,
+html[data-theme="light"] .level1-dropt-root [class*="text-muted"] {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="light"] .level1-dropt-root input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme="light"] .level1-dropt-root textarea,
+html[data-theme="light"] .level1-dropt-root select {
+  background-color: #ffffff !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-strong) !important;
+}

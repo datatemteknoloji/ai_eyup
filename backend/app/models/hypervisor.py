@@ -1,7 +1,7 @@
 """
 Hypervisor Model
 """
-from sqlalchemy import Column, Integer, String, JSON, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Text, JSON, DateTime, Enum
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
@@ -25,7 +25,7 @@ class Hypervisor(Base):
     ip_address = Column(String(45), nullable=False, index=True)
     port = Column(Integer, default=443)
     username = Column(String(255))
-    password = Column(String(255))
+    password = Column(Text)  # Fernet ciphertext — Text avoids truncation
     connection_config = Column(JSON, nullable=False, default=dict)
     status = Column(String(50))
     last_sync = Column(DateTime(timezone=True))

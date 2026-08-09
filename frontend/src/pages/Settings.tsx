@@ -5,6 +5,8 @@ import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
 import { useBranding } from '../branding/BrandingContext'
 import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
+import { PlatformStatusTab } from '../components/PlatformStatusTab'
+import SecuritySettings from './SecuritySettings'
 
 interface Credential {
   id: number
@@ -226,6 +228,49 @@ const RagTab: React.FC = () => {
     onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); alert(`"${d.title}" silindi (${d.deleted_chunks} chunk).`) },
     onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası')
   })
+  type RunbookCandidateRow = {
+    id: number
+    incident_id: number | null
+    title: string
+    content: string
+    status: string
+    created_at: string | null
+  }
+  const { data: candidatesData, refetch: refetchCandidates } = useQuery<{ success: boolean; candidates: RunbookCandidateRow[] }>({
+    queryKey: ['rag-runbook-candidates'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/candidates?status=pending`)
+      if (!res.ok) return { success: false, candidates: [] }
+      return res.json()
+    },
+    refetchInterval: 60000,
+  })
+  const approveCandidate = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/candidates/${id}/approve`, { method: 'POST' })
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Onay başarısız')
+      return r
+    },
+    onSuccess: (d) => {
+      refetchCandidates()
+      refetchRunbookDocs()
+      refetchStatus()
+      alert(`Runbook'a eklendi: ${d.chunks_added ?? 0} chunk`)
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+  })
+  const rejectCandidate = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/candidates/${id}/reject`, { method: 'POST' })
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Red başarısız')
+      return r
+    },
+    onSuccess: () => refetchCandidates(),
+    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+  })
+  const candidates = candidatesData?.candidates ?? []
   const runbookDocs = runbookDocsData?.documents ?? []
   const src = status?.sources
   return (
@@ -309,6 +354,54 @@ const RagTab: React.FC = () => {
                 >
                   Sil
                 </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Runbook adayları (resolved incident → admin onayı) */}
+      <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-amber-500/25">
+        <h3 className="text-base font-semibold text-white mb-1">Runbook Adayları</h3>
+        <p className="text-slate-500 text-xs mb-3">
+          Çözülen incident&apos;lardan otomatik oluşur. Onaylanınca Chroma runbook&apos;a yazılır; reddedilirse yazılmaz.
+        </p>
+        {candidates.length === 0 ? (
+          <p className="text-slate-500 text-sm">Bekleyen aday yok.</p>
+        ) : (
+          <ul className="space-y-3">
+            {candidates.map((c) => (
+              <li key={c.id} className="p-3 rounded-lg bg-cyber-card/50 border border-white/[0.06]">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white text-sm font-medium truncate">{c.title}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      Incident #{c.incident_id ?? '—'} · {c.created_at ? new Date(c.created_at).toLocaleString('tr-TR') : ''}
+                    </div>
+                    <pre className="mt-2 text-[11px] text-slate-400 whitespace-pre-wrap max-h-28 overflow-y-auto font-mono">
+                      {(c.content || '').slice(0, 600)}
+                      {(c.content || '').length > 600 ? '…' : ''}
+                    </pre>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={approveCandidate.isPending || rejectCandidate.isPending}
+                      onClick={() => approveCandidate.mutate(c.id)}
+                      className="px-3 py-1.5 text-xs bg-emerald-600/80 hover:bg-emerald-500 text-white rounded-lg disabled:opacity-50"
+                    >
+                      Onayla
+                    </button>
+                    <button
+                      type="button"
+                      disabled={approveCandidate.isPending || rejectCandidate.isPending}
+                      onClick={() => rejectCandidate.mutate(c.id)}
+                      className="px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-slate-300 rounded-lg border border-white/[0.08] disabled:opacity-50"
+                    >
+                      Reddet
+                    </button>
+                  </div>
+                </div>
               </li>
             ))}
           </ul>
@@ -582,10 +675,210 @@ const ConfigBackupTab: React.FC = () => {
       )}
 
       <ul className="mt-6 text-xs text-slate-500 space-y-1 list-disc list-inside">
-        <li>Sunucu / hypervisor envanteri bu yedekte yoktur (ayrı DB dump veya yeniden keşif).</li>
+        <li>Sunucu / hypervisor / OpenShift envanteri bu JSON yedekte yoktur — aşağıdaki «Veritabanı yedeği»ni kullanın.</li>
         <li>Hedefte aynı kullanıcı adları yoksa modül atamaları atlanır (uyarı gösterilir).</li>
         <li>Platform paket güncellemesi için «Platform Güncelleme» sekmesini kullanın.</li>
+        <li>Tam DB taşıma + SECRET_KEY: hedefte aynı SECRET_KEY gerekir (docs/migration-and-secrets.md).</li>
       </ul>
+
+      <div className="my-8 border-t border-white/[0.08]" />
+
+      <DbBackupSection />
+    </div>
+  )
+}
+
+/** Tam PostgreSQL dump (ainew + Dropt) — Settings üzerinden taşıma */
+const DbBackupSection: React.FC = () => {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [includeDropt, setIncludeDropt] = useState(true)
+  const [restoreAinew, setRestoreAinew] = useState(true)
+  const [restoreDropt, setRestoreDropt] = useState(true)
+  const [requireFp, setRequireFp] = useState(true)
+  const [confirm, setConfirm] = useState('')
+  const [preview, setPreview] = useState<any>(null)
+  const fileRef = React.useRef<HTMLInputElement>(null)
+
+  const { data: cap } = useQuery({
+    queryKey: ['db-backup-capability'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/capability`)
+      if (!r.ok) throw new Error('Yetenek bilgisi alınamadı')
+      return r.json()
+    },
+  })
+
+  const downloadDb = async () => {
+    setBusy(true); setErr(null); setMsg(null)
+    try {
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/export?include_dropt=${includeDropt ? 'true' : 'false'}`)
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const cd = r.headers.get('Content-Disposition') || ''
+      const m = /filename="?([^";]+)"?/i.exec(cd)
+      const name = m?.[1] || `ainew-db-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(url)
+      setMsg(`Veritabanı yedeği indirildi (${name}).`)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Yedek alınamadı')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const validateFile = async (file: File) => {
+    setBusy(true); setErr(null); setMsg(null); setPreview(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/validate`, { method: 'POST', body: fd })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      setPreview(body)
+      setMsg('Yedek doğrulandı — geri yüklemeden önce onay metnini yazın.')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Doğrulama başarısız')
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const runRestore = async (file: File) => {
+    setBusy(true); setErr(null); setMsg(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('confirm', confirm)
+      fd.append('restore_ainew', restoreAinew ? 'true' : 'false')
+      fd.append('restore_dropt', restoreDropt ? 'true' : 'false')
+      fd.append('require_fingerprint_match', requireFp ? 'true' : 'false')
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/restore`, { method: 'POST', body: fd })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      setMsg(body.message || 'Geri yükleme tamam')
+      setPreview(null)
+      setConfirm('')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Geri yükleme başarısız')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const phrase = cap?.restore_confirm_phrase || 'VERITABANI GERI YUKLE'
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-white mb-2">Veritabanı yedeği (tam taşıma)</h2>
+      <p className="text-sm text-slate-400 mb-4 max-w-3xl">
+        Bağımsız kurulumda kayıtların (sunucular, vCenter, OpenShift, audit, ayarlar, Level 1 Dropt DB …)
+        geri gelmesi için PostgreSQL dump. Settings → bu dosyayı indirin → yeni ortamda aynı yerden yükleyin.
+        Disk dosyaları (Chroma, RPM mirror, uploads) dahil değildir.
+      </p>
+
+      {cap && !cap.available && (
+        <div className="mb-4 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Yedek şu an kullanılamıyor: {(cap.reasons || []).join(' · ') || 'bilinmeyen neden'}
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4 mb-4">
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
+          <h3 className="text-sm font-semibold text-cyan-300 mb-3">Dışa aktar</h3>
+          <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
+            <input type="checkbox" checked={includeDropt} onChange={e => setIncludeDropt(e.target.checked)}
+              className="rounded border-slate-600" disabled={!cap?.dropt_db_present} />
+            Level 1 (Dropt) veritabanını dahil et
+            {!cap?.dropt_db_present && <span className="text-slate-600">(container yok)</span>}
+          </label>
+          <button type="button" disabled={busy || !cap?.available} onClick={downloadDb}
+            className="px-4 py-2 rounded-lg text-sm bg-gradient-to-r from-blue-600 to-blue-700 text-white disabled:opacity-50">
+            {busy ? 'Hazırlanıyor…' : 'Zip indir'}
+          </button>
+          <p className="text-[11px] text-slate-500 mt-3">
+            Parmak izi: <code className="text-slate-400 font-mono">{cap?.secret_key_fingerprint || '—'}</code>
+            {' · '}sürüm {cap?.app_version || '—'}
+          </p>
+        </div>
+
+        <div className="bg-cyber-deep/50 rounded-[10px] border border-rose-500/20 p-5">
+          <h3 className="text-sm font-semibold text-rose-300 mb-2">İçe aktar (üzerine yazar)</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            Hedef DB&apos;deki mevcut veri silinir/yenilenir. Aynı <code className="text-slate-400">SECRET_KEY</code> şart
+            (şifreli alanlar). Önce doğrulayın, sonra onay metnini yazıp yükleyin.
+          </p>
+          <div className="flex flex-wrap gap-3 mb-3 text-xs text-slate-400">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={restoreAinew} onChange={e => setRestoreAinew(e.target.checked)} /> ainew DB
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={restoreDropt} onChange={e => setRestoreDropt(e.target.checked)} /> Dropt DB
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={requireFp} onChange={e => setRequireFp(e.target.checked)} /> SECRET_KEY eşleşmesi zorunlu
+            </label>
+          </div>
+          <input
+            value={confirm}
+            onChange={e => setConfirm(e.target.value)}
+            placeholder={phrase}
+            className="w-full mb-3 px-3 py-2 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white font-mono"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={busy}
+              onClick={() => fileRef.current?.click()}
+              className="px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 disabled:opacity-50">
+              Dosya seç & doğrula
+            </button>
+            <label className={`px-3 py-2 rounded-lg text-sm border cursor-pointer ${
+              confirm === phrase && !busy
+                ? 'bg-rose-600/30 border-rose-500/40 text-rose-100'
+                : 'opacity-40 pointer-events-none border-white/[0.06] text-slate-500'
+            }`}>
+              Geri yükle
+              <input type="file" accept=".zip,application/zip" className="hidden" disabled={busy || confirm !== phrase}
+                onChange={e => {
+                  const f = e.target.files?.[0]
+                  if (f) runRestore(f)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          </div>
+          <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0]
+              if (f) validateFile(f)
+            }}
+          />
+        </div>
+      </div>
+
+      {preview && (
+        <div className="mb-3 rounded-[10px] border border-white/[0.08] bg-cyber-deep/40 p-4 text-xs text-slate-300 space-y-1">
+          <div>Kaynak sürüm: <span className="text-white">{preview.manifest?.app_version}</span> · {preview.manifest?.exported_at}</div>
+          <div>SECRET_KEY: {preview.fingerprint_match
+            ? <span className="text-emerald-400">eşleşiyor</span>
+            : <span className="text-amber-300">farklı (risk)</span>}
+            {' '}({preview.manifest?.secret_key_fingerprint} → {preview.current_fingerprint})
+          </div>
+          <div>ainew: {(preview.ainew_size_bytes / 1024).toFixed(1)} KB · Dropt: {preview.has_dropt ? `${(preview.dropt_size_bytes / 1024).toFixed(1)} KB` : 'yok'}</div>
+        </div>
+      )}
+
+      {msg && <div className="mb-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-sm text-emerald-100">{msg}</div>}
+      {err && <div className="mb-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100">{err}</div>}
     </div>
   )
 }
@@ -1123,6 +1416,8 @@ const Settings: React.FC = () => {
   const [remoteLlmSaved, setRemoteLlmSaved] = useState(false)
   const [remoteLlmError, setRemoteLlmError] = useState('')
   const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
+  const [remoteLlmTesting, setRemoteLlmTesting] = useState(false)
+  const [remoteLlmTestMsg, setRemoteLlmTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const [promForm, setPromForm] = useState({
     prometheus_url: '',
@@ -1150,6 +1445,7 @@ const Settings: React.FC = () => {
   }, [generalSettings?.remote_llm])
   const saveRemoteLlm = async () => {
     setRemoteLlmError('')
+    setRemoteLlmTestMsg(null)
     setRemoteLlmSaving(true)
     try {
       const res = await fetch(`${API_BASE_URL}/settings/remote-llm`, {
@@ -1175,6 +1471,35 @@ const Settings: React.FC = () => {
       setRemoteLlmError(e.message || 'Kaydedilemedi')
     } finally {
       setRemoteLlmSaving(false)
+    }
+  }
+
+  const testRemoteLlm = async () => {
+    setRemoteLlmError('')
+    setRemoteLlmTestMsg(null)
+    setRemoteLlmTesting(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/remote-llm/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: remoteLlmForm.url.trim(),
+          model: remoteLlmForm.model.trim(),
+          api_key: remoteLlmForm.api_key.trim() || undefined,
+          verify_ssl: remoteLlmForm.verify_ssl,
+          ca_bundle: remoteLlmForm.ca_bundle.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const detail = typeof data.detail === 'string' ? data.detail : 'Test başarısız'
+        throw new Error(detail)
+      }
+      setRemoteLlmTestMsg({ ok: Boolean(data.ok), text: data.message || (data.ok ? 'OK' : 'Başarısız') })
+    } catch (e: any) {
+      setRemoteLlmTestMsg({ ok: false, text: e.message || 'Test başarısız' })
+    } finally {
+      setRemoteLlmTesting(false)
     }
   }
 
@@ -1253,11 +1578,10 @@ const Settings: React.FC = () => {
   })
 
   const { data: servers = [] } = useQuery<Server[]>({
-    queryKey: ['servers'],
+    queryKey: ['servers', 'settings-picker'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/servers/`)
-      if (!res.ok) return []
-      return res.json()
+      const { fetchServersForPicker } = await import('../api/servers')
+      return fetchServersForPicker<Server>({ page_size: 200, maxPages: 3 })
     }
   })
   const linuxServers = React.useMemo(() => servers.filter(s => !isWindowsServer(s)), [servers])
@@ -1545,9 +1869,11 @@ const Settings: React.FC = () => {
     { id: 'branding', name: 'Kurumsal Kimlik' },
     { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
     { id: 'monitoring', name: 'Monitoring' },
+    { id: 'security', name: 'Güvenlik' },
     { id: 'advanced', name: 'Gelişmiş Ayarlar' },
     { id: 'about', name: 'Hakkında' },
     ...(isAdmin ? [
+      { id: 'platform-status', name: 'Platform Durumu' },
       { id: 'config-backup', name: 'Yedek / Taşıma' },
       { id: 'platform-update', name: 'Platform Güncelleme' },
       { id: 'danger', name: 'Tehlikeli Bölge' },
@@ -1559,7 +1885,7 @@ const Settings: React.FC = () => {
       {/* Sol Menu */}
       <div className="w-64 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden flex-shrink-0">
         <div className="p-4 border-b border-white/[0.06]">
-          <h2 className="text-lg font-semibold text-white">Ayarlar</h2>
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Ayarlar</h2>
         </div>
         <nav className="p-3">
           {tabs.map(tab => (
@@ -1567,7 +1893,7 @@ const Settings: React.FC = () => {
               className={`w-full flex items-center px-4 py-2.5 rounded-lg text-left transition-all text-sm ${
                 activeTab === tab.id
                   ? (tab.id === 'danger' ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-blue-600/20 text-blue-400 border border-blue-500/30')
-                  : (tab.id === 'danger' ? 'text-red-400/70 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-white hover:bg-white/[0.06]/50')
+                  : (tab.id === 'danger' ? 'text-red-400/70 hover:text-red-400 hover:bg-red-500/10' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]')
               }`}>
               <span className="font-medium">{tab.name}</span>
             </button>
@@ -1882,15 +2208,26 @@ const Settings: React.FC = () => {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3 mt-4">
+                    <div className="flex flex-wrap items-center gap-3 mt-4">
+                      <button
+                        onClick={testRemoteLlm}
+                        disabled={remoteLlmTesting || remoteLlmSaving || !remoteLlmForm.url.trim() || !remoteLlmForm.model.trim()}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors border border-slate-500/50">
+                        {remoteLlmTesting ? 'Test ediliyor…' : 'Bağlantıyı test et'}
+                      </button>
                       <button
                         onClick={saveRemoteLlm}
-                        disabled={remoteLlmSaving}
+                        disabled={remoteLlmSaving || remoteLlmTesting}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
                         {remoteLlmSaving ? 'Kaydediliyor...' : 'Kaydet'}
                       </button>
                       {remoteLlmSaved && <span className="text-green-400 text-sm">Kaydedildi</span>}
                       {remoteLlmError && <span className="text-red-400 text-sm">{remoteLlmError}</span>}
+                      {remoteLlmTestMsg && (
+                        <span className={`text-sm ${remoteLlmTestMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                          {remoteLlmTestMsg.text}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2424,12 +2761,21 @@ const Settings: React.FC = () => {
             </div>
           )}
 
+          {/* ═══ Uygulama geneli Güvenlik ═══ */}
+          {activeTab === 'security' && (
+            <SecuritySettings />
+          )}
+
           {/* ═══ Gelişmiş Ayarlar ═══ */}
           {activeTab === 'advanced' && (
             <AdvancedSettingsTab />
           )}
 
-          {/* ═══ Platform Update ═══ */}
+          {/* ═══ Platform Durumu / Yedek / Update ═══ */}
+          {activeTab === 'platform-status' && isAdmin && (
+            <PlatformStatusTab />
+          )}
+
           {activeTab === 'config-backup' && isAdmin && (
             <ConfigBackupTab />
           )}

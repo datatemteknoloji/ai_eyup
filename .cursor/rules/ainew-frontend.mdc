@@ -1,0 +1,42 @@
+---
+description: Frontend React / TypeScript conventions for ainew
+globs: frontend/**/*.{ts,tsx,css}
+alwaysApply: false
+---
+
+# Frontend conventions
+
+## Stack
+
+React 18 + Vite + TypeScript + Tailwind + TanStack Query + react-router-dom v6.
+
+## Yapı
+
+- Sayfalar: `src/pages/`; paylaşılan: `src/components/`
+- Auth: `src/auth/AuthContext` (`user`, `hasModule`, role)
+- Marka: `src/branding/BrandingContext` + `/api/v1/public`
+- API: `src/config/api.ts` → same-origin `/api/v1` (nginx proxy)
+
+## Routing / RBAC
+
+- `RequireAuth`, `RequireAdmin`, `RequireModule`, `RequireAnyModule`
+- Platform AIOps: `RequirePlatformAiops` (`linux` | `virt` | `windows` | `exadata` | `openshift`)
+- Terminal `/terminal/:serverId` Layout'suz; login Layout'suz
+
+## UI (DESIGN.md)
+
+- Dark theme: slate/blue surfaces; **mor/violet yok** — accent blue-600
+- Fontlar: DM Sans + DM Mono (IP, metrik, kernel)
+- Yoğun admin paneli; cyber/neon glow yok
+- Query defaults: staleTime 30s, refetchOnWindowFocus false
+
+## Pattern
+
+- Platform sayfaları: `PlatformAiopsPages`, `PlatformDashboardPages`, `PlatformInfraReportsPages`
+- Chat markdown: `chatMarkdown.tsx`, `nlChatUi.tsx`
+- Hata: `ErrorBoundary` ile sar
+
+## Yapma
+
+- API'ye doğrudan `:8000` hardcode etme (proxy kullan)
+- DESIGN.md'ye aykırı purple/neon/emoji UI ekleme

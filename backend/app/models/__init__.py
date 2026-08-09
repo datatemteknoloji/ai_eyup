@@ -19,10 +19,14 @@ from app.models.system_update import SystemUpdatePlan, SystemUpdateJob
 from app.models.vm_snapshot import VMSnapshot
 from app.models.agent_action import AgentAction
 from app.models.user import User
+from app.models.identity import IdentityConfig
+from app.models.security import UserSession, UserMfa
 from app.models.audit_log import AuditLog
 from app.models.workflow_run import WorkflowRun
 from app.models.module import Module, UserModule
 from app.models.learned_fact import LearnedFact
+from app.models.assistant_playbook import AssistantPlaybook
+from app.models.runbook_candidate import RunbookCandidate
 from app.models.discovered_application import DiscoveredApplication
 from app.models.linux_inventory import (
     LinuxInventory, FilesystemMetric, ServiceStatus,
@@ -42,9 +46,11 @@ __all__ = [
     "SystemUpdatePlan", "SystemUpdateJob",
     "VMSnapshot",
     "AgentAction",
-    "User", "AuditLog", "WorkflowRun",
+    "User", "IdentityConfig", "UserSession", "UserMfa", "AuditLog", "WorkflowRun",
     "Module", "UserModule",
     "LearnedFact",
+    "AssistantPlaybook",
+    "RunbookCandidate",
     "DiscoveredApplication",
     "LinuxInventory", "FilesystemMetric", "ServiceStatus",
     "PackageInventory", "OpenPort", "NlqQueryAudit",

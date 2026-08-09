@@ -200,9 +200,9 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "env": "METRIC_SYNC_INTERVAL_SEC",
     },
     "inventory_sync_interval_minutes": {
-        "default": 5, "type": "int", "min": 1, "max": 120,
+        "default": 30, "type": "int", "min": 1, "max": 120,
         "group": "background", "label": "Envanter sync aralığı (dk)",
-        "help": "Harici/UCMDB envanter senkronu (mevcut ayar anahtarı).",
+        "help": "Hypervisor VM envanteri + opsiyonel uCMDB senkron aralığı (full sync).",
         "env": "INVENTORY_SYNC_INTERVAL_MINUTES",
     },
     "esx_metric_interval_sec": {
@@ -331,47 +331,84 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "unified_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
         "group": "unified_chat", "label": "Unified Chat agentic mod",
-        "help": "Açıkken model, sabit context yerine gerekirse kendi karar verip READ_ONLY "
-                "SSH tanı komutları / canlı vCenter-OpenShift sorguları çağırabilir. Sorun "
-                "yaşanırsa kapatın; sistem otomatik olarak eski sabit-context akışına döner.",
+        "help": "Açıkken varsayılan yol agentic-first'tir (sabit collect ile XOR). "
+                "Derin analiz veya chat_force_collect_and_agentic ikisini birlikte açar. "
+                "Kapalıysa yalnızca sabit Linux/Windows collect.",
         "env": "UNIFIED_CHAT_AGENTIC_MODE",
     },
     "unified_chat_max_tool_steps": {
-        "default": 6, "type": "int", "min": 1, "max": 12,
+        "default": 4, "type": "int", "min": 1, "max": 12,
         "group": "unified_chat", "label": "Unified Chat maks. araç adımı",
         "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla "
-                "araç (tool) sayısı.",
+                "araç (tool) sayısı. Dalga 2 varsayılanı 4 (TTFT).",
         "env": "UNIFIED_CHAT_MAX_TOOL_STEPS",
+    },
+    "unified_chat_planning_max_tool_steps": {
+        "default": 2, "type": "int", "min": 1, "max": 6,
+        "group": "unified_chat", "label": "Migrasyon/planlama maks. araç adımı",
+        "help": "vCenter↔OpenShift taşıma / kapasite / kaynak planı sorularında agentic "
+                "üst sınırı (daha düşük = daha hızlı TTFT). Başarılı 1–2 tool sonrası "
+                "döngü erken biter.",
+        "env": "UNIFIED_CHAT_PLANNING_MAX_TOOL_STEPS",
+    },
+    "chat_model_fast": {
+        "default": "", "type": "str", "min": 0, "max": 128,
+        "group": "unified_chat", "label": "Hızlı model (knowledge / simple)",
+        "help": "Unified'da knowledge veya simple karmaşıklıkta kullanılır. Boşsa "
+                "kullanıcı/aktif model (regresyonsuz). Örn. llama3.2:3b, mistral:latest.",
+        "env": "CHAT_MODEL_FAST",
+    },
+    "chat_model_strong": {
+        "default": "", "type": "str", "min": 0, "max": 128,
+        "group": "unified_chat", "label": "Güçlü model (live / planning)",
+        "help": "Unified live/planning yolunda, kullanıcı model seçmediyse kullanılır. "
+                "Boşsa request.model veya sistem aktif modeli.",
+        "env": "CHAT_MODEL_STRONG",
     },
     # ── Linux Chat (agentic tool-calling) ────────────────────────────
     "linux_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
         "group": "linux_chat", "label": "Linux Chat agentic mod",
-        "help": "Açıkken model, sabit SSH taramasıyla yetinmeyip gerekirse kendi karar verip "
-                "ek READ_ONLY SSH tanı komutları çağırabilir (aynı mekanizma Unified Chat'te "
-                "de kullanılıyor). Sorun yaşanırsa kapatın; sistem otomatik olarak eski "
-                "sabit-context akışına döner.",
+        "help": "Açıkken varsayılan yol agentic-first'tir (sabit SSH collect ile XOR — "
+                "ikisi birden yalnızca derin analiz veya chat_force_collect_and_agentic). "
+                "Kapalıysa yalnızca sabit collect kullanılır.",
         "env": "LINUX_CHAT_AGENTIC_MODE",
     },
     "linux_chat_max_tool_steps": {
-        "default": 6, "type": "int", "min": 1, "max": 12,
+        "default": 4, "type": "int", "min": 1, "max": 12,
         "group": "linux_chat", "label": "Linux Chat maks. araç adımı",
         "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla "
-                "araç (tool) sayısı.",
+                "araç (tool) sayısı. Dalga 2 varsayılanı 4 (TTFT).",
         "env": "LINUX_CHAT_MAX_TOOL_STEPS",
+    },
+    "chat_ssh_fleet_cap": {
+        "default": 64, "type": "int", "min": 1, "max": 512,
+        "group": "linux_chat", "label": "Chat filo canlı tarama üst sınırı",
+        "help": "Linux/Windows/Unified sohbette eşzamanlı SSH/WinRM hedef üst sınırı. "
+                "Seçim yokken varsayılan olarak filo taranmaz; 'filo/karşılaştır/tüm sunucular' "
+                "denirse bu cap kadar örneklem alınır.",
+        "env": "CHAT_SSH_FLEET_CAP",
+    },
+    "chat_force_collect_and_agentic": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "linux_chat", "label": "Collect + agentic birlikte (ağır yol)",
+        "help": "Açıksa Dalga 2 XOR iptal: sabit collect ve agentic aynı turda çalışır. "
+                "Derin analiz kelimeleri (vmstat/iostat/derin analiz) zaten ikisini açar.",
+        "env": "CHAT_FORCE_COLLECT_AND_AGENTIC",
     },
     # ── Windows Chat (agentic tool-calling) ──────────────────────────
     "windows_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
         "group": "windows_chat", "label": "Windows Chat agentic mod",
-        "help": "Açıkken model, sabit WinRM taramasıyla yetinmeyip gerekirse READ_ONLY "
-                "WinRM/PowerShell araçları çağırabilir.",
+        "help": "Açıkken varsayılan yol agentic-first (WinRM collect ile XOR). "
+                "Kapalıysa yalnızca sabit WinRM collect.",
         "env": "WINDOWS_CHAT_AGENTIC_MODE",
     },
     "windows_chat_max_tool_steps": {
-        "default": 6, "type": "int", "min": 1, "max": 12,
+        "default": 4, "type": "int", "min": 1, "max": 12,
         "group": "windows_chat", "label": "Windows Chat maks. araç adımı",
-        "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla araç sayısı.",
+        "help": "Agentic modda bir yanıt üretilmeden önce art arda çağrılabilecek en fazla "
+                "araç sayısı. Dalga 2 varsayılanı 4 (TTFT).",
         "env": "WINDOWS_CHAT_MAX_TOOL_STEPS",
     },
     # ── Virt Chat (agentic live tools beside hypervisor_intelligence) ─
@@ -424,6 +461,25 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Frontend nginx /api/ proxy_read_timeout. Değişiklik paket rebuild veya nginx conf güncellemesiyle yansır; uzun SSH toplu işler için 1800 önerilir.",
         "env": "NGINX_PROXY_READ_TIMEOUT_SEC",
     },
+    # ── Kısa TTL API önbellekleri (Redis) ───────────────────────────
+    "ocp_overview_cache_ttl_sec": {
+        "default": 30, "type": "int", "min": 5, "max": 300,
+        "group": "api_cache", "label": "OpenShift overview cache TTL (sn)",
+        "help": "GET /openshift/clusters/{id}/overview Redis TTL. Tekrarlayan dashboard açılışlarını hızlandırır; 0 Redis’i kullanmaz (fail-open zaten var).",
+        "env": "OCP_OVERVIEW_CACHE_TTL_SEC",
+    },
+    "ops_summary_cache_ttl_sec": {
+        "default": 45, "type": "int", "min": 5, "max": 300,
+        "group": "api_cache", "label": "Ops summary cache TTL (sn)",
+        "help": "GET /ops-center/summary Redis TTL — navbar badge çoklu platform çağrıları için.",
+        "env": "OPS_SUMMARY_CACHE_TTL_SEC",
+    },
+    "monitoring_servers_cache_ttl_sec": {
+        "default": 20, "type": "int", "min": 5, "max": 120,
+        "group": "api_cache", "label": "Monitoring servers cache TTL (sn)",
+        "help": "GET /monitoring/metrics/servers Redis TTL. fresh=1 ile bypass.",
+        "env": "MONITORING_SERVERS_CACHE_TTL_SEC",
+    },
 }
 
 GROUP_LABELS = {
@@ -439,6 +495,7 @@ GROUP_LABELS = {
     "linux_chat": "Linux Chat (agentic)",
     "rag_reranker": "RAG Reranker (HuggingFace)",
     "proxy": "Proxy / Nginx",
+    "api_cache": "API önbellek (Redis)",
 }
 
 _cache: Dict[str, Any] = {}

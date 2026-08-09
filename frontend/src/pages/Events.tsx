@@ -15,6 +15,7 @@ interface SystemEvent {
   id: number; server_id: number | null; server_name: string | null
   event_type: string; severity: string; source: string | null
   title: string; description: string | null; raw_data: any
+  has_raw_data?: boolean
   is_acknowledged: boolean; is_known: boolean; resolved: boolean; created_at: string | null
 }
 interface EventStats {
@@ -56,6 +57,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [expandedRaw, setExpandedRaw] = useState<number | null>(null)
+  const [rawCache, setRawCache] = useState<Record<number, any>>({})
   const [newEvent, setNewEvent] = useState({ title: '', event_type: 'custom', severity: 'info', description: '' })
   const [groupedView, setGroupedView] = useState(true)
   const [excludeKnown, setExcludeKnown] = useState(true)
@@ -117,7 +119,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       if (!res.ok) return { total: 0, events: [] }
       return res.json()
     },
-    enabled: !groupedView, refetchInterval: 20000
+    enabled: !groupedView, refetchInterval: 45_000,
   })
 
   const { data: groupedData, isLoading: groupedLoading } = useQuery<{ total: number; groups: EventGroup[] }>({
@@ -131,7 +133,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       if (!res.ok) return { total: 0, groups: [] }
       return res.json()
     },
-    enabled: groupedView, refetchInterval: 20000
+    enabled: groupedView, refetchInterval: 45_000,
   })
 
   const { data: occurrenceData } = useQuery<{ events: SystemEvent[] }>({
@@ -154,7 +156,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       if (!res.ok) return { total: 0, unresolved: 0, critical: 0, warning: 0, emergency: 0, acknowledged: 0, known: 0 }
       return res.json()
     },
-    refetchInterval: 20000
+    refetchInterval: 45_000,
   })
 
   const { data: coverage } = useQuery<{
@@ -368,8 +370,32 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     } catch { /* sessiz başarısız */ }
   }
 
+  const toggleRaw = async (e: SystemEvent) => {
+    if (expandedRaw === e.id) {
+      setExpandedRaw(null)
+      return
+    }
+    setExpandedRaw(e.id)
+    if (e.raw_data && Object.keys(e.raw_data).length) {
+      setRawCache(c => ({ ...c, [e.id]: e.raw_data }))
+      return
+    }
+    if (rawCache[e.id] !== undefined) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/events/${e.id}`)
+      if (res.ok) {
+        const full = await res.json()
+        setRawCache(c => ({ ...c, [e.id]: full.raw_data ?? null }))
+      } else {
+        setRawCache(c => ({ ...c, [e.id]: null }))
+      }
+    } catch {
+      setRawCache(c => ({ ...c, [e.id]: null }))
+    }
+  }
+
   const flatMenu = (e: SystemEvent): MenuItem[] => [
-    { label: 'Raw data', icon: '', hidden: !(e.raw_data && Object.keys(e.raw_data).length), onClick: () => setExpandedRaw(expandedRaw === e.id ? null : e.id) },
+    { label: 'Raw data', icon: '', hidden: !(e.has_raw_data || (e.raw_data && Object.keys(e.raw_data).length)), onClick: () => { void toggleRaw(e) } },
     { label: 'İncelemeye al', icon: <Eye size={13} strokeWidth={2} />, hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
     { label: 'Onayı kaldır', icon: '↩', hidden: !e.is_acknowledged || e.resolved, onClick: () => unackEvent.mutate(e.id) },
     { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
@@ -664,7 +690,9 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                           <td colSpan={8} className="px-5 py-3" style={{ background: 'var(--bg-deep)' }}>
                             <p className="text-xs mb-1 font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>Raw Data:</p>
                             <pre className="text-[11px] font-mono rounded p-3 overflow-auto max-h-40" style={{ background: '#05080f', color: NEON.green }}>
-                              {JSON.stringify(event.raw_data, null, 2)}
+                              {rawCache[event.id] === undefined
+                                ? 'Yükleniyor…'
+                                : JSON.stringify(rawCache[event.id] ?? event.raw_data, null, 2)}
                             </pre>
                           </td>
                         </tr>

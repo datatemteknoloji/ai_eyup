@@ -120,10 +120,9 @@ const Applications: React.FC = () => {
   const { data: serverOptions } = useQuery<{ id: number; name: string }[]>({
     queryKey: ['apps-server-options'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/`)
-      if (!r.ok) return []
-      const list = await r.json()
-      return (Array.isArray(list) ? list : list?.servers || []).map((s: any) => ({ id: s.id, name: s.name }))
+      const { fetchServersForPicker } = await import('../api/servers')
+      const list = await fetchServersForPicker<{ id: number; name: string }>({ page_size: 200, maxPages: 5 })
+      return list.map((s) => ({ id: s.id, name: s.name }))
     },
     staleTime: 60000,
   })

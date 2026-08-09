@@ -19,6 +19,7 @@ import { useAuth } from '../auth/AuthContext'
 interface UserItem {
   id: number; username: string; email: string | null; full_name: string | null
   role: 'admin' | 'operator' | 'viewer'; is_active: boolean
+  auth_source?: 'local' | 'ad' | 'sso'
   last_login: string | null; created_at: string | null
 }
 interface ModuleInfo {
@@ -456,12 +457,31 @@ export default function UserManager() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">Kullanıcı Yönetimi</h1>
-          <p className="text-sm text-slate-400 mt-0.5">Kullanıcı ekle · rol ve modül erişimini tek ekrandan yönet</p>
+          <p className="text-sm text-slate-400 mt-0.5">
+            Local kullanıcı ekle · AD kullanıcıları sync ile gelir · rol ve modül erişimi
+          </p>
         </div>
-        <button onClick={() => open('add')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm transition-colors">
-          <UserPlus size={15} /> Yeni Kullanıcı
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              try {
+                const r = await apiFetch('POST', '/identity/sync-ad')
+                alert(`AD sync: getirilen=${r.matched}, yeni=${r.created}, güncellenen=${r.updated}`)
+                invalidateAll()
+              } catch (e: any) {
+                alert(e.message || 'AD sync başarısız — AD ayarlarını kontrol edin')
+              }
+            }}
+            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-violet-500/40 text-violet-200 hover:bg-violet-500/10 font-medium text-sm transition-colors"
+            title="Active Directory senkronizasyonu"
+          >
+            <RefreshCw size={14} /> AD Sync
+          </button>
+          <button onClick={() => open('add')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm transition-colors">
+            <UserPlus size={15} /> Yeni Kullanıcı
+          </button>
+        </div>
       </div>
 
       {/* İstatistikler */}
@@ -553,6 +573,11 @@ export default function UserManager() {
                               <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${ROLE_BADGE[u.role]}`}>
                                 {ROLE_ICON[u.role]} {ROLE_LABEL[u.role]}
                               </span>
+                              {(u.auth_source || 'local') !== 'local' && (
+                                <span className="text-[9px] text-violet-300 border border-violet-500/40 bg-violet-500/10 px-1 py-0.5 rounded-full uppercase">
+                                  {u.auth_source}
+                                </span>
+                              )}
                               <span className="text-[10px] text-slate-600">@{u.username}</span>
                               {u.is_active
                                 ? <span className="text-[10px] text-slate-600">{relTime(u.last_login)}</span>
@@ -605,10 +630,12 @@ export default function UserManager() {
                             className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-700 transition-colors">
                             <Pencil size={13} />
                           </button>
-                          <button onClick={() => open('password', u)} title="Şifre Sıfırla"
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-slate-700 transition-colors">
-                            <KeyRound size={13} />
-                          </button>
+                          {(u.auth_source || 'local') === 'local' && (
+                            <button onClick={() => open('password', u)} title="Şifre Sıfırla"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-slate-700 transition-colors">
+                              <KeyRound size={13} />
+                            </button>
+                          )}
                           {u.id !== me?.id && (
                             <button onClick={() => open('delete', u)} title="Sil"
                               className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-700 transition-colors">

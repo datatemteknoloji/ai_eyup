@@ -16,6 +16,7 @@ from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
+from app.services.hypervisor_credentials import hv_password
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ def sync_vcenter_events_for_hypervisor(db: Session, hypervisor: Hypervisor, hour
     client = VCenterClient(
         host=hypervisor.ip_address or hypervisor.hostname,
         username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
-        password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+        password=hv_password(hypervisor),
         port=hypervisor.port or 443,
     )
     if not client.login():

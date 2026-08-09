@@ -4,7 +4,8 @@ FastAPI Main Application
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from app.core.config import settings
 from app.core.version import get_app_version
 import logging
@@ -23,8 +24,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Server Management API",
     version=get_app_version(),
-    description="Server Management System API"
+    description="Server Management System API",
+    default_response_class=ORJSONResponse,
 )
+
+# Büyük JSON yanıtları sıkıştır (Wave 5)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS middleware
 app.add_middleware(
@@ -34,6 +39,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/metrics/chat-ttft")
+def chat_ttft_metrics():
+    """Prometheus scrape — ainew_chat_{cache,collect,agentic,ttft}_seconds."""
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    from fastapi.responses import Response
+
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # Pydantic'in ham (İngilizce, errors.pydantic.dev linkli) validasyon hatalarını
@@ -213,7 +227,6 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_network_info JSONB",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_cluster VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_datastore VARCHAR(255)",
-                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_esx_host VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_hardware_version VARCHAR(50)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_last_sync TIMESTAMPTZ",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS windows_exporter_installed BOOLEAN DEFAULT FALSE",
@@ -252,6 +265,33 @@ async def startup_tasks():
             _conn.execute(_sa_text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_tiers JSONB"
             ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(16) DEFAULT 'dark'"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(20) DEFAULT 'local'"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS rejected BOOLEAN DEFAULT FALSE"
+            ))
+            _conn.execute(_sa_text(
+                "ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"
+            ))
+            try:
+                _conn.execute(_sa_text(
+                    "ALTER TABLE chat_qa_cache ALTER COLUMN context_key TYPE VARCHAR(80)"
+                ))
+            except Exception:
+                pass
+            _conn.execute(_sa_text(
+                "CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_context_key ON chat_qa_cache (context_key)"
+            ))
+            _conn.execute(_sa_text(
+                "CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_expires_at ON chat_qa_cache (expires_at)"
+            ))
             for _idx in [
                 "CREATE INDEX IF NOT EXISTS ix_linux_inventory_uptime ON linux_inventory (uptime_seconds)",
                 "CREATE INDEX IF NOT EXISTS ix_linux_inventory_boot ON linux_inventory (boot_time)",
@@ -269,9 +309,9 @@ async def startup_tasks():
                 "CREATE INDEX IF NOT EXISTS ix_system_events_created_at ON system_events (created_at)",
                 "CREATE INDEX IF NOT EXISTS ix_system_events_last_seen ON system_events (last_seen)",
                 "CREATE INDEX IF NOT EXISTS ix_system_events_server_last_seen ON system_events (server_id, last_seen)",
-                # "Bu ESX host'ta hangi VM'ler var" sorgusu (AI Q&A) VM sayısı arttıkça
-                # (10.000+ sunucu hedefi) tam tablo taramasına dönmesin.
-                "CREATE INDEX IF NOT EXISTS ix_servers_vm_esx_host ON servers (vm_esx_host)",
+                # servers.status — ONLINE/ai_ready filtreleri (anomaly, metric sync, health)
+                "CREATE INDEX IF NOT EXISTS ix_servers_status ON servers (status)",
+                "CREATE INDEX IF NOT EXISTS ix_servers_status_ai_ready ON servers (status, ai_ready)",
             ]:
                 try:
                     _conn.execute(_sa_text(_idx))
@@ -289,7 +329,7 @@ async def startup_tasks():
         _udb = _SLu()
         try:
             if _udb.query(_User).count() == 0:
-                _admin_pw = _os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
+                _admin_pw = _os.getenv("ADMIN_DEFAULT_PASSWORD", "Kim13Sun")
                 _udb.add(_User(
                     username="admin",
                     full_name="Yönetici",
@@ -311,10 +351,33 @@ async def startup_tasks():
     # kalıp altta yatan sorun çözüldükten sonra da tekrar tekrar dönebiliyordu.
     try:
         from app.core.database import SessionLocal as _SLc
-        from app.services.chat_cache_service import purge_bad_cache_entries
+        from app.services.chat_cache_service import (
+            purge_bad_cache_entries,
+            purge_expired_cache_entries,
+        )
         _cdb = _SLc()
         try:
+            # Eski platform'suz context_key → linux: öneki (çapraz sızıntı önlemi)
+            from app.models.chat_cache import ChatQACache
+            from datetime import datetime, timezone, timedelta
+            _legacy = (
+                _cdb.query(ChatQACache)
+                .filter(
+                    (ChatQACache.context_key.is_(None))
+                    | (~ChatQACache.context_key.contains(":"))
+                )
+                .all()
+            )
+            for _row in _legacy:
+                base = (_row.context_key or "global").strip() or "global"
+                _row.context_key = f"linux:{base}"
+                if getattr(_row, "expires_at", None) is None:
+                    _row.expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+            if _legacy:
+                _cdb.commit()
+                logger.info("Chat cache: %s legacy context_key linux: ile güncellendi", len(_legacy))
             purge_bad_cache_entries(_cdb)
+            purge_expired_cache_entries(_cdb)
         finally:
             _cdb.close()
     except Exception as _ce:
@@ -448,6 +511,23 @@ async def startup_tasks():
         except Exception as e:
             logger.debug(f"RAG metrics seed skipped (Ollama/Chroma): {e}")
     asyncio.create_task(_rag_seed_metrics())
+
+    # RAG: docs/rag_seed → runbook (idempotent; PDF/md/txt + manifest.json)
+    async def _rag_seed_docs():
+        try:
+            from app.services.rag_seed import seed_rag_from_directory
+            summary = await seed_rag_from_directory()
+            logger.info(
+                "RAG docs seed: dir=%s added=%s updated=%s skipped=%s errors=%s",
+                summary.get("seed_dir"),
+                len(summary.get("added") or []),
+                len(summary.get("updated") or []),
+                len(summary.get("skipped") or []),
+                len(summary.get("errors") or []),
+            )
+        except Exception as e:
+            logger.debug(f"RAG docs seed skipped: {e}")
+    asyncio.create_task(_rag_seed_docs())
 
 @app.on_event("shutdown")
 async def shutdown_tasks():

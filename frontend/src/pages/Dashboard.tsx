@@ -8,6 +8,7 @@ import {
 } from 'recharts'
 import { ShieldOff, BarChart3, AlertTriangle, Zap } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { fetchServersPage, fetchServersSummary, type ServerSummary } from '../api/servers'
 import { ServerDetailDrawer } from './Servers'
 import { useAuth } from '../auth/AuthContext'
 
@@ -251,15 +252,13 @@ function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
 
   const load = () => {
     if (vmwareHvs.length === 0) { setIsLoading(false); return }
-    Promise.all(
-      vmwareHvs.map(hv =>
-        fetch(`${API_BASE_URL}/hypervisors/${hv.id}/host-metrics`)
-          .then(r => r.ok ? r.json() : null)
-          .then((data: EsxHostMetricsResponse | null) =>
-            (data?.hosts || []).map(h => ({ hvName: hv.name, host: h })))
-          .catch(() => [] as { hvName: string; host: EsxHost }[])
-      )
-    ).then(results => { setAllHosts(results.flat()); setIsLoading(false) })
+    fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { hosts?: { hvName: string; host: EsxHost }[] } | null) => {
+        setAllHosts((data?.hosts || []).map(row => ({ hvName: row.hvName, host: row.host })))
+        setIsLoading(false)
+      })
+      .catch(() => { setAllHosts([]); setIsLoading(false) })
   }
 
   useEffect(() => {
@@ -399,20 +398,30 @@ function ServerStatusChart({
 }
 
 // ── OS Distribution ────────────────────────────────────────────────────────
-function OsDistChart({ servers }: { servers: DashboardServer[] }) {
+function OsDistChart({ servers, byOs }: { servers?: DashboardServer[]; byOs?: Record<string, number> }) {
   const osCounts: Record<string, { count: number; color: string }> = {}
   const osColors: Record<string, string> = {
     rhel: NEON.red, centos: NEON.blue, ubuntu: NEON.orange,
     debian: NEON.orange, rocky: NEON.blue, oracle: NEON.cyan, windows: NEON.blue,
   }
 
-  servers.forEach(s => {
-    const key = (s.os_type || 'unknown').toLowerCase().replace(/\s+/g, '')
-    const shortKey = Object.keys(osColors).find(k => key.includes(k)) || 'linux'
-    const col = osColors[shortKey] || NEON.cyan
-    if (!osCounts[shortKey]) osCounts[shortKey] = { count: 0, color: col }
-    osCounts[shortKey].count++
-  })
+  if (byOs && Object.keys(byOs).length > 0) {
+    Object.entries(byOs).forEach(([osType, count]) => {
+      const key = (osType || 'unknown').toLowerCase().replace(/\s+/g, '')
+      const shortKey = Object.keys(osColors).find(k => key.includes(k)) || 'linux'
+      const col = osColors[shortKey] || NEON.cyan
+      if (!osCounts[shortKey]) osCounts[shortKey] = { count: 0, color: col }
+      osCounts[shortKey].count += count
+    })
+  } else {
+    ;(servers || []).forEach(s => {
+      const key = (s.os_type || 'unknown').toLowerCase().replace(/\s+/g, '')
+      const shortKey = Object.keys(osColors).find(k => key.includes(k)) || 'linux'
+      const col = osColors[shortKey] || NEON.cyan
+      if (!osCounts[shortKey]) osCounts[shortKey] = { count: 0, color: col }
+      osCounts[shortKey].count++
+    })
+  }
 
   const data = Object.entries(osCounts).map(([name, { count, color }]) => ({ name, count, color }))
   if (data.length === 0) return null
@@ -507,9 +516,9 @@ function DashboardHero({
     <div
       className="relative overflow-hidden rounded-2xl p-6 md:p-8 animate-fade-in"
       style={{
-        background: 'linear-gradient(135deg, var(--bg-elevated) 0%, rgba(26,37,64,0.9) 100%)',
+        background: 'linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-card2) 100%)',
         border: '1px solid var(--border-strong)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
       }}
     >
       <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full opacity-20 blur-3xl pointer-events-none"
@@ -517,11 +526,11 @@ function DashboardHero({
 
       <div className="relative flex flex-col lg:flex-row lg:items-center gap-8">
         <div className="flex-1">
-          <p className="text-xs uppercase tracking-[0.2em] mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>
+          <p className="text-xs uppercase tracking-[0.2em] mb-2 text-[var(--text-muted)]">
             {title}
           </p>
           <h1 className="text-2xl md:text-3xl font-bold mb-2" style={{ color: accent }}>{systemStatus}</h1>
-          <p className="text-sm max-w-xl" style={{ color: 'rgba(148,163,184,0.8)' }}>
+          <p className="text-sm max-w-xl text-[var(--text-secondary)]">
             {showFleet && `${totalServers} sunucunun ${onlineServers} tanesi çevrimiçi.`}
             {showOps && unresolvedEvents > 0 && ` ${unresolvedEvents.toLocaleString('tr-TR')} açık event`}
             {showOps && openIncidents > 0 && `, ${openIncidents.toLocaleString('tr-TR')} aktif incident`}
@@ -532,7 +541,7 @@ function DashboardHero({
               <div key={chip.label} className="px-3 py-1.5 rounded-lg text-xs font-medium"
                 style={{ background: `rgba(${hexToRgb(chip.color)},0.1)`, border: `1px solid rgba(${hexToRgb(chip.color)},0.25)`, color: chip.color }}>
                 <span className="opacity-70 mr-1.5">{chip.label}</span>
-                <span className="text-white font-bold">{chip.value}</span>
+                <span className="font-bold text-[var(--text-primary)]">{chip.value}</span>
               </div>
             ))}
           </div>
@@ -544,15 +553,15 @@ function DashboardHero({
               <RadialBarChart cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={10}
                 data={[{ name: 'Sağlık', value: healthScore, fill: accent }]}
                 startAngle={90} endAngle={-270}>
-                <RadialBar dataKey="value" cornerRadius={8} background={{ fill: 'rgba(255,255,255,0.06)' }} />
+                <RadialBar dataKey="value" cornerRadius={8} background={{ fill: 'rgba(148,163,184,0.15)' }} />
               </RadialBarChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-3xl font-bold text-white">{healthScore}</span>
-              <span className="text-[10px] uppercase tracking-wider text-slate-500">Health</span>
+              <span className="text-3xl font-bold text-[var(--text-primary)]">{healthScore}</span>
+              <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Health</span>
             </div>
           </div>
-          <p className="text-[10px] text-slate-600 mt-2">Güncelleme: {lastRefresh}</p>
+          <p className="text-[10px] text-[var(--text-muted)] mt-2">Güncelleme: {lastRefresh}</p>
         </div>
       </div>
     </div>
@@ -1179,27 +1188,36 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     return () => clearInterval(t)
   }, [])
 
-  const { data: serversRaw = [], isLoading: serversLoading } = useQuery<DashboardServer[]>({
-    queryKey: ['servers'],
+  const { data: linuxSummary, isLoading: serversLoading } = useQuery<ServerSummary>({
+    queryKey: ['servers-summary', 'linux'],
+    queryFn: () => fetchServersSummary('linux'),
+    enabled: showLinux && !isWindowsScope,
+    refetchInterval: 30_000,
+  })
+
+  const { data: serversRaw = [] } = useQuery<DashboardServer[]>({
+    queryKey: ['servers', 'linux', 'recent'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?platform=linux`)
-      if (!r.ok) throw new Error('Failed to fetch servers')
-      return r.json()
+      const p = await fetchServersPage<DashboardServer>({ platform: 'linux', page: 1, page_size: 50, hide_offline: false })
+      return p.items
     },
     enabled: showLinux && !isWindowsScope,
     refetchInterval: 30_000,
   })
   const servers = serversRaw.filter(s => !isWindowsOs(s))
 
-  // Admin (genel) dashboard TÜM envanteri (Linux + Windows + VM) baz alır —
-  // böylece "Toplam Sunucu" ve fleet grafikleri Linux dashboard'dan gerçekten
-  // farklı, altyapının tamamını yansıtan sayılar gösterir.
-  const { data: allServersRaw = [], isLoading: allServersLoading } = useQuery<DashboardServer[]>({
-    queryKey: ['servers-all'],
+  const { data: allSummary, isLoading: allServersLoading } = useQuery<ServerSummary>({
+    queryKey: ['servers-summary', 'all'],
+    queryFn: () => fetchServersSummary(),
+    enabled: isAdminScope,
+    refetchInterval: 30_000,
+  })
+
+  const { data: allServersRaw = [] } = useQuery<DashboardServer[]>({
+    queryKey: ['servers-all', 'recent'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/`)
-      if (!r.ok) throw new Error('Failed to fetch servers')
-      return r.json()
+      const p = await fetchServersPage<DashboardServer>({ page: 1, page_size: 50 })
+      return p.items
     },
     enabled: isAdminScope,
     refetchInterval: 30_000,
@@ -1211,12 +1229,26 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     os_type?: string; ai_ready?: boolean
     windows_exporter_installed?: boolean; windows_exporter_running?: boolean
   }
-  const { data: windowsServers = [], isLoading: windowsLoading } = useQuery<WindowsDashboardServer[]>({
-    queryKey: ['windows-dashboard-servers'],
+  const { data: windowsSummary, isLoading: windowsLoading } = useQuery({
+    queryKey: ['windows-dashboard-summary'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/windows/servers`)
+      const r = await fetch(`${API_BASE_URL}/windows/servers/summary`)
+      if (!r.ok) return null
+      return r.json() as Promise<{
+        total: number; online: number; winrm_configured: number; ai_ready: number
+        windows_exporter_running: number
+      }>
+    },
+    enabled: isWindowsScope || (isAdminScope && hasModule('windows')),
+    refetchInterval: 30_000,
+  })
+  const { data: windowsServers = [] } = useQuery<WindowsDashboardServer[]>({
+    queryKey: ['windows-dashboard-servers', 'recent'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/windows/servers?page=1&page_size=50`)
       if (!r.ok) return []
-      return r.json()
+      const data = await r.json()
+      return Array.isArray(data) ? data : (data.items || [])
     },
     enabled: isWindowsScope || (isAdminScope && hasModule('windows')),
     refetchInterval: 30_000,
@@ -1327,32 +1359,51 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   }
 
   // Admin scope: TÜM envanter (Linux+Windows+VM). Linux scope: sadece Linux. Windows scope: sadece Windows.
+  const fleetSummary: ServerSummary | null | undefined = isWindowsScope
+    ? null
+    : isAdminScope
+      ? allSummary
+      : linuxSummary
   const fleetServers = isWindowsScope ? windowsServers : isAdminScope ? allServersRaw : servers
-  const totalServers    = fleetServers.length
-  const onlineServers   = fleetServers.filter(s => s.status === 'ONLINE').length
-  const offlineServers  = fleetServers.filter(s => s.status === 'OFFLINE').length
-  const warningServers  = fleetServers.filter(s => s.status === 'WARNING').length
-  const criticalServers = fleetServers.filter(s => s.status === 'CRITICAL').length
-  const aiReadyServers  = isWindowsScope
-    ? fleetServers.filter(s => s.status === 'ONLINE').length
-    : (fleetServers as DashboardServer[]).filter(s => s.ai_ready && s.status === 'ONLINE').length
-  const totalCpu        = fleetServers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
-  const totalRam        = fleetServers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+  const totalServers = isWindowsScope
+    ? (windowsSummary?.total ?? windowsServers.length)
+    : (fleetSummary?.total ?? fleetServers.length)
+  const onlineServers = isWindowsScope
+    ? (windowsSummary?.online ?? windowsServers.filter(s => s.status === 'ONLINE').length)
+    : (fleetSummary?.online ?? fleetServers.filter(s => s.status === 'ONLINE').length)
+  const offlineServers = isWindowsScope
+    ? Math.max(0, totalServers - onlineServers)
+    : (fleetSummary?.offline ?? fleetServers.filter(s => s.status === 'OFFLINE').length)
+  const warningServers = fleetSummary?.warning ?? fleetServers.filter(s => s.status === 'WARNING').length
+  const criticalServers = fleetSummary?.critical ?? fleetServers.filter(s => s.status === 'CRITICAL').length
+  const aiReadyServers = isWindowsScope
+    ? (windowsSummary?.ai_ready ?? fleetServers.filter(s => s.status === 'ONLINE').length)
+    : (fleetSummary?.ai_ready ?? (fleetServers as DashboardServer[]).filter(s => s.ai_ready && s.status === 'ONLINE').length)
+  const totalCpu = isWindowsScope
+    ? fleetServers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0)
+    : (fleetSummary?.cpu_cores ?? fleetServers.reduce((sum, s) => sum + (s.cpu_cores || 0), 0))
+  const totalRam = isWindowsScope
+    ? fleetServers.reduce((sum, s) => sum + (s.memory_gb || 0), 0)
+    : (fleetSummary?.memory_gb ?? fleetServers.reduce((sum, s) => sum + (s.memory_gb || 0), 0))
   // metricsOverview backend'de her zaman Linux node-exporter kurulumlarını sayar —
   // admin (tüm envanter) kapsamında Windows sunucuları da içerecek şekilde
   // doğrudan fleetServers üzerinden hesaplanır.
   const monitoredInstalled = isWindowsScope
     ? onlineServers
     : isAdminScope
-      ? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length
+      ? (fleetSummary?.node_exporter_installed
+        ?? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length)
       : (metricsOverview?.total_online_installed
+        ?? fleetSummary?.node_exporter_installed
         ?? servers.filter(s => s.node_exporter?.installed && s.status === 'ONLINE').length)
   const monitoredLive = isWindowsScope
     ? onlineServers
     : isAdminScope
-      ? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.running && s.status === 'ONLINE').length
+      ? (fleetSummary?.node_exporter_running
+        ?? (fleetServers as DashboardServer[]).filter(s => s.node_exporter?.running && s.status === 'ONLINE').length)
       : (metricsOverview?.total_live
-      ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length)
+        ?? fleetSummary?.node_exporter_running
+        ?? servers.filter(s => s.node_exporter?.running && s.status === 'ONLINE').length)
 
   const onlinePct   = totalServers > 0 ? (onlineServers / totalServers) * 100 : 100
   const monitorPct  = totalServers > 0 ? (monitoredLive / totalServers) * 100 : 0
@@ -1369,7 +1420,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       { label: 'Toplam RAM', value: `${totalRam} GB`, sub: 'envanter', accent: NEON.green, pct: Math.min(100, totalRam / 2) },
     ] : []),
     ...(isWindowsScope ? [
-      { label: 'WinRM Hazır', value: windowsServers.filter(s => s.winrm_configured).length, sub: `${totalServers} sunucu`, accent: NEON.cyan, pct: totalServers > 0 ? (windowsServers.filter(s => s.winrm_configured).length / totalServers) * 100 : 0 },
+      { label: 'WinRM Hazır', value: windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length, sub: `${totalServers} sunucu`, accent: NEON.cyan, pct: totalServers > 0 ? ((windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length) / totalServers) * 100 : 0 },
     ] : []),
     ...(showLinux || isWindowsScope ? [
       { label: 'Uyarı/Kritik', value: warningServers + criticalServers, sub: `${offlineServers} offline`, accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
@@ -1412,7 +1463,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
               <HeroKpi label="AI Ready" value={aiReadyServers} sub={`${aiReadyPct.toFixed(0)}% kapsama`} accent={NEON.blue} pct={aiReadyPct} delay={50} />
             )}
             {isWindowsScope && (
-              <HeroKpi label="WinRM" value={windowsServers.filter(s => s.winrm_configured).length} sub="yapılandırılmış" accent={NEON.cyan} pct={totalServers > 0 ? (windowsServers.filter(s => s.winrm_configured).length / totalServers) * 100 : 0} delay={50} />
+              <HeroKpi label="WinRM" value={windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length} sub="yapılandırılmış" accent={NEON.cyan} pct={totalServers > 0 ? ((windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length) / totalServers) * 100 : 0} delay={50} />
             )}
             <HeroKpi label={isWindowsScope ? 'Erişilebilir' : 'Monitörlenen'} value={monitoredLive} sub={isWindowsScope ? `${offlineServers} offline` : `${monitoredInstalled} kurulu · ${monitoredLive} canlı`} accent={NEON.green} pct={monitorPct} delay={100} />
             <HeroKpi label="Çevrimiçi Oran" value={`${onlinePct.toFixed(0)}%`} sub={`${offlineServers} offline`} accent={NEON.green} pct={onlinePct} delay={150} />
@@ -1460,7 +1511,10 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
             <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-            <OsDistChart servers={isWindowsScope ? (windowsServers as unknown as DashboardServer[]) : (isAdminScope ? allServersRaw : servers)} />
+            <OsDistChart
+              byOs={isWindowsScope ? undefined : fleetSummary?.by_os}
+              servers={isWindowsScope ? (windowsServers as unknown as DashboardServer[]) : (isAdminScope ? allServersRaw : servers)}
+            />
           </div>
         )}
 

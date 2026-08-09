@@ -5,8 +5,9 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
-import * as XLSX from 'xlsx'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
+import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
+import ChatPinFact from '../components/ChatPinFact'
 import { FileDown, Server as ServerIcon, Boxes, Layers, Wrench } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
@@ -65,9 +66,10 @@ function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
   URL.revokeObjectURL(url)
 }
 
-function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
+async function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
   const rows = _parseMdTable(mdTable)
   if (rows.length === 0) return
+  const XLSX = await import('xlsx')
   const ws = XLSX.utils.aoa_to_sheet(rows)
   // Sütun genişliklerini otomatik ayarla (stil kütüphane gerektirdiğinden sadece genişlik)
   ws['!cols'] = rows[0].map((_, ci) => ({
@@ -161,7 +163,7 @@ const Chat: React.FC<{
   const effectiveInventoryMode = false
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
-  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'tools' | 'streaming'>('idle')
   const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const inventoryMsgSeq = useRef(-1000)
 
@@ -212,9 +214,9 @@ const Chat: React.FC<{
   const { data: servers = [] } = useQuery<Server[]>({
     queryKey: ['ai-ready-servers', inventoryPlatform],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=${inventoryPlatform}`)
-      if (!res.ok) throw new Error('Failed')
-      return res.json()
+      const { fetchAiReadyPage } = await import('../api/servers')
+      const p = await fetchAiReadyPage<Server>({ platform: inventoryPlatform, page: 1, page_size: 200 })
+      return p.items
     }
   })
 
@@ -496,6 +498,9 @@ const Chat: React.FC<{
               }
               setThinkingPhase('streaming')
             }
+            if (chunk.phase === 'collecting') setThinkingPhase('context')
+            if (chunk.phase === 'tools') setThinkingPhase('tools')
+            if (chunk.phase === 'answering') setThinkingPhase('streaming')
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
@@ -580,7 +585,8 @@ const Chat: React.FC<{
 
 
   const thinkingLabel =
-    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus)...' :
+    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (SSH / Prometheus / RAG)...' :
+    thinkingPhase === 'tools' ? 'Tanı araçları çalışıyor...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
   const emptyDescription =
@@ -736,7 +742,9 @@ const Chat: React.FC<{
                   ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
-                ].map(msg => (
+                ].map(msg => {
+                  const thread = [...messages, ...localInventoryMessages]
+                  return (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
                     <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
@@ -771,6 +779,22 @@ const Chat: React.FC<{
                               </>
                             )}
                           </div>
+                          {msg.id > 0 && (
+                            <>
+                              <ChatFeedbackButtons
+                                platform={inventoryPlatform}
+                                question={priorUserQuestion(thread, msg.id)}
+                                answer={msg.content}
+                                serverIds={selectedServers}
+                                sessionId={selectedSessionId}
+                                messageId={msg.id}
+                              />
+                              <ChatPinFact
+                                serverIds={selectedServers}
+                                serverOptions={aiReadyServers.map((s) => ({ id: s.id, name: s.name }))}
+                              />
+                            </>
+                          )}
                           {msg.meta?.charts?.map((chart, ci) => (
                             <ChatMetricChart key={`${msg.id}-chart-${ci}`} chart={chart} chartId={`msg-${msg.id}-${ci}`} />
                           ))}
@@ -781,7 +805,8 @@ const Chat: React.FC<{
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
 
                 {isLoading && streamSessionRef.current === selectedSessionId && (
                   <div className="flex justify-start mb-4">
@@ -801,6 +826,15 @@ const Chat: React.FC<{
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
                             <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span>{thinkingLabel}</span>
+                          </div>
+                          <ThinkingDots />
+                        </div>
+                      )}
+                      {thinkingPhase === 'tools' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-cyan-400/90">
+                            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                             <span>{thinkingLabel}</span>
                           </div>
                           <ThinkingDots />

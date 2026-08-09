@@ -19,13 +19,32 @@ router = APIRouter()
 @router.get("/metrics/servers")
 async def list_metric_servers(
     platform: str | None = None,
+    fresh: bool = False,
     db: Session = Depends(get_db),
 ):
     """
     Metrik sunucuları özeti — Prometheus up hedefleri + DB eşleşmesi.
     Merkezi node_exporter (hostname:9100) kurulumlarını da listeler;
     yalnızca node_exporter_installed bayrağına bağlı kalmaz.
+
+    Redis kısa TTL (varsayılan ~20s). fresh=1 ile bypass.
     """
+    import json
+
+    requested_platform = platform or "linux"
+    cache_key = f"ainew:mon:servers:{requested_platform}"
+    if not fresh:
+        try:
+            from app.core.redis_client import get_redis
+
+            r = get_redis()
+            if r is not None:
+                cached = r.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+        except Exception:
+            pass
+
     from app.services.monitoring.prometheus_metrics import (
         get_node_exporter_up_map,
         match_prometheus_instance,
@@ -41,7 +60,6 @@ async def list_metric_servers(
         Server.ip_address.isnot(None),
         Server.ip_address != "",
     )
-    requested_platform = platform or "linux"
     vm_instances_to_exclude: set[str] = set()
     if requested_platform == "linux":
         # VM'ler metriklerini vCenter'dan alır (bkz. MetricSyncService) — bu
@@ -117,7 +135,7 @@ async def list_metric_servers(
     online_installed = [r for r in rows if (r["status"] or "").upper() == "ONLINE"]
     live_count = sum(1 for r in rows if r["live"])
 
-    return {
+    result = {
         "total_installed": len(rows),
         "total_online_installed": len(online_installed),
         "total_live": live_count,
@@ -127,71 +145,117 @@ async def list_metric_servers(
         "servers": rows,
     }
 
+    try:
+        from app.core.redis_client import get_redis
+        from app.services.runtime_settings import get_setting
+
+        ttl = int(get_setting("monitoring_servers_cache_ttl_sec") or 20)
+        if ttl > 0:
+            r = get_redis()
+            if r is not None:
+                r.setex(cache_key, ttl, json.dumps(result, ensure_ascii=False, default=str))
+    except Exception:
+        pass
+
+    return result
+
 
 @router.post("/node-exporter/bulk-install")
-async def bulk_install_node_exporter(
+def bulk_install_node_exporter(
     server_ids: Optional[List[int]] = None,
     db: Session = Depends(get_db),
 ):
     """
-    Birden fazla sunucuya paralel Node Exporter kurulumu.
-    server_ids boşsa: node_exporter_running=False olan tüm ONLINE AI-Ready sunucular.
+    Birden fazla sunucuya paralel Node Exporter kurulumu — arka plan job.
+    Dönüş: ``{ job_id, queued, status }``; ilerleme GET /servers/bulk-jobs/{id}.
     """
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
+    import threading
 
+    from app.core.database import ThreadSessionLocal
+    from app.services import bulk_job_tracker as jobs
     from app.services.platform_scope import is_windows_server
 
     if server_ids:
         servers = db.query(Server).filter(Server.id.in_(server_ids)).all()
     else:
-        # node exporter çalışmayan, ONLINE, AI-Ready sunucular (Windows hariç —
-        # onlar windows_exporter/WinRM ile /windows/exporter/install-all üzerinden kurulur)
         servers = db.query(Server).filter(
             Server.status == "ONLINE",
-            Server.ai_ready == True,
-            Server.node_exporter_running == False,
+            Server.ai_ready == True,  # noqa: E712
+            Server.node_exporter_running == False,  # noqa: E712
         ).all()
         servers = [s for s in servers if not is_windows_server(s)]
 
     if not servers:
-        return {"queued": 0, "message": "Uygun sunucu bulunamadı"}
+        return {"queued": 0, "job_id": None, "status": "done", "message": "Uygun sunucu bulunamadı"}
 
-    results = {}
+    ids = [s.id for s in servers]
+    job_id = jobs.create_job(
+        "node_exporter_bulk_install",
+        "Node Exporter toplu kurulum",
+        total=len(ids),
+        message="Kurulum başlıyor...",
+    )
 
-    def _install_one(srv):
-        # NOT: Bu fonksiyon thread pool içinde çalışır — SQLAlchemy session'ı
-        # thread-safe olmadığından burada DB'ye dokunulmaz (sadece SSH/paramiko).
-        # DB güncellemesi tüm thread'ler bittikten sonra ana thread'de yapılır.
+    def _run():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from app.services.bulk_concurrency import bulk_ssh_workers
+
+        thread_db = ThreadSessionLocal()
         try:
-            installer = NodeExporterInstaller(srv)
-            res = installer.install()
-            return srv.id, {"success": res.get("success", False), "message": res.get("message", "")}
-        except Exception as e:
-            return srv.id, {"success": False, "message": str(e)}
+            srv_list = thread_db.query(Server).filter(Server.id.in_(ids)).all()
+            results: dict = {}
 
-    from app.services.bulk_concurrency import bulk_ssh_workers
-    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="bulk-ne") as pool:
-        from concurrent.futures import as_completed
-        futures = {pool.submit(_install_one, s): s for s in servers}
-        for f in as_completed(futures):
-            srv_id, result = f.result()
-            results[str(srv_id)] = result
+            def _install_one(srv):
+                try:
+                    installer = NodeExporterInstaller(srv)
+                    res = installer.install()
+                    return srv.id, {"success": res.get("success", False), "message": res.get("message", "")}
+                except Exception as e:
+                    return srv.id, {"success": False, "message": str(e)}
 
-    for srv in servers:
-        result = results.get(str(srv.id), {})
-        srv.node_exporter_installed = result.get("success", False)
-        srv.node_exporter_running   = result.get("success", False)
-    db.commit()
+            done = 0
+            with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="bulk-ne") as pool:
+                futures = {pool.submit(_install_one, s): s for s in srv_list}
+                for f in as_completed(futures):
+                    srv_id, result = f.result()
+                    results[str(srv_id)] = result
+                    done += 1
+                    jobs.tick(
+                        job_id,
+                        done=done,
+                        total=len(srv_list),
+                        ok_delta=1 if result.get("success") else 0,
+                        fail_delta=0 if result.get("success") else 1,
+                        message=f"NE kurulum {done}/{len(srv_list)}",
+                    )
 
-    success = sum(1 for r in results.values() if r["success"])
-    failed  = len(results) - success
-    logger.info(f"Bulk Node Exporter: {success} başarılı, {failed} başarısız")
+            for srv in srv_list:
+                result = results.get(str(srv.id), {})
+                srv.node_exporter_installed = result.get("success", False)
+                srv.node_exporter_running = result.get("success", False)
+            thread_db.commit()
+
+            success = sum(1 for r in results.values() if r.get("success"))
+            failed = len(results) - success
+            logger.info(f"Bulk Node Exporter: {success} başarılı, {failed} başarısız")
+            jobs.finish(
+                job_id,
+                status="done",
+                message=f"{success} başarılı, {failed} başarısız",
+                result={"queued": len(srv_list), "success": success, "failed": failed, "results": results},
+            )
+        except Exception as exc:
+            logger.exception("bulk NE install failed")
+            jobs.finish(job_id, status="error", message=str(exc), error=str(exc))
+        finally:
+            thread_db.close()
+
+    threading.Thread(target=_run, daemon=True, name=f"bulk-ne-{job_id}").start()
     return {
-        "queued":   len(servers),
-        "success":  success,
-        "failed":   failed,
-        "results":  results,
+        "job_id": job_id,
+        "queued": len(ids),
+        "status": "running",
+        "message": f"{len(ids)} sunucu için kurulum arka planda başladı",
     }
 
 

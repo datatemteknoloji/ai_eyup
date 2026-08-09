@@ -15,7 +15,10 @@ scrape_configs:
       - targets: ['pushgateway:9091']
 
   # Node Exporter (Linux) - File-based service discovery
+  # 45s: 10k hedefte 15s scrape CPU/network baskısını düşürür; self/pgw 15s kalır.
   - job_name: 'node-exporter'
+    scrape_interval: 45s
+    scrape_timeout: 20s
     file_sd_configs:
       - files:
           - '/etc/prometheus/targets/node_exporter_targets.json'
@@ -23,6 +26,8 @@ scrape_configs:
 
   # Windows Exporter (Windows) - port 9182
   - job_name: 'windows-exporter'
+    scrape_interval: 45s
+    scrape_timeout: 20s
     file_sd_configs:
       - files:
           - '/etc/prometheus/targets/windows_exporter_targets.json'

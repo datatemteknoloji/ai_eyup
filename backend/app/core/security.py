@@ -59,10 +59,16 @@ def create_access_token(subject: str, *, extra: Optional[Dict[str, Any]] = None,
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    jti = str(uuid.uuid4())
+    # extra içindeki jti varsa onu kullan (oturum kaydı ile eşlemek için)
+    jti = None
+    if extra and extra.get("jti"):
+        jti = str(extra["jti"])
+    if not jti:
+        jti = uuid.uuid4().hex
     to_encode: Dict[str, Any] = {"sub": str(subject), "exp": expire, "jti": jti}
     if extra:
         to_encode.update(extra)
+        to_encode["jti"] = jti
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 

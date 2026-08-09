@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { usePageVisible } from '../hooks/usePageVisible'
 import {
   AreaChart,
   Area,
@@ -473,13 +474,14 @@ const EnterpriseMetricChart: React.FC<{
 
 /** Real time modunda tüm veriler bu aralıkla (ms) yenilenir - "veri akar" */
 const REAL_TIME_REFETCH_OPTIONS = [
-  { label: '2s', value: 2000 },
-  { label: '4s', value: 4000 },
-  { label: '10s', value: 10000 },
+  { label: '15s', value: 15000 },
   { label: '30s', value: 30000 },
   { label: '1dk', value: 60000 },
 ]
-const DEFAULT_realTimeRefetchMs = 4000
+const DEFAULT_realTimeRefetchMs = 15000
+const TABLE_PAGE_SIZE = 50
+/** by(instance) serisinde Recharts/PromQL patlamasını önle */
+const MAX_SELECTED_INSTANCES = 8
 
 const DEFAULT_CHART_METRICS = ['cpu', 'memory', 'disk', 'load']
 
@@ -489,6 +491,7 @@ function escapePrometheusRegex(s: string): string {
 }
 
 const LiveMetrics: React.FC = () => {
+  const pageVisible = usePageVisible()
   const [selectedInstances, setSelectedInstances] = useState<string[]>([])
   const [realTimeRefetchMs, setRealTimeRefetchMs] = useState(DEFAULT_realTimeRefetchMs)
   const [instanceDropdownOpen, setInstanceDropdownOpen] = useState(false)
@@ -498,6 +501,7 @@ const LiveMetrics: React.FC = () => {
   const [realTimeMode, setRealTimeMode] = useState(false)
   const [chartSlots, setChartSlots] = useState<string[]>(() => [...DEFAULT_CHART_METRICS])
   const [hostFilter, setHostFilter] = useState('')
+  const [tablePage, setTablePage] = useState(1)
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -512,13 +516,18 @@ const LiveMetrics: React.FC = () => {
   const [sortKey, setSortKey] = useState<string>('hostname')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
-  const refetchIntervalInstant = realTimeMode ? realTimeRefetchMs : 10000
-  const refetchIntervalSlow = realTimeMode ? realTimeRefetchMs : 15000
+  const refetchIntervalInstant = pageVisible
+    ? (realTimeMode ? realTimeRefetchMs : 15000)
+    : false
+  const refetchIntervalSlow = pageVisible
+    ? (realTimeMode ? realTimeRefetchMs : 30000)
+    : false
 
   const { data: metricsOverview } = useQuery({
     queryKey: ['metrics-servers-overview'],
     queryFn: fetchMetricServersOverview,
     refetchInterval: refetchIntervalSlow,
+    refetchIntervalInBackground: false,
   })
 
   const { data: promSettings } = useQuery({
@@ -539,13 +548,15 @@ const LiveMetrics: React.FC = () => {
   const { data: instanceLabels = {} } = useQuery({
     queryKey: ['prometheus-instance-labels', realTimeMode, jobMatcher],
     queryFn: () => fetchInstanceLabels(jobMatcher),
-    refetchInterval: realTimeMode ? realTimeRefetchMs : 30000
+    refetchInterval: pageVisible ? (realTimeMode ? realTimeRefetchMs : 30000) : false,
+    refetchIntervalInBackground: false,
   })
 
   const { data: instanceUpStatus = {} } = useQuery({
     queryKey: ['prometheus-instance-up', realTimeMode, jobMatcher],
     queryFn: () => fetchInstanceUpStatus(jobMatcher),
-    refetchInterval: realTimeMode ? realTimeRefetchMs : 15000
+    refetchInterval: pageVisible ? (realTimeMode ? realTimeRefetchMs : 30000) : false,
+    refetchIntervalInBackground: false,
   })
 
   const { data: nodeMetricNames = [] } = useQuery({
@@ -554,15 +565,16 @@ const LiveMetrics: React.FC = () => {
     staleTime: 60000
   })
 
+  const chartInstances = selectedInstances.slice(0, MAX_SELECTED_INSTANCES)
   const selector =
-    selectedInstances.length === 0
+    chartInstances.length === 0
       ? jobMatcher
-      : selectedInstances.length === 1
-        ? `${jobMatcher},instance="${selectedInstances[0]}"`
-        : `${jobMatcher},instance=~"${selectedInstances.map(escapePrometheusRegex).join('|')}"`
+      : chartInstances.length === 1
+        ? `${jobMatcher},instance="${chartInstances[0]}"`
+        : `${jobMatcher},instance=~"${chartInstances.map(escapePrometheusRegex).join('|')}"`
 
-  const byInstance = selectedInstances.length > 0
-  const instanceQueryKey = selectedInstances.length === 0 ? 'all' : selectedInstances.slice().sort().join(',')
+  const byInstance = chartInstances.length > 0
+  const instanceQueryKey = chartInstances.length === 0 ? 'all' : chartInstances.slice().sort().join(',')
 
   /* Tüm sunucular: ortalama tek seri (yüzlerce host legend'ı grafiği bozmasın).
      Seçili host(lar): instance bazlı. */
@@ -611,92 +623,81 @@ const LiveMetrics: React.FC = () => {
     return preset ? preset.unit : ''
   }
 
-  const cpuRangeQuery = selectedInstances.length === 0
+  const cpuRangeQuery = chartInstances.length === 0
     ? `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${jobMatcher}}[5m])) * 100)`
     : `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
-  const memoryRangeQuery = selectedInstances.length === 0
+  const memoryRangeQuery = chartInstances.length === 0
     ? `(1 - (avg(node_memory_MemAvailable_bytes{${jobMatcher}}) / avg(node_memory_MemTotal_bytes{${jobMatcher}}))) * 100`
     : `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`
-  const diskRangeQuery = selectedInstances.length === 0
+  const diskRangeQuery = chartInstances.length === 0
     ? `(1 - (avg(node_filesystem_avail_bytes{mountpoint="/",${jobMatcher}}) / avg(node_filesystem_size_bytes{mountpoint="/",${jobMatcher}}))) * 100`
     : `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`
-
-  const cpuChartRangeQuery = `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
-  const memoryChartRangeQuery = `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`
-  const diskChartRangeQuery = `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`
 
   const { data: cpuResults = [], isLoading: cpuLoading } = useQuery({
     queryKey: ['prometheus-cpu', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(cpuQuery),
-    refetchInterval: refetchIntervalInstant
+    refetchInterval: refetchIntervalInstant,
+    refetchIntervalInBackground: false,
   })
 
   const { data: memoryResults = [], isLoading: memoryLoading } = useQuery({
     queryKey: ['prometheus-memory', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(memoryQuery),
-    refetchInterval: refetchIntervalInstant
+    refetchInterval: refetchIntervalInstant,
+    refetchIntervalInBackground: false,
   })
 
   const { data: diskResults = [], isLoading: diskLoading } = useQuery({
     queryKey: ['prometheus-disk', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(diskQuery),
-    refetchInterval: refetchIntervalSlow
+    refetchInterval: refetchIntervalSlow,
+    refetchIntervalInBackground: false,
   })
 
   const { data: loadResults = [], isLoading: loadLoading } = useQuery({
     queryKey: ['prometheus-load', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(loadQuery),
-    refetchInterval: refetchIntervalInstant
+    refetchInterval: refetchIntervalInstant,
+    refetchIntervalInBackground: false,
   })
 
   const { data: netRxResults = [] } = useQuery({
     queryKey: ['prometheus-net-rx', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(netRxQuery),
-    refetchInterval: refetchIntervalSlow
+    refetchInterval: refetchIntervalSlow,
+    refetchIntervalInBackground: false,
   })
 
   const { data: netTxResults = [] } = useQuery({
     queryKey: ['prometheus-net-tx', instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(netTxQuery),
-    refetchInterval: refetchIntervalSlow
+    refetchInterval: refetchIntervalSlow,
+    refetchIntervalInBackground: false,
   })
 
-  const refetchIntervalRange = realTimeMode ? realTimeRefetchMs : (rangeSeconds <= 900 ? 10000 : 30000)
+  const refetchIntervalRange = pageVisible
+    ? (realTimeMode ? realTimeRefetchMs : (rangeSeconds <= 900 ? 15000 : 30000))
+    : false
 
   const { data: cpuRangeResults = [] } = useQuery({
     queryKey: ['prometheus-cpu-range', cpuRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(cpuRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
+    refetchInterval: refetchIntervalRange,
+    refetchIntervalInBackground: false,
   })
 
   const { data: memoryRangeResults = [] } = useQuery({
     queryKey: ['prometheus-memory-range', memoryRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(memoryRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
+    refetchInterval: refetchIntervalRange,
+    refetchIntervalInBackground: false,
   })
 
   const { data: diskRangeResults = [] } = useQuery({
     queryKey: ['prometheus-disk-range', diskRangeQuery, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(diskRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
-  })
-
-  const { data: _cpuChartRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-cpu-chart', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
-    queryFn: () => fetchPrometheusRange(cpuChartRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
-  })
-
-  const { data: _memoryChartRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-memory-chart', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
-    queryFn: () => fetchPrometheusRange(memoryChartRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
-  })
-
-  const { data: _diskChartRangeResults = [] } = useQuery({
-    queryKey: ['prometheus-disk-chart', instanceQueryKey, effectiveRangeIndex, rangeSeconds, stepSeconds, realTimeMode],
-    queryFn: () => fetchPrometheusRange(diskChartRangeQuery, rangeSeconds, stepSeconds),
-    refetchInterval: refetchIntervalRange
+    refetchInterval: refetchIntervalRange,
+    refetchIntervalInBackground: false,
   })
 
   const customSlot0Query = getRangeQueryForMetricKey(chartSlots[0] ?? DEFAULT_CHART_METRICS[0])
@@ -708,25 +709,29 @@ const LiveMetrics: React.FC = () => {
     queryKey: ['prometheus-custom-chart', 0, customSlot0Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot0Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot0Query
+    enabled: !!customSlot0Query,
+    refetchIntervalInBackground: false,
   })
   const customChart1 = useQuery({
     queryKey: ['prometheus-custom-chart', 1, customSlot1Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot1Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot1Query
+    enabled: !!customSlot1Query,
+    refetchIntervalInBackground: false,
   })
   const customChart2 = useQuery({
     queryKey: ['prometheus-custom-chart', 2, customSlot2Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot2Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot2Query
+    enabled: !!customSlot2Query,
+    refetchIntervalInBackground: false,
   })
   const customChart3 = useQuery({
     queryKey: ['prometheus-custom-chart', 3, customSlot3Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot3Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot3Query
+    enabled: !!customSlot3Query,
+    refetchIntervalInBackground: false,
   })
   const customChartResults = [customChart0.data ?? [], customChart1.data ?? [], customChart2.data ?? [], customChart3.data ?? []]
   const customChartLoading = [customChart0.isLoading, customChart1.isLoading, customChart2.isLoading, customChart3.isLoading]
@@ -834,6 +839,17 @@ const LiveMetrics: React.FC = () => {
     })
     return copy
   }, [filteredRows, sortKey, sortDirection])
+
+  const tablePageCount = Math.max(1, Math.ceil(sortedRows.length / TABLE_PAGE_SIZE))
+  const safeTablePage = Math.min(tablePage, tablePageCount)
+  const pagedRows = useMemo(() => {
+    const start = (safeTablePage - 1) * TABLE_PAGE_SIZE
+    return sortedRows.slice(start, start + TABLE_PAGE_SIZE)
+  }, [sortedRows, safeTablePage])
+
+  useEffect(() => {
+    setTablePage(1)
+  }, [hostFilter, selectedInstances, sortKey, sortDirection])
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -953,11 +969,11 @@ const LiveMetrics: React.FC = () => {
                           return s.instance.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
                         })
                         .map((s) => s.instance)
-                      setSelectedInstances([...new Set(filtered)])
+                      setSelectedInstances([...new Set(filtered)].slice(0, MAX_SELECTED_INSTANCES))
                     }}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
                   >
-                    Filtreyi seç
+                    Filtreyi seç (max {MAX_SELECTED_INSTANCES})
                   </button>
                   <span className="text-xs text-slate-500 ml-auto">
                     {onlineMetricServers.filter((s) => {
@@ -983,11 +999,13 @@ const LiveMetrics: React.FC = () => {
                           type="checkbox"
                           checked={selectedInstances.includes(s.instance)}
                           onChange={() => {
-                            setSelectedInstances((prev) =>
-                              prev.includes(s.instance)
-                                ? prev.filter((i) => i !== s.instance)
-                                : [...prev, s.instance]
-                            )
+                            setSelectedInstances((prev) => {
+                              if (prev.includes(s.instance)) {
+                                return prev.filter((i) => i !== s.instance)
+                              }
+                              if (prev.length >= MAX_SELECTED_INSTANCES) return prev
+                              return [...prev, s.instance]
+                            })
                           }}
                           className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-cyber-card focus:ring-blue-500"
                         />
@@ -1033,7 +1051,7 @@ const LiveMetrics: React.FC = () => {
           ) : (
             <span className="text-xs text-slate-400">
               {timeRangeIndex === 0
-                ? 'Yenileme: 10s'
+                ? 'Yenileme: 15s'
                 : `Yenileme: 30s · ${timeRangeLabel}`}
             </span>
           )}
@@ -1194,7 +1212,7 @@ const LiveMetrics: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.05]">
-              {sortedRows.map((row) => (
+              {pagedRows.map((row) => (
                 <tr key={row.serverId} className={`hover:bg-white/[0.03] transition-colors ${!row.live ? 'opacity-70' : ''}`}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                     <div className="font-medium">{row.hostname}</div>
@@ -1237,6 +1255,31 @@ const LiveMetrics: React.FC = () => {
             </tbody>
           </table>
         </div>
+        {sortedRows.length > TABLE_PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
+            <span className="text-xs text-slate-500">
+              {sortedRows.length} satır · sayfa {safeTablePage}/{tablePageCount}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={safeTablePage <= 1}
+                onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
+              >
+                Önceki
+              </button>
+              <button
+                type="button"
+                disabled={safeTablePage >= tablePageCount}
+                onClick={() => setTablePage((p) => Math.min(tablePageCount, p + 1))}
+                className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
+              >
+                Sonraki
+              </button>
+            </div>
+          </div>
+        )}
         {sortedRows.length === 0 && (
           <div className="text-center py-12 text-slate-500">
             {isLoading ? 'Metrikler yükleniyor...' : 'Metrik bulunamadı'}

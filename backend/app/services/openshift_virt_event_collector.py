@@ -89,13 +89,14 @@ def sync_openshift_virt_events_for_hypervisor(db: Session, hypervisor: Hyperviso
     if htype != "openshift_virt":
         return {"skipped": True, "reason": "not_openshift_virt"}
 
+    from app.services.hypervisor_credentials import hv_password, hv_token, plain
     cc = hypervisor.connection_config or {}
-    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+    use_creds = bool(cc.get("username")) and bool(cc.get("password") or hypervisor.password)
     client = KubeVirtClient(
         api_url=cc.get("api_url") or hypervisor.hostname or hypervisor.ip_address,
-        token="" if use_creds else (cc.get("token") or hypervisor.password or ""),
+        token="" if use_creds else hv_token(hypervisor),
         username=cc.get("username") or "",
-        password=cc.get("password") or "",
+        password=plain(cc.get("password")) or hv_password(hypervisor),
         verify_ssl=bool(cc.get("verify_ssl", False)),
     )
 

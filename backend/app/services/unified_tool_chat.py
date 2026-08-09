@@ -1,14 +1,14 @@
 """
 Unified Chat — READ_ONLY agentic tool-calling katmanı.
 
-Sabit context toplamanın (linux/windows SSH-WinRM taraması, RAG, learned facts)
-YANINDA/ÖNCESİNDE çalışır: model önce kısa bir sistem promptu + READ_ONLY araç
-listesiyle "bu soruyu yanıtlamak için ek bir araç çağırmam gerekir mi?" kararını
-kendi verir. Araç çağırırsa (SSH tanı komutu, canlı vCenter/OpenShift sorgusu vb.)
-sonuç tekrar modele beslenir; çağırmazsa (ya da sağlayıcı/model tool-calling
-desteklemiyorsa) sessizce hiçbir şey üretmeden mevcut sabit-context akışına düşülür
-— bu modülün ürettiği metin, `_build_prompt`'a EK bir bağlam bloğu olarak eklenir,
-var olan davranışı asla bozmaz.
+Dalga 2 (TTFT): varsayılan yol agentic-first XOR sabit collect — chat stream'ler
+`chat_path_policy.resolve_live_path` ile karar verir. Bu modül yalnızca agentic
+açıldığında çağrılır; sabit SSH/WinRM taraması aynı turda genelde çalışmaz
+(derin analiz / chat_force_collect_and_agentic hariç).
+
+Model kısa sistem promptu + READ_ONLY araç listesiyle karar verir. Araç çağırırsa
+sonuç tekrar modele beslenir; çağırmazsa / destek yoksa sessizce mevcut context
+akışına düşülür — üretilen metin `_build_prompt`'a EK bağlam bloğu olarak eklenir.
 """
 from __future__ import annotations
 
@@ -33,8 +33,15 @@ SYSTEM_PROMPT = (
     "Deployment, Route, node NotReady, oc/kubectl) → openshift_ask / list_ocp_pods / "
     "list_ocp_events. Linux SSH/systemd araçlarını KULLANMA.\n"
     "- vCenter/ESXi/VM soruları → vcenter_* araçları.\n"
+    "- OpenShift Virtualization / KubeVirt VM soruları → list_kubevirt_vms / openshift_ask "
+    "(OV bir sanallaştırma ortamıdır; yalnız VMware listesine bakıp 'OV yok' deme).\n"
     "- Belirsiz 'servis/durum' ifadesinde: kullanıcı OpenShift/pod demediyse Linux; "
     "pod/namespace/cluster dediysa OpenShift. İkisini aynı yanıtta karıştırma.\n\n"
+    "SANALLASTIRMA KAPSAMI:\n"
+    "- VMware/vCenter hypervisor kaydı VE OpenShift Virtualization (KubeVirt VM'ler) "
+    "ikisi de sanallaştırmadır. Hypervisors tablosunda yalnızca vmware olsa bile "
+    "OCP kümesinde KubeVirt VM varsa OV ortamı vardır — 'sayılmaz' deme; "
+    "'hypervisor satırı yok, OpenShift VM yüzeyinden yönetiliyor' de.\n\n"
     "KURAL — GENEL TEKNİK SORU vs BU ORTAMA ÖZGÜ SORU:\n"
     "- Soru GENEL bir teknik/kavramsal konuysa (ör. 'RAID5 nedir', 'TCP handshake nasıl "
     "işler', 'PostgreSQL VACUUM ne işe yarar', 'systemd unit dosyası nasıl yazılır') "
@@ -69,20 +76,34 @@ _PLATFORM_HINTS = {
     "linux": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Linux sunucular (SSH/systemd). "
         "OpenShift pod/cluster veya vCenter cevapları ÜRETME; elinde o araçlar yoksa "
-        "kullanıcıya OpenShift AIOps / Unified Chat'e yönlendir."
+        "kullanıcıya OpenShift AIOps / Unified Chat'e yönlendir.\n"
+        "infra_overview bu sohbette YALNIZCA Linux özeti döner — Windows/HV/OCP sayma; "
+        "tabloda yalnızca Linux metrikleri göster."
     ),
     "openshift": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA OpenShift Container Platform (pod, namespace, "
-        "node, event, KubeVirt). Linux sunucu SSH/systemd cevabı ÜRETME; o konular "
-        "için Linux AIOps sohbetini öner."
+        "node, event, KubeVirt / OpenShift Virtualization). Linux sunucu SSH/systemd "
+        "cevabı ÜRETME; o konular için Linux AIOps sohbetini öner.\n"
+        "KubeVirt VirtualMachine'ler bu kapsamda SANALLAŞTIRMA workload'udur; "
+        "'OV sanallaştırma sayılmaz' deme.\n"
+        "infra_overview yalnızca OCP cluster özeti döner."
     ),
     "windows": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Windows sunucular (WinRM). "
-        "Linux SSH veya OpenShift karıştırma."
+        "Linux SSH veya OpenShift karıştırma.\n"
+        "infra_overview yalnızca Windows özeti döner."
     ),
     "virt": (
-        "\n\nBU SOHBET KAPSAMI: YALNIZCA sanallaştırma (vCenter/ESXi/KubeVirt VM). "
-        "Linux OS yönetimi veya OCP pod envanterini karıştırma."
+        "\n\nBU SOHBET KAPSAMI: YALNIZCA sanallaştırma (vCenter/ESXi + OpenShift "
+        "Virtualization/KubeVirt VM). Linux OS yönetimi veya OCP pod envanterini karıştırma.\n"
+        "OV, VMware yanında ikinci bir sanallaştırma yoludur; hypervisor kaydı yoksa "
+        "bile OCP KubeVirt VM'leri sanallaştırma sayılır.\n"
+        "infra_overview hypervisor/VM özeti döner; OV için OpenShift/KubeVirt araçlarını kullan."
+    ),
+    "exadata": (
+        "\n\nBU SOHBET KAPSAMI: YALNIZCA Exadata. "
+        "Genel Linux filo veya Windows karıştırma.\n"
+        "infra_overview yalnızca Exadata özeti döner."
     ),
 }
 
@@ -107,6 +128,10 @@ def run_read_only_tool_loop(
     max_steps: int = 6,
     domains: Optional[frozenset] = None,
     platform: Optional[str] = None,
+    *,
+    stop_after_tools: Optional[int] = None,
+    planning_mode: bool = False,
+    planning_depth: bool = False,
 ) -> Iterator[Dict[str, Any]]:
     """READ_ONLY tool-calling döngüsü — generator.
 
@@ -117,9 +142,10 @@ def run_read_only_tool_loop(
       - {"type": "error", "detail": str}              (araç kullanıldıktan SONRA hata)
       - {"type": "final", "used_tools": bool, "tool_text": str, "max_steps_reached": bool}
 
-    Çağıran taraf yalnızca "final" ile dönen tool_text'i mevcut prompt'a ek bir
-    bağlam bloğu olarak ekler; bu fonksiyon HİÇBİR ŞEKİLDE kullanıcıya doğrudan
-    cevap üretmez/streaming yapmaz (bu iş her zaman mevcut akışta kalır).
+    stop_after_tools: Bu kadar başarılı tool sonrası ek LLM turu yok (erken final) —
+    migrasyon/planlama TTFT için.
+    planning_mode: Kapasite/migrasyon sistem ekleri + agresif erken kesme.
+    planning_depth: Kullanıcı 'daha kapsamlı' istediğinde derin addendum.
     """
     try:
         from app.services.agent import tools as tool_mod
@@ -142,6 +168,15 @@ def run_read_only_tool_loop(
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
+    if planning_mode:
+        try:
+            from app.services.chat_planning_intent import (
+                PLANNING_SYSTEM_ADDENDUM,
+                PLANNING_DEPTH_ADDENDUM,
+            )
+            sys_content += PLANNING_DEPTH_ADDENDUM if planning_depth else PLANNING_SYSTEM_ADDENDUM
+        except Exception:
+            pass
     if server_summary:
         sys_content += "\n\nKULLANILABİLİR SUNUCULAR/KÜMELER:\n" + server_summary[:4000]
     if context_str:
@@ -153,8 +188,36 @@ def run_read_only_tool_loop(
     ]
 
     tool_texts: List[str] = []
+    tools_used: List[str] = []
     used_tools = False
-    exec_ctx: Dict[str, Any] = {}
+    successful_tool_runs = 0
+    exec_ctx: Dict[str, Any] = {"platform": plat or "unified"}
+    _stop_n = int(stop_after_tools) if stop_after_tools and stop_after_tools > 0 else None
+
+    def _finalize(max_steps_reached: bool = False, early_stop: bool = False) -> Dict[str, Any]:
+        if used_tools and tools_used:
+            try:
+                from app.services.assistant_playbooks import record_playbook
+                record_playbook(
+                    db,
+                    platform=plat or "unified",
+                    question=user_message,
+                    tools=tools_used,
+                    server_scope=(server_summary or "")[:80] or None,
+                )
+            except Exception as e:
+                logger.debug("Playbook kayıt atlandı: %s", e)
+        out: Dict[str, Any] = {
+            "type": "final",
+            "used_tools": used_tools,
+            "tool_text": "\n\n".join(tool_texts),
+            "tools_used": list(tools_used),
+        }
+        if max_steps_reached:
+            out["max_steps_reached"] = True
+        if early_stop:
+            out["early_stop"] = True
+        return out
 
     for _step in range(max(1, max_steps)):
         llm = chat_with_tools(model, messages, specs, timeout=90)
@@ -167,7 +230,7 @@ def run_read_only_tool_loop(
 
         tool_calls = llm.get("tool_calls") or []
         if not tool_calls:
-            yield {"type": "final", "used_tools": used_tools, "tool_text": "\n\n".join(tool_texts)}
+            yield _finalize()
             return
 
         messages.append({
@@ -205,6 +268,9 @@ def run_read_only_tool_loop(
                     yield {"type": "tool_call", "tool": name, "args": args, "label": name}
                     result_str = execute_windows_tool(name, args, db, exec_ctx)
                     used_tools = True
+                    successful_tool_runs += 1
+                    if name and name not in tools_used:
+                        tools_used.append(name)
                     messages.append({"role": "tool", "name": name, "content": (result_str or "")[:6000]})
                     tool_texts.append(f"[{name}] {(result_str or '')[:_MAX_TOOL_TEXT_CHARS]}")
                     yield {"type": "tool_result", "tool": name}
@@ -226,6 +292,9 @@ def run_read_only_tool_loop(
                 yield {"type": "tool_call", "tool": name, "args": args, "label": label}
                 result = tool.execute(db, args, exec_ctx)
                 used_tools = True
+                successful_tool_runs += 1
+                if name and name not in tools_used:
+                    tools_used.append(name)
                 result_text = _tool_result_to_text(result)
                 messages.append({"role": "tool", "name": name, "content": result_text})
                 tool_texts.append(f"[{label}]\n{result_text[:_MAX_TOOL_TEXT_CHARS]}")
@@ -243,5 +312,13 @@ def run_read_only_tool_loop(
                 messages.append({"role": "tool", "name": name,
                                  "content": json.dumps({"error": str(e)}, ensure_ascii=False)})
 
-    yield {"type": "final", "used_tools": used_tools, "tool_text": "\n\n".join(tool_texts),
-           "max_steps_reached": True}
+        # Migrasyon/planlama: yeterli tool sonrası ek LLM turlarını kes (TTFT)
+        if _stop_n is not None and successful_tool_runs >= _stop_n:
+            logger.info(
+                "[UnifiedToolChat] early_stop planning tools=%s runs=%s",
+                tools_used, successful_tool_runs,
+            )
+            yield _finalize(early_stop=True)
+            return
+
+    yield _finalize(max_steps_reached=True)

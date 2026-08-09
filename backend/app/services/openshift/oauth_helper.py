@@ -32,6 +32,19 @@ def _normalize_api_url(api_url: str) -> str:
     return url
 
 
+def _resolve_url(url: str) -> str:
+    """DNS / host /etc/hosts ile URL host'unu bağlanılabilir hale getir."""
+    try:
+        from app.services.host_resolve import rewrite_url_host
+        rewritten, note, _orig = rewrite_url_host(url)
+        if rewritten and rewritten != url:
+            logger.debug("OAuth URL resolve: %s", note)
+            return rewritten
+    except Exception as e:
+        logger.debug("OAuth URL resolve skip: %s", e)
+    return url
+
+
 def _extract_token_from_location(location: str) -> Optional[str]:
     if not location:
         return None
@@ -55,7 +68,7 @@ def obtain_oauth_token(
 
     Returns (token, error_message). Başarılı olursa error_message boş string olur.
     """
-    base = _normalize_api_url(api_url)
+    base = _resolve_url(_normalize_api_url(api_url))
     if not base:
         return None, "API Server URL gerekli"
     if not username or not password:
@@ -75,6 +88,7 @@ def obtain_oauth_token(
         authorize_endpoint = meta.get("authorization_endpoint")
         if not authorize_endpoint:
             return None, "OAuth authorization_endpoint bulunamadı"
+        authorize_endpoint = _resolve_url(authorize_endpoint)
     except requests.exceptions.SSLError:
         return None, "SSL hatası — Sertifika doğrulanamadı"
     except requests.exceptions.ConnectTimeout:
@@ -110,7 +124,8 @@ def obtain_oauth_token(
                 return token, ""
 
             if r.status_code in (301, 302, 303, 307, 308) and location:
-                url = location if location.startswith("http") else f"{base}{location}"
+                nxt = location if location.startswith("http") else f"{base}{location}"
+                url = _resolve_url(nxt)
                 continue
 
             if r.status_code == 200:

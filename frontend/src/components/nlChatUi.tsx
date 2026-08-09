@@ -66,10 +66,10 @@ export function NlHistorySidebar({
   loading?: boolean
 }) {
   return (
-    <div className="w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0">
+    <div className="nl-history-sidebar w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0">
       <div className="p-3 border-b border-slate-700/50 space-y-2 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]">
             <History size={14} />
             Geçmiş
           </div>
@@ -126,16 +126,17 @@ export function NlHistorySidebar({
           sessions.map(session => (
             <div
               key={session.id}
+              data-active={selectedId === session.id ? 'true' : 'false'}
               onClick={() => onSelect(session.id)}
-              className={`group flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer mb-1 transition-colors ${
+              className={`nl-history-item group flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer mb-1 transition-colors ${
                 selectedId === session.id
                   ? 'bg-blue-600/20 border border-blue-500/30'
                   : 'hover:bg-slate-800/80 border border-transparent'
               }`}
             >
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-slate-200 truncate">{session.title}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
+                <p className="nl-history-title text-xs font-medium text-slate-200 truncate">{session.title}</p>
+                <p className="nl-history-meta text-[10px] text-slate-500 mt-0.5">
                   {session.message_count} mesaj · {formatNlSessionDate(session.updated_at || session.created_at)}
                 </p>
               </div>

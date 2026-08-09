@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Radix Select/Dropdown in Dialog: modal sets body { pointer-events: none }.
+   Portaled poppers are body children — must re-enable clicks + sit above dialog (z-90). */
+[data-radix-popper-content-wrapper] {
+  z-index: 110 !important;
+  pointer-events: auto !important;
+}
+[data-radix-select-content],
+[data-radix-dropdown-menu-content] {
+  pointer-events: auto !important;
+}
+
 /* ── Design System Variables — Industrial Precision (v2) ─────────────────── */
 :root {
   /* Surfaces — elevation via lightness, same base hue */
@@ -69,6 +80,381 @@
   --purple:       #3b82f6;
   --purple-dim:   rgba(59,130,246,0.12);
   --purple-glow:  rgba(59,130,246,0.20);
+
+  /* Dropt / Level 1 tokens on :root so portals (dialog, context menu) inherit */
+  --theme-background: #080d16;
+  --theme-foreground: #eef3fb;
+  --theme-card: #121a2c;
+  --theme-card-foreground: #eef3fb;
+  --theme-popover: #1a2540;
+  --theme-popover-foreground: #eef3fb;
+  --theme-primary: #3b82f6;
+  --theme-primary-foreground: #f8fafc;
+  --theme-secondary: #1a2540;
+  --theme-secondary-foreground: #eef3fb;
+  --theme-muted: #1a2540;
+  --theme-muted-foreground: #c5d0e8;
+  --theme-accent: #243356;
+  --theme-accent-foreground: #f1f5fb;
+  --theme-destructive: #ef4444;
+  --theme-destructive-foreground: #fff;
+  --theme-border: rgba(255, 255, 255, 0.2);
+  --theme-input: rgba(255, 255, 255, 0.18);
+  --theme-ring: #3b82f6;
+  --theme-overlay: rgba(2, 6, 16, 0.78);
+  --theme-inset: rgba(0, 0, 0, 0.35);
+  --theme-terminal-bg: #0b1220;
+  --theme-terminal-fg: #d7e0ea;
+  --theme-success-fg: #4ade80;
+  --theme-link: #60a5fa;
+
+  --color-background: var(--theme-background);
+  --color-foreground: var(--theme-foreground);
+  --color-card: var(--theme-card);
+  --color-card-foreground: var(--theme-card-foreground);
+  --color-popover: var(--theme-popover);
+  --color-popover-foreground: var(--theme-popover-foreground);
+  --color-primary: var(--theme-primary);
+  --color-primary-foreground: var(--theme-primary-foreground);
+  --color-secondary: var(--theme-secondary);
+  --color-secondary-foreground: var(--theme-secondary-foreground);
+  --color-muted: var(--theme-muted);
+  --color-muted-foreground: var(--theme-muted-foreground);
+  --color-accent: var(--theme-accent);
+  --color-accent-foreground: var(--theme-accent-foreground);
+  --color-destructive: var(--theme-destructive);
+  --color-destructive-foreground: var(--theme-destructive-foreground);
+  --color-border: var(--theme-border);
+  --color-input: var(--theme-input);
+  --color-ring: var(--theme-ring);
+
+  color-scheme: dark;
+}
+
+/* Light theme — entire app (Layout + Level 1 ops portals) */
+html[data-theme="light"] {
+  --bg-deep:      #f1f5f9;
+  --bg-base:      #f8fafc;
+  --bg-card:      #ffffff;
+  --bg-surface:   #ffffff;
+  --bg-card2:     #eef2f7;
+  --bg-elevated:  #eef2f7;
+  --bg-hover:     #e2e8f0;
+  --bg-overlay:   #e2e8f0;
+
+  --text-primary:   #0f172a;
+  --text-secondary: #1e293b;
+  --text-muted:     #475569;
+
+  --border-dim:   rgba(15, 23, 42, 0.08);
+  --border-glow:  rgba(15, 23, 42, 0.14);
+  --border:       rgba(15, 23, 42, 0.1);
+  --border-strong:rgba(15, 23, 42, 0.18);
+
+  --accent:        #2563eb;
+  --accent-glow:   rgba(37, 99, 235, 0.2);
+  --accent-hover:  #1d4ed8;
+  --accent-muted:  #dbeafe;
+  --accent-subtle: rgba(37, 99, 235, 0.1);
+
+  --theme-background: #f1f5f9;
+  --theme-foreground: #0f172a;
+  --theme-card: #ffffff;
+  --theme-card-foreground: #0f172a;
+  --theme-popover: #ffffff;
+  --theme-popover-foreground: #0f172a;
+  --theme-primary: #2563eb;
+  --theme-primary-foreground: #f8fafc;
+  --theme-secondary: #e2e8f0;
+  --theme-secondary-foreground: #0f172a;
+  --theme-muted: #e2e8f0;
+  --theme-muted-foreground: #334155;
+  --theme-accent: #dbeafe;
+  --theme-accent-foreground: #0f172a;
+  --theme-destructive: #dc2626;
+  --theme-destructive-foreground: #fff;
+  --theme-border: rgba(15, 23, 42, 0.16);
+  --theme-input: rgba(15, 23, 42, 0.12);
+  --theme-ring: #2563eb;
+  --theme-overlay: rgba(15, 23, 42, 0.45);
+  --theme-inset: rgba(15, 23, 42, 0.06);
+  --theme-terminal-bg: #0f172a;
+  --theme-terminal-fg: #e2e8f0;
+  --theme-success-fg: #15803d;
+  --theme-link: #1d4ed8;
+
+  --color-background: var(--theme-background);
+  --color-foreground: var(--theme-foreground);
+  --color-card: var(--theme-card);
+  --color-card-foreground: var(--theme-card-foreground);
+  --color-popover: var(--theme-popover);
+  --color-popover-foreground: var(--theme-popover-foreground);
+  --color-primary: var(--theme-primary);
+  --color-primary-foreground: var(--theme-primary-foreground);
+  --color-secondary: var(--theme-secondary);
+  --color-secondary-foreground: var(--theme-secondary-foreground);
+  --color-muted: var(--theme-muted);
+  --color-muted-foreground: var(--theme-muted-foreground);
+  --color-accent: var(--theme-accent);
+  --color-accent-foreground: var(--theme-accent-foreground);
+  --color-destructive: var(--theme-destructive);
+  --color-destructive-foreground: var(--theme-destructive-foreground);
+  --color-border: var(--theme-border);
+  --color-input: var(--theme-input);
+  --color-ring: var(--theme-ring);
+
+  color-scheme: light;
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.18); }
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(15,23,42,0.3); }
+
+/* Light mode: remap hard-coded dark utilities (Settings, forms, panels, L1) */
+html[data-theme="light"] .bg-slate-950,
+html[data-theme="light"] .bg-slate-950\/90,
+html[data-theme="light"] .bg-slate-950\/80,
+html[data-theme="light"] .bg-slate-950\/60,
+html[data-theme="light"] .bg-slate-950\/50,
+html[data-theme="light"] .bg-slate-950\/40,
+html[data-theme="light"] .bg-slate-900,
+html[data-theme="light"] .bg-slate-900\/90,
+html[data-theme="light"] .bg-slate-900\/80,
+html[data-theme="light"] .bg-slate-900\/70,
+html[data-theme="light"] .bg-slate-900\/60,
+html[data-theme="light"] .bg-slate-900\/50,
+html[data-theme="light"] .bg-slate-900\/40,
+html[data-theme="light"] .bg-slate-900\/30 {
+  background-color: var(--bg-surface) !important;
+}
+html[data-theme="light"] .bg-slate-800,
+html[data-theme="light"] .bg-slate-800\/90,
+html[data-theme="light"] .bg-slate-800\/80,
+html[data-theme="light"] .bg-slate-800\/70,
+html[data-theme="light"] .bg-slate-800\/60,
+html[data-theme="light"] .bg-slate-800\/50,
+html[data-theme="light"] .bg-slate-800\/40,
+html[data-theme="light"] .bg-slate-800\/30,
+html[data-theme="light"] .bg-slate-700,
+html[data-theme="light"] .bg-slate-700\/80,
+html[data-theme="light"] .bg-slate-700\/60,
+html[data-theme="light"] .bg-slate-700\/50,
+html[data-theme="light"] .bg-slate-700\/40,
+html[data-theme="light"] .bg-slate-700\/30,
+html[data-theme="light"] .hover\:bg-slate-700:hover,
+html[data-theme="light"] .hover\:bg-slate-700\/50:hover,
+html[data-theme="light"] .hover\:bg-slate-700\/40:hover,
+html[data-theme="light"] .hover\:bg-slate-800:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/80:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/60:hover {
+  background-color: var(--bg-elevated) !important;
+}
+html[data-theme="light"] .bg-black\/30,
+html[data-theme="light"] .bg-black\/40,
+html[data-theme="light"] .bg-black\/50 {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="light"] .bg-white\/\[0\.03\],
+html[data-theme="light"] .bg-white\/\[0\.04\],
+html[data-theme="light"] .bg-white\/\[0\.05\],
+html[data-theme="light"] .bg-white\/\[0\.06\],
+html[data-theme="light"] .bg-white\/\[0\.07\],
+html[data-theme="light"] .bg-white\/\[0\.08\],
+html[data-theme="light"] .bg-white\/\[0\.1\],
+html[data-theme="light"] .hover\:bg-white\/\[0\.04\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.05\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.06\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.06\]\/50:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.07\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.1\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.12\]:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+/* text-white → primary ink, except on colored solid/gradient buttons */
+html[data-theme="light"] .text-white {
+  color: var(--text-primary) !important;
+}
+html[data-theme="light"] button.text-white[class*="bg-blue"],
+html[data-theme="light"] button.text-white[class*="bg-emerald"],
+html[data-theme="light"] button.text-white[class*="bg-green"],
+html[data-theme="light"] button.text-white[class*="bg-red"],
+html[data-theme="light"] button.text-white[class*="bg-amber"],
+html[data-theme="light"] button.text-white[class*="bg-orange"],
+html[data-theme="light"] button.text-white[class*="bg-cyan"],
+html[data-theme="light"] button.text-white[class*="bg-sky"],
+html[data-theme="light"] button.text-white[class*="from-"],
+html[data-theme="light"] a.text-white[class*="bg-blue"],
+html[data-theme="light"] a.text-white[class*="from-blue"],
+html[data-theme="light"] a.text-white[class*="bg-gradient"],
+html[data-theme="light"] a.text-white[class*="from-"],
+html[data-theme="light"] [class*="bg-blue-"].text-white,
+html[data-theme="light"] [class*="bg-emerald"].text-white,
+html[data-theme="light"] [class*="bg-green"].text-white,
+html[data-theme="light"] [class*="bg-red"].text-white,
+html[data-theme="light"] [class*="bg-amber"].text-white,
+html[data-theme="light"] [class*="bg-orange"].text-white,
+html[data-theme="light"] [class*="bg-sky"].text-white,
+html[data-theme="light"] [class*="bg-cyan"].text-white,
+html[data-theme="light"] [class*="from-blue"] .text-white,
+html[data-theme="light"] [class*="bg-blue-"] .text-white,
+html[data-theme="light"] [class*="bg-gradient"] .text-white,
+html[data-theme="light"] .bg-red-500 .text-white,
+html[data-theme="light"] .bg-amber-500 .text-white,
+html[data-theme="light"] .bg-amber-600.text-white,
+html[data-theme="light"] .bg-red-500.text-white {
+  color: #ffffff !important;
+}
+
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300 {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-500,
+html[data-theme="light"] .text-slate-600 {
+  color: var(--text-muted) !important;
+}
+/* Hover white on light panels → dark ink (nav / settings / menus) */
+html[data-theme="light"] .hover\:text-white:hover {
+  color: var(--text-primary) !important;
+}
+/* Keep white only on solid colored CTAs — not plain menu buttons */
+html[data-theme="light"] button[class*="bg-blue"].hover\:text-white:hover,
+html[data-theme="light"] button[class*="bg-emerald"].hover\:text-white:hover,
+html[data-theme="light"] button[class*="bg-green"].hover\:text-white:hover,
+html[data-theme="light"] button[class*="bg-red"].hover\:text-white:hover,
+html[data-theme="light"] button[class*="from-"].hover\:text-white:hover,
+html[data-theme="light"] a[class*="bg-blue"].hover\:text-white:hover,
+html[data-theme="light"] a[class*="from-blue"].hover\:text-white:hover,
+html[data-theme="light"] a[class*="from-"].hover\:text-white:hover,
+html[data-theme="light"] a[class*="bg-gradient"].hover\:text-white:hover {
+  color: #ffffff !important;
+}
+
+html[data-theme="light"] .border-slate-600,
+html[data-theme="light"] .border-slate-700,
+html[data-theme="light"] .border-slate-700\/40,
+html[data-theme="light"] .border-slate-700\/50,
+html[data-theme="light"] .border-slate-700\/60 {
+  border-color: var(--border-strong) !important;
+}
+html[data-theme="light"] .border-white\/\[0\.05\],
+html[data-theme="light"] .border-white\/\[0\.06\],
+html[data-theme="light"] .border-white\/\[0\.08\],
+html[data-theme="light"] .border-white\/10,
+html[data-theme="light"] .border-white\/5 {
+  border-color: var(--border) !important;
+}
+html[data-theme="light"] .divide-white\/\[0\.05\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+
+html[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-theme="light"] textarea,
+html[data-theme="light"] select {
+  background-color: #ffffff !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-strong) !important;
+}
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: var(--text-muted) !important;
+}
+html[data-theme="light"] .placeholder-slate-500::placeholder,
+html[data-theme="light"] .placeholder\:text-slate-600::placeholder {
+  color: var(--text-muted) !important;
+}
+
+html[data-theme="light"] .fixed.inset-0.bg-black\/60,
+html[data-theme="light"] .fixed.inset-0.bg-black\/50 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+/* Tables / cards hard-coded for dark */
+html[data-theme="light"] .cyber-table th {
+  background: var(--bg-elevated) !important;
+  color: var(--text-muted) !important;
+  border-bottom-color: var(--border) !important;
+}
+html[data-theme="light"] .cyber-table td {
+  border-bottom-color: var(--border-dim) !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="light"] .cyber-table tr:hover td {
+  background: var(--accent-subtle) !important;
+}
+html[data-theme="light"] .cyber-card:hover {
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.08);
+}
+html[data-theme="light"] .nav-active {
+  color: var(--accent) !important;
+}
+html[data-theme="light"] .badge-offline {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+/* Inline style leftovers that used dark rgba text */
+html[data-theme="light"] [style*="color: rgba(148,163,184"],
+html[data-theme="light"] [style*="color:rgba(148,163,184"],
+html[data-theme="light"] [style*="color: rgba(100,116,139"],
+html[data-theme="light"] [style*="color:rgba(100,116,139"] {
+  color: var(--text-muted) !important;
+}
+html[data-theme="light"] [style*="color: rgba(226,232,240"],
+html[data-theme="light"] [style*="color:rgba(226,232,240"] {
+  color: var(--text-primary) !important;
+}
+/* Dark navy gradients used in dashboard heroes → light surface blend */
+html[data-theme="light"] [style*="rgba(26,37,64"] {
+  background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-card2) 100%) !important;
+}
+
+/* Komuta merkezi KPI / metrik kartları — soft surfaces */
+html[data-theme="light"] .ops-kpi-chip .ops-kpi-label {
+  color: var(--text-muted) !important;
+}
+html[data-theme="light"] .ops-kpi-chip[data-active="false"] .ops-kpi-value {
+  color: var(--text-primary) !important;
+}
+html[data-theme="light"] .ops-kpi-chip[data-tone="critical"][data-active="true"] .ops-kpi-value {
+  color: #b91c1c !important;
+}
+html[data-theme="light"] .ops-kpi-chip[data-tone="warning"][data-active="true"] .ops-kpi-value {
+  color: #b45309 !important;
+}
+html[data-theme="light"] .ops-kpi-chip[data-tone="ok"][data-active="true"] .ops-kpi-value {
+  color: #15803d !important;
+}
+html[data-theme="light"] .ops-metric-widget {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-strong) !important;
+}
+html[data-theme="light"] .ops-metric-widget .ops-metric-count-zero {
+  color: var(--text-muted) !important;
+}
+html[data-theme="light"] .ops-metric-track {
+  background-color: var(--bg-hover) !important;
+}
+
+/* Dil asistanı geçmiş paneli */
+html[data-theme="light"] .nl-history-sidebar {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border) !important;
+}
+html[data-theme="light"] .nl-history-item:hover {
+  background-color: var(--bg-hover) !important;
+}
+html[data-theme="light"] .nl-history-item[data-active="true"] {
+  background-color: var(--accent-subtle) !important;
+  border-color: rgba(37, 99, 235, 0.35) !important;
+}
+html[data-theme="light"] .nl-history-item .nl-history-title {
+  color: var(--text-primary) !important;
+}
+html[data-theme="light"] .nl-history-item .nl-history-meta {
+  color: var(--text-muted) !important;
 }
 
 /* ── Base Reset ──────────────────────────────────────────────────────────── */

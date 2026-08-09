@@ -21,7 +21,8 @@ interface Incident {
   id: number; title: string; description: string | null; severity: string; status: string
   source: string | null; affected_servers: number[]; affected_server_details: Server[]
   related_events: number[]; related_event_details?: RelatedEvent[]
-  root_cause: string | null; resolution: string | null; rca_result: any
+  root_cause?: string | null; resolution?: string | null; rca_result?: any
+  has_rca?: boolean
   assigned_to: string | null; created_at: string | null; updated_at: string | null; resolved_at: string | null
 }
 interface IncidentStats { total: number; open: number; investigating: number; resolved: number; critical: number }
@@ -54,7 +55,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       if (!res.ok) return { total: 0, incidents: [] }
       return res.json()
     },
-    refetchInterval: 20000
+    refetchInterval: 45_000,
   })
 
   const { data: stats } = useQuery<IncidentStats>({
@@ -65,7 +66,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       if (!res.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
       return res.json()
     },
-    refetchInterval: 20000
+    refetchInterval: 45_000,
   })
 
   const invalidate = () => {
@@ -131,15 +132,26 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     })
   }
 
-  const downloadAllRcaPdf = () => {
-    const reports = incidents
-      .filter(inc => inc.rca_result?.analysis)
-      .map(inc => ({
+  const downloadAllRcaPdf = async () => {
+    const withRca = incidents.filter(inc => inc.has_rca || inc.rca_result?.analysis)
+    const reports: { title: string; subtitle: string; markdown: string }[] = []
+    for (const inc of withRca) {
+      let full = inc
+      if (!inc.rca_result?.analysis) {
+        try {
+          const res = await fetch(`${API_BASE_URL}/incidents/${inc.id}`)
+          if (res.ok) full = await res.json()
+        } catch { /* skip */ }
+      }
+      if (!full.rca_result?.analysis) continue
+      reports.push({
         title: `#${inc.id} — ${inc.title}`,
-        subtitle: [inc.severity, inc.rca_result?.model, inc.rca_result?.analyzed_at ? fmt(inc.rca_result.analyzed_at, false) : null]
+        subtitle: [inc.severity, full.rca_result?.model, full.rca_result?.analyzed_at ? fmt(full.rca_result.analyzed_at, false) : null]
           .filter(Boolean).join(' · '),
-        markdown: String(inc.rca_result.analysis),
-      }))
+        markdown: String(full.rca_result.analysis),
+      })
+    }
+    if (!reports.length) return
     exportMultipleRcaToPrintWindow(reports, {
       title: 'Tüm Incident RCA Raporları',
       filename: `rca_tum_incident_${new Date().toISOString().slice(0, 10)}`,
@@ -147,12 +159,12 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   }
 
   const incidents = incidentsData?.incidents || []
-  const rcaCount = incidents.filter(i => i.rca_result?.analysis).length
+  const rcaCount = incidents.filter(i => i.has_rca || i.rca_result?.analysis).length
   const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
   const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
 
   const rowMenu = (inc: Incident) => {
-    const items = []
+    const items: { label: string; icon: React.ReactNode; accent: string; onClick: () => void }[] = []
     if (inc.status === 'open') items.push({ label: "İncelemeye al", icon: "", accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
     if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
     if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: <Lock size={13} strokeWidth={2} />, accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
@@ -250,7 +262,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                       <div className="flex items-center gap-3 mt-2 text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {inc.affected_server_details?.length > 0 && <span>{inc.affected_server_details.map(s => s.name).join(', ')}</span>}
                         {inc.related_events?.length > 0 && <span>{inc.related_events.length} event</span>}
-                        {inc.rca_result?.analysis && <span className="text-[10px] font-bold text-blue-400">AI RCA</span>}
+                        {(inc.has_rca || inc.rca_result?.analysis) && <span className="text-[10px] font-bold text-blue-400">AI RCA</span>}
                         <span className="ml-auto">{fmt(inc.created_at)}</span>
                       </div>
                     </div>

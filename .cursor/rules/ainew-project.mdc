@@ -1,0 +1,43 @@
+---
+description: ainew (dttadvance) proje haritası ve çalışma ortamı
+alwaysApply: true
+---
+
+# ainew — AI-Powered Infrastructure Management
+
+Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` dosyasında (ör. 1.0.9.21). Repo: `datatemteknoloji/ai_eyup`.
+
+## Yığın
+
+- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Paramiko, LangGraph, ChromaDB
+- **Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query, Recharts
+- **Altyapı:** TimescaleDB (PG15), Redis 7, Prometheus, Pushgateway, Ollama (yerel LLM)
+
+## Dizinler
+
+- `backend/app/api/` — REST router'lar (`router.py` hepsini `/api/v1` altına bağlar)
+- `backend/app/services/` — iş mantığı (SSH, AIOps, agent, NLQ, hypervisor, Windows, …)
+- `backend/app/models/` — SQLAlchemy ORM
+- `backend/app/core/` — config, DB, JWT auth, encryption
+- `frontend/src/pages/` — sayfalar; `components/` — Layout, AIOps, chat
+- `docs/` — mimari ve özellik dokümanları (önce buraya bak)
+- `DESIGN.md` — UI design system (dark, blue accent, DM Sans/Mono)
+
+## Çalışan ortam (bu host)
+
+- Compose: `docker-compose.yml` (dev; backend `network_mode: host`, source mount)
+- UI: `:3000` · API: `:8000` · DB: `:5432` · Redis: `:6379` · Pushgateway: `:9091`
+- Kalıcı veri: `/data/data/{postgres,redis,chroma,hf_cache,repos,uploads,prometheus}`
+- Backend container adı: `server_management_backend`
+
+## Modüller (RBAC)
+
+`executive`, `linux`, `windows`, `virtualization`, `exadata`, `openshift`, `ai_automation`, `integrations`, `level1`, `applications`, `knowledge`. Admin tümüne erişir.
+
+## Kurallar
+
+- Uygulama verisini (DB, `.env` sırları, volume'lar) izinsiz değiştirme / silme
+- AI çıkarımı yerel Ollama veya isteğe bağlı REMOTE_LLM; harici cloud varsayılan değil
+- UI metinleri ve API hata mesajları çoğunlukla Türkçe
+- Dokümantasyon: `README.md`, `docs/architecture.md`, `docs/api-reference.md`
+- Ürün sohbet kuralları (asistan prompt): `.cursor/rules/ainew-assistant-prompts.mdc` — dosya yolları orada

@@ -30,6 +30,7 @@ fix_data_dir /app/repos
 fix_data_dir /app/uploads/chroma_knowledge
 fix_data_dir /app/updates
 fix_data_dir /app/hf_cache
+fix_data_dir /app/certs
 
 # docker.sock (GUI platform update): appuser'ı sock grubuna ekle
 if [ "$(id -u)" -eq 0 ] && [ -S /var/run/docker.sock ]; then

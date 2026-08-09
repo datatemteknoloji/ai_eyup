@@ -1,35 +1,152 @@
 /**
  * OpenShift Container Platform Dashboard — cluster bağlantısı, node/proje/workload envanteri.
  */
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Boxes, Server, Layers, Plus, RefreshCw, X, Check, Trash2, Cpu, MemoryStick,
+  Boxes, Server, Layers, Plus, RefreshCw, X, Check, Trash2, Cpu, MemoryStick, Info, Monitor, ChevronRight, Terminal, KeyRound,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
+import { useAuth } from '../auth/AuthContext'
+
+type DashTab = 'overview' | 'clusters' | 'vms' | 'nodes' | 'projects' | 'workloads' | 'risks' | 'storage' | 'resources'
+
+const VALID_TABS: DashTab[] = ['overview', 'clusters', 'vms', 'nodes', 'projects', 'workloads', 'risks', 'storage', 'resources']
+const INVENTORY_TABS: DashTab[] = ['overview', 'vms', 'projects', 'workloads', 'risks', 'storage', 'resources']
+const INTEGRATION_TABS: DashTab[] = ['overview', 'clusters', 'nodes']
+
+function parseTab(raw: string | null | undefined): DashTab | null {
+  if (raw && VALID_TABS.includes(raw as DashTab)) return raw as DashTab
+  return null
+}
+
+/** Bağlantı / token alma alternatifleri — bastion üzerinde `oc` ile. */
+function OpenShiftConnectHelp({ compact = false, align = 'right' }: { compact?: boolean; align?: 'left' | 'right' }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label="OpenShift bağlantı yardımı"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onBlur={(e) => {
+          if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) setOpen(false)
+        }}
+        className={`inline-flex items-center justify-center rounded-full text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors ${
+          compact ? 'w-6 h-6' : 'w-7 h-7'
+        }`}
+      >
+        <Info size={compact ? 14 : 16} />
+      </button>
+      {open && (
+        <div
+          role="tooltip"
+          className={`absolute z-50 top-full mt-2 w-[min(92vw,28rem)] rounded-xl border border-white/[0.1] bg-cyber-deep shadow-xl p-4 text-left ${
+            align === 'left' ? 'left-0' : 'right-0'
+          }`}
+        >
+          <div className="text-sm font-medium text-white mb-2">Cluster nasıl bağlanır?</div>
+          <div className="space-y-3 text-[11px] text-slate-300 leading-relaxed">
+            <div>
+              <div className="text-rose-300/90 font-medium mb-1">1) API Server URL</div>
+              <p className="text-slate-400 mb-1">
+                Konsol adresi (<code className="text-slate-300">console-openshift-console.apps…</code>) değil;
+                Kubernetes API adresi kullanın:
+              </p>
+              <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto whitespace-pre-wrap">{`https://api.<cluster>:6443
+# DNS yoksa:
+https://<api-ip>:6443`}</pre>
+            </div>
+            <div>
+              <div className="text-rose-300/90 font-medium mb-1">2) Önerilen: Service Account token (uzun ömürlü)</div>
+              <p className="text-slate-400 mb-1">Bastion / jump host’ta <code className="text-slate-300">oc</code> ile:</p>
+              <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto whitespace-pre-wrap">{`oc create sa ainew-viewer -n default
+oc adm policy add-cluster-role-to-user cluster-reader -z ainew-viewer -n default
+oc create token ainew-viewer -n default --duration=8760h`}</pre>
+              <p className="text-slate-500 mt-1">Çıkan token’ı “Bearer Token” alanına yapıştırın. Salt-okuma için <code className="text-slate-400">cluster-reader</code> yeterlidir.</p>
+            </div>
+            <div>
+              <div className="text-rose-300/90 font-medium mb-1">3) Alternatif: kullanıcı token’ı</div>
+              <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto">{`oc login … && oc whoami -t`}</pre>
+              <p className="text-slate-500 mt-1">Kısa ömürlü olabilir; üretim için SA token tercih edin.</p>
+            </div>
+            <div>
+              <div className="text-rose-300/90 font-medium mb-1">4) Kullanıcı adı / şifre</div>
+              <p className="text-slate-400">
+                OAuth ile token alınır (<code className="text-slate-300">oc login -u/-p</code> akışı). Bu sunucunun
+                <code className="text-slate-300"> oauth-openshift.apps.…</code> DNS’ini çözmesi ve ingress’e
+                erişmesi gerekir. DNS yoksa token yöntemini kullanın.
+              </p>
+            </div>
+            <p className="text-slate-500 border-t border-white/[0.06] pt-2">
+              Sertifika self-signed ise “Sertifika doğrula” kapalı kalsın.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface Cluster {
   id: number; name: string; api_url: string; status: string | null; version: string | null
   last_sync: string | null; sync_job?: { status?: string; phase?: string; percent?: number; message?: string } | null
+  auth_method?: string; verify_ssl?: boolean; has_token?: boolean
 }
 
 interface OcpNode {
   id: number; cluster_id: number; name: string; role: string; status: string
   cpu_cores?: number; memory_gb?: number; kubelet_version?: string
+  cpu_usage_pct?: number | null; memory_usage_pct?: number | null
+  cpu_requested?: number; memory_requested_gb?: number
+  cpu_allocatable?: number; memory_allocatable_gb?: number
+  pod_count?: number
+  internal_ip?: string; external_ip?: string; ip_address?: string; hostname?: string
 }
 
 interface OcpProject {
   id: number; cluster_id: number; name: string; status: string
   pod_count: number; deployment_count: number; route_count: number
+  display_name?: string; is_system?: boolean
 }
 
 interface OcpWorkload {
   id: number; cluster_id: number; project: string; kind: string; name: string
   status: string; node_name?: string; restart_count: number; ready?: string; host?: string
+  is_risk?: boolean; risk_severity?: string | null; reason?: string
 }
 
-function relTime(iso: string | null): string {
+interface HealthBoard {
+  overall: string
+  totals: {
+    clusters: number; nodes: number; nodes_not_ready: number; projects: number
+    pods: number; risk_pods: number; deployments: number; routes: number
+  }
+  clusters: Array<{
+    id: number; name: string; health: string; status: string; version?: string
+    node_count: number; nodes_ready: number; nodes_not_ready: string[]
+    project_count: number; pod_count: number; risk_pod_count: number
+    avg_cpu_request_pct?: number | null; avg_memory_request_pct?: number | null
+    top_risks: Array<{ name: string; project: string; status: string; restart_count: number; severity: string }>
+    last_sync?: string | null
+  }>
+}
+
+interface TopologyData {
+  project: string
+  nodes: Array<{ id: string; kind: string; name: string; status?: string; host?: string; node_name?: string; ready?: string; restart_count?: number }>
+  edges: Array<{ from: string; to: string; rel: string }>
+  summary: { routes: number; services: number; deployments: number; pods: number }
+}
+
+function relTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return '—'
@@ -43,10 +160,514 @@ function relTime(iso: string | null): string {
 
 function statusColor(status?: string) {
   const s = (status || '').toLowerCase()
-  if (['ready', 'running', 'active', 'admitted', 'available'].includes(s)) return 'text-green-400'
-  if (['pending', 'progressing'].includes(s)) return 'text-amber-400'
-  if (['notready', 'failed', 'error', 'crashloopbackoff'].includes(s)) return 'text-red-400'
+  if (['ready', 'running', 'active', 'admitted', 'available', 'healthy', 'online'].includes(s)) return 'text-green-400'
+  if (['pending', 'progressing', 'warning', 'syncing'].includes(s)) return 'text-amber-400'
+  if (['notready', 'failed', 'error', 'crashloopbackoff', 'critical', 'imagepullbackoff', 'oomkilled'].includes(s)) return 'text-red-400'
   return 'text-slate-400'
+}
+
+function healthTone(h?: string) {
+  if (h === 'critical') return 'border-red-500/40 bg-red-500/10'
+  if (h === 'warning') return 'border-amber-500/40 bg-amber-500/10'
+  if (h === 'healthy') return 'border-emerald-500/30 bg-emerald-500/5'
+  return 'border-white/[0.06] bg-cyber-card'
+}
+
+function CapacityBar({ pct, label }: { pct?: number | null; label: string }) {
+  const v = Math.min(100, Math.max(0, pct ?? 0))
+  const tone = v >= 90 ? 'bg-red-500' : v >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
+  return (
+    <div className="min-w-[7rem]">
+      <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+        <span>{label}</span>
+        <span>{pct == null ? '—' : `${pct}%`}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+        <div className={`h-full ${tone}`} style={{ width: `${pct == null ? 0 : v}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function PodDetailDrawer({
+  clusterId, namespace, pod, onClose,
+}: { clusterId: number; namespace: string; pod: string; onClose: () => void }) {
+  const [prev, setPrev] = useState(false)
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ['ocp-pod-detail', clusterId, namespace, pod],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}`)
+      if (!r.ok) throw new Error((await r.json()).detail || 'Pod detayı alınamadı')
+      return r.json()
+    },
+  })
+  const { data: logs, isFetching: logsLoading, refetch: refetchLogs } = useQuery({
+    queryKey: ['ocp-pod-logs', clusterId, namespace, pod, prev],
+    queryFn: async () => {
+      const params = new URLSearchParams({ tail: '400', previous: String(prev) })
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?${params}`)
+      if (!r.ok) throw new Error('Log alınamadı')
+      return r.json()
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+      <div className="w-full max-w-2xl h-full bg-cyber-card border-l border-white/[0.08] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
+          <div>
+            <div className="text-white font-medium">{namespace} / {pod}</div>
+            <div className="text-xs text-slate-500">Pod detay · log · olaylar</div>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Yükleniyor…</div>}
+          {detail && (
+            <>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
+                  <div className="text-slate-500">Phase</div>
+                  <div className={`font-medium ${statusColor(detail.phase)}`}>{detail.phase}</div>
+                </div>
+                <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
+                  <div className="text-slate-500">Node</div>
+                  <div className="text-white truncate">{detail.node || '—'}</div>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase text-slate-500 mb-2">Containers</div>
+                <div className="space-y-1.5">
+                  {(detail.containers || []).map((c: any) => (
+                    <div key={c.name} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-white">{c.name}</span>
+                        <span className={statusColor(c.reason || c.state)}>{c.reason || c.state}</span>
+                      </div>
+                      <div className="text-slate-500 mt-0.5 truncate">restart {c.restart_count} · {c.image}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {(detail.events || []).length > 0 && (
+                <div>
+                  <div className="text-xs uppercase text-slate-500 mb-2">Events</div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {(detail.events || []).map((e: any, i: number) => (
+                      <div key={i} className="text-[11px] text-slate-400 border-b border-white/[0.04] py-1">
+                        <span className={e.type === 'Warning' ? 'text-amber-400' : 'text-slate-500'}>{e.reason}</span>
+                        {' — '}{e.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase text-slate-500">Logs</div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <input type="checkbox" checked={prev} onChange={e => setPrev(e.target.checked)} />
+                  previous
+                </label>
+                <button type="button" onClick={() => refetchLogs()} className="text-[11px] text-rose-300 flex items-center gap-1">
+                  <RefreshCw size={11} className={logsLoading ? 'animate-spin' : ''} /> Yenile
+                </button>
+              </div>
+            </div>
+            {logs?.error && <div className="text-xs text-amber-400 mb-2">{logs.error}</div>}
+            <pre className="bg-black/40 rounded-lg p-3 text-[10px] text-cyan-100/90 overflow-auto max-h-80 whitespace-pre-wrap font-mono">
+              {logsLoading ? '…' : (logs?.logs || '(boş)')}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TopologyDrawer({
+  clusterId, project, onClose,
+}: { clusterId: number; project: string; onClose: () => void }) {
+  const { data, isLoading, error } = useQuery<TopologyData>({
+    queryKey: ['openshift-topology', clusterId, project],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/topology?project=${encodeURIComponent(project)}`)
+      if (!r.ok) throw new Error((await r.json()).detail || 'Topology alınamadı')
+      return r.json()
+    },
+  })
+
+  const kindOrder = ['route', 'service', 'deployment', 'pod', 'node']
+  const grouped = kindOrder.map(k => ({
+    kind: k,
+    items: (data?.nodes || []).filter(n => n.kind === k),
+  })).filter(g => g.items.length > 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+      <div
+        className="w-full max-w-xl h-full bg-cyber-card border-l border-white/[0.08] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
+          <div>
+            <div className="text-white font-medium">Topology · {project}</div>
+            <div className="text-xs text-slate-500">
+              {data?.summary
+                ? `${data.summary.routes} route · ${data.summary.services} svc · ${data.summary.deployments} deploy · ${data.summary.pods} pod`
+                : 'Route → Service → Deployment → Pod → Node'}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-5">
+          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Canlı topology yükleniyor…</div>}
+          {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : 'Hata'}</div>}
+          {grouped.map(g => (
+            <div key={g.kind}>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">{g.kind} ({g.items.length})</div>
+              <div className="space-y-1.5">
+                {g.items.map(n => (
+                  <div key={n.id} className="rounded-lg border border-white/[0.06] bg-cyber-deep/60 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-white truncate">{n.name}</span>
+                      <span className={`text-xs ${statusColor(n.status)}`}>{n.status || '—'}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                      {n.host || n.node_name || n.ready || ''}
+                      {n.restart_count != null && n.restart_count > 0 ? ` · restart ${n.restart_count}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {data && (data.edges || []).length > 0 && (
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">İlişkiler ({(data.edges || []).length})</div>
+              <div className="max-h-48 overflow-y-auto space-y-1 text-[11px] font-mono text-slate-400">
+                {(data.edges || []).slice(0, 80).map((e, i) => (
+                  <div key={i}>{e.from} —{e.rel}→ {e.to}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function openVmConsole(clusterId: number, namespace: string, name: string) {
+  const title = encodeURIComponent(`${namespace}/${name}`)
+  const url =
+    `/openshift/vms/${clusterId}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/console?title=${title}`
+  window.open(url, `ocp-console-${namespace}-${name}`, 'width=1100,height=720')
+}
+
+function VmDetailDrawer({
+  clusterId, namespace, name, onClose, onYaml,
+}: {
+  clusterId: number; namespace: string; name: string
+  onClose: () => void
+  onYaml: (yaml: string) => void
+}) {
+  const { data: detail, isLoading, error } = useQuery({
+    queryKey: ['openshift-vm-detail', clusterId, namespace, name],
+    queryFn: async () => {
+      const r = await fetch(
+        `${API_BASE_URL}/openshift/clusters/${clusterId}/kubevirt/vms/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
+      )
+      if (!r.ok) throw new Error((await r.json()).detail || 'VM detayı alınamadı')
+      return r.json()
+    },
+  })
+
+  const phase = (detail?.phase || detail?.vm_power_state || '').toLowerCase()
+  const canConsole = phase === 'running'
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+      <div className="w-full max-w-2xl h-full bg-cyber-card border-l border-white/[0.08] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
+          <div>
+            <div className="text-white font-medium">{namespace} / {name}</div>
+            <div className="text-xs text-slate-500">KubeVirt VM · proje · worker · PVC/PV</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!canConsole && !!detail}
+              title={canConsole ? 'Serial console' : 'VM Running olmalı'}
+              className="text-xs text-cyan-300 px-2 py-1 rounded border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+              onClick={() => openVmConsole(clusterId, namespace, name)}
+            >
+              <Terminal size={12} /> Console
+            </button>
+            <button
+              type="button"
+              className="text-xs text-rose-300 px-2 py-1 rounded border border-white/[0.08] hover:bg-white/[0.04]"
+              onClick={async () => {
+                const params = new URLSearchParams({ kind: 'virtualmachines', name, namespace })
+                const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/resource-yaml?${params}`)
+                const d = await r.json()
+                onYaml(d.yaml || d.error || '—')
+              }}
+            >
+              YAML
+            </button>
+            <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Yükleniyor…</div>}
+          {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : 'Hata'}</div>}
+          {detail && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                {[
+                  ['Phase', detail.phase || detail.vm_power_state],
+                  ['Proje', detail.namespace],
+                  ['Worker', detail.node_name || '—'],
+                  ['CPU', `${detail.cpu_cores ?? detail.vm_cpu_count ?? '—'} core`],
+                  ['Memory', detail.memory_gb != null ? `${detail.memory_gb} GB` : `${detail.vm_memory_mb || '—'} MB`],
+                  ['IP', detail.ip_address || detail.vm_guest_ip || '—'],
+                  ['Guest OS', detail.guest_os || detail.os_type || '—'],
+                  ['Machine', detail.machine_type || '—'],
+                  ['Launcher', detail.launcher_pod || '—'],
+                ].map(([l, v]) => (
+                  <div key={String(l)} className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
+                    <div className="text-slate-500">{l}</div>
+                    <div className={`font-medium truncate ${l === 'Phase' ? statusColor(String(v)) : 'text-white'}`}>{String(v)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <div className="text-xs uppercase text-slate-500 mb-2">Diskler → PVC → PV</div>
+                {(detail.disks || []).length === 0 && <div className="text-xs text-slate-500">Disk yok</div>}
+                <div className="space-y-2">
+                  {(detail.disks || []).map((d: any) => (
+                    <div key={d.name} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs space-y-1">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-white font-medium">{d.name}</span>
+                        <span className="text-slate-500">{d.source || '—'}{d.bus ? ` · ${d.bus}` : ''}</span>
+                      </div>
+                      {d.image && <div className="text-slate-500 truncate">image: {d.image}</div>}
+                      {d.pvc && !d.pvc.error && (
+                        <div className="text-slate-300">
+                          PVC <span className="text-white">{d.pvc.namespace}/{d.pvc.name}</span>
+                          {' · '}<span className={statusColor(d.pvc.phase)}>{d.pvc.phase}</span>
+                          {d.pvc.capacity_gb != null ? ` · ${d.pvc.capacity_gb} GB` : ''}
+                          {d.pvc.storage_class ? ` · ${d.pvc.storage_class}` : ''}
+                        </div>
+                      )}
+                      {d.pv && !d.pv.error && (
+                        <div className="text-slate-400">
+                          PV <span className="text-white">{d.pv.name}</span>
+                          {' · '}<span className={statusColor(d.pv.phase)}>{d.pv.phase}</span>
+                          {d.pv.reclaim ? ` · reclaim ${d.pv.reclaim}` : ''}
+                          {d.pv.capacity_gb != null ? ` · ${d.pv.capacity_gb} GB` : ''}
+                        </div>
+                      )}
+                      {(d.pvc?.error || d.pv?.error) && (
+                        <div className="text-amber-400">{d.pvc?.error || d.pv?.error}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs uppercase text-slate-500 mb-2">Ağ (NIC)</div>
+                {(detail.nics || detail.vm_network_info || []).length === 0 && (
+                  <div className="text-xs text-slate-500">NIC yok</div>
+                )}
+                <div className="space-y-1.5">
+                  {(detail.nics || detail.vm_network_info || []).map((n: any, i: number) => (
+                    <div key={n.name || i} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs flex flex-wrap justify-between gap-2">
+                      <span className="text-white">{n.name || 'nic'}</span>
+                      <span className="text-slate-400">
+                        {n.ip_address || n.ips?.[0]?.address || '—'}
+                        {n.mac ? ` · ${n.mac}` : ''}
+                        {n.binding ? ` · ${n.binding}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ClusterOverviewPanel({ overview }: { overview: any }) {
+  if (!overview) return null
+  const cap = overview.capacity || {}
+  return (
+    <div className="mt-4 pt-4 border-t border-white/[0.06] space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-slate-400">
+          Canlı config · Kubernetes <span className="text-white">{overview.version || '—'}</span>
+          {overview.migration_ready ? (
+            <span className="ml-2 text-emerald-400">· göç hazır</span>
+          ) : null}
+        </div>
+        {overview.migration_missing?.length > 0 && (
+          <div className="text-[11px] text-amber-400">Eksik: {overview.migration_missing.join(', ')}</div>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+          <div className="text-slate-500">CPU</div>
+          <div className="text-white">{cap.cpu_used_cores ?? '—'} / {cap.cpu_cores ?? '—'} core</div>
+        </div>
+        <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+          <div className="text-slate-500">Memory</div>
+          <div className="text-white">{cap.memory_used_gb ?? '—'} / {cap.memory_gb ?? '—'} GB</div>
+        </div>
+        <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+          <div className="text-slate-500">Nodes / Pods</div>
+          <div className="text-white">{cap.nodes_ready ?? '—'}/{cap.nodes_total ?? '—'} · {cap.pods_running ?? '—'} run</div>
+        </div>
+        <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+          <div className="text-slate-500">KubeVirt VM</div>
+          <div className="text-white">{overview.kubevirt_vms ?? '—'}</div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {(overview.operators || []).map((o: any) => (
+          <span key={o.group} className={`text-[10px] px-2 py-0.5 rounded-full border ${
+            o.installed ? 'border-emerald-500/30 text-emerald-300' : 'border-white/[0.08] text-slate-500'
+          }`}>
+            {(o.label || o.group || '').split('(')[0].trim()}{o.installed ? '' : ' ✕'}
+          </span>
+        ))}
+      </div>
+      {(overview.storage_classes || []).length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase text-slate-500 mb-1">StorageClass</div>
+          <div className="flex flex-wrap gap-1.5">
+            {(overview.storage_classes || []).map((sc: any) => (
+              <span key={sc.name} className="text-[10px] px-2 py-0.5 rounded border border-white/[0.08] text-slate-300">
+                {sc.name}{sc.default ? ' · default' : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {overview.namespaces && (
+        <div className="text-[11px] text-slate-500">
+          Namespace: {overview.namespaces.total ?? '—'} toplam
+          {overview.namespaces.user?.length != null ? ` · ${overview.namespaces.user.length} kullanıcı projesi` : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EditClusterModal({
+  cluster,
+  onClose,
+  onSave,
+  saving,
+}: {
+  cluster: Cluster
+  onClose: () => void
+  onSave: (data: Record<string, unknown>) => void
+  saving?: boolean
+}) {
+  const [form, setForm] = useState({
+    name: cluster.name,
+    api_url: cluster.api_url,
+    token: '',
+    username: '',
+    password: '',
+    verify_ssl: Boolean(cluster.verify_ssl),
+  })
+  const [authMethod, setAuthMethod] = useState<'token' | 'credentials'>(
+    cluster.auth_method === 'credentials' ? 'credentials' : 'token',
+  )
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const data: Record<string, unknown> = {
+      name: form.name.trim(),
+      api_url: form.api_url.trim(),
+      verify_ssl: form.verify_ssl,
+    }
+    if (authMethod === 'token') {
+      if (form.token.trim()) data.token = form.token.trim()
+    } else if (form.username && form.password) {
+      data.username = form.username
+      data.password = form.password
+    }
+    onSave(data)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
+        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Token / Bağlantı Güncelle</h2>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Adı</label>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">API URL</label>
+            <input value={form.api_url} onChange={(e) => setForm({ ...form, api_url: e.target.value })}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
+          </div>
+          <div className="grid grid-cols-2 gap-2 p-1 bg-cyber-deep border border-white/[0.06] rounded-lg">
+            <button type="button" onClick={() => setAuthMethod('token')}
+              className={`py-1.5 rounded-md text-sm ${authMethod === 'token' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}>
+              Bearer Token
+            </button>
+            <button type="button" onClick={() => setAuthMethod('credentials')}
+              className={`py-1.5 rounded-md text-sm ${authMethod === 'credentials' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}>
+              Kullanıcı / Şifre
+            </button>
+          </div>
+          {authMethod === 'token' ? (
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">Yeni Bearer Token <span className="text-slate-600">(boş = mevcut kalır)</span></label>
+              <textarea rows={3} value={form.token} onChange={(e) => setForm({ ...form, token: e.target.value })}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
+            </div>
+          ) : (
+            <>
+              <input placeholder="Kullanıcı" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              <input type="password" placeholder="Şifre" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+            </>
+          )}
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            <input type="checkbox" checked={form.verify_ssl} onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })} />
+            SSL doğrula
+          </label>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">İptal</button>
+            <button type="submit" disabled={saving}
+              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              Kaydet
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
 }
 
 function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) {
@@ -94,9 +715,12 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
-        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">OpenShift Cluster Ekle</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-lg font-semibold text-white">OpenShift Cluster Ekle</h2>
+            <OpenShiftConnectHelp compact />
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
@@ -120,13 +744,14 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">API Server URL *</label>
             <input type="text" required value={form.api_url} onChange={e => { setForm({ ...form, api_url: e.target.value }); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="https://api.cluster.example.com:6443" />
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="https://api.cluster.example.com:6443 veya https://IP:6443" />
+            <p className="text-[11px] text-slate-500 mt-1">Konsol URL’si değil; API :6443. Yardım için üstteki (i) ikonuna bakın.</p>
           </div>
           {authMethod === 'token' ? (
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">Bearer Token *</label>
               <textarea required rows={3} value={form.token} onChange={e => { setForm({ ...form, token: e.target.value }); setTestResult(null) }}
-                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50 font-mono" placeholder="oc whoami -t ile alınan token" />
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50 font-mono" placeholder="oc create token … veya oc whoami -t" />
             </div>
           ) : (
             <>
@@ -173,52 +798,206 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   )
 }
 
-export default function OpenShiftDashboard({ allowInventoryEdit = false }: { allowInventoryEdit?: boolean }) {
-  const [tab, setTab] = useState<'clusters' | 'nodes' | 'projects' | 'workloads'>('clusters')
+export default function OpenShiftDashboard({
+  allowInventoryEdit = false,
+  initialTab = 'overview',
+}: {
+  allowInventoryEdit?: boolean
+  initialTab?: DashTab
+}) {
+  const { user } = useAuth()
+  const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
+  /** Entegrasyonlar sayfası: bağlantı + cluster + node/kapasite. Envanter: iş yükü/VM/risk. */
+  const isIntegration = allowInventoryEdit
+  /** Küme ekle/sil/token — yalnızca admin (API de require_role admin). */
+  const canManageClusters = allowInventoryEdit && isAdmin
+  const allowedTabs = isIntegration ? INTEGRATION_TABS : INVENTORY_TABS
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabFromUrl = parseTab(searchParams.get('tab'))
+  const resolvedInitial = (() => {
+    const cand = tabFromUrl || initialTab
+    if (allowedTabs.includes(cand)) return cand
+    return 'overview'
+  })()
+  const [tab, setTab] = useState<DashTab>(resolvedInitial)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [editCluster, setEditCluster] = useState<Cluster | null>(null)
+  const [q, setQ] = useState('')
+  const [kindFilter, setKindFilter] = useState('pod')
+  const [page, setPage] = useState(1)
+  const [topo, setTopo] = useState<{ clusterId: number; project: string } | null>(null)
+  const [podView, setPodView] = useState<{ clusterId: number; namespace: string; pod: string } | null>(null)
+  const [vmView, setVmView] = useState<{ clusterId: number; namespace: string; name: string } | null>(null)
+  const [expandedClusterId, setExpandedClusterId] = useState<number | null>(null)
+  const [resKind, setResKind] = useState('deployments')
+  const [resNs, setResNs] = useState('')
+  const [yamlText, setYamlText] = useState<string | null>(null)
+  const pageSize = 40
   const qc = useQueryClient()
 
-  const { data: clusters = [], isLoading: clustersLoading } = useQuery<Cluster[]>({
+  useEffect(() => {
+    const cand = tabFromUrl || initialTab
+    const next = allowedTabs.includes(cand) ? cand : 'overview'
+    setTab(next)
+  }, [initialTab, tabFromUrl, isIntegration])
+
+  const { data: clustersData, isLoading: clustersLoading } = useQuery<Cluster[]>({
     queryKey: ['openshift-clusters'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters`)
       if (!r.ok) return []
-      return (await r.json()).clusters
+      const body = await r.json()
+      return Array.isArray(body?.clusters) ? body.clusters : []
     },
-    refetchInterval: (q) => {
-      const list = (q.state.data as Cluster[] | undefined) || []
+    refetchInterval: (query) => {
+      const list = (query.state.data as Cluster[] | undefined) || []
       return list.some(c => c.sync_job?.status === 'running') ? 4000 : 60_000
     },
   })
+  const clusters = clustersData ?? []
 
-  const { data: nodes = [] } = useQuery<OcpNode[]>({
+  const primaryClusterId = clusters[0]?.id
+  const detailClusterId = expandedClusterId ?? primaryClusterId
+
+  const { data: health } = useQuery<HealthBoard>({
+    queryKey: ['openshift-health-board'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/health-board`)
+      if (!r.ok) throw new Error('health board')
+      return r.json()
+    },
+    refetchInterval: 30_000,
+  })
+
+  const { data: nodesData } = useQuery<OcpNode[]>({
     queryKey: ['openshift-nodes'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/openshift/nodes`)
       if (!r.ok) return []
-      return (await r.json()).nodes
+      const body = await r.json()
+      return Array.isArray(body?.nodes) ? body.nodes : []
     },
+    refetchInterval: 60_000,
+    enabled: isIntegration,
+  })
+  const nodes = nodesData ?? []
+
+  const { data: projectsData } = useQuery<{ projects: OcpProject[]; total: number }>({
+    queryKey: ['openshift-projects', q, page, tab],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+      if (q.trim()) params.set('q', q.trim())
+      const r = await fetch(`${API_BASE_URL}/openshift/projects?${params}`)
+      if (!r.ok) return { projects: [], total: 0 }
+      return r.json()
+    },
+    enabled: !isIntegration && (tab === 'projects' || tab === 'overview'),
     refetchInterval: 60_000,
   })
 
-  const { data: projects = [] } = useQuery<OcpProject[]>({
-    queryKey: ['openshift-projects'],
+  const { data: workloadsData } = useQuery<{ workloads: OcpWorkload[]; total: number }>({
+    queryKey: ['openshift-workloads', q, kindFilter, page, tab],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/projects`)
-      if (!r.ok) return []
-      return (await r.json()).projects
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+        kind: kindFilter,
+      })
+      if (q.trim()) params.set('q', q.trim())
+      const r = await fetch(`${API_BASE_URL}/openshift/workloads?${params}`)
+      if (!r.ok) return { workloads: [], total: 0 }
+      return r.json()
     },
+    enabled: !isIntegration && tab === 'workloads',
     refetchInterval: 60_000,
   })
 
-  const { data: workloads = [] } = useQuery<OcpWorkload[]>({
-    queryKey: ['openshift-workloads'],
+  const { data: risksData } = useQuery<{ risks: OcpWorkload[]; total: number }>({
+    queryKey: ['openshift-risks'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/workloads`)
-      if (!r.ok) return []
-      return (await r.json()).workloads
+      const r = await fetch(`${API_BASE_URL}/openshift/risks?limit=200`)
+      if (!r.ok) return { risks: [], total: 0 }
+      return r.json()
     },
+    refetchInterval: 30_000,
+    enabled: !isIntegration,
+  })
+
+  const { data: liveOverview } = useQuery({
+    queryKey: ['openshift-overview', primaryClusterId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/overview`)
+      if (!r.ok) throw new Error('overview')
+      return r.json()
+    },
+    enabled: !!primaryClusterId && (tab === 'overview' || tab === 'clusters' || isIntegration),
     refetchInterval: 60_000,
+  })
+
+  const { data: clusterDetailOverview, isFetching: clusterDetailLoading } = useQuery({
+    queryKey: ['openshift-overview', detailClusterId, 'detail'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${detailClusterId}/overview`)
+      if (!r.ok) throw new Error('overview')
+      return r.json()
+    },
+    enabled: !!detailClusterId && (tab === 'clusters' || (isIntegration && tab === 'overview')),
+    refetchInterval: 60_000,
+  })
+
+  const { data: opHealth } = useQuery({
+    queryKey: ['openshift-op-health', primaryClusterId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/operators-health`)
+      if (!r.ok) throw new Error('op health')
+      return r.json()
+    },
+    enabled: !!primaryClusterId && !isIntegration && tab === 'overview',
+    refetchInterval: 60_000,
+  })
+
+  const { data: storage } = useQuery({
+    queryKey: ['openshift-storage', primaryClusterId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/storage`)
+      if (!r.ok) throw new Error('storage')
+      return r.json()
+    },
+    enabled: !!primaryClusterId && !isIntegration && tab === 'storage',
+  })
+
+  const { data: kubevirtVms, isFetching: vmsLoading } = useQuery({
+    queryKey: ['openshift-kubevirt-vms', primaryClusterId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/kubevirt/vms`)
+      if (!r.ok) throw new Error((await r.json()).detail || 'VM listesi alınamadı')
+      return r.json()
+    },
+    enabled: !!primaryClusterId && !isIntegration && tab === 'vms',
+    refetchInterval: 30_000,
+  })
+
+  const { data: resKinds } = useQuery({
+    queryKey: ['openshift-resource-kinds'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/resource-kinds`)
+      if (!r.ok) return { kinds: [] }
+      return r.json()
+    },
+    enabled: !isIntegration && tab === 'resources',
+  })
+
+  const { data: resources, isFetching: resLoading } = useQuery({
+    queryKey: ['openshift-resources', primaryClusterId, resKind, resNs],
+    queryFn: async () => {
+      const params = new URLSearchParams({ kind: resKind })
+      if (resNs.trim()) params.set('namespace', resNs.trim())
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/resources?${params}`)
+      if (!r.ok) throw new Error('resources')
+      return r.json()
+    },
+    enabled: !!primaryClusterId && !isIntegration && tab === 'resources',
   })
 
   const createMutation = useMutation({
@@ -235,6 +1014,7 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
       await fetch(`${API_BASE_URL}/openshift/clusters/${created.id}/sync?background=true`, { method: 'POST', headers: inventoryHeaders() })
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
+      qc.invalidateQueries({ queryKey: ['openshift-health-board'] })
     },
     onError: (e) => alert(e instanceof Error ? e.message : 'Ekleme hatası'),
   })
@@ -242,14 +1022,35 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${id}`, { method: 'DELETE', headers: inventoryHeaders() })
-      if (!r.ok) throw new Error('Silme hatası')
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        throw new Error(data.detail || 'Silme hatası')
+      }
+    },
+    onSuccess: () => {
+      ;['openshift-clusters', 'openshift-nodes', 'openshift-projects', 'openshift-workloads', 'openshift-health-board', 'openshift-risks'].forEach(k =>
+        qc.invalidateQueries({ queryKey: [k] }),
+      )
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası'),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Record<string, unknown> }) => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${id}`, {
+        method: 'PUT',
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(data),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.detail || 'Güncelleme hatası')
+      return body
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
-      qc.invalidateQueries({ queryKey: ['openshift-nodes'] })
-      qc.invalidateQueries({ queryKey: ['openshift-projects'] })
-      qc.invalidateQueries({ queryKey: ['openshift-workloads'] })
+      setEditCluster(null)
     },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Güncelleme hatası'),
   })
 
   const syncMutation = useMutation({
@@ -261,15 +1062,20 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
       setTimeout(() => {
-        qc.invalidateQueries({ queryKey: ['openshift-nodes'] })
-        qc.invalidateQueries({ queryKey: ['openshift-projects'] })
-        qc.invalidateQueries({ queryKey: ['openshift-workloads'] })
-      }, 8000)
+        ;['openshift-nodes', 'openshift-projects', 'openshift-workloads', 'openshift-health-board', 'openshift-risks'].forEach(k =>
+          qc.invalidateQueries({ queryKey: [k] }),
+        )
+      }, 5000)
     },
     onError: (e) => alert(e instanceof Error ? e.message : 'Sync hatası'),
   })
 
-  const nonSystemProjects = projects.filter(p => !(p as any).is_system)
+  const switchTab = (t: DashTab) => {
+    setTab(t)
+    setPage(1)
+    if (t === 'overview') setSearchParams({}, { replace: true })
+    else setSearchParams({ tab: t }, { replace: true })
+  }
 
   if (clustersLoading) {
     return (
@@ -279,53 +1085,168 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
     )
   }
 
+  const totals = health?.totals
+  const projects = projectsData?.projects || []
+  const workloads = workloadsData?.workloads || []
+  const risks = risksData?.risks || []
+  const projectTotal = projectsData?.total || 0
+  const workloadTotal = workloadsData?.total || 0
+
+  const nodeRoleCounts = useMemo(() => {
+    let master = 0
+    let worker = 0
+    let other = 0
+    for (const n of nodes) {
+      const role = (n.role || '').toLowerCase()
+      if (role.includes('master') || role.includes('control')) master += 1
+      else if (role.includes('worker')) worker += 1
+      else other += 1
+    }
+    return { master, worker, other }
+  }, [nodes])
+
+  const nsTotal = liveOverview?.namespaces?.total
+  const userProjects = liveOverview?.namespaces?.user?.length
+
+  const tabLabels: { id: DashTab; label: string }[] = isIntegration
+    ? [
+        { id: 'overview', label: 'Özet' },
+        { id: 'clusters', label: 'Cluster\'lar' },
+        { id: 'nodes', label: 'Node / Kapasite' },
+      ]
+    : [
+        { id: 'overview', label: 'Overview' },
+        { id: 'vms', label: 'Virtual Machines' },
+        { id: 'projects', label: 'Projeler' },
+        { id: 'workloads', label: 'Workload\'lar' },
+        { id: 'risks', label: `Riskler${risks.length ? ` (${risks.length})` : ''}` },
+        { id: 'storage', label: 'Storage' },
+        { id: 'resources', label: 'Kaynaklar' },
+      ]
+
   return (
     <div className="space-y-5">
-      {showAddModal && <AddClusterModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
+      {showAddModal && canManageClusters && (
+        <AddClusterModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />
+      )}
+      {editCluster && canManageClusters && (
+        <EditClusterModal
+          cluster={editCluster}
+          onClose={() => setEditCluster(null)}
+          onSave={(data) => updateMutation.mutate({ id: editCluster.id, data })}
+          saving={updateMutation.isPending}
+        />
+      )}
+      {topo && <TopologyDrawer clusterId={topo.clusterId} project={topo.project} onClose={() => setTopo(null)} />}
+      {podView && (
+        <PodDetailDrawer
+          clusterId={podView.clusterId}
+          namespace={podView.namespace}
+          pod={podView.pod}
+          onClose={() => setPodView(null)}
+        />
+      )}
+      {vmView && (
+        <VmDetailDrawer
+          clusterId={vmView.clusterId}
+          namespace={vmView.namespace}
+          name={vmView.name}
+          onClose={() => setVmView(null)}
+          onYaml={(y) => setYamlText(y)}
+        />
+      )}
+      {yamlText != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setYamlText(null)}>
+          <div className="w-full max-w-3xl max-h-[85vh] bg-cyber-card border border-white/[0.08] rounded-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+              <span className="text-sm text-white">Resource YAML</span>
+              <button type="button" onClick={() => setYamlText(null)} className="text-slate-400"><X size={16} /></button>
+            </div>
+            <pre className="p-4 text-[11px] text-cyan-100/90 overflow-auto max-h-[75vh] font-mono whitespace-pre-wrap">{yamlText}</pre>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-semibold text-white flex items-center gap-2">
-            <Boxes className="text-rose-400" size={22} /> OpenShift Container Platform
+            <Boxes className="text-rose-400" size={22} />
+            {isIntegration ? 'OpenShift Entegrasyon' : 'OpenShift Envanter'}
+            <OpenShiftConnectHelp align="left" />
           </h1>
-          <p className="text-sm text-slate-500 mt-1">Cluster, node, proje ve workload envanteri</p>
+          <p className="text-sm text-slate-500 mt-1">
+            {isIntegration
+              ? 'Bağlı kümeler · node / kapasite · bağlantı yönetimi'
+              : 'Proje · workload · VM · risk · storage'}
+          </p>
         </div>
-        {allowInventoryEdit && (
-          <button onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium hover:from-rose-500 hover:to-red-600">
-            <Plus size={16} /> Cluster Ekle
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isIntegration ? (
+            <>
+              <Link
+                to="/openshift"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 border border-white/[0.08] hover:bg-white/[0.04]"
+              >
+                Envanter’e git <ChevronRight size={14} />
+              </Link>
+              {canManageClusters ? (
+                <button onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium hover:from-rose-500 hover:to-red-600">
+                  <Plus size={16} /> Cluster Ekle
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500">Küme ekleme/silme yalnızca admin</span>
+              )}
+            </>
+          ) : (
+            <Link
+              to="/integrations/openshift"
+              className="text-xs text-slate-500 hover:text-rose-300"
+            >
+              Bağlantı yönetimi → Entegrasyonlar
+            </Link>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="text-xs text-slate-500 mb-1">Cluster</div>
-          <div className="text-2xl font-bold text-white">{clusters.length}</div>
+      {isIntegration ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          {[
+            ['Cluster', clusters.length],
+            ['Node', nodes.length || totals?.nodes || 0],
+            ['Master', nodeRoleCounts.master],
+            ['Worker', nodeRoleCounts.worker],
+            ['Namespace', nsTotal ?? totals?.projects ?? '—'],
+            ['Proje (user)', userProjects ?? '—'],
+          ].map(([label, val]) => (
+            <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-cyber-card p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+              <div className="text-xl font-bold text-white">{val as number | string}</div>
+            </div>
+          ))}
         </div>
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="text-xs text-slate-500 mb-1">Node</div>
-          <div className="text-2xl font-bold text-white">{nodes.length}</div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+          {[
+            ['Proje', totals?.projects ?? 0],
+            ['Pod', totals?.pods ?? 0],
+            ['Risk', totals?.risk_pods ?? risks.length, true],
+            ['Deploy', totals?.deployments ?? 0],
+            ['Route', totals?.routes ?? 0],
+            ['VM', liveOverview?.kubevirt_vms ?? '—'],
+          ].map(([label, val, alert]) => (
+            <div key={String(label)} className={`rounded-xl border p-3 ${alert && Number(val) > 0 ? 'border-red-500/30 bg-red-500/5' : 'border-white/[0.06] bg-cyber-card'}`}>
+              <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+              <div className={`text-xl font-bold ${alert && Number(val) > 0 ? 'text-red-400' : 'text-white'}`}>{val as number | string}</div>
+            </div>
+          ))}
         </div>
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="text-xs text-slate-500 mb-1">Proje</div>
-          <div className="text-2xl font-bold text-white">{nonSystemProjects.length}</div>
-        </div>
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="text-xs text-slate-500 mb-1">Pod</div>
-          <div className="text-2xl font-bold text-white">{workloads.filter(w => w.kind === 'pod').length}</div>
-        </div>
-      </div>
+      )}
 
-      <div className="flex items-center gap-2 border-b border-white/[0.06]">
-        {([
-          ['clusters', 'Cluster\'lar'],
-          ['nodes', 'Node\'lar'],
-          ['projects', 'Projeler'],
-          ['workloads', 'Workload\'lar'],
-        ] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+      <div className="flex items-center gap-1 border-b border-white/[0.06] overflow-x-auto">
+        {tabLabels.map(({ id, label }) => (
+          <button key={id} onClick={() => switchTab(id)}
+            className={`px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
               tab === id ? 'border-rose-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'
             }`}>
             {label}
@@ -333,45 +1254,301 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
         ))}
       </div>
 
-      {tab === 'clusters' && (
-        <div className="space-y-3">
+      {tab === 'overview' && isIntegration && (
+        <div className="space-y-4">
           {clusters.length === 0 && (
-            <div className="text-center py-12 text-slate-500">
-              <Boxes size={32} className="mx-auto mb-3 opacity-40" />
-              <p className="text-sm">Henüz bir OpenShift cluster'ı eklenmemiş.</p>
+            <div className="text-center py-12 text-slate-500 text-sm">
+              Henüz cluster yok — “Cluster Ekle” ile bağlayın.
             </div>
           )}
           {clusters.map(c => {
             const syncing = c.sync_job?.status === 'running'
+            const hb = health?.clusters?.find(h => h.id === c.id)
             return (
-              <div key={c.id} className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-rose-600 to-red-700 flex items-center justify-center flex-shrink-0">
-                    <Boxes size={18} className="text-white" />
-                  </div>
+              <div key={c.id} className={`rounded-xl border p-4 ${healthTone(hb?.health)}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-white font-medium truncate">{c.name}</div>
-                    <div className="text-xs text-slate-500 truncate">{c.api_url} · {c.version || 'sürüm bilinmiyor'}</div>
-                    <div className="text-xs text-slate-500">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white font-medium">{c.name}</span>
+                      <span className={`text-xs uppercase ${statusColor(c.status || hb?.health || '')}`}>{c.status || hb?.health || '—'}</span>
+                      <span className="text-xs text-slate-500">{c.version || liveOverview?.version || ''}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 truncate">{c.api_url}</div>
+                    <div className="text-xs text-slate-500 mt-1">
                       {syncing ? (
-                        <span className="text-cyan-400">{c.sync_job?.message || 'Senkronize ediliyor...'}</span>
+                        <span className="text-cyan-400">{c.sync_job?.message || 'Senkronize…'}</span>
                       ) : (
                         <>Son sync: {relTime(c.last_sync)}</>
                       )}
+                      {hb && (
+                        <> · {hb.nodes_ready}/{hb.node_count} node ready · {hb.project_count} proje</>
+                      )}
                     </div>
                   </div>
-                </div>
-                {allowInventoryEdit && (
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button onClick={() => syncMutation.mutate(c.id)} disabled={syncing}
-                      className="p-2 rounded-lg bg-white/[0.05] text-slate-300 hover:bg-white/[0.1] disabled:opacity-50">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setExpandedClusterId(c.id); switchTab('clusters') }}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:text-white"
+                    >
+                      Cluster detay
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => syncMutation.mutate(c.id)}
+                      disabled={syncing}
+                      className="p-2 rounded-lg bg-white/[0.05] text-slate-300 hover:bg-white/[0.1] disabled:opacity-50"
+                    >
                       <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
                     </button>
-                    <button onClick={() => { if (confirm(`'${c.name}' silinsin mi?`)) deleteMutation.mutate(c.id) }}
-                      className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20">
-                      <Trash2 size={15} />
+                  </div>
+                </div>
+                {c.id === primaryClusterId && liveOverview && (
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                      <div className="text-slate-500">CPU</div>
+                      <div className="text-white">{liveOverview.capacity?.cpu_used_cores ?? '—'} / {liveOverview.capacity?.cpu_cores ?? '—'} core</div>
+                    </div>
+                    <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                      <div className="text-slate-500">Memory</div>
+                      <div className="text-white">{liveOverview.capacity?.memory_used_gb ?? '—'} / {liveOverview.capacity?.memory_gb ?? '—'} GB</div>
+                    </div>
+                    <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                      <div className="text-slate-500">Master / Worker</div>
+                      <div className="text-white">{nodeRoleCounts.master} / {nodeRoleCounts.worker}</div>
+                    </div>
+                    <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                      <div className="text-slate-500">KubeVirt VM</div>
+                      <div className="text-white">{liveOverview.kubevirt_vms ?? '—'}</div>
+                    </div>
+                  </div>
+                )}
+                {c.id === primaryClusterId && liveOverview?.operators && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(liveOverview.operators || []).filter((o: any) => o.installed).map((o: any) => (
+                      <span key={o.group} className="text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 text-emerald-300">
+                        {(o.label || o.group || '').split('(')[0].trim()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {(totals?.nodes_not_ready || 0) > 0 && (
+            <div className="text-xs text-red-300">NotReady node: {totals?.nodes_not_ready}</div>
+          )}
+        </div>
+      )}
+
+      {tab === 'overview' && !isIntegration && (
+        <div className="space-y-4">
+          {liveOverview && (
+            <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-white font-medium">Canlı küme özeti · {liveOverview.version || '—'}</div>
+                <div className="text-xs text-slate-500">
+                  {liveOverview.capacity?.metrics_available ? 'metrics.k8s.io aktif' : 'metrics yok (request kapasite kullanılıyor)'}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                  <div className="text-slate-500">CPU</div>
+                  <div className="text-white">{liveOverview.capacity?.cpu_used_cores ?? '—'} / {liveOverview.capacity?.cpu_cores} core</div>
+                </div>
+                <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                  <div className="text-slate-500">Memory</div>
+                  <div className="text-white">{liveOverview.capacity?.memory_used_gb ?? '—'} / {liveOverview.capacity?.memory_gb} GB</div>
+                </div>
+                <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                  <div className="text-slate-500">Pods running</div>
+                  <div className="text-white">{liveOverview.capacity?.pods_running} / {liveOverview.capacity?.pods_total}</div>
+                </div>
+                <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
+                  <div className="text-slate-500">KubeVirt VM</div>
+                  <div className="text-white">{liveOverview.kubevirt_vms ?? '—'}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {opHealth && (
+            <div className={`rounded-xl border p-4 ${healthTone(opHealth.overall)}`}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-sm text-white font-medium">ClusterOperator / MCP</div>
+                <span className={`text-xs uppercase ${statusColor(opHealth.overall)}`}>{opHealth.overall}</span>
+              </div>
+              <div className="text-xs text-slate-400 mb-2">
+                Sürüm {opHealth.version || '—'}
+                {opHealth.updating ? ` · güncelleniyor: ${opHealth.update_message || ''}` : ''}
+              </div>
+              {(opHealth.operators?.degraded || []).length > 0 && (
+                <div className="space-y-1 mb-2">
+                  {(opHealth.operators?.degraded || []).slice(0, 6).map((d: any) => (
+                    <div key={d.name} className="text-xs text-red-300">{d.name}: {d.reason || d.message}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(health?.clusters || []).length === 0 && (
+            <div className="text-center py-12 text-slate-500">
+              <Boxes size={32} className="mx-auto mb-3 opacity-40" />
+              <p className="text-sm">Henüz cluster yok — <Link to="/integrations/openshift" className="text-rose-300 hover:underline">Entegrasyonlar</Link> üzerinden ekleyin.</p>
+            </div>
+          )}
+          {(health?.clusters || []).map(c => (
+            <div key={c.id} className={`rounded-xl border p-4 ${healthTone(c.health)}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-medium">{c.name}</span>
+                    <span className={`text-xs uppercase ${statusColor(c.health)}`}>{c.health}</span>
+                    <span className="text-xs text-slate-500">{c.version || ''}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {c.nodes_ready}/{c.node_count} node ready · {c.project_count} proje · {c.pod_count} pod · risk {c.risk_pod_count}
+                    {' · '}sync {relTime(c.last_sync)}
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <CapacityBar pct={c.avg_cpu_request_pct} label="CPU req" />
+                  <CapacityBar pct={c.avg_memory_request_pct} label="Mem req" />
+                </div>
+              </div>
+              {Array.isArray(c.nodes_not_ready) && c.nodes_not_ready.length > 0 && (
+                <div className="mt-3 text-xs text-red-300">
+                  NotReady: {c.nodes_not_ready.join(', ')}
+                </div>
+              )}
+              {c.top_risks?.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-slate-500 uppercase">Öne çıkan riskler</div>
+                    <button
+                      type="button"
+                      onClick={() => switchTab('risks')}
+                      className="text-[11px] text-rose-300 hover:underline"
+                    >
+                      Tüm riskler ({c.risk_pod_count}) →
                     </button>
                   </div>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {c.top_risks.slice(0, 3).map((r, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setPodView({ clusterId: c.id, namespace: r.project, pod: r.name })}
+                        className="rounded-lg bg-black/20 border border-white/[0.05] px-3 py-2 text-xs text-left hover:border-rose-500/30"
+                      >
+                        <div className="flex justify-between gap-2">
+                          <span className="text-white truncate">{r.project}/{r.name}</span>
+                          <span className={statusColor(r.severity)}>{r.status}</span>
+                        </div>
+                        <div className="text-slate-500 mt-0.5">restart {r.restart_count} · {r.severity}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(!c.top_risks || c.top_risks.length === 0) && (c.risk_pod_count || 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => switchTab('risks')}
+                  className="mt-3 text-xs text-rose-300 hover:underline"
+                >
+                  {c.risk_pod_count} risk pod → Riskler sekmesi
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'clusters' && isIntegration && (
+        <div className="space-y-3">
+          {clusters.length === 0 && (
+            <div className="text-center py-12 text-slate-500 text-sm">Henüz cluster yok.</div>
+          )}
+          {clusters.map(c => {
+            const syncing = c.sync_job?.status === 'running'
+            const expanded = (expandedClusterId ?? clusters[0]?.id) === c.id
+            return (
+              <div key={c.id} className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <button
+                    type="button"
+                    className="flex items-center gap-3 min-w-0 text-left flex-1"
+                    onClick={() => setExpandedClusterId(c.id)}
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-rose-600 to-red-700 flex items-center justify-center flex-shrink-0">
+                      <Boxes size={18} className="text-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-white font-medium truncate flex items-center gap-2">
+                        {c.name}
+                        <span className={`text-[10px] uppercase ${statusColor(c.status || '')}`}>{c.status || '—'}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">{c.api_url}</div>
+                      <div className="text-xs text-slate-500">
+                        Sürüm {c.version || 'bilinmiyor'}
+                        {' · '}
+                        {syncing ? (
+                          <span className="text-cyan-400">{c.sync_job?.message || 'Senkronize ediliyor...'}</span>
+                        ) : (
+                          <>Son sync: {relTime(c.last_sync)}</>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedClusterId(c.id)}
+                      className={`text-xs px-2.5 py-1.5 rounded-lg border ${
+                        expanded ? 'border-rose-500/40 text-rose-300' : 'border-white/[0.08] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {expanded ? 'Detay açık' : 'Detay'}
+                    </button>
+                    {allowInventoryEdit && (
+                      <button onClick={() => syncMutation.mutate(c.id)} disabled={syncing}
+                        className="p-2 rounded-lg bg-white/[0.05] text-slate-300 hover:bg-white/[0.1] disabled:opacity-50"
+                        title="Senkronize et">
+                        <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+                      </button>
+                    )}
+                    {canManageClusters && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setEditCluster(c)}
+                          className="p-2 rounded-lg bg-white/[0.05] text-cyan-300 hover:bg-white/[0.1]"
+                          title="Token / bağlantı güncelle"
+                        >
+                          <KeyRound size={15} />
+                        </button>
+                        <button onClick={() => { if (confirm(`'${c.name}' silinsin mi?`)) deleteMutation.mutate(c.id) }}
+                          className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                          title="Bağlantıyı sil">
+                          <Trash2 size={15} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {expanded && (
+                  <>
+                    {clusterDetailLoading && detailClusterId === c.id && (
+                      <div className="mt-3 text-xs text-slate-400 flex items-center gap-2">
+                        <RefreshCw size={12} className="animate-spin" /> Canlı küme detayı yükleniyor…
+                      </div>
+                    )}
+                    {detailClusterId === c.id && (
+                      <ClusterOverviewPanel overview={clusterDetailOverview || (c.id === primaryClusterId ? liveOverview : null)} />
+                    )}
+                  </>
                 )}
               </div>
             )
@@ -379,101 +1556,446 @@ export default function OpenShiftDashboard({ allowInventoryEdit = false }: { all
         </div>
       )}
 
-      {tab === 'nodes' && (
-        <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-white/[0.03] text-slate-500 text-xs">
-              <tr>
-                <th className="text-left px-4 py-2.5">Node</th>
-                <th className="text-left px-4 py-2.5">Rol</th>
-                <th className="text-left px-4 py-2.5">Durum</th>
-                <th className="text-left px-4 py-2.5">CPU</th>
-                <th className="text-left px-4 py-2.5">RAM</th>
-                <th className="text-left px-4 py-2.5">Kubelet</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.04]">
-              {nodes.map(n => (
-                <tr key={n.id} className="hover:bg-white/[0.02]">
-                  <td className="px-4 py-2.5 text-white flex items-center gap-2"><Server size={13} className="text-slate-500" /> {n.name}</td>
-                  <td className="px-4 py-2.5 text-slate-400 capitalize">{n.role}</td>
-                  <td className={`px-4 py-2.5 font-medium ${statusColor(n.status)}`}>{n.status}</td>
-                  <td className="px-4 py-2.5 text-slate-400 flex items-center gap-1"><Cpu size={12} /> {n.cpu_cores ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-400 flex items-center gap-1"><MemoryStick size={12} /> {n.memory_gb ?? '—'} GB</td>
-                  <td className="px-4 py-2.5 text-slate-500 text-xs">{n.kubelet_version || '—'}</td>
-                </tr>
-              ))}
-              {nodes.length === 0 && (
-                <tr><td colSpan={6} className="text-center py-8 text-slate-500">Node bulunamadı — cluster senkronize edildi mi?</td></tr>
-              )}
-            </tbody>
-          </table>
+      {tab === 'vms' && !isIntegration && (
+        <div className="space-y-3">
+          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          {vmsLoading && (
+            <div className="text-xs text-slate-400 flex items-center gap-2">
+              <RefreshCw size={12} className="animate-spin" /> KubeVirt VM’ler yükleniyor…
+            </div>
+          )}
+          {kubevirtVms && kubevirtVms.installed === false && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+              KubeVirt kurulu değil veya erişilemiyor: {kubevirtVms.message || '—'}
+            </div>
+          )}
+          {kubevirtVms?.installed !== false && (
+            <>
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                <span className="flex items-center gap-1.5">
+                  <Monitor size={14} /> {kubevirtVms?.total ?? 0} VirtualMachine
+                </span>
+                <span>Canlı API · tıklayınca PVC/PV detayı</span>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-white/[0.03] text-xs text-slate-500">
+                    <tr>
+                      <th className="text-left px-4 py-2">Ad</th>
+                      <th className="text-left px-4 py-2">Proje</th>
+                      <th className="text-left px-4 py-2">Durum</th>
+                      <th className="text-left px-4 py-2">Worker</th>
+                      <th className="text-left px-4 py-2">CPU / Mem</th>
+                      <th className="text-left px-4 py-2">IP</th>
+                      <th className="text-left px-4 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(kubevirtVms?.vms || []).map((vm: any) => (
+                      <tr
+                        key={`${vm.namespace}/${vm.name}`}
+                        className="hover:bg-white/[0.03]"
+                      >
+                        <td
+                          className="px-4 py-2 text-white font-medium cursor-pointer"
+                          onClick={() => primaryClusterId && setVmView({
+                            clusterId: primaryClusterId,
+                            namespace: vm.namespace,
+                            name: vm.name,
+                          })}
+                        >{vm.name}</td>
+                        <td className="px-4 py-2 text-slate-400">{vm.namespace}</td>
+                        <td className={`px-4 py-2 ${statusColor(vm.phase || vm.status)}`}>{vm.phase || vm.status}</td>
+                        <td className="px-4 py-2 text-slate-400">{vm.node_name || '—'}</td>
+                        <td className="px-4 py-2 text-slate-500">{vm.cpu_cores ?? '—'} / {vm.memory_gb ?? '—'} GB</td>
+                        <td className="px-4 py-2 text-slate-400 font-mono text-xs">{vm.ip_address || '—'}</td>
+                        <td className="px-4 py-2">
+                          <button
+                            type="button"
+                            disabled={(vm.phase || '').toLowerCase() !== 'running'}
+                            title={(vm.phase || '').toLowerCase() === 'running' ? 'Serial console' : 'VM Running olmalı'}
+                            className="text-xs text-cyan-300 disabled:opacity-30 inline-flex items-center gap-1"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (primaryClusterId) openVmConsole(primaryClusterId, vm.namespace, vm.name)
+                            }}
+                          >
+                            <Terminal size={12} /> Console
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!vmsLoading && (kubevirtVms?.vms || []).length === 0 && kubevirtVms?.installed !== false && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
+                          Bu kümede VirtualMachine bulunamadı.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'nodes' && isIntegration && (
+        <div className="space-y-3">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {nodes.map(n => {
+              const notReady = (n.status || '').toLowerCase() !== 'ready'
+              const tip = [
+                n.internal_ip && `InternalIP: ${n.internal_ip}`,
+                n.external_ip && `ExternalIP: ${n.external_ip}`,
+                !n.internal_ip && !n.external_ip && 'IP bilgisi yok — küme sync çalıştırın',
+              ].filter(Boolean).join('\n')
+              return (
+                <div
+                  key={n.id}
+                  title={tip}
+                  className={`group relative rounded-xl border p-4 ${notReady ? 'border-red-500/40 bg-red-500/10' : 'border-white/[0.06] bg-cyber-card'}`}
+                >
+                  <div className="pointer-events-none absolute left-3 top-full z-20 mt-1 hidden min-w-[11rem] rounded-lg border border-white/[0.1] bg-cyber-card px-2.5 py-2 text-[11px] text-slate-200 shadow-xl group-hover:block">
+                    <div className="font-medium text-slate-100">{n.name}</div>
+                    <div className="text-slate-500 capitalize mt-0.5">{n.role}</div>
+                    {n.internal_ip || n.ip_address ? (
+                      <div className="mt-1 font-mono text-cyan-300/90">IP {n.internal_ip || n.ip_address}</div>
+                    ) : (
+                      <div className="mt-1 text-slate-500">IP yok</div>
+                    )}
+                  </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-white font-medium truncate flex items-center gap-1.5">
+                        <Server size={14} className="text-slate-500 shrink-0" /> {n.name}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5 capitalize">{n.role} · {n.pod_count ?? 0} pod</div>
+                    </div>
+                    <span className={`text-xs font-medium ${statusColor(n.status)}`}>{n.status}</span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <CapacityBar pct={n.cpu_usage_pct} label={`CPU req (${n.cpu_requested ?? '—'} / ${n.cpu_allocatable ?? n.cpu_cores ?? '—'})`} />
+                    <CapacityBar pct={n.memory_usage_pct} label={`Mem req (${n.memory_requested_gb ?? '—'} / ${n.memory_allocatable_gb ?? n.memory_gb ?? '—'} GB)`} />
+                  </div>
+                  <div className="mt-2 text-[10px] text-slate-500 flex gap-3">
+                    <span className="flex items-center gap-1"><Cpu size={10} /> {n.cpu_cores ?? '—'} core</span>
+                    <span className="flex items-center gap-1"><MemoryStick size={10} /> {n.memory_gb ?? '—'} GB</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {nodes.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">Node yok — sync çalıştırın.</div>}
+          <p className="text-[11px] text-slate-500">Kapasite çubukları pod resource request toplamına göredir (anlık usage değil).</p>
         </div>
       )}
 
       {tab === 'projects' && (
-        <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-white/[0.03] text-slate-500 text-xs">
-              <tr>
-                <th className="text-left px-4 py-2.5">Proje</th>
-                <th className="text-left px-4 py-2.5">Durum</th>
-                <th className="text-left px-4 py-2.5">Pod</th>
-                <th className="text-left px-4 py-2.5">Deployment</th>
-                <th className="text-left px-4 py-2.5">Route</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.04]">
-              {nonSystemProjects.map(p => (
-                <tr key={p.id} className="hover:bg-white/[0.02]">
-                  <td className="px-4 py-2.5 text-white flex items-center gap-2"><Layers size={13} className="text-slate-500" /> {p.name}</td>
-                  <td className={`px-4 py-2.5 font-medium ${statusColor(p.status)}`}>{p.status}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{p.pod_count}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{p.deployment_count}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{p.route_count}</td>
+        <div className="space-y-3">
+          <input
+            value={q}
+            onChange={e => { setQ(e.target.value); setPage(1) }}
+            placeholder="Proje ara…"
+            className="w-full max-w-sm bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
+          />
+          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-white/[0.03] text-slate-500 text-xs">
+                <tr>
+                  <th className="text-left px-4 py-2.5">Proje</th>
+                  <th className="text-left px-4 py-2.5">Durum</th>
+                  <th className="text-left px-4 py-2.5">Pod</th>
+                  <th className="text-left px-4 py-2.5">Deploy</th>
+                  <th className="text-left px-4 py-2.5">Route</th>
+                  <th className="text-left px-4 py-2.5"></th>
                 </tr>
-              ))}
-              {nonSystemProjects.length === 0 && (
-                <tr><td colSpan={5} className="text-center py-8 text-slate-500">Proje bulunamadı — cluster senkronize edildi mi?</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-white/[0.04]">
+                {projects.map(p => (
+                  <tr key={p.id} className="hover:bg-white/[0.02]">
+                    <td className="px-4 py-2.5 text-white">
+                      <div className="flex items-center gap-2"><Layers size={13} className="text-slate-500" /> {p.name}</div>
+                      {p.display_name && <div className="text-[10px] text-slate-500 ml-5">{p.display_name}</div>}
+                    </td>
+                    <td className={`px-4 py-2.5 font-medium ${statusColor(p.status)}`}>{p.status}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{p.pod_count}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{p.deployment_count}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{p.route_count}</td>
+                    <td className="px-4 py-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setTopo({ clusterId: p.cluster_id, project: p.name })}
+                        className="text-xs text-rose-300 hover:text-rose-200"
+                      >
+                        Topology
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {projects.length === 0 && (
+                  <tr><td colSpan={6} className="text-center py-8 text-slate-500">Proje bulunamadı</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={page} pageSize={pageSize} total={projectTotal} onChange={setPage} />
         </div>
       )}
 
       {tab === 'workloads' && (
-        <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-white/[0.03] text-slate-500 text-xs">
-              <tr>
-                <th className="text-left px-4 py-2.5">Tür</th>
-                <th className="text-left px-4 py-2.5">Ad</th>
-                <th className="text-left px-4 py-2.5">Proje</th>
-                <th className="text-left px-4 py-2.5">Durum</th>
-                <th className="text-left px-4 py-2.5">Ready</th>
-                <th className="text-left px-4 py-2.5">Restart</th>
-                <th className="text-left px-4 py-2.5">Node / Host</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.04]">
-              {workloads.slice(0, 500).map(w => (
-                <tr key={w.id} className="hover:bg-white/[0.02]">
-                  <td className="px-4 py-2.5 text-slate-400 uppercase text-xs">{w.kind}</td>
-                  <td className="px-4 py-2.5 text-white">{w.name}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{w.project}</td>
-                  <td className={`px-4 py-2.5 font-medium ${statusColor(w.status)}`}>{w.status}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{w.ready || '—'}</td>
-                  <td className={`px-4 py-2.5 ${w.restart_count >= 5 ? 'text-amber-400' : 'text-slate-400'}`}>{w.restart_count}</td>
-                  <td className="px-4 py-2.5 text-slate-500 text-xs">{w.node_name || w.host || '—'}</td>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={q}
+              onChange={e => { setQ(e.target.value); setPage(1) }}
+              placeholder="Ad / proje ara…"
+              className="flex-1 min-w-[12rem] max-w-sm bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
+            />
+            <select
+              value={kindFilter}
+              onChange={e => { setKindFilter(e.target.value); setPage(1) }}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
+            >
+              {['pod', 'deployment', 'service', 'route'].map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-white/[0.03] text-slate-500 text-xs">
+                <tr>
+                  <th className="text-left px-4 py-2.5">Tür</th>
+                  <th className="text-left px-4 py-2.5">Ad</th>
+                  <th className="text-left px-4 py-2.5">Proje</th>
+                  <th className="text-left px-4 py-2.5">Durum</th>
+                  <th className="text-left px-4 py-2.5">Ready</th>
+                  <th className="text-left px-4 py-2.5">Restart</th>
+                  <th className="text-left px-4 py-2.5">Node / Host</th>
                 </tr>
-              ))}
-              {workloads.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-slate-500">Workload bulunamadı — cluster senkronize edildi mi?</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-white/[0.04]">
+                {workloads.map(w => (
+                  <tr key={w.id} className={`hover:bg-white/[0.02] ${w.is_risk ? 'bg-red-500/5' : ''}`}>
+                    <td className="px-4 py-2.5 text-slate-400 uppercase text-xs">{w.kind}</td>
+                    <td className="px-4 py-2.5 text-white">{w.name}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{w.project}</td>
+                    <td className={`px-4 py-2.5 font-medium ${statusColor(w.status)}`}>{w.status}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{w.ready || '—'}</td>
+                    <td className={`px-4 py-2.5 ${(w.restart_count || 0) >= 5 ? 'text-amber-400' : 'text-slate-400'}`}>{w.restart_count}</td>
+                    <td className="px-4 py-2.5 text-slate-500 text-xs">{w.node_name || w.host || '—'}</td>
+                  </tr>
+                ))}
+                {workloads.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-8 text-slate-500">Workload bulunamadı</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={page} pageSize={pageSize} total={workloadTotal} onChange={setPage} />
         </div>
       )}
+
+      {tab === 'risks' && (
+        <div className="space-y-2">
+          {risks.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">Riskli pod yok.</div>}
+          {risks.map(w => (
+            <div key={w.id} className={`rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-2 ${
+              w.risk_severity === 'critical' ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/30 bg-amber-500/5'
+            }`}>
+              <div className="min-w-0">
+                <div className="text-white text-sm truncate">{w.project} / {w.name}</div>
+                <div className="text-xs text-slate-500">{w.node_name || '—'} · restart {w.restart_count}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-xs font-medium ${statusColor(w.status)}`}>{w.status}</span>
+                <span className="text-[10px] uppercase text-slate-400">{w.risk_severity}</span>
+                <button type="button" className="text-xs text-rose-300" onClick={() => setPodView({ clusterId: w.cluster_id, namespace: w.project, pod: w.name })}>
+                  Log / Detay
+                </button>
+                <button type="button" className="text-xs text-slate-400" onClick={() => setTopo({ clusterId: w.cluster_id, project: w.project })}>
+                  Topology
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'storage' && (
+        <div className="space-y-4">
+          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          {storage && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  ['StorageClass', storage.summary?.storage_classes],
+                  ['PV', storage.summary?.pvs],
+                  ['PVC', storage.summary?.pvcs],
+                  ['PVC Pending', storage.summary?.pvcs_pending],
+                ].map(([l, v]) => (
+                  <div key={String(l)} className={`rounded-xl border p-3 ${l === 'PVC Pending' && Number(v) > 0 ? 'border-amber-500/40 bg-amber-500/5' : 'border-white/[0.06] bg-cyber-card'}`}>
+                    <div className="text-[10px] text-slate-500 uppercase">{l}</div>
+                    <div className="text-xl font-bold text-white">{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">StorageClass</div>
+                <table className="w-full text-sm">
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(storage.storage_classes || []).map((sc: any) => (
+                      <tr key={sc.name}>
+                        <td className="px-4 py-2 text-white">{sc.name}{sc.default ? ' · default' : ''}</td>
+                        <td className="px-4 py-2 text-slate-500 text-xs">{sc.provisioner}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">PVC (ilk 40)</div>
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-slate-500">
+                    <tr>
+                      <th className="text-left px-4 py-2">Ad</th>
+                      <th className="text-left px-4 py-2">NS</th>
+                      <th className="text-left px-4 py-2">Phase</th>
+                      <th className="text-left px-4 py-2">Cap</th>
+                      <th className="text-left px-4 py-2">SC / Volume</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(storage.persistent_volume_claims || []).slice(0, 40).map((p: any) => (
+                      <tr key={`${p.namespace}/${p.name}`} className={p.phase === 'Pending' ? 'bg-amber-500/5' : ''}>
+                        <td className="px-4 py-2 text-white">{p.name}</td>
+                        <td className="px-4 py-2 text-slate-400">{p.namespace}</td>
+                        <td className={`px-4 py-2 ${statusColor(p.phase)}`}>{p.phase}</td>
+                        <td className="px-4 py-2 text-slate-500">{p.capacity_gb ?? '—'} GB</td>
+                        <td className="px-4 py-2 text-slate-500 text-xs">{p.storage_class || '—'}{p.volume ? ` · ${p.volume}` : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">PersistentVolume (ilk 40)</div>
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-slate-500">
+                    <tr>
+                      <th className="text-left px-4 py-2">Ad</th>
+                      <th className="text-left px-4 py-2">Phase</th>
+                      <th className="text-left px-4 py-2">Cap</th>
+                      <th className="text-left px-4 py-2">Claim</th>
+                      <th className="text-left px-4 py-2">SC / Reclaim</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(storage.persistent_volumes || []).slice(0, 40).map((p: any) => (
+                      <tr key={p.name}>
+                        <td className="px-4 py-2 text-white">{p.name}</td>
+                        <td className={`px-4 py-2 ${statusColor(p.phase)}`}>{p.phase}</td>
+                        <td className="px-4 py-2 text-slate-500">{p.capacity_gb ?? '—'} GB</td>
+                        <td className="px-4 py-2 text-slate-400 text-xs">{p.claim || '—'}</td>
+                        <td className="px-4 py-2 text-slate-500 text-xs">
+                          {p.storage_class || '—'}
+                          {p.reclaim ? ` · ${p.reclaim}` : ''}
+                        </td>
+                      </tr>
+                    ))}
+                    {(storage.persistent_volumes || []).length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-center text-slate-500 text-sm">PV yok</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'resources' && (
+        <div className="space-y-3">
+          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={resKind}
+              onChange={e => setResKind(e.target.value)}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
+            >
+              {(resKinds?.kinds || []).map((k: any) => (
+                <option key={k.id} value={k.id}>{k.label}</option>
+              ))}
+            </select>
+            <input
+              value={resNs}
+              onChange={e => setResNs(e.target.value)}
+              placeholder="namespace (boş = tüm cluster)"
+              className="flex-1 min-w-[10rem] max-w-xs bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
+            />
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Namespace boş bırakılırsa cluster genelinde listelenir. Daraltmak için proje adı yazın.
+          </p>
+          {resLoading && <div className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw size={12} className="animate-spin" /> Yükleniyor…</div>}
+          {resources?.error && <div className="text-xs text-amber-400">{resources.error}</div>}
+          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-white/[0.03] text-xs text-slate-500">
+                <tr>
+                  <th className="text-left px-4 py-2">Ad</th>
+                  <th className="text-left px-4 py-2">NS</th>
+                  <th className="text-left px-4 py-2">Info</th>
+                  <th className="text-left px-4 py-2">Age</th>
+                  <th className="text-left px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.04]">
+                {(resources?.items || []).slice(0, 100).map((it: any) => (
+                  <tr key={`${it.namespace}/${it.name}`}>
+                    <td className="px-4 py-2 text-white">{it.name}</td>
+                    <td className="px-4 py-2 text-slate-400">{it.namespace || '—'}</td>
+                    <td className="px-4 py-2 text-slate-400">{it.info}</td>
+                    <td className="px-4 py-2 text-slate-500">{it.age}</td>
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        className="text-xs text-rose-300"
+                        onClick={async () => {
+                          const params = new URLSearchParams({ kind: resKind, name: it.name })
+                          if (it.namespace) params.set('namespace', it.namespace)
+                          const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/resource-yaml?${params}`)
+                          const d = await r.json()
+                          setYamlText(d.yaml || d.error || '—')
+                        }}
+                      >
+                        YAML
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Pager({ page, pageSize, total, onChange }: { page: number; pageSize: number; total: number; onChange: (p: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  if (total <= pageSize) return null
+  return (
+    <div className="flex items-center justify-between text-xs text-slate-400">
+      <span>{total} kayıt · sayfa {page}/{pages}</span>
+      <div className="flex gap-2">
+        <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}
+          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">Önceki</button>
+        <button type="button" disabled={page >= pages} onClick={() => onChange(page + 1)}
+          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">Sonraki</button>
+      </div>
     </div>
   )
 }

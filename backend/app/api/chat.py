@@ -413,9 +413,14 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         _prior_history = fetch_recent_history(db, session_id, limit=8)
         history_block = format_history_block(_prior_history)
 
-        # Seçili sunucuları bul
+        # Seçili sunucular + Dalga 1 filo politikası (stream ile aynı)
         selected_servers = []
-        explicit_server_target = bool((request.server_ids and len(request.server_ids) > 0) or request.server_id or (request.hypervisor_ids and len(request.hypervisor_ids) > 0) or request.hypervisor_id)
+        explicit_server_target = bool(
+            (request.server_ids and len(request.server_ids) > 0)
+            or request.server_id
+            or (request.hypervisor_ids and len(request.hypervisor_ids) > 0)
+            or request.hypervisor_id
+        )
         if request.server_ids and len(request.server_ids) > 0:
             selected_servers = (
                 db.query(Server)
@@ -437,7 +442,6 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             if server:
                 selected_servers = [server]
 
-        # Hypervisor hedeflenmişse, o hypervisor(lar)a bağlı AI-ready sunucuları seç
         if not selected_servers and request.hypervisor_ids and len(request.hypervisor_ids) > 0:
             selected_servers = (
                 db.query(Server)
@@ -456,37 +460,41 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 )
                 .all()
             )
-        
-        # Eğer sunucu seçilmemişse tüm AI Ready sunucuları al (Windows hariç)
-        if not selected_servers:
-            selected_servers = _linux_ai_ready_servers(db)
-        
+
         ai_ready_servers = _linux_ai_ready_servers(db)
-
         mentioned = _servers_mentioned_in_message(db, message)
-        if mentioned:
-            if explicit_server_target:
-                selected_servers = list(dict.fromkeys(mentioned + selected_servers))
-            else:
-                selected_servers = mentioned
-
-        server_context = ""
-        if selected_servers:
-            server_context = "Secili sunucular (gercek DB verileri):\n"
-            for s in selected_servers:
-                os_info = s.os_version or s.os_type or "Linux"
-                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
-        elif ai_ready_servers:
-            server_context = f"AI Ready sunucular ({len(ai_ready_servers)} adet):\n"
-            for s in ai_ready_servers:
-                os_info = s.os_version or s.os_type or "Linux"
-                server_context += f"- {s.name} ({s.ip_address}): OS={os_info}, {s.status}\n"
+        from app.services.chat_fleet_policy import (
+            apply_live_collect_policy,
+            inventory_lines_for_prompt,
+        )
+        inventory_servers = (
+            list(selected_servers) if explicit_server_target and selected_servers
+            else list(ai_ready_servers)
+        )
+        live_targets, _fleet_policy_note, _allow_live = apply_live_collect_policy(
+            selected_servers if explicit_server_target else ai_ready_servers,
+            message=message,
+            has_explicit_selection=explicit_server_target and bool(selected_servers),
+            mentioned=mentioned if not explicit_server_target else (
+                list(dict.fromkeys(mentioned + selected_servers)) if mentioned else None
+            ),
+        )
+        # Mention + explicit: politika mention'ı yok saydıysa birleştir
+        if explicit_server_target and mentioned:
+            from app.services.linux_info_collector import cap_servers_for_ssh as _cap_merge
+            merged = list(dict.fromkeys(mentioned + list(live_targets or selected_servers)))
+            live_targets, _cap_m = _cap_merge(merged, message)
+            if _cap_m:
+                _fleet_policy_note = ((_fleet_policy_note or "") + "\n" + _cap_m).strip()
+        selected_servers = live_targets
+        inventory_for_db = inventory_servers
 
         # Önce Prometheus (Node Exporter metrikleri) — SSH'a gerek kalmadan çoğu metrik buradan gelir
         PROMETHEUS_KEYWORDS = [
             'cpu', 'ram', 'memory', 'bellek', 'disk', 'bandwidth',
             'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
-            'kullanım', 'usage', 'durum', 'status', 'genel', 'overview', 'özet',
+            'kullanım', 'usage', 'kaynak', 'tüket', 'tuket', 'tüketim', 'tuketim',
+            'durum', 'status', 'genel', 'overview', 'özet',
             'trafik', 'traffic', 'throughput',
         ]
         SSH_ONLY_KEYWORDS = [
@@ -532,40 +540,43 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
         msg_lower_ctx = message.lower()
         needs_prometheus = any(k in msg_lower_ctx for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
-        SERVER_TRIGGER_CTX = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS + APP_KEYWORDS
-        # Yukarıdaki elle yazılmış listeler dışında kalan ama linux_info_collector'ın
-        # KEYWORD_TO_GROUPS/EXTRA_GROUPS_KEYWORDS'ünde tanımlı bir konu varsa (örn.
-        # "vm.swappiness", "sysctl", "dirty_ratio" gibi kernel tuning terimleri) yine
-        # SSH context topla — bkz. has_recognized_topic() docstring'i.
+        # Dalga 1: prom ≠ SSH — SSH tetikleyicileri Prometheus listesinden ayrı
+        _SSH_TRIGGER_CTX = SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS + APP_KEYWORDS + DEEP_PERF_KEYWORDS
         from app.services.linux_info_collector import has_recognized_topic as _has_topic_ctx
 
         db_only_answer, matched_db_static_topic = _classify_db_only_sysinfo(
             msg_lower_ctx, SSH_ONLY_KEYWORDS, SSH_SYSINFO_KEYWORDS
         )
-        raw_topic_match = any(k in msg_lower_ctx for k in SERVER_TRIGGER_CTX) or _has_topic_ctx(message)
+        raw_topic_match = any(k in msg_lower_ctx for k in _SSH_TRIGGER_CTX) or _has_topic_ctx(message)
+        # Prometheus-only sorular da "sunucu niyeti" sayılır (envanter/DB context için)
+        prom_topic = any(k in msg_lower_ctx for k in PROMETHEUS_KEYWORDS)
         needs_ssh_ctx = raw_topic_match and not request.skip_server_context and not db_only_answer
-        # DB-only cevaplarda da sunucu bağlamı (kernel/os/hostname) toplanmalı, SSH olmadan.
-        needs_db_sysinfo_ctx = (matched_db_static_topic or raw_topic_match) and not request.skip_server_context
+        needs_db_sysinfo_ctx = (
+            matched_db_static_topic or raw_topic_match or prom_topic
+        ) and not request.skip_server_context
         ssh_timeout_ctx = 40.0 if any(k in msg_lower_ctx for k in DEEP_PERF_KEYWORDS) else 20.0
 
-        # Kullanıcı sunucu seçmemişse yalnızca sunucu/altyapı niyeti varsa tüm AI-ready sunucuları ekle.
-        if not selected_servers and (needs_ssh_ctx or needs_db_sysinfo_ctx):
-            selected_servers = _linux_ai_ready_servers(db)
+        # DB-only: canlı hedef yoksa envanterden liste (SSH yok)
+        if db_only_answer and not selected_servers and inventory_for_db:
+            selected_servers = inventory_for_db[:80]
 
-        # Filo taramasını sınırla (269 host × kısa timeout → çoğu zaman aşımı; DB-only
-        # yanıtta SSH/zaman aşımı riski yok ama prompt boyutu için aynı üst sınır uygulanır)
-        _fleet_note = None
+        # Filo taramasını sınırla (canlı hedefler zaten policy+cap'ten geçti; ekstra cap güvenlik)
+        _fleet_note = _fleet_policy_note
         if selected_servers and (needs_ssh_ctx or needs_db_sysinfo_ctx):
             from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh
-            selected_servers, _fleet_note = _cap_ssh(selected_servers, message)
+            selected_servers, _cap_note = _cap_ssh(selected_servers, message)
+            if _cap_note:
+                _fleet_note = ((_fleet_note or "") + "\n" + _cap_note).strip()
             if needs_ssh_ctx:
                 n = len(selected_servers)
                 ssh_timeout_ctx = min(90.0, max(float(ssh_timeout_ctx), 25.0 + 0.9 * n))
 
         # Genel sorularda (sunucu niyeti yok + sunucu seçilmedi) otomatik sunucu bağlamı ekleme.
         server_context = ""
-        include_server_context = bool(selected_servers) and (needs_ssh_ctx or needs_db_sysinfo_ctx or explicit_server_target)
-        if include_server_context:
+        include_server_context = bool(selected_servers) and (
+            needs_ssh_ctx or needs_db_sysinfo_ctx or explicit_server_target
+        )
+        if include_server_context and selected_servers:
             server_context = "Secili sunucular (gercek DB verileri):\n"
             for s in selected_servers:
                 os_info = s.os_version or s.os_type or "Linux"
@@ -576,6 +587,10 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                     extra_fields.append(f"Hostname={s.hostname}")
                 extra_str = (", " + ", ".join(extra_fields)) if extra_fields else ""
                 server_context += f"- {s.name} ({s.ip_address}): OS={os_info}{extra_str}, Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB\n"
+        elif not selected_servers and inventory_for_db and needs_db_sysinfo_ctx:
+            server_context = inventory_lines_for_prompt(inventory_for_db)
+        # _fleet_note context_parts'a eklenir (aşağıda) — server_context'e çift yazma
+
 
         prometheus_context = ""
         if needs_prometheus:
@@ -609,7 +624,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         try:
             import asyncio
             from app.services.linux_info_collector import detect_needed_groups, collect_server_info, build_server_context
-            if selected_servers and (needs_ssh_ctx or (needs_prometheus and not prometheus_context)):
+            # Dalga 1: Prometheus tek başına SSH açmaz
+            if selected_servers and needs_ssh_ctx:
                 global_cred = db.query(GlobalCredential).filter(GlobalCredential.is_default == True).first()
                 if not global_cred:
                     global_cred = db.query(GlobalCredential).first()
@@ -700,9 +716,9 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                             _facts_blocks.append(f"[{_s.name}]\n{_fb}")
                     if _facts_blocks:
                         context_parts.append(
-                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis SSH taramalarindan — "
-                            "canli BAGLAM ile celisirse canli veriyi esas al, kullanirken 'onceden "
-                            "ogrenilmis (X once dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal; SSH tarama veya admin manuel sabitleme — "
+                            "canli BAGLAM ile celisirse canli veriyi esas al; MANUEL SABITLEME etiketli "
+                            "satirlarda ozellikle dikkatli ol):\n" + "\n\n".join(_facts_blocks)
                         )
                 except Exception:
                     pass
@@ -1329,6 +1345,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
+            from app.services.chat_obs import ChatTiming
+            _timing = ChatTiming(platform=chat_platform)
+
             # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
             from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
             _is_followup = (not ephemeral) and has_prior_messages(db, session_id)
@@ -1341,20 +1360,29 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             # _context_key — session_id icermiyor).
             # Gizli modda cache okuma/yazma yok (prompt sızıntısı önlemi).
             server_ids = request.server_ids or []
-            cached = None if (_is_followup or ephemeral) else get_cached_answer(db, message, server_ids)
+            cached = None if (_is_followup or ephemeral) else get_cached_answer(
+                db, message, server_ids, platform=chat_platform,
+            )
+            _timing.mark("cache")
             if cached:
                 answer = cached["answer"]
+                yield _sse({"phase": "answering"})
+                _timing.note_ttft()
                 for i in range(0, len(answer), 8):
                     yield _sse({"token": answer[i:i+8]})
                 _persist_chat_pair(db, session_id, ephemeral=ephemeral, user=message, assistant=answer)
+                _timing.finish(cache_hit=True, extra={"from_cache": True})
                 yield _sse({"done": True, "session_id": session_id, "from_cache": True})
                 return
 
+            yield _sse({"phase": "collecting"})
+            _timing.mark("collect_start")
             # ── 2a/2b. Niyet yönlendirici (inventory / direct_cmd) ───────
             from app.services.admin_intent_router import (
                 route_admin_question,
                 resolve_linux_targets,
                 INTENT_INVENTORY,
+                INTENT_INVENTORY_SUMMARY,
                 INTENT_DIRECT_CMD,
             )
             from app.services.linux_chat_intent import (
@@ -1367,6 +1395,22 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 "[ROUTE] intent=%s conf=%.2f hints=%s",
                 _route.intent, _route.confidence, list((_route.hints or {}).keys()),
             )
+
+            # Platform-scoped DB özeti (SSH/agent yok) — Linux sohbetinde Windows/OCP sızmaz
+            if _route.intent == INTENT_INVENTORY_SUMMARY:
+                from app.services.infra_summary import build_infra_overview_text
+                inv_answer = build_infra_overview_text(db, platform=chat_platform)
+                for i in range(0, len(inv_answer), 8):
+                    yield _sse({"token": inv_answer[i:i + 8]})
+                _persist_chat_pair(
+                    db, session_id, ephemeral=ephemeral, user=message, assistant=inv_answer,
+                )
+                if not ephemeral:
+                    save_to_cache(
+                        db, message, inv_answer, server_ids, platform=chat_platform,
+                    )
+                yield _sse({"done": True, "session_id": session_id})
+                return
 
             if chat_platform != "openshift" and _route.intent == INTENT_INVENTORY:
                 _inv_servers, _inv_note = resolve_linux_targets(
@@ -1589,8 +1633,16 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 yield _sse({"done": True, "session_id": session_id})
                 return
 
-            # ── 2. Seçili sunucular ───────────────────────────────────────
+            # ── 2. Seçili sunucular + Dalga 1 filo politikası ─────────────
             selected_servers = []
+            has_explicit_selection = bool(
+                (request.server_ids and len(request.server_ids) > 0)
+                or request.server_id
+                or (request.hypervisor_ids and len(request.hypervisor_ids) > 0)
+                or request.hypervisor_id
+            )
+            fleet_policy_note = None
+            inventory_servers = []
             if request.server_ids:
                 selected_servers = db.query(Server).filter(
                     Server.id.in_(request.server_ids), Server.ai_ready == True
@@ -1610,26 +1662,36 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     Server.hypervisor_id == request.hypervisor_id, Server.ai_ready == True
                 ).all()
 
-            # ── Mesajdan sunucu adı/IP otomatik algılama ─────────────────
-            # Kullanıcı "ahmet-test2 sunucusundan..." veya "192.168.1.46'dan..."
-            # dediğinde o sunucuyu otomatik seç
-            if not selected_servers:
-                if chat_platform == "openshift":
-                    selected_servers = []
-                else:
-                    all_ai_servers = _linux_ai_ready_servers(db)
+            if chat_platform == "openshift":
+                selected_servers = []
+                inventory_servers = []
+            else:
+                from app.services.chat_fleet_policy import (
+                    apply_live_collect_policy,
+                    inventory_lines_for_prompt,
+                )
+                all_ai_servers = _linux_ai_ready_servers(db)
+                mentioned = []
+                if not has_explicit_selection:
                     msg_lower_srv = message.lower()
-                    detected_servers = []
                     for s in all_ai_servers:
-                        name_match = s.name and s.name.lower() in msg_lower_srv
-                        ip_match = s.ip_address and s.ip_address in message
-                        if name_match or ip_match:
-                            detected_servers.append(s)
-                    if detected_servers:
-                        selected_servers = detected_servers
-                        logger.info(f"Mesajdan sunucu algılandı: {[s.name for s in detected_servers]}")
-                    else:
-                        selected_servers = all_ai_servers
+                        if (s.name and s.name.lower() in msg_lower_srv) or (
+                            s.ip_address and s.ip_address in message
+                        ):
+                            mentioned.append(s)
+                    if mentioned:
+                        logger.info(f"Mesajdan sunucu algılandı: {[s.name for s in mentioned]}")
+                inventory_servers = (
+                    list(selected_servers) if has_explicit_selection and selected_servers
+                    else list(all_ai_servers)
+                )
+                live_targets, fleet_policy_note, _allow_live = apply_live_collect_policy(
+                    selected_servers if has_explicit_selection else all_ai_servers,
+                    message=message,
+                    has_explicit_selection=has_explicit_selection and bool(selected_servers),
+                    mentioned=mentioned if not has_explicit_selection else None,
+                )
+                selected_servers = live_targets
 
             server_context = ""
             if chat_platform == "openshift":
@@ -1642,20 +1704,26 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         )
                 except Exception:
                     server_context = ""
-            elif selected_servers:
-                def _srv_line(s):
-                    extra = []
-                    if s.kernel_version:
-                        extra.append(f"Kernel={s.kernel_version}")
-                    if s.hostname and s.hostname != s.name:
-                        extra.append(f"Hostname={s.hostname}")
-                    extra_str = (", " + ", ".join(extra)) if extra else ""
-                    return (
-                        f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}{extra_str}, "
-                        f"Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB"
+            else:
+                if selected_servers:
+                    def _srv_line(s):
+                        extra = []
+                        if s.kernel_version:
+                            extra.append(f"Kernel={s.kernel_version}")
+                        if s.hostname and s.hostname != s.name:
+                            extra.append(f"Hostname={s.hostname}")
+                        extra_str = (", " + ", ".join(extra)) if extra else ""
+                        return (
+                            f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}{extra_str}, "
+                            f"Durum={s.status}, CPU={s.cpu_cores} core, RAM={s.memory_gb}GB"
+                        )
+                    server_context = "Canlı hedefler:\n" + "\n".join(
+                        _srv_line(s) for s in selected_servers
                     )
-                lines = [_srv_line(s) for s in selected_servers]
-                server_context = "Seçili sunucular:\n" + "\n".join(lines)
+                elif inventory_servers:
+                    server_context = inventory_lines_for_prompt(inventory_servers)
+                # fleet_policy_note context_parts'a (_fleet_note_stream) eklenir — burada değil
+
 
             # ── 2c. Grafik/zaman serisi rapor isteği (node_exporter → TimescaleDB) ──
             # "son 2 saatlik disk ve network utilizasyonu ver" gibi hem bir süre HEM
@@ -1686,7 +1754,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             PROMETHEUS_KEYWORDS = [
                 'cpu', 'ram', 'memory', 'bellek', 'disk', 'bandwidth',
                 'yük', 'load', 'performans', 'performance', 'metrik', 'metric',
-                'kullanım', 'usage', 'durum', 'status', 'genel', 'overview', 'özet',
+                'kullanım', 'usage', 'kaynak', 'tüket', 'tuket', 'tüketim', 'tuketim',
+                'durum', 'status', 'genel', 'overview', 'özet',
                 'trafik', 'traffic', 'throughput',
             ]
             SSH_ONLY_KEYWORDS = [
@@ -1735,38 +1804,34 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             DEEP_PERF_KEYWORDS = ['vmstat', 'iostat', '1 dakika', '1 dak', 'derin analiz', 'benchmark', '1 saniyelik', '10 defa', 'saniye aralık', 'örnekle']
             ml = message.lower()
             needs_prometheus = any(k in ml for k in PROMETHEUS_KEYWORDS) and not request.skip_server_context
-            # SSH: sunucu/sistem sorusu içeriyorsa her zaman çalıştır (keyword listesine bağlı değil)
-            SERVER_TRIGGER = PROMETHEUS_KEYWORDS + SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS
-            # Elle yazılmış SERVER_TRIGGER listesi dışında kalan ama linux_info_collector'ın
-            # kapsamlı KEYWORD_TO_GROUPS/EXTRA_GROUPS_KEYWORDS'ünde tanımlı bir konu varsa
-            # (örn. "vm.swappiness", "sysctl", "dirty_ratio") yine SSH context topla —
-            # aksi halde needs_ssh hep False kalır, _collect_ssh() hiç çalışmaz, context boş
-            # gider ve LLM context'siz "SSH bağlantısı sağlanamadı" diye cevap verir (SSH
-            # aslında hiç denenmemiştir). Bkz. has_recognized_topic() docstring'i.
-            # DİKKAT: has_recognized_topic() "kernel"/"os" gibi terimleri de tanır (bkz.
-            # linux_info_collector KEYWORD_TO_GROUPS) — bu yüzden db_only_answer kısayolu
-            # burada da (chat_message'daki gibi) explicit olarak needs_ssh'i bastırmalı,
-            # aksi halde "kernel versiyonları" sorusu yine filoya SSH atardı (bkz. kullanıcı
-            # bulgusu: bu endpoint frontend'in gerçekte kullandığı /chat/stream'dir).
+            # Dalga 1: Prometheus kelimeleri tek başına SSH açmaz (prom ≠ SSH).
+            # SSH: SSH_ONLY / SSH_SYSINFO / derin perf / has_recognized_topic.
+            # has_recognized_topic "kernel"/"os" da tanır → db_only_answer needs_ssh'i bastırır.
             from app.services.linux_info_collector import has_recognized_topic as _has_topic
             db_only_answer, matched_db_static_topic = _classify_db_only_sysinfo(
                 ml, SSH_ONLY_KEYWORDS, SSH_SYSINFO_KEYWORDS
             )
+            _ssh_trigger = SSH_ONLY_KEYWORDS + SSH_SYSINFO_KEYWORDS + DEEP_PERF_KEYWORDS
             needs_ssh = (
-                any(k in ml for k in SERVER_TRIGGER) or _has_topic(message)
+                any(k in ml for k in _ssh_trigger) or _has_topic(message)
             ) and not request.skip_server_context and not db_only_answer
             # OpenShift sohbeti Linux SSH/Prometheus ile karışmasın
             if chat_platform == "openshift":
                 needs_ssh = False
                 needs_prometheus = False
                 selected_servers = []
+            # DB-only cevaplarda envanterden sunucu listesi (SSH yok)
+            if db_only_answer and not selected_servers and inventory_servers:
+                selected_servers = inventory_servers[:80]
             is_deep         = any(k in ml for k in DEEP_PERF_KEYWORDS)
             # Filo üst sınırı — 200+ host'u tek turda patlatma (SSH) veya prompt'u
             # şişirme (db_only_answer — tüm filo DB tablosu LLM'e gönderilmesin).
-            _fleet_note_stream = None
+            _fleet_note_stream = fleet_policy_note
             if selected_servers and (needs_ssh or db_only_answer):
                 from app.services.linux_info_collector import cap_servers_for_ssh as _cap_ssh_stream
-                selected_servers, _fleet_note_stream = _cap_ssh_stream(selected_servers, message)
+                selected_servers, _cap_note = _cap_ssh_stream(selected_servers, message)
+                if _cap_note:
+                    _fleet_note_stream = ((_fleet_note_stream or "") + "\n" + _cap_note).strip()
             # Alt sınır 20s -> 30s (unified_chat.py'deki aynı düzeltmeyle uyumlu): "genel mod"a
             # düşen sorgular (STANDARD_GROUPS'un tamamı, ~9 grup/60+ komut) tek sunucuda bile
             # ölçümlerde 20-27s sürebiliyor — eski 20s taban bunu sığdırmadan zaman aşımına
@@ -1783,6 +1848,41 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
             if not global_cred:
                 global_cred = db.query(GlobalCredential).first()
 
+            # ── Dalga 2: collect XOR agentic (model/provider collect'ten önce) ──
+            from app.services import runtime_settings as _rts
+            from app.services.chat_path_policy import resolve_live_path, has_session_episode
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
+            _uses_external_api = (
+                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
+                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
+                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
+            )
+            _agentic_ok = (
+                (not _uses_external_api)
+                and (not ephemeral)
+                and (not request.skip_server_context)
+                and _rts.get_bool("linux_chat_agentic_mode")
+            )
+            # OpenShift: SSH collect yok ama agentic OCP araçları çalışabilir
+            _wants_fixed = bool(needs_ssh) and chat_platform != "openshift"
+            _live_path = resolve_live_path(
+                message,
+                agentic_enabled=_agentic_ok,
+                wants_fixed_collect=_wants_fixed,
+                has_live_targets=bool(selected_servers),
+                is_followup=_is_followup,
+                has_episode=has_session_episode(session_id=session_id, platform=chat_platform),
+                allow_agentic_without_collect=(chat_platform == "openshift"),
+            )
+            if _live_path.is_deep:
+                is_deep = True
+            logger.info(
+                "[LinuxChat] live_path reason=%s collect=%s agentic=%s targets=%s",
+                _live_path.reason, _live_path.run_fixed_collect, _live_path.run_agentic,
+                len(selected_servers),
+            )
+
             # ── 4. Paralel context toplama ────────────────────────────────
             async def _collect_prometheus():
                 if not needs_prometheus:
@@ -1793,7 +1893,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     return ""
 
             async def _collect_ssh():
-                if not (needs_ssh or needs_prometheus):
+                # Dalga 1: Prometheus tek başına SSH açmaz
+                # Dalga 2: agentic-first XOR — sabit collect kapalıysa atla
+                if not needs_ssh or not _live_path.run_fixed_collect:
                     return ""
                 try:
                     from app.services.linux_info_collector import (
@@ -1836,36 +1938,20 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 except Exception:
                     return {}
 
-            # NOT: wait_for(gather(...)) KULLANMIYORUZ — _collect_ssh() zaten kendi içinde
-            # context_timeout ile sınırlı (bkz. yukarıdaki asyncio.wait). Dıştan ayrıca
-            # wait_for(..., timeout=context_timeout+2.0) sarmak, sadece _collect_prometheus()
-            # veya _collect_rag() biraz uzun sürdüğünde ZATEN TOPLANMIŞ ssh_ctx'i de (gather
-            # tek bir birim olduğu için) tamamen atıp "SSH verisi alınamadı"ya yol açıyordu —
-            # unified_chat.py'deki aynı düzeltmeyle uyumlu: her kaynağın sonucu kendi tamamlanma
-            # durumuna göre bağımsız korunur.
+            # Dalga 3: canlı collect (prom+ssh) bitince ilerle; RAG best-effort
+            from app.services.chat_obs import await_live_then_rag
             prom_task = _asyncio.ensure_future(_collect_prometheus())
             ssh_task = _asyncio.ensure_future(_collect_ssh())
             rag_task = _asyncio.ensure_future(_collect_rag())
-            done, pending = await _asyncio.wait(
-                [prom_task, ssh_task, rag_task], timeout=context_timeout + 2.0
+            live_results, rag_ctx = await await_live_then_rag(
+                [prom_task, ssh_task],
+                rag_task,
+                live_timeout=context_timeout + 2.0,
             )
-            for t in pending:
-                t.cancel()
-
-            def _safe_result(task, default):
-                if task in done:
-                    try:
-                        return task.result()
-                    except Exception:
-                        return default
-                return default
-
-            prom_ctx = _safe_result(prom_task, "")
-            ssh_ctx = _safe_result(ssh_task, "")
-            rag_ctx = _safe_result(rag_task, {})
-            prom_ctx = prom_ctx if isinstance(prom_ctx, str) else ""
-            ssh_ctx = ssh_ctx if isinstance(ssh_ctx, str) else ""
+            prom_ctx = live_results[0] if isinstance(live_results[0], str) else ""
+            ssh_ctx = live_results[1] if isinstance(live_results[1], str) else ""
             rag_ctx = rag_ctx if isinstance(rag_ctx, dict) else {}
+            _timing.mark("collect_end")
 
             # ── 5. Prompt ─────────────────────────────────────────────────
             context_parts = []
@@ -1933,9 +2019,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             _facts_blocks.append(f"[{_s.name}]\n{_fb}")
                     if _facts_blocks:
                         context_parts.append(
-                            "ONCEDEN OGRENILMIS BILGILER (yapisal, gecmis SSH taramalarindan — "
-                            "canli BAGLAM ile celisirse canli veriyi esas al, kullanirken 'onceden "
-                            "ogrenilmis (X once dogrulandi)' diye belirt):\n" + "\n\n".join(_facts_blocks)
+                            "ONCEDEN OGRENILMIS BILGILER (yapisal; SSH tarama veya admin manuel sabitleme — "
+                            "canli BAGLAM ile celisirse canli veriyi esas al; MANUEL SABITLEME etiketli "
+                            "satirlarda ozellikle dikkatli ol):\n" + "\n\n".join(_facts_blocks)
                         )
                 except Exception:
                     pass
@@ -1984,21 +2070,28 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
-            # ── 5b. AI Streaming için model/sağlayıcı — agentic araç döngüsünden ÖNCE
-            # belirleniyor çünkü döngü yalnızca yerel Ollama/llm_gateway yolunda çalışır.
-            model = request.model or get_active_model(db)
-            provider = _detect_provider(model)
+            try:
+                from app.services.assistant_playbooks import append_playbook_to_context
+                context_str = append_playbook_to_context(
+                    db, context_str, platform=chat_platform, question=message,
+                )
+            except Exception:
+                pass
 
-            # ── Agentic READ_ONLY tool-calling (opsiyonel, öncesindeki sabit-context
-            # SSH taramasını KALDIRMAZ — yalnızca ek bir bağlam bloğu olarak üstüne
-            # ekler). unified_chat.py'deki AYNI mekanizma — bkz. oradaki yorum.
-            from app.services import runtime_settings as _rts
-            _uses_external_api = (
-                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
-                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
-                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
-            )
-            if not _uses_external_api and not ephemeral and not request.skip_server_context and _rts.get_bool("linux_chat_agentic_mode"):
+            try:
+                from app.services.episode_memory import append_episode_to_context
+                context_str = append_episode_to_context(
+                    context_str, session_id=session_id, platform=chat_platform,
+                )
+            except Exception:
+                pass
+
+            # ── 5b. Model/sağlayıcı yukarıda (Dalga 2 path) belirlendi ──
+            # Agentic READ_ONLY tool-calling — XOR: collect ile birlikte yalnızca
+            # derin yol / force_both. Bkz. chat_path_policy.resolve_live_path.
+            if _live_path.run_agentic:
+                yield _sse({"phase": "tools"})
+                _timing.mark("agentic_start")
                 try:
                     from app.services.unified_tool_chat import run_read_only_tool_loop
                     from app.services.agent.tools import domains_for_platform
@@ -2053,6 +2146,59 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         context_str = context_str + "\n\nARAÇ SONUÇLARI (bu turda modelin kendi kararıyla çalıştırdığı ek SSH/canlı sorgular):\n" + tool_context_text
                 except Exception as e:
                     logger.warning(f"[LinuxChat] agentic tool loop devre dışı bırakıldı: {e}")
+                    # XOR agentic-first başarısızsa ve collect atlandıysa: bir kez collect dene
+                    if needs_ssh and selected_servers and not _live_path.run_fixed_collect and not ssh_ctx:
+                        try:
+                            from app.services.linux_info_collector import (
+                                detect_needed_groups, collect_server_info, build_server_context as _bsc_fb,
+                            )
+                            groups = detect_needed_groups(message)
+                            loop_fb = _asyncio.get_event_loop()
+                            tasks_fb = [
+                                loop_fb.run_in_executor(
+                                    None, lambda s=srv: collect_server_info(s, groups, global_cred, message)
+                                )
+                                for srv in selected_servers
+                            ]
+                            done_fb, pend_fb = await _asyncio.wait(tasks_fb, timeout=min(45.0, context_timeout))
+                            for t in pend_fb:
+                                t.cancel()
+                            ctxs_fb = []
+                            for i, t in enumerate(tasks_fb):
+                                if t in done_fb:
+                                    try:
+                                        ctxs_fb.append(_bsc_fb(selected_servers[i], t.result()))
+                                    except Exception:
+                                        pass
+                            if ctxs_fb:
+                                ssh_ctx = "\n\n".join(ctxs_fb)
+                                context_str = (
+                                    "SUNUCULARDAN ALINAN GERCEK VERILER (SSH, agentic fallback):\n"
+                                    + ssh_ctx
+                                    + ("\n\n" + context_str if context_str else "")
+                                )
+                        except Exception as e_fb:
+                            logger.debug("agentic fallback collect: %s", e_fb)
+                _timing.mark("agentic_end")
+
+            # Episode: bu turdaki canlı keşfi follow-up için Redis'e yaz
+            try:
+                from app.services.episode_memory import save_episode, summarize_live_context
+                live_bits = []
+                if ssh_ctx:
+                    live_bits.append(ssh_ctx if isinstance(ssh_ctx, str) else str(ssh_ctx))
+                if "ARAÇ SONUÇLARI" in (context_str or ""):
+                    live_bits.append(context_str.split("ARAÇ SONUÇLARI", 1)[-1][:2000])
+                summary = summarize_live_context("\n".join(live_bits))
+                if summary and not ephemeral:
+                    save_episode(
+                        session_id=session_id,
+                        platform=chat_platform,
+                        summary=summary,
+                        server_names=[s.name for s in selected_servers] if selected_servers else None,
+                    )
+            except Exception:
+                pass
 
             prompt = _build_prompt(
                 message=message,
@@ -2071,7 +2217,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 db.commit()
 
             # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
+            yield _sse({"phase": "answering"})
             full_response = ""
+            _ttft_sent = False
 
             async with httpx.AsyncClient(timeout=180.0) as client:
                 if provider == "groq" and settings.GROQ_API_KEY:
@@ -2080,6 +2228,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         model, prompt
                     ):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
 
                 elif provider == "openai" and settings.OPENAI_API_KEY:
@@ -2088,6 +2239,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         model, prompt
                     ):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
 
                 elif provider == "openrouter" and settings.OPENROUTER_API_KEY:
@@ -2097,6 +2251,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         extra_headers={"HTTP-Referer": "https://datatem.ai", "X-Title": "datatem AI"}
                     ):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
 
                 else:
@@ -2108,6 +2265,9 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         token = chunk.get("response", "")
                         if token:
                             full_response += token
+                            if not _ttft_sent:
+                                _timing.note_ttft()
+                                _ttft_sent = True
                             yield _sse({"token": token})
                         if chunk.get("done"):
                             break
@@ -2133,8 +2293,15 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 full_response and not is_deep and not needs_ssh and not _is_followup
                 and not ephemeral
             ):
-                save_to_cache(db, message, full_response, server_ids)
+                save_to_cache(db, message, full_response, server_ids, platform=chat_platform)
 
+            _timing.finish(
+                cache_hit=False,
+                extra={
+                    "path": getattr(_live_path, "reason", ""),
+                    "targets": len(selected_servers) if selected_servers else 0,
+                },
+            )
             yield _sse({"done": True, "session_id": session_id})
 
         except Exception as e:
@@ -2146,3 +2313,37 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class ChatFeedbackRequest(BaseModel):
+    platform: str = "linux"
+    question: str
+    answer: Optional[str] = None
+    server_ids: Optional[List[int]] = None
+    session_id: Optional[int] = None
+    message_id: Optional[int] = None
+    vote: str  # up | down
+    correction_text: Optional[str] = None
+
+
+@router.post("/feedback")
+def chat_feedback(body: ChatFeedbackRequest, db: Session = Depends(get_db)):
+    """Asistan cevabına 👍/👎 veya düzeltme — QA cache öğrenmesi."""
+    from app.services.chat_cache_service import apply_feedback
+
+    try:
+        result = apply_feedback(
+            db,
+            platform=body.platform,
+            question=body.question,
+            answer=body.answer,
+            server_ids=body.server_ids,
+            vote=body.vote,
+            correction_text=body.correction_text,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("chat feedback failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e

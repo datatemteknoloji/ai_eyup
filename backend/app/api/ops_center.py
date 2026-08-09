@@ -488,6 +488,7 @@ async def handled_events(
 @router.get("/summary")
 async def ops_summary(
     platform: Optional[str] = Query(default=None),
+    fresh: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     """Navbar badge — Komuta Merkezi / Events ile aynı actionable event sayıları.
@@ -496,19 +497,33 @@ async def ops_summary(
     warning  = warning event adedi
     total    = critical + warning
 
-    Kısa TTL önbellek: Layout her ~60 sn'de 5 platform için çağırır; aynı
-    process içinde tekrarlayan ağır sorguları önler.
+    Redis TTL önbellek (varsayılan ~45s) — multi-worker / restart dostu.
+    fresh=1 ile bypass.
     """
+    import json
     import time as _time
-    cache_key = f"ops_summary:{platform or 'all'}"
-    cache = getattr(ops_summary, "_cache", None)
-    if cache is None:
-        ops_summary._cache = {}
-        cache = ops_summary._cache
-    hit = cache.get(cache_key)
-    now = _time.monotonic()
-    if hit and hit[0] > now:
-        return hit[1]
+
+    cache_key = f"ainew:ops:summary:{platform or 'all'}"
+    if not fresh:
+        try:
+            from app.core.redis_client import get_redis
+
+            r = get_redis()
+            if r is not None:
+                cached = r.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+        except Exception:
+            pass
+        # Process-local fallback (Redis yoksa)
+        mem = getattr(ops_summary, "_cache", None)
+        if mem is None:
+            ops_summary._cache = {}
+            mem = ops_summary._cache
+        hit = mem.get(cache_key)
+        now = _time.monotonic()
+        if hit and hit[0] > now:
+            return hit[1]
 
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = _active_events(db, since, platform=platform)
@@ -531,7 +546,28 @@ async def ops_summary(
         "open_incidents": open_incidents,
         "action_needed": total > 0,
     }
-    cache[cache_key] = (now + 20.0, result)  # 20 sn TTL
+
+    try:
+        from app.services.runtime_settings import get_setting
+
+        ttl = int(get_setting("ops_summary_cache_ttl_sec") or 45)
+    except Exception:
+        ttl = 45
+
+    try:
+        from app.core.redis_client import get_redis
+
+        r = get_redis()
+        if r is not None and ttl > 0:
+            r.setex(cache_key, ttl, json.dumps(result, ensure_ascii=False, default=str))
+    except Exception:
+        pass
+
+    mem = getattr(ops_summary, "_cache", None)
+    if mem is None:
+        ops_summary._cache = {}
+        mem = ops_summary._cache
+    mem[cache_key] = (_time.monotonic() + float(ttl), result)
     return result
 
 

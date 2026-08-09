@@ -83,7 +83,6 @@ export const ExadataAnalysisPage = () => <AnalysisHub platform="exadata" />
 export const OpenShiftOpsPage = () => <OpenShiftOpsCenter />
 export const OpenShiftEventsPage = () => <EventsHub platform="openshift" />
 export const OpenShiftIncidentsPage = withPlatformPage('openshift', Incidents)
-export const OpenShiftAnalysisPage = () => <AnalysisHub platform="openshift" />
 
 export const LinuxChatPage = () => (
   <PlatformChatShell platform="linux">

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Intent sabitleri
 INTENT_INVENTORY = "inventory"
+INTENT_INVENTORY_SUMMARY = "inventory_summary"
 INTENT_DIRECT_CMD = "direct_cmd"
 INTENT_VIRT_QA = "virt_qa"
 INTENT_SSH_TOPIC = "ssh_topic"
@@ -62,7 +63,17 @@ def _route_linux(raw: str, normalized: str) -> RouteResult:
     from app.services.linux_chat_intent import (
         extract_direct_commands,
         is_fleet_inventory_query,
+        is_inventory_status_query,
     )
+
+    # Özet/sayı soruları önce — çapraz platform sızdıran agentic yoluna düşmesin
+    if is_inventory_status_query(raw):
+        return RouteResult(
+            intent=INTENT_INVENTORY_SUMMARY,
+            confidence=0.96,
+            normalized_q=normalized,
+            hints={"summary": True},
+        )
 
     if is_fleet_inventory_query(raw):
         return RouteResult(

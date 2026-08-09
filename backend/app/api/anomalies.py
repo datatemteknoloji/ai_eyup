@@ -4,7 +4,7 @@ Anomaly Detection API endpoints
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from app.core.database import get_db
 from app.models.server import Server
 from app.models.metric import MetricData
@@ -20,6 +20,44 @@ from datetime import datetime, timedelta
 import statistics
 
 router = APIRouter()
+
+
+def _metric_history_points(db: Session, server_id: int, metric_name: str, since: datetime, hours: int):
+    """Uzun aralıkta hourly CAGG; kısa aralıkta raw metric_data."""
+    if hours > 6:
+        try:
+            rows = db.execute(
+                text("""
+                    SELECT bucket, avg_value
+                    FROM metric_data_hourly
+                    WHERE server_id = :sid
+                      AND metric_name = :mname
+                      AND bucket >= :since
+                    ORDER BY bucket ASC
+                """),
+                {"sid": server_id, "mname": metric_name, "since": since},
+            ).fetchall()
+            if rows:
+                data = [
+                    {"timestamp": r[0].isoformat(), "value": round(float(r[1]), 4)}
+                    for r in rows if r[1] is not None
+                ]
+                return data, [float(r[1]) for r in rows if r[1] is not None]
+        except Exception:
+            pass
+
+    records = (
+        db.query(MetricData)
+        .filter(
+            MetricData.server_id == server_id,
+            MetricData.metric_name == metric_name,
+            MetricData.timestamp >= since,
+        )
+        .order_by(MetricData.timestamp.asc())
+        .all()
+    )
+    data = [{"timestamp": r.timestamp.isoformat(), "value": round(r.value, 4)} for r in records]
+    return data, [r.value for r in records]
 
 
 @router.get("/")
@@ -147,51 +185,116 @@ async def run_aiops_cycle_now(db: Session = Depends(get_db)):
 
 @router.get("/summary")
 async def get_anomaly_summary(db: Session = Depends(get_db)):
-    """Tum sunucularin anlık metrik ozeti ve anomali sayilari."""
+    """Tum sunucularin anlık metrik ozeti ve anomali sayilari (set-based SQL)."""
     servers = db.query(Server).filter(
-        Server.ai_ready == True,
+        Server.ai_ready == True,  # noqa: E712
         Server.status == "ONLINE"
     ).all()
+    if not servers:
+        now = datetime.utcnow()
+        return {
+            "servers": [],
+            "total_servers": 0,
+            "critical_servers": 0,
+            "warning_servers": 0,
+            "healthy_servers": 0,
+            "generated_at": now.isoformat(),
+        }
 
     now = datetime.utcnow()
     last_hour = now - timedelta(hours=1)
+    metric_names = [
+        "cpu_usage_percent", "memory_usage_percent",
+        "disk_root_usage_percent", "load1",
+        "disk_io_utilization_percent",
+    ]
+    server_ids = [s.id for s in servers]
+    server_by_id = {s.id: s for s in servers}
+
+    # Aggregates + latest value — N×5 ORM yerine set-based sorgular
+    agg_rows = (
+        db.query(
+            MetricData.server_id,
+            MetricData.metric_name,
+            func.avg(MetricData.value),
+            func.max(MetricData.value),
+            func.min(MetricData.value),
+        )
+        .filter(
+            MetricData.server_id.in_(server_ids),
+            MetricData.metric_name.in_(metric_names),
+            MetricData.timestamp >= last_hour,
+        )
+        .group_by(MetricData.server_id, MetricData.metric_name)
+        .all()
+    )
+
+    latest_subq = (
+        db.query(
+            MetricData.server_id.label("sid"),
+            MetricData.metric_name.label("mname"),
+            func.max(MetricData.timestamp).label("max_ts"),
+        )
+        .filter(
+            MetricData.server_id.in_(server_ids),
+            MetricData.metric_name.in_(metric_names),
+            MetricData.timestamp >= last_hour,
+        )
+        .group_by(MetricData.server_id, MetricData.metric_name)
+        .subquery()
+    )
+    latest_rows = (
+        db.query(MetricData.server_id, MetricData.metric_name, MetricData.value)
+        .join(
+            latest_subq,
+            (MetricData.server_id == latest_subq.c.sid)
+            & (MetricData.metric_name == latest_subq.c.mname)
+            & (MetricData.timestamp == latest_subq.c.max_ts),
+        )
+        .all()
+    )
+
+    metrics_by_server: dict = {sid: {} for sid in server_ids}
+    latest_map = {(r[0], r[1]): float(r[2]) for r in latest_rows}
+    for sid, mname, avg_v, max_v, min_v in agg_rows:
+        cur = latest_map.get((sid, mname))
+        if cur is None:
+            continue
+        metrics_by_server[sid][mname] = {
+            "current": round(cur, 2),
+            "avg": round(float(avg_v), 2),
+            "max": round(float(max_v), 2),
+            "min": round(float(min_v), 2),
+        }
 
     summary = []
-    for srv in servers:
-        # Son 1 saatin metrik istatistikleri
-        metrics = {}
-        for metric_name in ["cpu_usage_percent", "memory_usage_percent",
-                             "disk_root_usage_percent", "load1",
-                             "disk_io_utilization_percent"]:
-            vals = db.query(MetricData.value).filter(
-                MetricData.server_id == srv.id,
-                MetricData.metric_name == metric_name,
-                MetricData.timestamp >= last_hour
-            ).all()
-            if vals:
-                values = [v[0] for v in vals]
-                metrics[metric_name] = {
-                    "current": round(values[-1], 2),
-                    "avg": round(statistics.mean(values), 2),
-                    "max": round(max(values), 2),
-                    "min": round(min(values), 2),
-                }
-
-        # Hızlı anomali skoru (sadece esik bazlı, hızlı)
+    for sid, srv in server_by_id.items():
+        metrics = metrics_by_server.get(sid) or {}
         score = 0
         alerts = []
         cpu = metrics.get("cpu_usage_percent", {}).get("current", 0)
         mem = metrics.get("memory_usage_percent", {}).get("current", 0)
         disk = metrics.get("disk_root_usage_percent", {}).get("current", 0)
-        if cpu >= 95: score += 3; alerts.append("CPU kritik")
-        elif cpu >= 80: score += 1; alerts.append("CPU yuksek")
-        if mem >= 95: score += 3; alerts.append("Bellek kritik")
-        elif mem >= 85: score += 1; alerts.append("Bellek yuksek")
-        if disk >= 90: score += 3; alerts.append("Disk kritik")
-        elif disk >= 80: score += 1; alerts.append("Disk yuksek")
+        if cpu >= 95:
+            score += 3
+            alerts.append("CPU kritik")
+        elif cpu >= 80:
+            score += 1
+            alerts.append("CPU yuksek")
+        if mem >= 95:
+            score += 3
+            alerts.append("Bellek kritik")
+        elif mem >= 85:
+            score += 1
+            alerts.append("Bellek yuksek")
+        if disk >= 90:
+            score += 3
+            alerts.append("Disk kritik")
+        elif disk >= 80:
+            score += 1
+            alerts.append("Disk yuksek")
 
         health = "critical" if score >= 3 else ("warning" if score >= 1 else "healthy")
-
         summary.append({
             "server_id": srv.id,
             "server_name": srv.name,
@@ -227,14 +330,7 @@ async def get_metric_history(
         return {"error": "Server not found"}
 
     since = datetime.utcnow() - timedelta(hours=hours)
-    records = db.query(MetricData).filter(
-        MetricData.server_id == server_id,
-        MetricData.metric_name == metric_name,
-        MetricData.timestamp >= since,
-    ).order_by(MetricData.timestamp.asc()).all()
-
-    data = [{"timestamp": r.timestamp.isoformat(), "value": round(r.value, 4)} for r in records]
-    values = [r.value for r in records]
+    data, values = _metric_history_points(db, server_id, metric_name, since, hours)
 
     stats = {}
     if values:

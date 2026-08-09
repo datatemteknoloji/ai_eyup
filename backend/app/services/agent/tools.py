@@ -75,38 +75,33 @@ def resolve_openshift_cluster(db: Session, args: Dict[str, Any]) -> Optional[Ope
 
 def _build_vcenter_client(hv: Hypervisor):
     from app.services.vmware.vcenter_client import VCenterClient
+    from app.services.hypervisor_credentials import hv_password, plain
+    cc = hv.connection_config or {}
     return VCenterClient(
         host=hv.ip_address or hv.hostname,
-        username=hv.username or (hv.connection_config or {}).get("username", ""),
-        password=hv.password or (hv.connection_config or {}).get("password", ""),
+        username=hv.username or cc.get("username", ""),
+        password=hv_password(hv),
         port=hv.port or 443,
     )
 
 
 def _build_kubevirt_client(hv: Hypervisor):
     from app.services.openshift.kubevirt_client import KubeVirtClient
+    from app.services.hypervisor_credentials import hv_password, hv_token, plain
     cc = hv.connection_config or {}
-    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+    use_creds = bool(cc.get("username")) and bool(cc.get("password") or hv.password)
     return KubeVirtClient(
         api_url=cc.get("api_url") or hv.hostname or hv.ip_address,
-        token="" if use_creds else (cc.get("token") or hv.password or ""),
+        token="" if use_creds else hv_token(hv),
         username=cc.get("username") or "",
-        password=cc.get("password") or "",
+        password=plain(cc.get("password")) or hv_password(hv),
         verify_ssl=bool(cc.get("verify_ssl", False)),
     )
 
 
 def _build_ocp_client(cluster: OpenShiftCluster):
-    from app.services.openshift.ocp_client import OpenShiftClient
-    cc = cluster.connection_config or {}
-    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
-    return OpenShiftClient(
-        api_url=cc.get("api_url") or cluster.api_url,
-        token="" if use_creds else (cc.get("token") or ""),
-        username=cc.get("username") or "",
-        password=cc.get("password") or "",
-        verify_ssl=bool(cc.get("verify_ssl", False)),
-    )
+    from app.services.openshift.cluster_ops import client_from_cluster
+    return client_from_cluster(cluster)
 
 
 def _service_arg_ok(service: str) -> bool:
@@ -268,7 +263,12 @@ def _free_disks_cmd(args: Dict[str, Any]) -> str:
 def _infra_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     from app.services.infra_summary import build_infra_overview_text
     try:
-        return {"ok": True, "summary": build_infra_overview_text(db)}
+        platform = (ctx or {}).get("platform") or (args or {}).get("platform")
+        return {
+            "ok": True,
+            "platform_scope": (platform or "unified"),
+            "summary": build_infra_overview_text(db, platform=platform),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -285,40 +285,6 @@ def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
         return {"ok": True, "answer": result.get("answer"), "source": "hypervisor_intelligence"}
     except Exception as e:
         logger.error(f"[Tool] vcenter_ask hata: {e}", exc_info=True)
-        return {"ok": False, "error": str(e)}
-
-
-def _vcenter_vms_by_host_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
-    host = (args.get("host") or "").strip()
-    if not host:
-        return {"ok": False, "error": "host zorunlu (ör. 'opcesxht27.kfs.local' veya kısa adı)"}
-    try:
-        from app.services.hypervisor_intelligence import h_vms_on_host
-        answer = h_vms_on_host(db, host)
-        if not answer:
-            return {"ok": False, "error": f"'{host}' adında/DB'de eşleşen ESX host bulunamadı"}
-        return {"ok": True, "answer": answer, "source": "vm_esx_host (senkronize DB)"}
-    except Exception as e:
-        logger.error(f"[Tool] vcenter_vms_by_host hata: {e}", exc_info=True)
-        return {"ok": False, "error": str(e)}
-
-
-def _knowledge_base_search_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
-    query = (args.get("query") or "").strip()
-    if not query:
-        return {"ok": False, "error": "query zorunlu"}
-    try:
-        import asyncio
-        from app.services.rag_service import get_knowledge_context
-        # direct_handler sync bir bağlamdan çağrılır (agentic tool loop event loop'u
-        # bloklamaması için zaten thread pool'da çalışır) — burada güvenle yeni bir
-        # event loop açılabilir.
-        context = asyncio.run(get_knowledge_context(query))
-        if not context:
-            return {"ok": True, "answer": "Bilgi bankasında bu sorguyla eşleşen sonuç bulunamadı.", "source": "knowledge_base"}
-        return {"ok": True, "answer": context, "source": "knowledge_base (RAG)"}
-    except Exception as e:
-        logger.error(f"[Tool] knowledge_base_search hata: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -753,18 +719,17 @@ TOOLS: Dict[str, Tool] = {
     "infra_overview": Tool(
         name="infra_overview",
         description=(
-            "TÜM ALTYAPININ genel envanter özetini döndürür: toplam sunucu sayısı, "
-            "Linux/Windows dağılımı, AI Ready sunucu sayısı, sanal makine (VM) sayısı, "
-            "fiziksel host sayısı ve hypervisor listesi. 'Kaç sunucumuz/VM'imiz var', "
-            "'altyapıda kaç makine var' gibi TEK BİR sunucuyla ilgili OLMAYAN, genel/toplam "
-            "sayı sorularında bu aracı kullan — sunucu sunucu run_diagnostic/df ÇALIŞTIRMA, "
-            "tek çağrı yeterlidir ve parametre gerektirmez."
+            "Aktif sohbet platformunun envanter özetini döndürür (ucuz DB sorgusu, parametre yok). "
+            "Linux sohbetinde YALNIZCA Linux sayıları; Windows'ta Windows; OpenShift'te cluster; "
+            "Virt'te hypervisor/VM; Unified'da TÜM altyapı. "
+            "'Kaç sunucu var', 'envanter durumu', 'AI Ready kaç tane' gibi genel sayı/özet "
+            "sorularında bunu kullan — sunucu sunucu SSH/df ÇALIŞTIRMA."
         ),
         parameters={"type": "object", "properties": {}},
         risk_level=RiskLevel.READ_ONLY,
         build_command=lambda args: "",
         direct_handler=_infra_overview_handler,
-        direct_label="Altyapı genel envanter özeti",
+        direct_label="Platform envanter özeti",
     ),
     "vcenter_ask": Tool(
         name="vcenter_ask",
@@ -785,48 +750,6 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_vcenter_ask_handler,
         direct_label="vCenter/Hypervisor canlı soru-cevap",
-    ),
-    "vcenter_vms_by_host": Tool(
-        name="vcenter_vms_by_host",
-        description=(
-            "Belirli bir ESX/hypervisor HOST adı verildiğinde, o host üzerinde çalışan VM'lerin "
-            "listesini (ad, güç durumu, vCPU, RAM) döner — senkronize envanterden anında gelir. "
-            "'X host'unda hangi VM'ler var', 'en yoğun host'un VM kırılımı/breakdown'ı' gibi "
-            "sorularda — önce hangi host'un kastedildiğini (ör. vcenter_ask/host CPU sıralamasından) "
-            "belirleyip SONRA bu aracı o host adıyla çağır."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "host": {"type": "string", "description": "ESX host adı (tam veya nokta öncesi kısa ad, ör. 'opcesxht27')"},
-            },
-            "required": ["host"],
-        },
-        risk_level=RiskLevel.READ_ONLY,
-        build_command=lambda args: "",
-        direct_handler=_vcenter_vms_by_host_handler,
-        direct_label="Host bazında VM listesi (senkronize)",
-    ),
-    "knowledge_base_search": Tool(
-        name="knowledge_base_search",
-        description=(
-            "Bilgi bankasında (runbook/prosedür, geçmiş olay, mimari/konfigürasyon notu — RAG/semantik "
-            "arama) sorgu yapar. Cevap canlı bir API/DB sorgusuyla DEĞİL, önceden kaydedilmiş "
-            "doküman/not/runbook içeriğiyle verilir. 'Nasıl yapılır', 'prosedür ne', 'bu hata neden "
-            "oluyor', 'geçmişte böyle bir sorun oldu mu' gibi bilgi/prosedür sorularında; anlık metrik "
-            "veya canlı durum sorularında KULLANMA (onlar için ilgili canlı/DB aracını kullan)."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Aranacak soru/konu (doğal dil)"},
-            },
-            "required": ["query"],
-        },
-        risk_level=RiskLevel.READ_ONLY,
-        build_command=lambda args: "",
-        direct_handler=_knowledge_base_search_handler,
-        direct_label="Bilgi bankası (RAG) araması",
     ),
     "vcenter_live_alarms": Tool(
         name="vcenter_live_alarms",
@@ -1415,8 +1338,6 @@ TOOLS: Dict[str, Tool] = {
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
     "vcenter_ask": frozenset({"vcenter"}),
-    "vcenter_vms_by_host": frozenset({"vcenter"}),
-    "knowledge_base_search": frozenset({"infra"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),
     "openshift_ask": frozenset({"openshift"}),

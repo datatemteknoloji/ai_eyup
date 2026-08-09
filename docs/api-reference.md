@@ -13,7 +13,7 @@ Get a token:
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin123"}'
+  -d '{"username": "admin", "password": "Kim13Sun"}'
 # → {"access_token": "eyJ...", "token_type": "bearer"}
 ```
 
@@ -27,7 +27,7 @@ Authenticate and get a JWT token.
 
 **Request:**
 ```json
-{ "username": "admin", "password": "admin123" }
+{ "username": "admin", "password": "Kim13Sun" }
 ```
 
 **Response:**

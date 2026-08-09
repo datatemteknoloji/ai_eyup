@@ -757,7 +757,11 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
   const [pushResults, setPushResults] = useState<Record<string, any>>({})
 
   useEffect(() => {
-    fetch('/api/v1/servers').then(r => r.json()).then(setServers).catch(() => {})
+    import('../api/servers').then(({ fetchServersForPicker }) =>
+      fetchServersForPicker({ page_size: 200, maxPages: 2 })
+        .then(setServers)
+        .catch(() => {})
+    )
   }, [])
 
   const generateConfig = async () => {

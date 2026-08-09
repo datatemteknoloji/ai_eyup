@@ -82,13 +82,11 @@ const Agent: React.FC = () => {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/servers/ai-ready/list`)
-      .then(r => r.ok ? r.json() : [])
-      .then((d: Server[] | { servers: Server[] }) => {
-        const list = Array.isArray(d) ? d : (d.servers || [])
-        setServers(list.filter(s => s.ai_ready))
-      })
-      .catch(() => {})
+    import('../api/servers').then(({ fetchAiReadyPage }) =>
+      fetchAiReadyPage<Server>({ page: 1, page_size: 200 })
+        .then((p) => setServers(p.items.filter(s => s.ai_ready)))
+        .catch(() => {})
+    )
     fetch(`${API_BASE_URL}/chat/models`)
       .then(r => r.ok ? r.json() : { models: [] })
       .then((d: { models?: AIModel[]; default?: string }) => {

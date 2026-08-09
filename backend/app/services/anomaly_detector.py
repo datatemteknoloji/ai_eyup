@@ -92,8 +92,14 @@ def detect_anomalies_for_server(
     server: Server,
     lookback_minutes: int = 60,
     history_minutes: int = 1440,  # 24 saat gecmis
+    *,
+    _preloaded: Optional[Dict[str, Dict[str, List[Tuple[datetime, float]]]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Bir sunucu icin anomali tespiti yapar."""
+    """Bir sunucu icin anomali tespiti yapar.
+
+    ``_preloaded`` verilirse DB'ye tekrar sorgu atılmaz:
+    ``{metric_name: {"recent": [(ts,val),...], "history": [(ts,val),...]}}``
+    """
     anomalies = []
     now = datetime.utcnow()
     lookback_start = now - timedelta(minutes=lookback_minutes)
@@ -107,26 +113,35 @@ def detect_anomalies_for_server(
                 cores = max(1, int(server.cpu_cores))
                 cfg["warning"] = cores * 1.0
                 cfg["critical"] = cores * 2.0
-            # Son N dakikanin ortalamasini al (mevcut deger)
-            recent = db.query(MetricData).filter(
-                MetricData.server_id == server.id,
-                MetricData.metric_name == metric_name,
-                MetricData.timestamp >= lookback_start,
-            ).order_by(MetricData.timestamp.desc()).limit(cfg["min_history"]).all()
 
-            if not recent:
-                continue
+            if _preloaded is not None:
+                bucket = _preloaded.get(metric_name) or {}
+                recent_vals = [v for _, v in (bucket.get("recent") or [])][: cfg["min_history"]]
+                history_values = [v for _, v in (bucket.get("history") or [])]
+                if not recent_vals:
+                    continue
+                current_value = statistics.mean(recent_vals)
+            else:
+                # Son N dakikanin ortalamasini al (mevcut deger)
+                recent = db.query(MetricData).filter(
+                    MetricData.server_id == server.id,
+                    MetricData.metric_name == metric_name,
+                    MetricData.timestamp >= lookback_start,
+                ).order_by(MetricData.timestamp.desc()).limit(cfg["min_history"]).all()
 
-            current_value = statistics.mean([r.value for r in recent])
+                if not recent:
+                    continue
 
-            # Gecmis verileri al (baseline)
-            history = db.query(MetricData.value).filter(
-                MetricData.server_id == server.id,
-                MetricData.metric_name == metric_name,
-                MetricData.timestamp >= history_start,
-                MetricData.timestamp < lookback_start,
-            ).all()
-            history_values = [h[0] for h in history]
+                current_value = statistics.mean([r.value for r in recent])
+
+                # Gecmis verileri al (baseline)
+                history = db.query(MetricData.value).filter(
+                    MetricData.server_id == server.id,
+                    MetricData.metric_name == metric_name,
+                    MetricData.timestamp >= history_start,
+                    MetricData.timestamp < lookback_start,
+                ).all()
+                history_values = [h[0] for h in history]
 
             if len(history_values) < cfg["min_history"]:
                 # Gecmis yetersiz, sadece esik kontrolu yap
@@ -196,16 +211,67 @@ def _build_message(metric: str, value: float, severity: str, z: Optional[float],
 
 
 def detect_all_anomalies(db: Session) -> List[Dict[str, Any]]:
-    """Tum ONLINE AI-ready sunuculari tara."""
+    """Tum ONLINE AI-ready sunuculari tara — metrikler set-based cekilir (N×M ORM yok)."""
     servers = db.query(Server).filter(
-        Server.ai_ready == True,
+        Server.ai_ready == True,  # noqa: E712
         Server.status == "ONLINE"
     ).all()
+    if not servers:
+        return []
+
+    now = datetime.utcnow()
+    lookback_minutes = 60
+    history_minutes = 1440
+    lookback_start = now - timedelta(minutes=lookback_minutes)
+    history_start = now - timedelta(minutes=history_minutes)
+    metric_names = list(ANOMALY_CONFIG.keys())
+    server_by_id = {s.id: s for s in servers}
+    server_ids = list(server_by_id.keys())
+
+    # Tek (veya chunk'lı) sorgu: son 24 saat tüm ilgili metrikler
+    # {server_id: {metric_name: {"recent": [(ts,v)], "history": [(ts,v)]}}}
+    preloaded: Dict[int, Dict[str, Dict[str, List[Tuple[datetime, float]]]]] = {
+        sid: {} for sid in server_ids
+    }
+
+    chunk = 500
+    for i in range(0, len(server_ids), chunk):
+        id_chunk = server_ids[i : i + chunk]
+        rows = (
+            db.query(
+                MetricData.server_id,
+                MetricData.metric_name,
+                MetricData.timestamp,
+                MetricData.value,
+            )
+            .filter(
+                MetricData.server_id.in_(id_chunk),
+                MetricData.metric_name.in_(metric_names),
+                MetricData.timestamp >= history_start,
+            )
+            .all()
+        )
+        for sid, mname, ts, val in rows:
+            if sid not in preloaded:
+                continue
+            bucket = preloaded[sid].setdefault(mname, {"recent": [], "history": []})
+            if ts >= lookback_start:
+                bucket["recent"].append((ts, float(val)))
+            else:
+                bucket["history"].append((ts, float(val)))
+
+    # recent'i timestamp desc sırala (limit min_history detect içinde)
+    for sid in preloaded:
+        for mname, bucket in preloaded[sid].items():
+            bucket["recent"].sort(key=lambda x: x[0], reverse=True)
 
     all_anomalies = []
-    for srv in servers:
+    for sid, srv in server_by_id.items():
         try:
-            anomalies = detect_anomalies_for_server(db, srv)
+            anomalies = detect_anomalies_for_server(
+                db, srv, lookback_minutes=lookback_minutes, history_minutes=history_minutes,
+                _preloaded=preloaded.get(sid),
+            )
             all_anomalies.extend(anomalies)
         except Exception as e:
             logger.error(f"Anomaly detection failed {srv.name}: {e}")

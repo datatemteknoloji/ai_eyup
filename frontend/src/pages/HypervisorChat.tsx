@@ -10,6 +10,7 @@ import {
   ChevronDown, ChevronUp, FileDown, BarChart3,
 } from 'lucide-react'
 import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '../utils/pdfExport'
+import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect, NlChatInput,
 } from '../components/nlChatUi'
@@ -207,7 +208,7 @@ function SuggestionChips({
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
   const isUser = msg.role === 'user'
 
   return (
@@ -272,6 +273,16 @@ function MessageBubble({ msg }: { msg: Message }) {
             </button>
           )}
         </div>
+        {!isUser && !msg.error && question && (
+          <div className="px-1">
+            <ChatFeedbackButtons
+              platform="virt"
+              question={question}
+              answer={msg.content}
+              messageId={typeof msg.id === 'number' ? msg.id : undefined}
+            />
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center ml-2 mt-1 flex-shrink-0">
@@ -587,9 +598,18 @@ export default function HypervisorChat({
           </div>
         ) : (
           <div className="max-w-3xl mx-auto">
-            {messages.map(msg => (
-              <MessageBubble key={msg.id} msg={msg} />
-            ))}
+            {messages.map((msg, i) => {
+              let question = ''
+              if (msg.role === 'assistant') {
+                for (let j = i - 1; j >= 0; j--) {
+                  if (messages[j].role === 'user') {
+                    question = messages[j].content
+                    break
+                  }
+                }
+              }
+              return <MessageBubble key={msg.id} msg={msg} question={question} />
+            })}
             {loading && <TypingIndicator />}
             <div ref={bottomRef} />
           </div>

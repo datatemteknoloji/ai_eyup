@@ -65,10 +65,25 @@ def _event_display_server_name(e: SystemEvent, server_map: Optional[dict] = None
     return None
 
 
-def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
+_LIST_DESC_MAX = 200
+
+
+def _event_to_dict(
+    e: SystemEvent,
+    server_name: Optional[str] = None,
+    *,
+    slim: bool = False,
+) -> dict:
     if not server_name:
         server_name = _event_display_server_name(e)
     last_seen = e.last_seen or e.created_at
+    desc = e.description
+    raw = e.raw_data
+    has_raw = bool(raw) and (not isinstance(raw, dict) or len(raw) > 0)
+    if slim:
+        if desc and len(desc) > _LIST_DESC_MAX:
+            desc = desc[:_LIST_DESC_MAX] + "…"
+        raw = None
     return {
         "id": e.id,
         "server_id": e.server_id,
@@ -77,8 +92,9 @@ def _event_to_dict(e: SystemEvent, server_name: Optional[str] = None) -> dict:
         "severity": e.severity,
         "source": e.source,
         "title": e.title,
-        "description": e.description,
-        "raw_data": e.raw_data,
+        "description": desc,
+        "raw_data": raw if not slim else None,
+        "has_raw_data": has_raw,
         "is_acknowledged": e.is_acknowledged,
         "is_known": getattr(e, "is_known", False),
         "resolved": e.resolved,
@@ -222,7 +238,7 @@ async def list_events(
 
     return {
         "total": total,
-        "events": [_event_to_dict(e, server_map.get(e.server_id)) for e in events]
+        "events": [_event_to_dict(e, server_map.get(e.server_id), slim=True) for e in events]
     }
 
 
@@ -766,6 +782,15 @@ async def event_server_coverage(
         "with_count": len(with_events),
         "without_count": len(without_events),
     }
+
+
+@router.get("/{event_id}")
+async def get_event(event_id: int, db: Session = Depends(get_db)):
+    """Tek event (tam alanlar — raw_data dahil). Liste slim; detay/raw için burası."""
+    event = db.query(SystemEvent).filter(SystemEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event bulunamadı")
+    return _event_to_dict(event, slim=False)
 
 
 # ── Log AI Analizi ───────────────────────────────────────────────────────────

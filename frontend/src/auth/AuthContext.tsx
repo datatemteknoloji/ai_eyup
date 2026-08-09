@@ -9,15 +9,26 @@ export interface AuthUser {
   full_name: string | null
   role: 'admin' | 'operator' | 'viewer'
   is_active: boolean
+  auth_source?: 'local' | 'ad' | 'sso'
   last_login: string | null
-  modules: string[]      // erişilebilir modül ID'leri
+  modules: string[]
   is_admin: boolean
+  theme?: 'dark' | 'light'
 }
+
+export type LoginResult =
+  | { mfa_required: false }
+  | {
+      mfa_required: true
+      mfa_enrollment_required: boolean
+      mfa_token: string
+    }
 
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<LoginResult>
+  completeMfaLogin: (mfaToken: string, code: string, enroll: boolean) => Promise<void>
   logout: () => void
   refresh: () => Promise<void>
   hasModule: (moduleId: string) => boolean
@@ -26,6 +37,14 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue>(null as any)
 
 export const useAuth = () => useContext(AuthContext)
+
+function applyUser(data: any): AuthUser {
+  return {
+    ...data,
+    modules: data.modules ?? [],
+    is_admin: data.is_admin ?? (data.role === 'admin'),
+  }
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -39,13 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Authorization': `Bearer ${token}` },
       })
       if (r.ok) {
-        const data = await r.json()
-        // Ensure modules field exists (fallback for older backends)
-        setUser({
-          ...data,
-          modules: data.modules ?? [],
-          is_admin: data.is_admin ?? (data.role === 'admin'),
-        })
+        setUser(applyUser(await r.json()))
       } else {
         clearToken(); setUser(null)
       }
@@ -58,8 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchMe().finally(() => setLoading(false))
   }, [fetchMe])
 
-  const login = useCallback(async (username: string, password: string) => {
-    // loading=true: login geçişinde Layout'un eski user ile render etmesini engelle
+  const login = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     setLoading(true)
     try {
       const r = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -69,19 +81,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
       if (!r.ok) {
         const err = await r.json().catch(() => ({}))
-        throw new Error(err.detail || 'Giriş başarısız')
+        throw new Error(typeof err.detail === 'string' ? err.detail : 'Giriş başarısız')
+      }
+      const data = await r.json()
+      if (data.mfa_required) {
+        return {
+          mfa_required: true,
+          mfa_enrollment_required: !!data.mfa_enrollment_required,
+          mfa_token: data.mfa_token,
+        }
+      }
+      setToken(data.access_token)
+      if (data.user) setUser(applyUser(data.user))
+      else await fetchMe()
+      return { mfa_required: false }
+    } finally {
+      setLoading(false)
+    }
+  }, [fetchMe])
+
+  const completeMfaLogin = useCallback(async (mfaToken: string, code: string, enroll: boolean) => {
+    setLoading(true)
+    try {
+      const path = enroll ? '/auth/mfa/enroll/confirm' : '/auth/mfa/verify'
+      const r = await fetch(`${API_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_token: mfaToken, code }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(typeof err.detail === 'string' ? err.detail : 'MFA başarısız')
       }
       const data = await r.json()
       setToken(data.access_token)
-      if (data.user) {
-        setUser({
-          ...data.user,
-          modules: data.user.modules ?? [],
-          is_admin: data.user.is_admin ?? (data.user.role === 'admin'),
-        })
-      } else {
-        await fetchMe()
-      }
+      if (data.user) setUser(applyUser(data.user))
+      else await fetchMe()
     } finally {
       setLoading(false)
     }
@@ -100,7 +135,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/login'
   }, [])
 
-  /** Kullanıcının belirtilen modüle erişimi var mı? */
   const hasModule = useCallback((moduleId: string): boolean => {
     if (!user) return false
     if (user.is_admin || user.role === 'admin') return true
@@ -108,7 +142,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user])
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh: fetchMe, hasModule }}>
+    <AuthContext.Provider value={{
+      user, loading, login, completeMfaLogin, logout, refresh: fetchMe, hasModule,
+    }}>
       {children}
     </AuthContext.Provider>
   )

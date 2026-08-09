@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { useAuth } from '../auth/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,12 +65,18 @@ function fmt(dt: string | null) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const KnowledgeBase: React.FC = () => {
+  const { user } = useAuth()
+  const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const [serverId, setServerId] = useState<number | ''>('')
   const [category, setCategory] = useState('')
   const [q, setQ] = useState('')
   const [offset, setOffset] = useState(0)
   const [editing, setEditing] = useState<Fact | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [pinServerId, setPinServerId] = useState<number | ''>('')
+  const [pinKey, setPinKey] = useState('')
+  const [pinValue, setPinValue] = useState('')
+  const [pinHint, setPinHint] = useState('')
   const limit = 100
   const qc = useQueryClient()
 
@@ -131,6 +138,37 @@ const KnowledgeBase: React.FC = () => {
     },
   })
 
+  const pinMutation = useMutation({
+    mutationFn: async () => {
+      if (pinServerId === '' || !pinKey.trim() || !pinValue.trim()) {
+        throw new Error('Sunucu, anahtar ve değer gerekli')
+      }
+      const r = await fetch(`${API_BASE_URL}/knowledge/correct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server_id: Number(pinServerId),
+          key: pinKey.trim(),
+          value: pinValue.trim(),
+          category: 'correction',
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(typeof err?.detail === 'string' ? err.detail : 'Kaydedilemedi')
+      }
+      return r.json()
+    },
+    onSuccess: () => {
+      setPinKey('')
+      setPinValue('')
+      setPinHint('Sabitlendi — RAG yeniden indekslenecek')
+      qc.invalidateQueries({ queryKey: ['knowledge-facts'] })
+      qc.invalidateQueries({ queryKey: ['knowledge-summary'] })
+    },
+    onError: (e: Error) => setPinHint(e.message || 'Kaydedilemedi'),
+  })
+
   const clearServerMutation = useMutation({
     mutationFn: async (sid: number) => {
       await fetch(`${API_BASE_URL}/knowledge/server/${sid}`, { method: 'DELETE' })
@@ -140,6 +178,24 @@ const KnowledgeBase: React.FC = () => {
       qc.invalidateQueries({ queryKey: ['knowledge-summary'] })
     },
   })
+
+  const { data: allServers } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['knowledge-pin-servers'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/servers/?page=1&page_size=200`)
+      if (!r.ok) return []
+      const data = await r.json()
+      const items = data?.items || data?.servers || data || []
+      if (!Array.isArray(items)) return []
+      return items.map((s: any) => ({ id: s.id, name: s.name || `#${s.id}` }))
+    },
+    staleTime: 60_000,
+  })
+
+  const pinServerChoices = (() => {
+    if (allServers?.length) return allServers.map((s) => ({ server_id: s.id, server_name: s.name }))
+    return (summary?.servers || []).map((s) => ({ server_id: s.server_id, server_name: s.server_name }))
+  })()
 
   const rows = data?.facts || []
   const total = data?.total || 0
@@ -183,6 +239,60 @@ const KnowledgeBase: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Yeni bilgi sabitle — yalnızca admin */}
+      {isAdmin ? (
+      <div className="bg-cyber-card border border-amber-500/20 rounded-[10px] p-3 space-y-2">
+        <div className="text-sm text-slate-200 font-medium">Gerçeği sabitle</div>
+        <p className="text-xs text-slate-500">
+          Yalnızca admin — kalıcı manuel düzeltme (source=manual, RAG reindex). Canlı SSH ile çelişirse canlı veri esas alınır.
+        </p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <select
+            value={pinServerId}
+            onChange={(e) => setPinServerId(e.target.value ? Number(e.target.value) : '')}
+            className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 min-w-[160px]"
+          >
+            <option value="">Sunucu seçin</option>
+            {pinServerChoices.map((s) => (
+              <option key={s.server_id} value={s.server_id}>
+                {s.server_name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={pinKey}
+            onChange={(e) => setPinKey(e.target.value)}
+            placeholder="Anahtar"
+            maxLength={200}
+            className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 min-w-[140px]"
+          />
+          <input
+            value={pinValue}
+            onChange={(e) => setPinValue(e.target.value)}
+            placeholder="Doğru değer"
+            maxLength={2000}
+            className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 flex-1 min-w-[160px]"
+          />
+          <button
+            type="button"
+            disabled={pinMutation.isPending || pinServerId === '' || !pinKey.trim() || !pinValue.trim()}
+            onClick={() => {
+              setPinHint('')
+              pinMutation.mutate()
+            }}
+            className="px-3 py-1.5 text-sm bg-amber-600/90 hover:bg-amber-500 text-white rounded-lg disabled:opacity-50"
+          >
+            {pinMutation.isPending ? '…' : 'Sabitle'}
+          </button>
+          {pinHint && <span className="text-xs text-slate-400">{pinHint}</span>}
+        </div>
+      </div>
+      ) : (
+        <p className="text-xs text-slate-500">
+          Manuel bilgi sabitleme / düzenleme yalnızca yöneticilere açıktır. Onayla ve silme knowledge yetkisiyle yapılabilir.
+        </p>
       )}
 
       {/* Filtreler */}
@@ -273,9 +383,11 @@ const KnowledgeBase: React.FC = () => {
                           <button
                             onClick={() => confirmMutation.mutate(f.id)}
                             className="text-slate-500 hover:text-emerald-300 text-xs">Onayla</button>
-                          <button
-                            onClick={() => { setEditing(f); setEditValue(f.value) }}
-                            className="text-slate-500 hover:text-blue-300 text-xs">Düzenle</button>
+                          {isAdmin && (
+                            <button
+                              onClick={() => { setEditing(f); setEditValue(f.value) }}
+                              className="text-slate-500 hover:text-blue-300 text-xs">Düzenle</button>
+                          )}
                           <button
                             onClick={() => { if (confirm('Bu bilgi silinsin mi?')) deleteMutation.mutate(f.id) }}
                             className="text-slate-500 hover:text-red-300 text-xs">Sil</button>

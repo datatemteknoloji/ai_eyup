@@ -14,7 +14,7 @@ class Server(Base):
     name = Column(String(255), nullable=False, index=True)
     hostname = Column(String(255))
     ip_address = Column(String(45), index=True)
-    status = Column(String(50), default="unknown")
+    status = Column(String(50), default="unknown", index=True)
     os_type       = Column(String(50))
     os_version    = Column(String(255))   # PRETTY_NAME
     os_release_id = Column(String(50))    # ID: "rhel"|"ol"|"rocky"|"ubuntu"
@@ -44,7 +44,6 @@ class Server(Base):
     vm_network_info   = Column(JSON,        nullable=True)        # [{adapter, mac, ips:[...]}] listesi
     vm_cluster        = Column(String(255), nullable=True)        # Hangi cluster / datacenter
     vm_datastore      = Column(String(255), nullable=True)        # Birincil datastore / storage domain adı
-    vm_esx_host       = Column(String(255), nullable=True, index=True)  # VM'in ÇALIŞTIĞI fiziksel ESX/hypervisor host adı (cluster'dan farklı — runtime.host)
     vm_hardware_version = Column(String(50), nullable=True)       # vmx-19 / v4 vb.
     vm_last_sync      = Column(DateTime(timezone=True), nullable=True)  # Son hypervisor sync zamanı
 

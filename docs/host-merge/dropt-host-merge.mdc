@@ -1,0 +1,36 @@
+---
+description: Dropt Ops Portal'ı host uygulamaya gömme — hedef Cursor kuralı
+alwaysApply: true
+---
+
+# Dropt → Host merge (hedef repo)
+
+Bu repoda Dropt Ops özelliklerini **gömüyorsan** önce şu manifesti oku ve ona uy:
+
+`docs/host-merge/dropt-host-merge-manifest.json`
+
+(Manifest yolu farklıysa kullanıcı yolunu düzeltmiş olabilir — `dropt-host-merge-manifest.json` ara.)
+
+## Zorunlu ilkeler
+
+1. **Login / AppShell taşıma.** Host login ve ana menü kullanılır. Dropt `LoginPage` + tam `AppShell` gömülmez.
+2. **Sunucu listesi host’tan.** vCenter listesi kalır. Çift tık → Dropt `ServerConsole` / ops menü kalıbı (`OpsWizardContext.embedded=true`).
+3. **Dropt `TargetServer.id` şart.** Host satırı → Dropt inventory upsert/map olmadan ops API çalışmaz.
+4. **Auth bridge.** Dropt API Bearer token ister (`dtt_access_token` veya eşdeğeri). Host oturumundan token exchange / shared JWT planla.
+5. **Ayarlar split:**
+   - OMIT: general, account
+   - KEEP under Dropt submenu: automation, mail, assistant, repos, centrify, backup
+   - Security: host’ta AD/SSO/TLS varsa OMIT; MFA/sessions host’ta yoksa host üst Ayarlar’a taşı (API modelini kontrol et)
+6. **Jobs + Audit** Dropt submenu’de kalsın (ops izi).
+7. **Asistan yazmaz.** Yönlendirir; job auto-apply yok. `capabilities.json` route’larını host path’lere güncelle.
+8. **Hostname/IP/ASM yan etkileri** bozulmasın: Centrify, HPSA, DNS checklist, ASM &lt;2TiB fdisk / ≥2TiB parted.
+
+## Çalışma sırası
+
+Manifest `host_merge_playbook` adımlarını izle (auth → server map → console → jobs → settings → capabilities → verify).
+
+## Yapma
+
+- Manifest’teki `do_not` listesine uy.
+- Uydurma ops adı / route önerme.
+- Embedded preview/apply akışını standalone job sayfasına zorla kırma (console gömülüyse).

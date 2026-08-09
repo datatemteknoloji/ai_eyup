@@ -36,6 +36,8 @@ ACTIVE_EVENT_WINDOW_HOURS = 6
 AUTO_RESOLVE_AFTER_HOURS = 2
 # Tek RCA turunda analiz edilecek maksimum incident sayısı (Ollama yükünü sınırla).
 MAX_RCA_PER_RUN = 3
+# Tek AIOps turunda SystemEvent'e yazılacak maksimum anomali (persist maliyeti).
+MAX_ANOMALIES_PERSIST = 200
 METRIC_ANOMALY_TYPE = "metric_anomaly"
 
 
@@ -49,6 +51,14 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
 
     Kritik yeni event'ler için auto_create_or_link_incident çağrılır.
     """
+    if anomalies and len(anomalies) > MAX_ANOMALIES_PERSIST:
+        logger.info(
+            "AIOps persist: %s anomali → ilk %s ile sınırlandı",
+            len(anomalies),
+            MAX_ANOMALIES_PERSIST,
+        )
+        anomalies = anomalies[:MAX_ANOMALIES_PERSIST]
+
     created = 0
     updated = 0
     incidents_touched = set()

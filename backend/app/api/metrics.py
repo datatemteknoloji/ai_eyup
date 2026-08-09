@@ -3,7 +3,7 @@ Metrics API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text
 from typing import List, Optional
 from datetime import datetime, timedelta
 from app.core.database import get_db
@@ -15,6 +15,42 @@ import os
 import httpx
 
 router = APIRouter()
+
+
+def _history_from_cagg_or_raw(db: Session, server_id: int, metric_name: str, start_time: datetime, hours: int):
+    """hours > 6 ise metric_data_hourly CAGG; aksi halde raw metric_data."""
+    if hours > 6:
+        try:
+            rows = db.execute(
+                text("""
+                    SELECT bucket AS timestamp, avg_value AS value
+                    FROM metric_data_hourly
+                    WHERE server_id = :sid
+                      AND metric_name = :mname
+                      AND bucket >= :since
+                    ORDER BY bucket ASC
+                """),
+                {"sid": server_id, "mname": metric_name, "since": start_time},
+            ).fetchall()
+            if rows:
+                return [
+                    {"timestamp": r[0], "value": float(r[1]), "unit": None}
+                    for r in rows if r[1] is not None
+                ]
+        except Exception:
+            pass
+
+    metrics = (
+        db.query(MetricData)
+        .filter(
+            MetricData.server_id == server_id,
+            MetricData.metric_name == metric_name,
+            MetricData.timestamp >= start_time,
+        )
+        .order_by(MetricData.timestamp)
+        .all()
+    )
+    return [{"timestamp": m.timestamp, "value": m.value, "unit": m.unit} for m in metrics]
 
 
 # ── Prometheus proxy ────────────────────────────────────────────────────────
@@ -143,26 +179,22 @@ async def get_metric_history(
         raise HTTPException(status_code=404, detail="Server not found")
     
     start_time = datetime.utcnow() - timedelta(hours=hours)
-    
-    metrics = db.query(MetricData).filter(
-        MetricData.server_id == server_id,
-        MetricData.metric_name == metric_name,
-        MetricData.timestamp >= start_time
-    ).order_by(MetricData.timestamp).all()
-    
+    points = _history_from_cagg_or_raw(db, server_id, metric_name, start_time, hours)
+
     return {
         "server_id": server_id,
         "hostname": server.hostname,
         "metric_name": metric_name,
         "start_time": start_time.isoformat(),
-        "data_points": len(metrics),
+        "data_points": len(points),
+        "resolution": "hourly" if hours > 6 else "raw",
         "data": [
             {
-                "timestamp": m.timestamp.isoformat(),
-                "value": m.value,
-                "unit": m.unit
+                "timestamp": p["timestamp"].isoformat() if hasattr(p["timestamp"], "isoformat") else str(p["timestamp"]),
+                "value": p["value"],
+                "unit": p.get("unit"),
             }
-            for m in metrics
+            for p in points
         ]
     }
 

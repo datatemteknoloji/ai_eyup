@@ -5,6 +5,7 @@
 | [Getting Started](getting-started.md) | Tutorial | Install and first login |
 | [Architecture](architecture.md) | Explanation | System design and data flows |
 | [Deployment](deployment.md) | Reference + How-to | Docker Compose config, env vars |
+| [Migration & Secrets](migration-and-secrets.md) | How-to | DB taşıma, SECRET_KEY rotate, checklist |
 | [API Reference](api-reference.md) | Reference | All REST endpoints |
 | [AIOps Pipeline](features/aiops.md) | Explanation + How-to | Anomaly detection, events, incidents, RCA |
 | [AI Chat & RAG](features/ai-chat.md) | How-to + Explanation | Chat with servers, RAG setup |

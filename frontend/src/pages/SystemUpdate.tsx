@@ -1650,7 +1650,33 @@ const SystemUpdate: React.FC = () => {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(body),
                           })
-                          if (r.ok) setCheckResult(await r.json())
+                          if (!r.ok) return
+                          const started = await r.json()
+                          // Geriye uyumluluk: senkron results dönerse doğrudan kullan
+                          if (started && !started.job_id && typeof started === 'object') {
+                            const keys = Object.keys(started)
+                            if (keys.length && started[keys[0]]?.packages !== undefined) {
+                              setCheckResult(started)
+                              return
+                            }
+                          }
+                          const jobId = started?.job_id
+                          if (!jobId) return
+                          // Poll bulk job until done
+                          for (let i = 0; i < 600; i++) {
+                            await new Promise(res => setTimeout(res, 1500))
+                            const jr = await fetch(`/api/v1/servers/bulk-jobs/${jobId}`)
+                            if (!jr.ok) continue
+                            const job = await jr.json()
+                            if (job.status === 'done') {
+                              setCheckResult(job.result || {})
+                              break
+                            }
+                            if (job.status === 'error') {
+                              setCheckResult({})
+                              break
+                            }
+                          }
                         } finally { setChecking(false) }
                       }}
                       disabled={checking}

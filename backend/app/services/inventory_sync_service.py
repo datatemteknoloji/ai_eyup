@@ -181,7 +181,6 @@ def _upsert_vm_record(
         not existing.vm_disk_gb
         or not existing.vm_tools_status
         or not existing.vm_datastore
-        or not existing.vm_esx_host
         or not existing.vm_last_sync
     )
     if preloaded_details:
@@ -229,13 +228,15 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
         error=None,
     )
 
+    from app.services.hypervisor_credentials import hv_password, hv_token, plain
+
     if htype == "vmware":
         try:
             from app.services.vmware.vcenter_client import VCenterClient
             client = VCenterClient(
                 host=hypervisor.ip_address or hypervisor.hostname,
                 username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
-                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                password=hv_password(hypervisor),
             )
             if not client.login():
                 errors.append("vCenter bağlantı hatası: giriş başarısız (host/kullanıcı/şifre kontrol edin)")
@@ -252,7 +253,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
             client = OVirtClient(
                 host=hypervisor.ip_address or hypervisor.hostname,
                 username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
-                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                password=hv_password(hypervisor),
                 verify_ssl=False,
                 port=hypervisor.port or 443,
             )
@@ -268,7 +269,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
             client = ProxmoxClient(
                 host=hypervisor.ip_address or hypervisor.hostname,
                 username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
-                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                password=hv_password(hypervisor),
                 port=hypervisor.port or 8006,
                 verify_ssl=False,
             )
@@ -285,7 +286,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
             winrm = WinRMClient(
                 host=hypervisor.ip_address or hypervisor.hostname,
                 username=hypervisor.username or (hypervisor.connection_config or {}).get("username", ""),
-                password=hypervisor.password or (hypervisor.connection_config or {}).get("password", ""),
+                password=hv_password(hypervisor),
                 port=hypervisor.port or 5985,
             )
             client = HyperVClient(winrm)
@@ -299,12 +300,12 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
         try:
             from app.services.openshift.kubevirt_client import KubeVirtClient
             cc = hypervisor.connection_config or {}
-            use_creds = bool(cc.get("username")) and bool(cc.get("password"))
+            use_creds = bool(cc.get("username")) and bool(cc.get("password") or hypervisor.password)
             client = KubeVirtClient(
                 api_url=cc.get("api_url") or hypervisor.hostname or hypervisor.ip_address,
-                token="" if use_creds else (cc.get("token") or hypervisor.password or ""),
+                token="" if use_creds else hv_token(hypervisor),
                 username=cc.get("username") or "",
-                password=cc.get("password") or "",
+                password=plain(cc.get("password")) or hv_password(hypervisor),
                 verify_ssl=bool(cc.get("verify_ssl", False)),
             )
             _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
@@ -351,7 +352,6 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 or not existing.vm_disk_gb
                 or not existing.vm_tools_status
                 or not existing.vm_datastore
-                or not existing.vm_esx_host
                 or not existing.vm_last_sync
             ):
                 need.append(vm)

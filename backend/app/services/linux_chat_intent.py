@@ -129,6 +129,16 @@ def extract_direct_commands(msg: str) -> List[str]:
 
 
 # Pattern'ler _fold() sonrası ASCII-ish metinde çalışır (ı→i, ş→s, …)
+_INVENTORY_STATUS_PATTERNS = [
+    r"envanter\s*(durum|ozet|ozeti|sayi|kac|ne\s*kadar)",
+    r"(kac|ne\s*kadar)\s+(sunucu|linux|host|makine)",
+    r"sunucu\s*(sayisi|durumu|ozeti)",
+    r"(filo|altyapi)\s*(ozet|durum|sayi)",
+    r"ai\s*ready\s*(kac|sayi|durum)",
+    r"inventory\s*(status|summary|count|overview)",
+    r"how\s+many\s+servers",
+]
+
 _INVENTORY_PATTERNS = [
     r"hostname.{0,40}ip",
     r"ip.{0,40}hostname",
@@ -152,6 +162,19 @@ _INVENTORY_PATTERNS = [
     r"list\s+servers",
     r"inventory.{0,30}ip",
 ]
+
+
+def is_inventory_status_query(msg: str) -> bool:
+    """Sayı/özet envanter sorusu (hostname listesi değil) — platform-scoped DB özeti."""
+    m = _fold(msg)
+    if not m.strip():
+        return False
+    if extract_direct_commands(msg):
+        return False
+    for pat in _INVENTORY_STATUS_PATTERNS:
+        if re.search(pat, m):
+            return True
+    return False
 
 
 def is_fleet_inventory_query(msg: str) -> bool:

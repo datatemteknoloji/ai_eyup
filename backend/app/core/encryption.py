@@ -48,9 +48,12 @@ def decrypt_secret(value: Optional[str]) -> Optional[str]:
 
 
 def is_encrypted(value: Optional[str]) -> bool:
-    """True if value looks like a Fernet ciphertext (quick prefix check)."""
+    """True if value looks like a Fernet ciphertext (urlsafe base64, version 0x80)."""
     if not value:
         return False
+    # Fernet token string form always starts with gAAAAA… (version byte 0x80)
+    if value.startswith("gAAAA"):
+        return True
     try:
         return base64.urlsafe_b64decode(value[:4].encode() + b"==")[:3] == _FERNET_PREFIX
     except Exception:

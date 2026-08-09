@@ -8,12 +8,13 @@ export default {
     extend: {
       colors: {
         cyber: {
-          deep:   '#070b14',
-          base:   '#0a0f1e',
-          card:   '#0d1424',
-          card2:  '#111827',
-          hover:  '#151f35',
-          border: 'rgba(99,130,194,0.15)',
+          // Theme-aware — follow --bg-* from index.css (dark/light)
+          deep:   'var(--bg-deep)',
+          base:   'var(--bg-base)',
+          card:   'var(--bg-card)',
+          card2:  'var(--bg-elevated)',
+          hover:  'var(--bg-hover)',
+          border: 'var(--border-glow)',
         },
         neon: {
           cyan:   '#22d3ee',

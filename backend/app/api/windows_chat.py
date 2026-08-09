@@ -268,6 +268,7 @@ async def delete_all_sessions(db: Session = Depends(get_db)):
 _ALL_WINRM_KEYWORDS = [
     'cpu', 'ram', 'memory', 'bellek', 'performans', 'performance', 'kullanım', 'usage',
     'yük', 'load', 'durum', 'status', 'genel', 'özet',
+    'kaynak', 'tüket', 'tuket', 'tüketim', 'tuketim',
     'disk', 'depolama', 'storage', 'sürücü', 'drive', 'alan', 'space', 'c:', 'd:',
     'servis', 'service', 'hizmet', 'durdu', 'stopped', 'başla', 'start', 'restart',
     'log', 'event log', 'olay günlüğü', 'günlük', 'hata', 'error', 'warning', 'uyarı',
@@ -408,12 +409,34 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
     all_windows_servers = _get_windows_servers(db)
     selected_servers: List[Server] = []
+    has_explicit = bool(request.server_ids or request.server_id)
     if request.server_ids:
         selected_servers = [s for s in all_windows_servers if s.id in request.server_ids]
     elif request.server_id:
         selected_servers = [s for s in all_windows_servers if s.id == request.server_id]
-    if not selected_servers:
-        selected_servers = all_windows_servers
+
+    mentioned: List[Server] = []
+    if not has_explicit:
+        ml_srv = message.lower()
+        for s in all_windows_servers:
+            if (s.name and s.name.lower() in ml_srv) or (s.ip_address and s.ip_address in message):
+                mentioned.append(s)
+
+    from app.services.chat_fleet_policy import (
+        apply_live_collect_policy,
+        inventory_lines_for_prompt,
+    )
+    inventory_servers = (
+        list(selected_servers) if has_explicit and selected_servers
+        else list(all_windows_servers)
+    )
+    live_targets, fleet_note, _allow_live = apply_live_collect_policy(
+        selected_servers if has_explicit else all_windows_servers,
+        message=message,
+        has_explicit_selection=has_explicit and bool(selected_servers),
+        mentioned=mentioned if not has_explicit else None,
+    )
+    selected_servers = live_targets
 
     ml = message.lower()
     needs_winrm = any(k in ml for k in _ALL_WINRM_KEYWORDS) and not request.skip_server_context
@@ -449,11 +472,15 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             logger.warning(f"WinRM info collect failed: {e}")
 
     context_parts = []
+    if fleet_note:
+        context_parts.append(fleet_note)
     if winrm_ctx:
         context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + winrm_ctx.strip())
     elif selected_servers:
         lines = [f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Windows'}, Durum={s.status}" for s in selected_servers]
         context_parts.append("VERITABANI BILGILERI:\n" + "\n".join(lines))
+    elif inventory_servers and needs_winrm:
+        context_parts.append(inventory_lines_for_prompt(inventory_servers))
 
     if selected_servers:
         try:
@@ -571,28 +598,77 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
-            from app.services.chat_history import fetch_recent_history, format_history_block
-            history_block = format_history_block(fetch_recent_history(db, session_id, limit=8))
+            from app.services.chat_obs import ChatTiming
+            _timing = ChatTiming(platform="windows")
 
-            # ── Sunucu seçimi (yalnızca Windows sunucular) ──────────────────
+            from app.services.chat_history import (
+                fetch_recent_history, format_history_block, has_prior_messages,
+            )
+            from app.services.chat_cache_service import get_cached_answer, save_to_cache
+
+            _is_followup = has_prior_messages(db, session_id)
+            history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
+
+            # ── Sunucu seçimi (Dalga 1 filo politikası) ───────────────────
             all_windows_servers = _get_windows_servers(db)
             selected_servers: List[Server] = []
+            has_explicit = bool(request.server_ids or request.server_id)
             if request.server_ids:
                 selected_servers = [s for s in all_windows_servers if s.id in request.server_ids]
             elif request.server_id:
                 selected_servers = [s for s in all_windows_servers if s.id == request.server_id]
 
-            if not selected_servers:
+            mentioned: List[Server] = []
+            if not has_explicit:
                 ml_srv = message.lower()
-                detected = [
-                    s for s in all_windows_servers
-                    if (s.name and s.name.lower() in ml_srv) or (s.ip_address and s.ip_address in message)
-                ]
-                selected_servers = detected if detected else all_windows_servers
+                for s in all_windows_servers:
+                    if (s.name and s.name.lower() in ml_srv) or (s.ip_address and s.ip_address in message):
+                        mentioned.append(s)
+
+            from app.services.chat_fleet_policy import (
+                apply_live_collect_policy,
+                inventory_lines_for_prompt,
+            )
+            inventory_servers = (
+                list(selected_servers) if has_explicit and selected_servers
+                else list(all_windows_servers)
+            )
+            live_targets, fleet_note, _allow_live = apply_live_collect_policy(
+                selected_servers if has_explicit else all_windows_servers,
+                message=message,
+                has_explicit_selection=has_explicit and bool(selected_servers),
+                mentioned=mentioned if not has_explicit else None,
+            )
+            selected_servers = live_targets
+
+            cache_ids = [s.id for s in selected_servers] if has_explicit else []
+            cached = None if _is_followup else get_cached_answer(
+                db, message, cache_ids, platform="windows",
+            )
+            _timing.mark("cache")
+            if cached:
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.commit()
+                answer = cached["answer"]
+                yield _sse({"phase": "answering"})
+                _timing.note_ttft()
+                for i in range(0, len(answer), 8):
+                    yield _sse({"token": answer[i:i + 8]})
+                db.add(ChatMessage(session_id=session_id, role="assistant", content=answer))
+                s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if s:
+                    s.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                _timing.finish(cache_hit=True, extra={"from_cache": True})
+                yield _sse({"done": True, "session_id": session_id, "from_cache": True})
+                return
+
+            yield _sse({"phase": "collecting"})
+            _timing.mark("collect_start")
 
             ml = message.lower()
             needs_winrm = any(k in ml for k in _ALL_WINRM_KEYWORDS) and not request.skip_server_context
-            context_timeout = 25.0
+            context_timeout = min(60.0, max(25.0, 15.0 + 1.0 * len(selected_servers)))
 
             server_context = ""
             if selected_servers:
@@ -601,9 +677,46 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     for s in selected_servers
                 ]
                 server_context = "Seçili sunucular:\n" + "\n".join(lines)
+            elif inventory_servers:
+                server_context = inventory_lines_for_prompt(inventory_servers)
+            if fleet_note:
+                server_context = (
+                    (server_context + "\n\n" + fleet_note).strip()
+                    if server_context
+                    else fleet_note
+                )
+
+            # ── Dalga 2: collect XOR agentic ──────────────────────────────
+            from app.services import runtime_settings as _rts
+            from app.services.chat_path_policy import resolve_live_path, has_session_episode
+            model = request.model or get_active_model(db)
+            provider = _detect_provider(model)
+            _uses_external_api = (
+                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
+                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
+                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
+            )
+            _agentic_ok = (
+                (not _uses_external_api)
+                and (not request.skip_server_context)
+                and _rts.get_bool("windows_chat_agentic_mode")
+            )
+            _live_path = resolve_live_path(
+                message,
+                agentic_enabled=_agentic_ok,
+                wants_fixed_collect=bool(needs_winrm),
+                has_live_targets=bool(selected_servers),
+                is_followup=_is_followup,
+                has_episode=has_session_episode(session_id=session_id, platform="windows"),
+            )
+            logger.info(
+                "[WindowsChat] live_path reason=%s collect=%s agentic=%s targets=%s",
+                _live_path.reason, _live_path.run_fixed_collect, _live_path.run_agentic,
+                len(selected_servers),
+            )
 
             async def _collect_winrm():
-                if not needs_winrm:
+                if not needs_winrm or not _live_path.run_fixed_collect:
                     return ""
                 try:
                     from app.services.windows.windows_info_collector import (
@@ -652,14 +765,19 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     return {}
 
             try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(_collect_winrm(), _collect_rag(), return_exceptions=True),
-                    timeout=context_timeout + 2.0,
+                from app.services.chat_obs import await_live_then_rag
+                winrm_task = asyncio.ensure_future(_collect_winrm())
+                rag_task = asyncio.ensure_future(_collect_rag())
+                live_results, rag_ctx = await await_live_then_rag(
+                    [winrm_task],
+                    rag_task,
+                    live_timeout=context_timeout + 2.0,
                 )
-                winrm_ctx = results[0] if isinstance(results[0], str) else ""
-                rag_ctx = results[1] if isinstance(results[1], dict) else {}
-            except asyncio.TimeoutError:
+                winrm_ctx = live_results[0] if isinstance(live_results[0], str) else ""
+                rag_ctx = rag_ctx if isinstance(rag_ctx, dict) else {}
+            except Exception:
                 winrm_ctx, rag_ctx = "", {}
+            _timing.mark("collect_end")
 
             event_ctx = _windows_event_context(db, selected_servers)
 
@@ -715,16 +833,26 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             context_str = "\n\n".join(context_parts) if context_parts else "Bu sorgu için bağlam verisi toplanmadı."
 
-            # ── Agentic READ_ONLY WinRM araç döngüsü ──────────────────────
-            model = request.model or get_active_model(db)
-            provider = _detect_provider(model)
-            from app.services import runtime_settings as _rts
-            _uses_external_api = (
-                (provider == "groq" and bool(settings.GROQ_API_KEY)) or
-                (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
-                (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
-            )
-            if not _uses_external_api and not request.skip_server_context and _rts.get_bool("windows_chat_agentic_mode"):
+            try:
+                from app.services.assistant_playbooks import append_playbook_to_context
+                context_str = append_playbook_to_context(
+                    db, context_str, platform="windows", question=message,
+                )
+            except Exception:
+                pass
+
+            try:
+                from app.services.episode_memory import append_episode_to_context
+                context_str = append_episode_to_context(
+                    context_str, session_id=session_id, platform="windows",
+                )
+            except Exception:
+                pass
+
+            # ── Agentic READ_ONLY WinRM (Dalga 2 XOR) ─────────────────────
+            if _live_path.run_agentic:
+                yield _sse({"phase": "tools"})
+                _timing.mark("agentic_start")
                 try:
                     from app.services.unified_tool_chat import run_read_only_tool_loop
                     from app.services.agent.tools import domains_for_platform
@@ -773,6 +901,25 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                         )
                 except Exception as e:
                     logger.warning(f"[WindowsChat] agentic tool loop devre dışı: {e}")
+                _timing.mark("agentic_end")
+
+            try:
+                from app.services.episode_memory import save_episode, summarize_live_context
+                live_bits = []
+                if winrm_ctx:
+                    live_bits.append(winrm_ctx if isinstance(winrm_ctx, str) else str(winrm_ctx))
+                if "ARAÇ SONUÇLARI" in (context_str or ""):
+                    live_bits.append(context_str.split("ARAÇ SONUÇLARI", 1)[-1][:2000])
+                summary = summarize_live_context("\n".join(live_bits))
+                if summary:
+                    save_episode(
+                        session_id=session_id,
+                        platform="windows",
+                        summary=summary,
+                        server_names=[s.name for s in selected_servers] if selected_servers else None,
+                    )
+            except Exception:
+                pass
 
             prompt = _build_prompt(
                 message=message,
@@ -787,16 +934,24 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             db.commit()
 
             # model/provider yukarıda agentic için belirlendi
+            yield _sse({"phase": "answering"})
             full_response = ""
+            _ttft_sent = False
 
             async with httpx.AsyncClient(timeout=180.0) as client:
                 if provider == "groq" and settings.GROQ_API_KEY:
                     async for token in _stream_external_openai(client, settings.GROQ_API_URL, settings.GROQ_API_KEY, model, prompt):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
                 elif provider == "openai" and settings.OPENAI_API_KEY:
                     async for token in _stream_external_openai(client, settings.OPENAI_API_URL, settings.OPENAI_API_KEY, model, prompt):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
                 elif provider == "openrouter" and settings.OPENROUTER_API_KEY:
                     async for token in _stream_external_openai(
@@ -804,6 +959,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                         extra_headers={"HTTP-Referer": "https://datatem.ai", "X-Title": "datatem AI"},
                     ):
                         full_response += token
+                        if not _ttft_sent and token:
+                            _timing.note_ttft()
+                            _ttft_sent = True
                         yield _sse({"token": token})
                 else:
                     async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
@@ -813,6 +971,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                         token = chunk.get("response", "")
                         if token:
                             full_response += token
+                            if not _ttft_sent:
+                                _timing.note_ttft()
+                                _ttft_sent = True
                             yield _sse({"token": token})
                         if chunk.get("done"):
                             break
@@ -823,6 +984,13 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 s.updated_at = datetime.now(timezone.utc)
             db.commit()
 
+            if full_response and not _is_followup and not needs_winrm:
+                save_to_cache(db, message, full_response, cache_ids, platform="windows")
+
+            _timing.finish(
+                cache_hit=False,
+                extra={"path": getattr(_live_path, "reason", ""), "targets": len(selected_servers)},
+            )
             yield _sse({"done": True, "session_id": session_id})
 
         except Exception as e:

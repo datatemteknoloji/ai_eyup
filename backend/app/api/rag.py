@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.services.rag_service import (
     ingest_runbook_append,
@@ -84,6 +85,64 @@ async def rag_runbook_delete_document(title: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/runbook/candidates")
+async def list_runbook_candidates(
+    status: Optional[str] = "pending",
+    db: Session = Depends(get_db),
+):
+    """Onay bekleyen / tüm runbook adayları (resolved incident'tan)."""
+    from app.models.runbook_candidate import RunbookCandidate
+
+    q = db.query(RunbookCandidate).order_by(RunbookCandidate.id.desc())
+    if status and status != "all":
+        q = q.filter(RunbookCandidate.status == status)
+    rows = q.limit(100).all()
+    return {"success": True, "candidates": [r.to_dict() for r in rows]}
+
+
+@router.post("/runbook/candidates/{candidate_id}/approve")
+async def approve_runbook_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Adayı onayla → Chroma runbook'a yaz."""
+    from app.services import runbook_candidates as rc
+
+    if getattr(user, "role", None) not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Yalnızca admin onaylayabilir")
+    try:
+        data = rc.approve_candidate(db, candidate_id, username=getattr(user, "username", "") or "")
+        n = await ingest_runbook_append(title=data["title"], content=data["content"])
+        return {"success": True, "candidate": data, "chunks_added": n}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Candidate approve failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runbook/candidates/{candidate_id}/reject")
+async def reject_runbook_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Adayı reddet — Chroma'ya yazılmaz."""
+    from app.services import runbook_candidates as rc
+
+    if getattr(user, "role", None) not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Yalnızca admin reddedebilir")
+    try:
+        data = rc.reject_candidate(db, candidate_id, username=getattr(user, "username", "") or "")
+        return {"success": True, "candidate": data}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Candidate reject failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/runbook/ingest-pdf")
 async def rag_runbook_ingest_pdf(
     file: UploadFile = File(..., description="PDF dosyası"),
@@ -125,9 +184,9 @@ async def rag_runbook_ingest_pdf(
 
 @router.post("/incidents/reindex")
 async def rag_incidents_reindex(db: Session = Depends(get_db)):
-    """Incidents tablosunu RAG incidents collection'a indexle (mevcut içerik silinir)."""
+    """Incidents tablosunu RAG incidents collection'a indexle (+ stale prune)."""
     try:
-        n = await ingest_incidents_from_db(db)
+        n = await ingest_incidents_from_db(db, force_full=True)
         return {"success": True, "chunks_added": n}
     except Exception as e:
         logger.exception("Incidents reindex failed")

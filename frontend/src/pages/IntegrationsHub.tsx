@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Database, Cloud, Server, Layers, FileUp, RefreshCw,
-  AlertTriangle, CheckCircle2, Merge, ChevronRight,
+  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 
@@ -11,6 +11,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   hypervisor: <Cloud size={22} />,
   physical: <Server size={22} />,
   exadata: <Layers size={22} />,
+  openshift: <Boxes size={22} />,
 }
 
 export default function IntegrationsHub() {
@@ -57,7 +58,7 @@ export default function IntegrationsHub() {
         <div>
           <h1 className="text-2xl font-bold text-white">Envanter Merkezi</h1>
           <p className="text-slate-400 text-sm mt-1">
-            UCMDB, vCenter/OLVM, fiziksel host ve Exadata envanterini tek noktadan yönetin — mükerrer kayıtları tekilleştirin
+            UCMDB, vCenter/OLVM, fiziksel host, Exadata ve OpenShift envanterini tek noktadan yönetin — mükerrer kayıtları tekilleştirin
           </p>
         </div>
         <button
@@ -108,6 +109,8 @@ export default function IntegrationsHub() {
                   <span className="text-slate-400">Kayıt: <strong className="text-white">{src.count ?? 0}</strong></span>
                   {src.vm_count != null && <span className="text-slate-400">VM: <strong className="text-white">{src.vm_count}</strong></span>}
                   {src.rack_count != null && <span className="text-slate-400">Rack: <strong className="text-white">{src.rack_count}</strong></span>}
+                  {src.node_count != null && <span className="text-slate-400">Node: <strong className="text-white">{src.node_count}</strong></span>}
+                  {src.project_count != null && <span className="text-slate-400">Proje: <strong className="text-white">{src.project_count}</strong></span>}
                 </div>
               </div>
             </Link>

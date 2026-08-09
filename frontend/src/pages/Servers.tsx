@@ -8,6 +8,7 @@ const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { fetchServersPage } from '../api/servers'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isPoweredOn } from '../utils/powerState'
@@ -1142,6 +1143,8 @@ const Servers: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
+  const [page, setPage] = useState(1)
+  const pageSize = 50
 
   const [sortKey, setSortKey] = useState<string>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -1168,70 +1171,34 @@ const Servers: React.FC = () => {
   }
   const queryClient = useQueryClient()
 
-  // Önce sunucu listesini al (Node Exporter durumu olmadan)
-  const { data: servers = [], isLoading, isFetching, isError, error, refetch } = useQuery<Server[]>({
-    queryKey: ['servers', 'linux'],
-    queryFn: async () => {
-      // Bu sayfa Linux modülü altında — sadece Linux (Windows olmayan) sunucular gösterilir.
-      const response = await fetch(`${API_BASE_URL}/servers/?platform=linux`)
-      if (!response.ok) {
-        let detail = `HTTP ${response.status}`
-        try {
-          const err = await response.json()
-          detail = typeof err?.detail === 'string' ? err.detail : JSON.stringify(err)
-        } catch { /* JSON parse hatası yoksay */ }
-        throw new Error(detail)
-      }
-      const data = await response.json()
-      if (!Array.isArray(data)) throw new Error('API dizi döndürmedi')
-      return data
-    },
-    refetchInterval: 60_000,   // 60 sn'de bir arka planda yenile
-    placeholderData: (prev) => prev, // önceki veriyi göster, yüklenirken blank bırakma
+  // Filtre değişince ilk sayfaya dön
+  React.useEffect(() => {
+    setPage(1)
+  }, [searchTerm, ipFilter, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter])
+
+  const { data: serversPage, isLoading, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['servers', 'linux', page, pageSize, searchTerm, ipFilter, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter],
+    queryFn: () =>
+      fetchServersPage<Server>({
+        platform: 'linux',
+        page,
+        page_size: pageSize,
+        q: searchTerm || undefined,
+        ip: ipFilter || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        hide_offline: !showOffline,
+        ai_ready: aiReadyFilter === 'all' ? null : aiReadyFilter === 'true',
+        server_type: typeFilter !== 'all' ? typeFilter : undefined,
+        os: osFilter !== 'all' ? osFilter : undefined,
+        node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
+      }),
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
   })
 
-  // Tüm ONLINE sunucular için Node Exporter durumu iste (SSH yoksa backend Prometheus'tan bakar)
-  const checkableServerIds = servers
-    .filter(s => s.status === 'ONLINE')
-    .map(s => s.id)
-    .sort((a, b) => a - b)
-    .join(',')
-
-  // Node Exporter kurulu sunucuları listele
-  // Node Exporter durumlarını ayrı bir query ile al (ONLINE sunucular; backend SSH + Prometheus fallback kullanır)
-  const { data: nodeExporterStatuses = {} } = useQuery<Record<number, { installed: boolean; running: boolean }>>({
-    queryKey: ['nodeExporterStatuses', checkableServerIds],
-    queryFn: async () => {
-      const onlineServers = servers.filter(s => s.status === 'ONLINE')
-      if (onlineServers.length === 0) return {}
-
-      const statusPromises = onlineServers.map(async (server) => {
-        let installed = false
-        let running = false
-        try {
-          const response = await fetch(`${API_BASE_URL}/monitoring/node-exporter/status/${server.id}`)
-          const data = await response.json().catch(() => ({}))
-          if (response.ok) {
-            installed = Boolean(data.installed)
-            running = Boolean(data.running)
-          }
-        } catch {
-          // ağ/parse hatası
-        }
-        return {
-          serverId: server.id,
-          status: { installed, running }
-        }
-      })
-
-      const results = await Promise.all(statusPromises)
-      const statusMap: Record<number, { installed: boolean; running: boolean }> = {}
-      results.forEach(r => { statusMap[r.serverId] = r.status })
-      return statusMap
-    },
-    enabled: servers.length > 0 && checkableServerIds.length > 0,
-    refetchInterval: 60000
-  })
+  const servers = serversPage?.items ?? []
+  const totalServers = serversPage?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -1271,49 +1238,8 @@ const Servers: React.FC = () => {
 
   const parseIp = (ip: string) => ip.split('.').map(part => Number(part) || 0)
 
-  // Sunuculara Node Exporter durumunu ekle
-  const serversWithNodeExporter = servers.map(server => ({
-    ...server,
-    node_exporter: nodeExporterStatuses[server.id] || {
-      installed: false,
-      running: false
-    }
-  }))
-
-  // Filtreleme
-  const filteredServers = serversWithNodeExporter.filter(server => {
-    const matchesSearch = server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      server.ip_address?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      server.hostname?.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesIp = !ipFilter || server.ip_address?.toLowerCase().includes(ipFilter.toLowerCase())
-    
-    // Status filtresi:
-    // showOffline=false → OFFLINE gizle (ONLINE + WARNING + diğerleri görünür)
-    // showOffline=true  → hepsi görünür (OFFLINE dahil)
-    const matchesStatus = showOffline
-      ? (statusFilter === 'all' || server.status === statusFilter)
-      : (server.status !== 'OFFLINE' && (statusFilter === 'all' || server.status === statusFilter))
-    
-    const matchesAiReady = aiReadyFilter === 'all' || 
-      (aiReadyFilter === 'true' && server.ai_ready) ||
-      (aiReadyFilter === 'false' && !server.ai_ready)
-    
-    const matchesType = typeFilter === 'all' || server.server_type === typeFilter
-
-    const osTypeLow = (server.os_type || '').toLowerCase()
-    const matchesOs = osFilter === 'all' ||
-      (osFilter === 'linux' && !osTypeLow.includes('windows') && (osTypeLow.includes('linux') || osTypeLow.includes('rhel') || osTypeLow.includes('ol') || osTypeLow.includes('ubuntu') || osTypeLow.includes('centos') || osTypeLow.includes('rocky') || osTypeLow.includes('sles') || server.os_release_id)) ||
-      (osFilter === 'other' && !osTypeLow.includes('windows') && !osTypeLow.includes('linux') && !osTypeLow.includes('rhel') && !osTypeLow.includes('ol') && !osTypeLow.includes('ubuntu') && !osTypeLow.includes('centos') && !osTypeLow.includes('rocky') && !osTypeLow.includes('sles') && !server.os_release_id)
-
-    const matchesNodeExporter = nodeExporterFilter === 'all' ||
-      (nodeExporterFilter === 'installed' && server.node_exporter?.installed) ||
-      (nodeExporterFilter === 'running' && server.node_exporter?.running) ||
-      (nodeExporterFilter === 'not_installed' && !server.node_exporter?.installed)
-
-    return matchesSearch && matchesIp && matchesStatus && matchesAiReady && matchesType && matchesOs && matchesNodeExporter
-  })
-
-  const sortedServers = [...filteredServers].sort((a, b) => {
+  // Filtreler sunucu tarafında; burada yalnızca mevcut sayfayı sırala. NE = DB cache.
+  const sortedServers = [...servers].sort((a, b) => {
     let aValue: number | string = ''
     let bValue: number | string = ''
 
@@ -1544,7 +1470,7 @@ const Servers: React.FC = () => {
 
           </div>
           <div className="flex items-center gap-2">
-            <ActionsDropdown servers={servers} refetch={() => { refetch(); queryClient.invalidateQueries({ queryKey: ['nodeExporterStatuses'] }) }} />
+            <ActionsDropdown servers={servers} refetch={() => { refetch() }} />
           </div>
         </div>
       </div>
@@ -1804,6 +1730,34 @@ const Servers: React.FC = () => {
             {searchTerm || ipFilter || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
               ? 'Filtreye uygun sunucu bulunamadı' 
               : 'Henüz sunucu yok — envanter Entegrasyonlar üzerinden eklenir'}
+          </div>
+        )}
+        {totalServers > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06] text-sm text-slate-400">
+            <span>
+              {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalServers)} / {totalServers}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded-lg bg-white/[0.05] border border-white/[0.08] disabled:opacity-40 hover:bg-white/[0.08]"
+              >
+                Önceki
+              </button>
+              <span className="text-slate-500">
+                {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="px-3 py-1 rounded-lg bg-white/[0.05] border border-white/[0.08] disabled:opacity-40 hover:bg-white/[0.08]"
+              >
+                Sonraki
+              </button>
+            </div>
           </div>
         )}
       </div>

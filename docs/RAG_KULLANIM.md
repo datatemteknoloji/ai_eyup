@@ -97,8 +97,14 @@ Her chat mesajında:
 Config (opsiyonel):
 
 - `RAG_CHROMA_PATH`: Chroma veri dizini (varsayılan: `/app/chroma`)
+- `RAG_SEED_PATH`: Kurulumla gelen runbook PDF/metin dizini (varsayılan: `/app/docs/rag_seed`; host’ta `{kurulum}/docs/rag_seed`)
 - `RAG_RUNBOOK_TOP_K`, `RAG_INCIDENTS_TOP_K`, `RAG_METRICS_TOP_K`: Her collection’dan kaç chunk alınacağı (varsayılan 3, 3, 5)
 - `OLLAMA_EMBED_MODEL`: Embedding modeli (varsayılan: `nomic-embed-text`)
+
+## Seed dizini (`docs/rag_seed`)
+
+İlk kurulum / her backend açılışında (idempotent) bu dizindeki PDF/md/txt runbook RAG’e yazılır.
+Ayrıntı: [docs/rag_seed/README.md](rag_seed/README.md). Ayarlar → RAG ile manuel yükleme de çalışmaya devam eder.
 
 ## Docker
 

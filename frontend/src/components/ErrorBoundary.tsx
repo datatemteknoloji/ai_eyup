@@ -3,6 +3,8 @@ import { Component, ErrorInfo, ReactNode } from 'react';
 interface Props {
   children?: ReactNode;
   fallback?: ReactNode;
+  /** Değişince hata durumu sıfırlanır (örn. location.pathname) */
+  resetKey?: string | number;
 }
 
 interface State {
@@ -17,8 +19,13 @@ class ErrorBoundary extends Component<Props, State> {
   };
 
   public static getDerivedStateFromError(error: Error): State {
-    // Update state so the next render will show the fallback UI.
     return { hasError: true, error };
+  }
+
+  public componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: undefined, errorInfo: undefined })
+    }
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -43,21 +50,35 @@ class ErrorBoundary extends Component<Props, State> {
             </svg>
           </div>
           <h2 className="mb-2 text-2xl font-bold text-gray-800">Beklenmeyen Bir Hata Oluştu</h2>
-          <p className="mb-6 max-w-md text-gray-600">
+          <p className="mb-4 max-w-md text-gray-600">
             Arayüzde bir sorun meydana geldi. Lütfen sayfayı yenilemeyi deneyin veya sistem yöneticisiyle iletişime geçin.
           </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
-          >
-            Sayfayı Yenile
-          </button>
+          {this.state.error && (
+            <pre className="mb-6 max-w-xl w-full overflow-auto rounded border border-red-200 bg-red-50 px-3 py-2 text-left text-xs text-red-700 font-mono">
+              {this.state.error.message || String(this.state.error)}
+            </pre>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => this.setState({ hasError: false, error: undefined, errorInfo: undefined })}
+              className="rounded border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Tekrar dene
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+            >
+              Sayfayı Yenile
+            </button>
+          </div>
           
-          {import.meta.env.DEV && this.state.error && (
+          {import.meta.env.DEV && this.state.errorInfo && (
             <div className="mt-8 max-w-4xl text-left">
-              <p className="font-mono text-sm text-red-600 font-semibold mb-2">{this.state.error.toString()}</p>
               <pre className="overflow-auto rounded bg-gray-100 p-4 text-xs text-gray-800 border border-gray-300 max-h-64">
-                {this.state.errorInfo?.componentStack}
+                {this.state.errorInfo.componentStack}
               </pre>
             </div>
           )}

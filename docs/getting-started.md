@@ -111,7 +111,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 Default credentials:
 - **Username:** `admin`
-- **Password:** `admin123`
+- **Password:** `Kim13Sun`
 
 **Change the default password immediately** — go to Settings → Users after login.
 

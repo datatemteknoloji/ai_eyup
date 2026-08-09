@@ -473,11 +473,13 @@ const McpTools: React.FC = () => {
   const { data: servers = [], isLoading: serversLoading } = useQuery<Server[]>({
     queryKey: ['mcp-servers'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
-      if (r.ok) { const d = await r.json(); if (Array.isArray(d) && d.length) return d }
-      const r2 = await fetch(`${API_BASE_URL}/servers/`)
-      if (!r2.ok) throw new Error('Sunucu listesi alınamadı')
-      return r2.json()
+      const { fetchAiReadyPage, fetchServersPage } = await import('../api/servers')
+      try {
+        const p = await fetchAiReadyPage<Server>({ page: 1, page_size: 200 })
+        if (p.items.length) return p.items
+      } catch { /* fall through */ }
+      const p2 = await fetchServersPage<Server>({ page: 1, page_size: 200, ai_ready: true })
+      return p2.items
     }
   })
 

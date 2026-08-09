@@ -89,7 +89,7 @@ export function buildPlatformAiopsChildren(
       icon: React.createElement(AlertTriangle, { size: 15 }),
       badge: () => (openInc > 0 ? warnBadge(openInc) : null),
     },
-    { path: `${base}/analysis`, name: 'Analiz Araçları', icon: React.createElement(Wrench, { size: 15 }) },
+    { path: `${base}/analysis`, name: platform === 'openshift' ? 'Küme Analizi' : 'Analiz Araçları', icon: React.createElement(Wrench, { size: 15 }) },
   ]
 }
 

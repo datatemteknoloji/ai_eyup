@@ -1,0 +1,43 @@
+---
+description: Backend FastAPI / Python conventions for ainew
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend conventions
+
+## Yapı
+
+- Endpoint: `app/api/<domain>.py` → `APIRouter`; kayıt `app/api/router.py`
+- Mantık: `app/services/`; ORM: `app/models/`; ayarlar: `app/core/config.py` (`settings`)
+- Runtime ayarlar (interval vb.): `app/services/runtime_settings.py` + DB `AppSettings`
+- Arka plan: `app/background_tasks.py` (health, metric sync, anomaly, logs, inventory, OCP, …)
+
+## Auth
+
+- Global middleware `main.py`: `/api/v1/*` JWT Bearer ister
+- Muaf: `/api/v1/auth/*`, `/api/v1/public/*`, `/health`, `/docs`, `/repos`, OPTIONS
+- WebSocket terminal kendi JWT doğrulamasını kullanır
+
+## Ölçek / I/O
+
+- Blocking SSH/WinRM/vCenter: `run_in_executor` / thread pool (SSH pool max 150)
+- Sync FastAPI `def` endpoint'ler AnyIO thread limiter (150) ile çalışır
+- DB pool: `app/core/database.py`; Postgres `max_connections=500` (compose)
+
+## AI / RAG
+
+- Chat/agent: Ollama veya `REMOTE_LLM_*` gateway (`llm_gateway.py`)
+- RAG: ChromaDB (`RAG_CHROMA_PATH`), embedding genelde yerel Ollama
+- Agent: LangGraph + `services/agent/guard.py` (human-in-the-loop)
+
+## Şema
+
+- Startup'ta `create_all` + idempotent `ALTER … IF NOT EXISTS` (`main.py`)
+- Ağır migrasyonlar: `backend/alembic/`, kök `migrations/*.sql`
+
+## Yapma
+
+- Secrets'ı loglama; `.env` commit etme
+- Router yüklemesini try/except ile kırılgan bırakma (mevcut pattern'i koru)
+- `network_mode: host` varsayımını bozan bağlama değişiklikleri yapma

@@ -954,7 +954,18 @@ _MINIMAL_BASE = {"kernel", "os"}
 
 # Filo SSH taramasında eşzamanlı üst sınır (çok büyük filolarda timeout önlemi).
 # Derin admin checklist her ortamda açık; özel olarak 16'ya düşürülmez.
+# Runtime override: chat_ssh_fleet_cap (bkz. chat_fleet_policy.get_chat_ssh_fleet_cap).
 CHAT_SSH_FLEET_CAP = 64
+
+
+def _effective_fleet_cap(cap: Optional[int] = None) -> int:
+    if cap is not None:
+        return max(1, min(int(cap), 512))
+    try:
+        from app.services.chat_fleet_policy import get_chat_ssh_fleet_cap
+        return get_chat_ssh_fleet_cap(CHAT_SSH_FLEET_CAP)
+    except Exception:
+        return CHAT_SSH_FLEET_CAP
 
 
 def _message_wants_dmesg(message: Optional[str]) -> bool:
@@ -988,8 +999,9 @@ def _message_wants_admin_diag(message: Optional[str]) -> bool:
     )
 
 
-def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: int = CHAT_SSH_FLEET_CAP) -> Tuple[List[Any], Optional[str]]:
+def cap_servers_for_ssh(servers: List[Any], message: Optional[str] = None, cap: Optional[int] = None) -> Tuple[List[Any], Optional[str]]:
     """Çok büyük filolarda SSH hedefini sınırla; mesajda adı geçenleri önceliklendir."""
+    cap = _effective_fleet_cap(cap)
     if not servers or len(servers) <= cap:
         return list(servers or []), None
     msg = (message or "").lower()

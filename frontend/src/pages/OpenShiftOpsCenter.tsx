@@ -1,10 +1,10 @@
 /**
- * OpenShift Container Platform Komuta Merkezi — cluster/node durumu ve olaylar.
+ * OpenShift Komuta Merkezi — küme özeti + Events'e yönlendirme (olay listesi Events'te).
  */
 import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Boxes, Server, AlertTriangle, CheckCircle2, ChevronRight } from 'lucide-react'
+import { Boxes, Server, AlertTriangle, CheckCircle2, ChevronRight, ClipboardList } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { OpsRefreshCountdown, OpsShell } from '../components/ops/OpsShell'
 
@@ -13,15 +13,10 @@ interface ClusterSummary {
   node_count: number; not_ready_nodes: string[]; project_count: number; last_sync: string | null
 }
 
-interface OpenShiftEventItem {
-  id: number; title: string; severity: string
-  cluster_name?: string; namespace?: string; source_object?: string; last_seen: string | null
-}
-
 interface CommandCenterData {
   clusters: ClusterSummary[]
-  critical_events: OpenShiftEventItem[]
-  warning_events: OpenShiftEventItem[]
+  critical_events: { id: number }[]
+  warning_events: { id: number }[]
   total_events: number
   generated_at: string
 }
@@ -71,22 +66,12 @@ function ClusterCard({ c }: { c: ClusterSummary }) {
         </div>
       )}
       <div className="text-[11px] text-slate-500 mt-2">Son sync: {relTime(c.last_sync)}</div>
-    </div>
-  )
-}
-
-function EventRow({ e }: { e: OpenShiftEventItem }) {
-  const critical = e.severity === 'critical' || e.severity === 'emergency'
-  return (
-    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${
-      critical ? 'border-red-500/30 bg-red-500/5' : 'border-amber-500/25 bg-amber-500/5'
-    }`}>
-      {critical ? <AlertTriangle size={14} className="text-red-400 flex-shrink-0" /> : <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm text-white truncate">{e.title}</div>
-        <div className="text-xs text-slate-500 truncate">{e.cluster_name} {e.namespace ? `· ${e.namespace}` : ''}</div>
-      </div>
-      <div className="text-xs text-slate-500 flex-shrink-0">{relTime(e.last_seen)}</div>
+      <Link
+        to="/openshift"
+        className="inline-flex items-center gap-1 mt-3 text-xs text-rose-300 hover:text-rose-200"
+      >
+        Envanter <ChevronRight size={12} />
+      </Link>
     </div>
   )
 }
@@ -109,17 +94,18 @@ export default function OpenShiftOpsCenter() {
   }, [qc])
 
   const clusters = data?.clusters || []
-  const criticalEvents = data?.critical_events || []
-  const warningEvents = data?.warning_events || []
+  const criticalCount = data?.critical_events?.length || 0
+  const warningCount = data?.warning_events?.length || 0
   const healthyClusters = clusters.filter(c => c.status !== 'ERROR' && c.not_ready_nodes.length === 0).length
+  const actionable = criticalCount + warningCount
 
   return (
     <OpsShell
       platform="openshift"
       loading={isLoading}
       kpi={{
-        critical: criticalEvents.length,
-        warning: warningEvents.length,
+        critical: criticalCount,
+        warning: warningCount,
         tertiaryValue: healthyClusters,
         tertiaryLabel: 'Sağlıklı Cluster',
       }}
@@ -139,20 +125,30 @@ export default function OpenShiftOpsCenter() {
         </div>
       )}
 
-      {(criticalEvents.length > 0 || warningEvents.length > 0) && (
-        <div className="space-y-2">
-          <div className="text-sm font-medium text-slate-300 flex items-center gap-2">
-            <AlertTriangle size={14} className="text-amber-400" /> Aktif Olaylar
+      <div className="rounded-xl border border-white/[0.08] bg-cyber-card/60 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center flex-shrink-0">
+            <ClipboardList size={18} className="text-amber-300" />
           </div>
-          <div className="space-y-1.5">
-            {criticalEvents.map(e => <EventRow key={`c-${e.id}`} e={e} />)}
-            {warningEvents.map(e => <EventRow key={`w-${e.id}`} e={e} />)}
+          <div className="min-w-0">
+            <div className="text-sm text-white font-medium">Olaylar</div>
+            <div className="text-xs text-slate-400 mt-0.5">
+              {actionable > 0
+                ? `${criticalCount} kritik · ${warningCount} uyarı — detay Events ekranında`
+                : 'Aktif kritik/uyarı yok — geçmiş ve heatmap Events’te'}
+            </div>
           </div>
         </div>
-      )}
+        <Link
+          to="/openshift/events"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-rose-600/20 text-rose-200 border border-rose-500/30 hover:bg-rose-600/30"
+        >
+          Events’e git <ChevronRight size={14} />
+        </Link>
+      </div>
 
-      {clusters.length > 0 && criticalEvents.length === 0 && warningEvents.length === 0 && (
-        <div className="text-center py-8 text-slate-500">
+      {clusters.length > 0 && actionable === 0 && (
+        <div className="text-center py-6 text-slate-500">
           <CheckCircle2 size={28} className="mx-auto mb-2 text-green-500/60" />
           <p className="text-sm">Aktif kritik/uyarı olayı yok.</p>
         </div>

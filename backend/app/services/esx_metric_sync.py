@@ -42,7 +42,8 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
         host    = (hv.ip_address or hv.hostname or "").strip()
         port    = hv.port or 443
         user    = (hv.username or "").strip()
-        passwd  = hv.password or ""
+        from app.services.hypervisor_credentials import hv_password
+        passwd  = hv_password(hv)
 
         if not host or not user:
             errors.append(f"{hv.name}: IP/kullanıcı bilgisi eksik")

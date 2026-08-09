@@ -393,7 +393,7 @@ const PackageManager: React.FC = () => {
       .catch((e: Error) => showToast(`Paketler yüklenemedi: ${e.message}`, 'err')), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadServers = useCallback(() =>
-    fetch(`${API}/servers/`, { headers: authHeaders() })
+    fetch(`${API}/servers/?page=1&page_size=200&ai_ready=true`, { headers: authHeaders() })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then((data: any) => {
         const list: any[] = Array.isArray(data) ? data : (data?.servers || data?.items || [])

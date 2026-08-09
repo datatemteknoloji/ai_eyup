@@ -43,11 +43,6 @@ class VCenterClient:
         self.session_id = None
         self.session = requests.Session()
         self.session.verify = verify_ssl
-        # host_id (MoRef) -> host adı önbelleği — bir sync turu içinde tekrar tekrar
-        # host listesi çekilmesin (clone_session ile paralel worker'lara da aktarılır).
-        self._host_name_cache: Optional[Dict[str, str]] = None
-        # vm_id (MoRef, ör. "vm-10001") -> ÇALIŞTIĞI host'un MoRef'i önbelleği.
-        self._vm_host_ref_cache: Optional[Dict[str, str]] = None
     
     def login(self) -> bool:
         """vCenter'a giriş yap"""
@@ -193,122 +188,7 @@ class VCenterClient:
         sibling.session_id = self.session_id
         if self.session_id:
             sibling.session.headers.update({"vmware-api-session-id": self.session_id})
-        sibling._host_name_cache = self._host_name_cache
-        sibling._vm_host_ref_cache = self._vm_host_ref_cache
         return sibling
-
-    def list_hosts(self) -> List[Dict]:
-        """ESXi host listesini (REST /vcenter/host — id + name + connection_state) getirir."""
-        response = self._api_call("GET", "/vcenter/host")
-        if not response:
-            return []
-        if isinstance(response, list):
-            return response
-        elif isinstance(response, dict):
-            return response.get("value", [])
-        return []
-
-    def get_host_name_map(self) -> Dict[str, str]:
-        """host_id (MoRef, ör. 'host-1234') -> host adı sözlüğü. Sonuç instance içinde cache'lenir.
-
-        VM'in hangi ESX host'ta çalıştığı bilgisi (`runtime.host`) sadece bir MoRef ID'dir, insan
-        tarafından okunabilir host adı değildir — bu eşleme olmadan "bu VM hangi host'ta" / "bu
-        host'ta hangi VM'ler var" soruları hiçbir zaman doğru cevaplanamaz.
-
-        BİLEREK SOAP tabanlı `get_all_host_stats()` kullanılır (REST `/vcenter/host` "name" alanı
-        DEĞİL) — çünkü `hypervisor_host_metrics.host_name` (host CPU/RAM metrikleri, `_get_esx_hosts`)
-        AYNI SOAP HostSystem.name alanından doldurulur. REST ve SOAP host adları bazı ortamlarda
-        farklı olabilir (ör. biri IP biri FQDN) — tutarsız kaynak kullanmak VM↔host eşlemesini host
-        metrikleriyle asla örtüşmeyen, kullanışsız bir alan haline getirirdi.
-        """
-        if self._host_name_cache is not None:
-            return self._host_name_cache
-        cache: Dict[str, str] = {}
-        try:
-            for h in self.get_all_host_stats():
-                hid = h.get("host_ref") or ""
-                name = h.get("host_name") or ""
-                if hid and name:
-                    cache[hid] = name
-        except Exception as exc:
-            logger.debug("get_all_host_stats (host adı eşlemesi) hatası: %s", exc)
-        self._host_name_cache = cache
-        return cache
-
-    def get_vm_host_ref_map(self) -> Dict[str, str]:
-        """vm_id (MoRef) -> ÇALIŞTIĞI ESX host'un MoRef'i (SOAP runtime.host).
-
-        NOT: Bazı vCenter/REST API sürümlerinde `/vcenter/vm/{vm}` yanıtında "host"
-        alanı hiç dönmüyor (bu ortamda doğrulandı) — bu yüzden VM'in çalıştığı host'u
-        REST'ten değil, `get_all_host_stats`/`get_all_vm_live_stats`'ta da kullanılan
-        SOAP PropertyCollector'dan (tek, hafif bir çağrı — sadece name+runtime.host)
-        güvenilir şekilde alıyoruz.
-        """
-        if self._vm_host_ref_cache is not None:
-            return self._vm_host_ref_cache
-        import xml.etree.ElementTree as ET
-
-        cache: Dict[str, str] = {}
-        try:
-            soap_url = f"https://{self.host}:{self.port}/sdk"
-            soap_session = self._soap_login()
-            if not soap_session:
-                self._vm_host_ref_cache = cache
-                return cache
-            root_folder = self._get_root_folder(soap_session, soap_url)
-            soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:vim25="urn:vim25"
-                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <soapenv:Body>
-    <vim25:RetrieveProperties>
-      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
-      <vim25:specSet>
-        <vim25:propSet>
-          <vim25:type>VirtualMachine</vim25:type>
-          <vim25:all>false</vim25:all>
-          <vim25:pathSet>runtime.host</vim25:pathSet>
-        </vim25:propSet>
-        <vim25:objectSet>
-          <vim25:obj type="Folder">{root_folder}</vim25:obj>
-          <vim25:skip>false</vim25:skip>
-          {self._VM_TRAVERSAL}
-        </vim25:objectSet>
-      </vim25:specSet>
-    </vim25:RetrieveProperties>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-            resp = soap_session.post(soap_url, data=soap_body,
-                                     headers={"Content-Type": "text/xml; charset=utf-8"},
-                                     verify=self.verify_ssl, timeout=60)
-            if resp.status_code != 200:
-                logger.warning(f"get_vm_host_ref_map HTTP {resp.status_code}: {resp.text[:300]}")
-                self._vm_host_ref_cache = cache
-                return cache
-
-            def _tag(el): return el.tag.split("}")[-1]
-
-            root_xml = ET.fromstring(resp.text)
-            for rv in root_xml.iter():
-                if _tag(rv) != "returnval":
-                    continue
-                vm_ref = None
-                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
-                if obj_el is not None:
-                    vm_ref = obj_el.text
-                if not vm_ref:
-                    continue
-                for ps in rv:
-                    if _tag(ps) != "propSet":
-                        continue
-                    n_el = next((c for c in ps if _tag(c) == "name"), None)
-                    v_el = next((c for c in ps if _tag(c) == "val"), None)
-                    if n_el is not None and v_el is not None and n_el.text == "runtime.host" and v_el.text:
-                        cache[vm_ref] = v_el.text.strip()
-        except Exception as exc:
-            logger.debug("get_vm_host_ref_map hatası: %s", exc)
-        self._vm_host_ref_cache = cache
-        return cache
 
     def _inventory_row_from_vm(self, vm: Dict) -> Dict:
         """Tek VM için details+guest çekip inventory satırına çevir (thread içinde çağrılır)."""
@@ -404,15 +284,6 @@ class VCenterClient:
         ]
         if not targets:
             return {}
-        # Host adı + VM->host eşlemesini BİR kez, paralel worker'lar başlamadan önce
-        # çek ve cache'le — clone_session() bu cache'leri kopyalar, böylece binlerce
-        # VM için ayrı ayrı çağrı yapılmaz (host adı: 1 REST çağrısı, vm->host: 1 SOAP
-        # çağrısı toplamda yeterli olur; 10.000+ VM ölçeğinde kritik bir optimizasyon).
-        try:
-            self.get_host_name_map()
-            self.get_vm_host_ref_map()
-        except Exception as exc:
-            logger.debug("Host eşleme ön-yüklemesi atlandı: %s", exc)
         if len(targets) == 1 or workers == 1:
             vid, name = targets[0]
             det = self.get_vm_full_details(vid, name=name)
@@ -1080,18 +951,6 @@ class VCenterClient:
             # ── Cluster ─────────────────────────────────────────────────────
             cluster_name = (details.get("resource_pool") or details.get("host") or "")
 
-            # ── ESX host (VM'in ÇALIŞTIĞI fiziksel host — cluster'dan farklı) ──
-            # REST `/vcenter/vm/{vm}` yanıtı bu vCenter/API sürümünde "host" alanını
-            # HİÇ döndürmüyor (doğrulandı) — bu yüzden host bilgisi SOAP tabanlı
-            # get_vm_host_ref_map()'ten (runtime.host, tek toplu çağrı, cache'li) alınır.
-            esx_host_ref = details.get("host") or self.get_vm_host_ref_map().get(vm_id, "")
-            esx_host_name = ""
-            if esx_host_ref:
-                try:
-                    esx_host_name = self.get_host_name_map().get(esx_host_ref, "")
-                except Exception as exc:
-                    logger.debug("ESX host adı çözümlenemedi (%s): %s", esx_host_ref, exc)
-
             return {
                 "vm_id":               vm_id,
                 "vm_name":             name or details.get("name", ""),
@@ -1105,7 +964,6 @@ class VCenterClient:
                 "vm_network_info":     networks,
                 "vm_cluster":          str(cluster_name) if cluster_name else "",
                 "vm_datastore":        datastore_name,
-                "vm_esx_host":         esx_host_name or esx_host_ref,
                 "vm_hardware_version": hw_version,
                 "os_type":             (guest.get("family") or "") or self._guest_os_family_fallback(details.get("guest_OS", "")),
             }
@@ -3731,3 +3589,258 @@ class VCenterClient:
             logger.error("query_lifecycle_events error (%s): %s", self.host, exc, exc_info=True)
             return {"events": [], "errors": [str(exc)]}
 
+
+
+    # ── MTV / Forklift kaynak envanteri ───────────────────────────────────────
+
+    def get_datastores(self) -> List[Dict]:
+        """Datastore listesi (moref + ad) — MTV StorageMap için."""
+        out = []
+        for d in self.list_datastores_status() or []:
+            moref = d.get("ref") or d.get("moref")
+            if not moref:
+                continue
+            out.append({
+                "moref": moref,
+                "name": d.get("name") or moref,
+                "type": d.get("type"),
+                "capacity_gb": d.get("capacity_gb"),
+                "free_gb": d.get("free_gb"),
+                "accessible": d.get("accessible"),
+            })
+        return out
+
+    def get_networks(self) -> List[Dict]:
+        """Standart + DV port group ağları (moref) — MTV NetworkMap için."""
+        import xml.etree.ElementTree as ET
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            # REST fallback
+            data = self._api_call("GET", "/vcenter/network") or []
+            if isinstance(data, dict):
+                data = data.get("value") or []
+            return [{"moref": n.get("network"), "name": n.get("name"), "type": n.get("type")}
+                    for n in data if n.get("network")]
+
+        root_folder = self._get_root_folder(soap_session, soap_url)
+        result: List[Dict] = []
+
+        def _fetch(obj_type: str, paths: List[str], net_type: str):
+            path_xml = "".join(f"<vim25:pathSet>{p}</vim25:pathSet>" for p in paths)
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>{obj_type}</vim25:type>
+          <vim25:all>false</vim25:all>
+          {path_xml}
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToNet</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToNetFolder</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToNet</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>network</vim25:path>
+            <vim25:skip>false</vim25:skip>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToNetFolder</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>networkFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(
+                    soap_url, data=body,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=30,
+                )
+                if resp.status_code != 200:
+                    return
+                root = ET.fromstring(resp.text)
+
+                def _tag(el):
+                    return el.tag.split("}")[-1]
+
+                for rv in root.iter():
+                    if _tag(rv) != "returnval":
+                        continue
+                    obj_el = next((c for c in rv if _tag(c) == "obj"), None)
+                    if obj_el is None or not (obj_el.text or "").strip():
+                        continue
+                    moref = obj_el.text.strip()
+                    name = moref
+                    for ps in rv:
+                        if _tag(ps) != "propSet":
+                            continue
+                        n_el = next((c for c in ps if _tag(c) == "name"), None)
+                        v_el = next((c for c in ps if _tag(c) == "val"), None)
+                        if n_el is not None and (n_el.text or "") == "name" and v_el is not None:
+                            name = (v_el.text or name).strip()
+                    result.append({"moref": moref, "name": name, "type": net_type})
+            except Exception as e:
+                logger.warning("get_networks %s error: %s", obj_type, e)
+
+        _fetch("Network", ["name"], "network")
+        _fetch("DistributedVirtualPortgroup", ["name"], "dvportgroup")
+        # de-dupe by moref
+        seen = set()
+        uniq = []
+        for n in result:
+            if n["moref"] in seen:
+                continue
+            seen.add(n["moref"])
+            uniq.append(n)
+        return uniq
+
+    def get_vm_resource_refs(self, morefs: List[str]) -> Dict:
+        """Seçili VM'lerin kullandığı datastore/ağ moref'leri (MTV eşleme)."""
+        import xml.etree.ElementTree as ET
+
+        wanted = set(morefs or [])
+        if not wanted:
+            return {"datastores": [], "networks": [], "per_vm": {}, "warnings": []}
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            raise RuntimeError("vCenter SOAP oturumu açılamadı")
+
+        ds_map: Dict[str, str] = {}
+        net_map: Dict[str, str] = {}
+        per_vm: Dict[str, Dict] = {}
+        warnings: List[str] = []
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        for moid in wanted:
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>datastore</vim25:pathSet>
+          <vim25:pathSet>network</vim25:pathSet>
+          <vim25:pathSet>config.hardware.device</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{moid}</vim25:obj>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(
+                    soap_url, data=body,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=30,
+                )
+                if resp.status_code != 200:
+                    warnings.append(f"{moid}: SOAP HTTP {resp.status_code}")
+                    continue
+                root = ET.fromstring(resp.text)
+                vm_name = moid
+                vm_ds: List[str] = []
+                vm_net: List[str] = []
+                nic_count = 0
+                for rv in root.iter():
+                    if _tag(rv) != "returnval":
+                        continue
+                    for ps in rv:
+                        if _tag(ps) != "propSet":
+                            continue
+                        n_el = next((c for c in ps if _tag(c) == "name"), None)
+                        v_el = next((c for c in ps if _tag(c) == "val"), None)
+                        if n_el is None or v_el is None:
+                            continue
+                        pname = n_el.text or ""
+                        if pname == "name" and v_el.text:
+                            vm_name = v_el.text.strip()
+                        elif pname == "datastore":
+                            for child in v_el:
+                                if _tag(child) in ("ManagedObjectReference", "Datastore") or child.get("type") == "Datastore":
+                                    ref = (child.text or "").strip()
+                                    if ref:
+                                        ds_map.setdefault(ref, ref)
+                                        vm_ds.append(ref)
+                                # name may be sibling attribute
+                                nm = child.get("name")
+                                if nm and (child.text or "").strip():
+                                    ds_map[child.text.strip()] = nm
+                        elif pname == "network":
+                            for child in v_el:
+                                ref = (child.text or "").strip()
+                                if ref:
+                                    net_map.setdefault(ref, ref)
+                                    vm_net.append(ref)
+                        elif pname == "config.hardware.device":
+                            for child in v_el:
+                                t = child.get("{http://www.w3.org/2001/XMLSchema-instance}type") or child.get("type") or ""
+                                local = _tag(child)
+                                if "Ethernet" in t or "Ethernet" in local or "VirtualE1000" in t or "VirtualVmxnet" in t:
+                                    nic_count += 1
+                # Try to resolve datastore names via list
+                per_vm[moid] = {
+                    "name": vm_name,
+                    "datastores": vm_ds,
+                    "networks": vm_net,
+                    "nic_count": nic_count,
+                }
+                if nic_count > len(set(vm_net)) and vm_net:
+                    warnings.append(
+                        f"'{vm_name}': {nic_count} NIC aynı ağa bağlı — Forklift reddedebilir; "
+                        f"fazla NIC'i kaldırın veya farklı ağlara alın."
+                    )
+            except Exception as e:
+                warnings.append(f"{moid}: {e}")
+
+        # Enrich datastore/network names from inventory
+        try:
+            for d in self.get_datastores():
+                if d["moref"] in ds_map:
+                    ds_map[d["moref"]] = d["name"]
+        except Exception:
+            pass
+        try:
+            for n in self.get_networks():
+                if n["moref"] in net_map:
+                    net_map[n["moref"]] = n["name"]
+        except Exception:
+            pass
+
+        return {
+            "datastores": [{"moref": k, "name": v} for k, v in sorted(ds_map.items(), key=lambda x: x[1] or "")],
+            "networks": [{"moref": k, "name": v} for k, v in sorted(net_map.items(), key=lambda x: x[1] or "")],
+            "per_vm": per_vm,
+            "warnings": warnings,
+        }

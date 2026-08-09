@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import './level1/level1-theme.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ const TasksPanel = () => {
       if (!r.ok) return { summary: { total: 0, pending: 0, running: 0, failed: 0, active: 0 }, tasks: [], hours }
       return r.json()
     },
-    refetchInterval: autoRefresh ? 5000 : false,
+    refetchInterval: autoRefresh ? 10_000 : false,
   })
 
   const tasks = (data?.tasks || []).filter(t => !statusFilter || t.status === statusFilter)
@@ -528,7 +529,7 @@ const AuditPanel = () => {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const ActivityCenter: React.FC = () => {
-  const [tab, setTab] = useState<'tasks' | 'audit'>('audit')
+  const [tab, setTab] = useState<'tasks' | 'audit' | 'level1'>('audit')
 
   const { data: badge } = useQuery<{ count: number; snap: number; agent: number }>({
     queryKey: ['active-task-count'],
@@ -536,7 +537,7 @@ const ActivityCenter: React.FC = () => {
       const r = await fetch(`${API_BASE_URL}/tasks/active-count`)
       return r.ok ? r.json() : { count: 0, snap: 0, agent: 0 }
     },
-    refetchInterval: 10000,
+    refetchInterval: 15_000,
   })
 
   return (
@@ -567,6 +568,16 @@ const ActivityCenter: React.FC = () => {
           Audit Log
         </button>
         <button
+          onClick={() => setTab('level1')}
+          className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'level1'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          Level 1 (Dropt)
+        </button>
+        <button
           onClick={() => setTab('tasks')}
           className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             tab === 'tasks'
@@ -583,9 +594,50 @@ const ActivityCenter: React.FC = () => {
         </button>
       </div>
 
-      {tab === 'audit' ? <AuditPanel /> : <TasksPanel />}
+      {tab === 'audit' && <AuditPanel />}
+      {tab === 'level1' && <Level1AuditEmbed />}
+      {tab === 'tasks' && <TasksPanel />}
     </div>
   )
 }
+
+function Level1AuditEmbed() {
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { ensureDroptSession } = await import('./level1/Level1Shell')
+        await ensureDroptSession()
+        if (!cancelled) setReady(true)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  return (
+    <div className="rounded-xl border border-white/[0.06] overflow-hidden bg-cyber-card level1-dropt-root">
+      <div className="px-4 py-2 border-b border-white/[0.06] text-xs text-slate-400">
+        Kaynak: Dropt ops audit (tek yazım — Level 1 Denetim ile aynı store). Ayrıntılı görünüm:{' '}
+        <a href="/level1/audit" className="text-blue-400 hover:underline">İşletim Level 1 → Denetim</a>
+      </div>
+      {error && <div className="p-4 text-red-400 text-sm whitespace-pre-wrap">{error}</div>}
+      {!ready && !error && <div className="p-6 text-slate-400 text-sm">Dropt oturumu hazırlanıyor…</div>}
+      {ready && (
+        <React.Suspense fallback={<div className="p-6 text-slate-400 text-sm">Yükleniyor…</div>}>
+          <Level1AuditContentLazy />
+        </React.Suspense>
+      )}
+    </div>
+  )
+}
+
+const Level1AuditContentLazy = React.lazy(() =>
+  import('./level1/Level1Audit').then((m) => ({ default: m.Level1AuditContent })),
+)
 
 export default ActivityCenter

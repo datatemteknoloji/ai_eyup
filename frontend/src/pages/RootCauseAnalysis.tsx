@@ -232,14 +232,14 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
   const { data: serversData } = useQuery({
     queryKey: ['servers-list-compare', platform],
     queryFn: async () => {
-      const params = appendPlatform(new URLSearchParams({ limit: '300' }), platform)
-      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
-      return r.json()
+      const { fetchServersPage } = await import('../api/servers')
+      const plat = platform === 'virt' ? 'virt' : platform === 'windows' ? 'windows' : platform === 'exadata' ? 'exadata' : 'linux'
+      return fetchServersPage({ platform: plat, page: 1, page_size: 200 })
     },
   })
   // Sadece online sunucular
   const allServers: { id: number; name: string; status: string }[] =
-    serversData?.servers ?? serversData ?? []
+    (serversData?.items ?? []) as { id: number; name: string; status: string }[]
   const onlineServers = allServers.filter(s => s.status !== 'OFFLINE')
 
   const run = async () => {
@@ -792,15 +792,14 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
   const { data: serversListData } = useQuery({
     queryKey: ['rca-servers-online', platform],
     queryFn: async () => {
-      const params = appendPlatform(new URLSearchParams({ limit: '300' }), platform)
-      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
-      if (!r.ok) return { servers: [] }
-      return r.json()
+      const { fetchServersPage } = await import('../api/servers')
+      const plat = platform === 'virt' ? 'virt' : platform === 'windows' ? 'windows' : platform === 'exadata' ? 'exadata' : 'linux'
+      return fetchServersPage({ platform: plat, page: 1, page_size: 200, hide_offline: true })
     },
     staleTime: 60_000,
   })
   const allServers: { id: number; name: string; status: string }[] =
-    serversListData?.servers ?? serversListData ?? []
+    (serversListData?.items ?? []) as { id: number; name: string; status: string }[]
   const onlineServers = allServers.filter(s => s.status !== 'OFFLINE')
 
   const { data, isLoading } = useQuery({

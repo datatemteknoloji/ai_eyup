@@ -46,6 +46,36 @@ def active_model_label(requested_model: Optional[str] = None) -> str:
     return requested_model or settings.OLLAMA_DEFAULT_MODEL
 
 
+def resolve_model_for_tier(
+    tier: str,
+    requested_model: Optional[str] = None,
+) -> tuple:
+    """Unified model tier: (model_name, tier_used).
+
+    tier: \"fast\" | \"strong\"
+    - fast: chat_model_fast doluysa onu kullan; boşsa strong yoluna düş (regresyonsuz)
+    - strong: request/UI modeli varsa onu koru; yoksa chat_model_strong; o da boşsa requested
+    """
+    try:
+        from app.services import runtime_settings
+        fast = (runtime_settings.get_str("chat_model_fast") or "").strip()
+        strong_cfg = (runtime_settings.get_str("chat_model_strong") or "").strip()
+    except Exception:
+        fast, strong_cfg = "", ""
+
+    requested = (requested_model or "").strip()
+    t = (tier or "strong").strip().lower()
+
+    if t == "fast" and fast:
+        return fast, "fast"
+
+    if requested:
+        return requested, "strong"
+    if strong_cfg:
+        return strong_cfg, "strong"
+    return requested or settings.OLLAMA_DEFAULT_MODEL, "strong"
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Senkron sohbet (agent tool-calling, guard) — requests tabanlı
 # ─────────────────────────────────────────────────────────────────────────

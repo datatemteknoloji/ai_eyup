@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import text
@@ -24,10 +24,56 @@ from app.core.encryption import encrypt_secret, decrypt_secret
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# SSH Test & Update — arka plan job + progress (poll)
+# SSH Test & Update — arka plan job + progress (poll). Wave 6: Redis + bellek fallback.
 _ssh_test_jobs: Dict[str, Dict[str, Any]] = {}
 _ssh_test_lock = threading.Lock()
 _SSH_TEST_JOB_TTL_SEC = 3600
+_SSH_TEST_REDIS_PREFIX = "ainew:ssh_test:"
+
+
+def _ssh_job_save(job_id: str, job: Dict[str, Any]) -> None:
+    with _ssh_test_lock:
+        _ssh_test_jobs[job_id] = job
+    try:
+        from app.core.redis_client import get_redis
+        import json as _json
+
+        r = get_redis()
+        if r is not None:
+            r.setex(
+                f"{_SSH_TEST_REDIS_PREFIX}{job_id}",
+                _SSH_TEST_JOB_TTL_SEC,
+                _json.dumps(job, ensure_ascii=False, default=str),
+            )
+    except Exception:
+        pass
+
+
+def _ssh_job_get(job_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from app.core.redis_client import get_redis
+        import json as _json
+
+        r = get_redis()
+        if r is not None:
+            raw = r.get(f"{_SSH_TEST_REDIS_PREFIX}{job_id}")
+            if raw:
+                data = _json.loads(raw)
+                if isinstance(data, dict):
+                    return data
+    except Exception:
+        pass
+    with _ssh_test_lock:
+        j = _ssh_test_jobs.get(job_id)
+        return dict(j) if j else None
+
+
+def _ssh_job_update(job_id: str, mutator) -> None:
+    job = _ssh_job_get(job_id)
+    if not job:
+        return
+    mutator(job)
+    _ssh_job_save(job_id, job)
 
 
 # ─── Schemas ──────────────────────────────────────────
@@ -413,15 +459,14 @@ def _run_ssh_test_job(job_id: str, test_targets: List[dict], skipped: List[str],
                 else:
                     failed.append(row["name"])
                 done += 1
-                with _ssh_test_lock:
-                    job = _ssh_test_jobs.get(job_id)
-                    if job is not None:
-                        job["done"] = done
-                        job["successful"] = len(successful)
-                        job["failed"] = len(failed)
-                        job["key_deployed"] = len(key_deployed)
-                        job["current_server"] = row["name"]
-                        job["message"] = f"{done}/{total} sunucu test edildi"
+                def _mut(j, _done=done, _row=row):
+                    j["done"] = _done
+                    j["successful"] = len(successful)
+                    j["failed"] = len(failed)
+                    j["key_deployed"] = len(key_deployed)
+                    j["current_server"] = _row["name"]
+                    j["message"] = f"{_done}/{total} sunucu test edildi"
+                _ssh_job_update(job_id, _mut)
                 if done % 25 == 0 or done == total:
                     logger.info("test-all-ssh[%s] ilerlemesi %s/%s", job_id[:8], done, total)
 
@@ -457,29 +502,27 @@ def _run_ssh_test_job(job_id: str, test_targets: List[dict], skipped: List[str],
             "skipped_servers": skipped[:20],
             "key_deployed_servers": key_deployed[:20],
         }
-        with _ssh_test_lock:
-            job = _ssh_test_jobs.get(job_id)
-            if job is not None:
-                job["status"] = "done"
-                job["done"] = total
-                job["successful"] = len(successful)
-                job["failed"] = len(failed)
-                job["key_deployed"] = len(key_deployed)
-                job["current_server"] = None
-                job["message"] = msg
-                job["result"] = result
+        def _done_mut(j):
+            j["status"] = "done"
+            j["done"] = total
+            j["successful"] = len(successful)
+            j["failed"] = len(failed)
+            j["key_deployed"] = len(key_deployed)
+            j["current_server"] = None
+            j["message"] = msg
+            j["result"] = result
+        _ssh_job_update(job_id, _done_mut)
     except Exception as e:
         logger.exception("test-all-ssh[%s] failed: %s", job_id[:8], e)
         try:
             db.rollback()
         except Exception:
             pass
-        with _ssh_test_lock:
-            job = _ssh_test_jobs.get(job_id)
-            if job is not None:
-                job["status"] = "error"
-                job["error"] = str(e)
-                job["message"] = f"SSH test hatası: {e}"
+        def _err_mut(j, _e=e):
+            j["status"] = "error"
+            j["error"] = str(_e)
+            j["message"] = f"SSH Test hatası: {_e}"
+        _ssh_job_update(job_id, _err_mut)
     finally:
         db.close()
 
@@ -547,17 +590,8 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
         "error": None,
         "result": None,
     }
-    with _ssh_test_lock:
-        # Eski job'ları temizle (basit TTL)
-        now = time.time()
-        stale = [
-            jid for jid, j in _ssh_test_jobs.items()
-            if now - float(j.get("started_at") or 0) > _SSH_TEST_JOB_TTL_SEC
-        ]
-        for jid in stale:
-            _ssh_test_jobs.pop(jid, None)
-        job["started_at"] = now
-        _ssh_test_jobs[job_id] = job
+    job["started_at"] = time.time()
+    _ssh_job_save(job_id, job)
 
     logger.info("test-all-ssh started job=%s targets=%s workers=%s skipped=%s", job_id[:8], len(test_targets), workers, len(skipped))
 
@@ -576,10 +610,10 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
             "skipped_servers": skipped[:20],
             "key_deployed_servers": [],
         }
-        with _ssh_test_lock:
-            job["status"] = "done"
-            job["message"] = msg
-            job["result"] = result
+        job["status"] = "done"
+        job["message"] = msg
+        job["result"] = result
+        _ssh_job_save(job_id, job)
         return _ssh_test_job_snapshot(job)
 
     t = threading.Thread(
@@ -595,12 +629,10 @@ async def test_all_servers_ssh(db: Session = Depends(get_db)):
 @router.get("/credentials/test-all-ssh/{job_id}")
 async def test_all_servers_ssh_status(job_id: str):
     """SSH Test & Update progress."""
-    with _ssh_test_lock:
-        job = _ssh_test_jobs.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job bulunamadı veya süresi doldu")
-        snap = _ssh_test_job_snapshot(job)
-    return snap
+    job = _ssh_job_get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job bulunamadı veya süresi doldu")
+    return _ssh_test_job_snapshot(job)
 
 
 # ─── Gelişmiş ayarlar (timeout / interval / worker) ───
@@ -797,18 +829,25 @@ async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
 
 @router.put("/ollama-model")
 async def set_ollama_model(payload: dict, db: Session = Depends(get_db)):
-    """Aktif Ollama modelini kaydet"""
+    """Aktif Ollama modelini kaydet — chat + agent aynı modele hizalanır (Wave B3)."""
     model = (payload.get("model") or "").strip()
     if not model:
         raise HTTPException(status_code=400, detail="Model adı boş olamaz")
-    row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
-    if row:
-        row.value = model
-    else:
-        db.add(AppSettings(key="ollama_active_model", value=model))
+
+    def _upsert(key: str, value: str) -> None:
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(AppSettings(key=key, value=value))
+
+    _upsert("ollama_active_model", model)
+    # Agent tool-calling modeli de aynı değere yazılır; .env AGENT_MODEL yalnızca
+    # agent_active_model yokken fallback kalır.
+    _upsert("agent_active_model", model)
     db.commit()
-    logger.info(f"Aktif Ollama modeli guncellendi: {model}")
-    return {"success": True, "model": model}
+    logger.info("Aktif Ollama + agent modeli guncellendi: %s", model)
+    return {"success": True, "model": model, "agent_model": model}
 
 
 @router.put("/remote-llm")
@@ -873,6 +912,87 @@ async def set_remote_llm(
         f"verify_ssl={verify_ssl} ca_bundle={'set' if ca_bundle else 'unset'}"
     )
     return {"success": True, "enabled": enabled, "url": url, "model": model, "verify_ssl": verify_ssl, "ca_bundle": ca_bundle}
+
+
+@router.post("/remote-llm/test")
+async def test_remote_llm(
+    payload: dict,
+    _user: User = Depends(require_role("admin")),
+):
+    """Uzak AI gateway bağlantısını test et (kaydetmeden form değerleriyle denenebilir).
+
+    Body: {url, model, api_key?, verify_ssl?, ca_bundle?}
+    api_key boşsa kayıtlı REMOTE_LLM_API_KEY kullanılır.
+    """
+    import time
+
+    import httpx
+
+    from app.core.config import settings
+
+    url = (payload.get("url") or settings.REMOTE_LLM_URL or "").strip().rstrip("/")
+    model = (payload.get("model") or settings.REMOTE_LLM_MODEL or "").strip()
+    api_key_raw = payload.get("api_key")
+    api_key = (api_key_raw or "").strip() or (settings.REMOTE_LLM_API_KEY or "").strip()
+    verify_ssl = bool(payload.get("verify_ssl", settings.REMOTE_LLM_VERIFY_SSL))
+    ca_bundle = (payload.get("ca_bundle") or settings.REMOTE_LLM_CA_BUNDLE or "").strip()
+
+    if not url:
+        raise HTTPException(status_code=400, detail="Gateway URL gerekli")
+    if not model:
+        raise HTTPException(status_code=400, detail="Model adı gerekli")
+
+    verify: bool | str = verify_ssl
+    if ca_bundle:
+        if not os.path.isfile(ca_bundle):
+            raise HTTPException(
+                status_code=400,
+                detail=f"CA bundle dosyası bulunamadı: {ca_bundle}",
+            )
+        verify = ca_bundle
+
+    chat_url = f"{url}/v1/chat/completions"
+    # Bazı OpenAI-uyumlu uçlar (yerel Ollama) key istemez; Bifrost vb. Authorization ister.
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = api_key
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 8,
+        "temperature": 0,
+    }
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=30.0, verify=verify) as client:
+            resp = await client.post(chat_url, headers=headers, json=body)
+    except httpx.TimeoutException:
+        return {"ok": False, "message": "Zaman aşımı (30s) — gateway yanıt vermedi", "latency_ms": None}
+    except httpx.ConnectError as exc:
+        return {"ok": False, "message": f"Bağlantı hatası: {exc}", "latency_ms": None}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": f"İstek başarısız: {exc}", "latency_ms": None}
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    if resp.status_code >= 400:
+        detail = (resp.text or "")[:280]
+        return {
+            "ok": False,
+            "message": f"HTTP {resp.status_code}: {detail or 'yanıt gövdesi boş'}",
+            "latency_ms": latency_ms,
+            "url": chat_url,
+            "model": model,
+        }
+    try:
+        data = resp.json()
+        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        snippet = str(content).strip()[:80]
+    except Exception:
+        snippet = ""
+    msg = f"Bağlantı OK · {model} · {latency_ms} ms"
+    if snippet:
+        msg += f" · yanıt: {snippet!r}"
+    return {"ok": True, "message": msg, "latency_ms": latency_ms, "url": chat_url, "model": model}
 
 
 @router.put("/metric-retention")
@@ -1633,4 +1753,198 @@ async def wipe_all_data(
     return {
         "success": True,
         "message": f"Seçilen veriler silindi ({', '.join(selected_labels)}). Kullanıcılar, modül yetkileri ve sistem ayarları korundu.",
+    }
+
+
+# ─── Tam veritabanı yedek / geri yükleme (pg_dump) ───────────────────────────
+
+@router.get("/db-backup/capability")
+def db_backup_capability(_admin: User = Depends(require_role("admin"))):
+    from app.services import db_migration_backup as dmb
+    return dmb.capability()
+
+
+@router.get("/db-backup/export")
+def db_backup_export(
+    request: Request,
+    include_dropt: bool = True,
+    admin: User = Depends(require_role("admin")),
+):
+    """ainew (+ opsiyonel Dropt) PostgreSQL dump zip indir."""
+    import shutil
+    from fastapi.responses import FileResponse
+    from app.services import db_migration_backup as dmb
+    from app.services.audit import record_audit
+
+    try:
+        zip_path, manifest = dmb.create_backup_zip(include_dropt=include_dropt)
+    except Exception as e:
+        record_audit(
+            None,
+            category="admin",
+            action="db_backup.export",
+            status="failed",
+            actor=admin,
+            summary=f"DB yedek başarısız: {e}",
+            detail={"error": str(e)[:400]},
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(503, f"Yedek alınamadı: {e}")
+
+    record_audit(
+        None,
+        category="admin",
+        action="db_backup.export",
+        status="success",
+        actor=admin,
+        summary="Tam veritabanı yedeği indirildi",
+        detail={
+            "include_dropt": include_dropt,
+            "ainew_bytes": ((manifest.get("databases") or {}).get("ainew") or {}).get("size_bytes"),
+            "dropt_included": ((manifest.get("databases") or {}).get("dropt") or {}).get("included"),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    cleanup_dir = zip_path.parent
+
+    def _cleanup():
+        try:
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    # Background cleanup after send — FileResponse + BackgroundTask
+    from starlette.background import BackgroundTask
+
+    return FileResponse(
+        path=str(zip_path),
+        media_type="application/zip",
+        filename=zip_path.name,
+        background=BackgroundTask(_cleanup),
+    )
+
+
+@router.post("/db-backup/validate")
+async def db_backup_validate(
+    file: UploadFile = File(...),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Yüklenen zip'i doğrula (restore öncesi önizleme)."""
+    import tempfile
+    from pathlib import Path
+    from app.services import db_migration_backup as dmb
+
+    suffix = Path(file.filename or "backup.zip").suffix or ".zip"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        raw = await file.read()
+        tmp.write(raw)
+        tmp_path = Path(tmp.name)
+    try:
+        parsed = dmb.validate_backup_zip(tmp_path)
+        man = parsed["manifest"]
+        return {
+            "ok": True,
+            "manifest": {
+                "format": man.get("format"),
+                "format_version": man.get("format_version"),
+                "app_version": man.get("app_version"),
+                "exported_at": man.get("exported_at"),
+                "secret_key_fingerprint": man.get("secret_key_fingerprint"),
+                "databases": man.get("databases"),
+                "warnings": man.get("warnings"),
+            },
+            "fingerprint_match": parsed["fingerprint_match"],
+            "current_fingerprint": parsed["current_fingerprint"],
+            "has_dropt": bool(parsed.get("dropt_sql")),
+            "ainew_size_bytes": len(parsed["ainew_sql"] or b""),
+            "dropt_size_bytes": len(parsed["dropt_sql"] or b"") if parsed.get("dropt_sql") else 0,
+            "restore_confirm_phrase": dmb.RESTORE_CONFIRM,
+        }
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@router.post("/db-backup/restore")
+async def db_backup_restore(
+    request: Request,
+    file: UploadFile = File(...),
+    confirm: str = Form(...),
+    restore_ainew: bool = Form(True),
+    restore_dropt: bool = Form(True),
+    require_fingerprint_match: bool = Form(True),
+    admin: User = Depends(require_role("admin")),
+):
+    """
+    Tam DB geri yükleme. Mevcut verinin üzerine yazar.
+    confirm alanı tam olarak: VERITABANI GERI YUKLE
+    """
+    import tempfile
+    from pathlib import Path
+    from app.services import db_migration_backup as dmb
+    from app.services.audit import record_audit
+
+    suffix = Path(file.filename or "backup.zip").suffix or ".zip"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = Path(tmp.name)
+
+    try:
+        result = dmb.restore_backup_zip(
+            tmp_path,
+            confirm=confirm,
+            restore_ainew=restore_ainew,
+            restore_dropt=restore_dropt,
+            require_fingerprint_match=require_fingerprint_match,
+        )
+    except ValueError as e:
+        record_audit(
+            None,
+            category="admin",
+            action="db_backup.restore",
+            status="failed",
+            actor=admin,
+            summary=f"DB restore reddedildi: {e}",
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        record_audit(
+            None,
+            category="admin",
+            action="db_backup.restore",
+            status="failed",
+            actor=admin,
+            summary=f"DB restore başarısız: {e}",
+            detail={"error": str(e)[:500]},
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(503, f"Geri yükleme başarısız: {e}")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    record_audit(
+        None,
+        category="admin",
+        action="db_backup.restore",
+        status="success",
+        actor=admin,
+        summary="Tam veritabanı geri yüklendi",
+        detail=result,
+        ip_address=request.client.host if request.client else None,
+    )
+    return {
+        "ok": True,
+        "message": (
+            "Veritabanı geri yüklendi. Oturumu yenileyin; gerekirse backend/worker'ı yeniden başlatın."
+        ),
+        "result": result,
     }

@@ -12,8 +12,11 @@ from app.core.config import settings
 from app.services.embedding import get_embedding
 from app.services.rag_store import (
     add_chunks,
+    upsert_chunks,
     query_collection,
     clear_collection,
+    count_collection,
+    prune_ids_not_in_keep,
     COLLECTION_RUNBOOK,
     COLLECTION_INCIDENTS,
     COLLECTION_METRICS,
@@ -24,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 RUNBOOK_CHUNK_SIZE = 800
 RUNBOOK_CHUNK_OVERLAP = 100
+
+# Wave 5: incremental incident reindex (full scan ~6 saatte bir)
+_INCIDENT_FULL_INTERVAL_SEC = 6 * 3600
+_last_full_incident_ingest = 0.0
+# Knowledge: imza değişmediyse clear+embed atlanır
+_knowledge_sig: Optional[tuple] = None
 
 
 def _candidate_k(top_k: int) -> int:
@@ -142,12 +151,35 @@ def _incident_to_text(incident) -> str:
     return "\n".join(p for p in parts if p).strip()
 
 
-async def ingest_incidents_from_db(db: Session) -> int:
+async def ingest_incidents_from_db(db: Session, *, force_full: bool = False) -> int:
+    """Incident'ları Chroma'ya upsert et.
+
+    Varsayılan: son 14 günde oluşturulan/güncellenen kayıtlar.
+    force_full veya ~6 saatte bir tam tarama (orphan id'ler kalabilir; kabul edilebilir).
+    """
+    import time
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import or_
     from app.models.event import Incident
     from app.services.embedding import get_embeddings_batch, get_last_embed_error
 
-    # clear YAPMA — Event chunk'ları aynı collection'da; yalnızca incident_* id'leri yenilenir
-    rows = db.query(Incident).order_by(Incident.id).all()
+    global _last_full_incident_ingest
+    now_mono = time.monotonic()
+    do_full = force_full or (_last_full_incident_ingest == 0.0) or (
+        now_mono - _last_full_incident_ingest >= _INCIDENT_FULL_INTERVAL_SEC
+    )
+
+    q = db.query(Incident)
+    if not do_full:
+        cutoff = datetime.utcnow() - timedelta(days=14)
+        q = q.filter(
+            or_(
+                Incident.updated_at >= cutoff,
+                Incident.created_at >= cutoff,
+            )
+        )
+    rows = q.order_by(Incident.id).all()
     ids, texts, metadatas = [], [], []
     for r in rows:
         t = _incident_to_text(r)
@@ -157,13 +189,27 @@ async def ingest_incidents_from_db(db: Session) -> int:
         texts.append(t)
         metadatas.append({"incident_id": r.id, "title": (r.title or "")[:200], "severity": r.severity or ""})
     if not texts:
+        if do_full:
+            _last_full_incident_ingest = now_mono
         return 0
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Incident RAG ingest: {detail}")
-    add_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    upsert_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    if do_full:
+        _last_full_incident_ingest = now_mono
+        try:
+            # Stale incident_* chunk'larını temizle (DB'de olmayan id)
+            all_ids = {f"incident_{i}" for (i,) in db.query(Incident.id).all()}
+            pruned = prune_ids_not_in_keep(
+                COLLECTION_INCIDENTS, all_ids, id_prefix="incident_",
+            )
+            if pruned:
+                logger.info("RAG incidents prune: %s stale chunk silindi", pruned)
+        except Exception as e:
+            logger.warning("RAG incidents prune atlandı: %s", e)
     return len(ids)
 
 
@@ -197,7 +243,16 @@ async def ingest_events_from_db(db: Session, limit: int = 2000) -> int:
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Event RAG ingest: {detail}")
-    add_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    upsert_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    try:
+        all_event_ids = {f"event_{i}" for (i,) in db.query(SystemEvent.id).all()}
+        pruned = prune_ids_not_in_keep(
+            COLLECTION_INCIDENTS, all_event_ids, id_prefix="event_",
+        )
+        if pruned:
+            logger.info("RAG events prune: %s stale chunk silindi", pruned)
+    except Exception as e:
+        logger.warning("RAG events prune atlandı: %s", e)
     return len(ids)
 
 
@@ -228,14 +283,31 @@ async def ingest_metric_descriptions(items: List[dict]) -> int:
     return len(ids)
 
 
-async def ingest_knowledge_from_db(db: Session) -> int:
+async def ingest_knowledge_from_db(db: Session, *, force: bool = False) -> int:
     """
     Bilgi Bankası → RAG knowledge_facts.
     Öncelik: learned_facts; yoksa linux_inventory + discovered_applications ile doldur.
+    İmza (count/max id/max last_confirmed) değişmediyse yeniden index atlanır.
     """
+    from sqlalchemy import func as sa_func
     from app.models.learned_fact import LearnedFact
     from app.models.server import Server
     from app.services.embedding import get_embeddings_batch, get_last_embed_error
+
+    global _knowledge_sig
+    agg = db.query(
+        sa_func.count(LearnedFact.id),
+        sa_func.max(LearnedFact.id),
+        sa_func.max(LearnedFact.last_confirmed_at),
+    ).one()
+    sig = (int(agg[0] or 0), agg[1], str(agg[2]) if agg[2] else "")
+    if (
+        not force
+        and _knowledge_sig == sig
+        and count_collection(COLLECTION_KNOWLEDGE) > 0
+    ):
+        logger.debug("RAG knowledge: imza değişmedi, reindex atlandı")
+        return 0
 
     clear_collection(COLLECTION_KNOWLEDGE)
     rows = db.query(LearnedFact).order_by(
@@ -285,13 +357,15 @@ async def ingest_knowledge_from_db(db: Session) -> int:
         texts, ids, metadatas = _knowledge_chunks_from_inventory(db)
 
     if not texts:
+        _knowledge_sig = sig
         return 0
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Bilgi Bankası RAG ingest: {detail}")
-    add_chunks(COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    upsert_chunks(COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    _knowledge_sig = sig
     return len(ids)
 
 
@@ -421,13 +495,9 @@ async def get_runbook_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_RUNBOOK_TOP_K
     try:
         emb = await get_embedding(message)
-        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-            return ""
-        hits = query_collection(COLLECTION_RUNBOOK, query_embedding=emb, n_results=_candidate_k(top_k))
-        hits = await _rerank_hits(message, hits, top_k)
-        if not hits:
-            return ""
-        return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
+        return await _format_collection_context(
+            message, COLLECTION_RUNBOOK, emb, top_k, joiner="\n\n---\n\n"
+        )
     except Exception as e:
         logger.warning(f"Runbook RAG error: {e}")
         return ""
@@ -437,13 +507,9 @@ async def get_incidents_context(message: str, top_k: Optional[int] = None) -> st
     top_k = top_k or settings.RAG_INCIDENTS_TOP_K
     try:
         emb = await get_embedding(message)
-        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-            return ""
-        hits = query_collection(COLLECTION_INCIDENTS, query_embedding=emb, n_results=_candidate_k(top_k))
-        hits = await _rerank_hits(message, hits, top_k)
-        if not hits:
-            return ""
-        return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
+        return await _format_collection_context(
+            message, COLLECTION_INCIDENTS, emb, top_k, joiner="\n\n---\n\n"
+        )
     except Exception as e:
         logger.warning(f"Incidents RAG error: {e}")
         return ""
@@ -453,13 +519,9 @@ async def get_metrics_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_METRICS_TOP_K
     try:
         emb = await get_embedding(message)
-        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-            return ""
-        hits = query_collection(COLLECTION_METRICS, query_embedding=emb, n_results=_candidate_k(top_k))
-        hits = await _rerank_hits(message, hits, top_k)
-        if not hits:
-            return ""
-        return "\n\n".join(h["document"] for h in hits if h.get("document"))
+        return await _format_collection_context(
+            message, COLLECTION_METRICS, emb, top_k, joiner="\n\n"
+        )
     except Exception as e:
         logger.warning(f"Metrics RAG error: {e}")
         return ""
@@ -469,16 +531,29 @@ async def get_knowledge_context(message: str, top_k: Optional[int] = None) -> st
     top_k = top_k or settings.RAG_KNOWLEDGE_TOP_K
     try:
         emb = await get_embedding(message)
-        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-            return ""
-        hits = query_collection(COLLECTION_KNOWLEDGE, query_embedding=emb, n_results=_candidate_k(top_k))
-        hits = await _rerank_hits(message, hits, top_k)
-        if not hits:
-            return ""
-        return "\n\n---\n\n".join(h["document"] for h in hits if h.get("document"))
+        return await _format_collection_context(
+            message, COLLECTION_KNOWLEDGE, emb, top_k, joiner="\n\n---\n\n"
+        )
     except Exception as e:
         logger.warning(f"Knowledge RAG error: {e}")
         return ""
+
+
+async def _format_collection_context(
+    message: str,
+    collection: str,
+    emb: Optional[List[float]],
+    top_k: int,
+    *,
+    joiner: str,
+) -> str:
+    if not emb or all(abs(float(x)) < 1e-12 for x in emb):
+        return ""
+    hits = query_collection(collection, query_embedding=emb, n_results=_candidate_k(top_k))
+    hits = await _rerank_hits(message, hits, top_k)
+    if not hits:
+        return ""
+    return joiner.join(h["document"] for h in hits if h.get("document"))
 
 
 async def get_rag_context_for_message(
@@ -491,18 +566,34 @@ async def get_rag_context_for_message(
     """
     Chat RAG: runbook (PDF), incidents, metrics, knowledge (Bilgi Bankası semantik).
 
+    Dalga 3: soru için tek embedding; dört koleksiyon aynı vektörle sorgulanır
+    (önceki 4× embed kalkar). Rerank hâlâ koleksiyon başına best-effort.
+
     Seçili sunucu fact'leri Chat tarafında zaten get_learned_facts_block ile gelir;
     burada varsayılan olarak semantik knowledge_facts araması kullanılır (filo geneli).
     include_server_facts=True ise seçili sunucu kayıtları da eklenir (preview / özel yollar).
     """
-    # Paralel çalıştır — sıralı awaitlerde her biri (özellikle reranker açıkken)
-    # birkaç saniye sürebilir; art arda dört kez beklemek toplam gecikmeyi katlar.
     import asyncio as _asyncio
+
+    empty = {"runbook": "", "incidents": "", "metrics": "", "knowledge": ""}
+    try:
+        emb = await get_embedding(message)
+    except Exception as e:
+        logger.warning("RAG tek embed hatası: %s", e)
+        return empty
+    if not emb or all(abs(float(x)) < 1e-12 for x in emb):
+        return empty
+
+    rb_k = settings.RAG_RUNBOOK_TOP_K
+    inc_k = settings.RAG_INCIDENTS_TOP_K
+    met_k = settings.RAG_METRICS_TOP_K
+    kn_k = settings.RAG_KNOWLEDGE_TOP_K
+
     runbook, incidents, metrics, knowledge = await _asyncio.gather(
-        get_runbook_context(message),
-        get_incidents_context(message),
-        get_metrics_context(message),
-        get_knowledge_context(message),
+        _format_collection_context(message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"),
+        _format_collection_context(message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"),
+        _format_collection_context(message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"),
+        _format_collection_context(message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"),
     )
     if include_server_facts and db is not None and server_ids:
         try:

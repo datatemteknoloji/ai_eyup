@@ -1332,14 +1332,26 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     },
   })
 
+  const [vmPage, setVmPage] = useState(1)
+  const vmPageSize = 50
+
   // VMs — backend ile aynı tanım: hypervisor_id dolu OLUŞTU ya da server_type=VIRTUAL
-  // (OLVM/UCMDB gibi kaynaklardan hypervisor bağlantısı olmadan gelen VM'ler de dahil)
-  const { data: vms = [] } = useQuery<VM[]>({
-    queryKey: ['servers', 'platform=virt'],
+  const { data: vmsPage } = useQuery({
+    queryKey: ['servers', 'platform=virt', vmPage, vmPageSize],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/?platform=virt`)
-      if (!r.ok) return []
-      return r.json()
+      const { fetchServersPage } = await import('../api/servers')
+      return fetchServersPage<VM>({ platform: 'virt', page: vmPage, page_size: vmPageSize })
+    },
+    refetchInterval: 60_000,
+  })
+  const vms = vmsPage?.items ?? []
+  const vmsTotal = vmsPage?.total ?? 0
+
+  const { data: virtSummary } = useQuery({
+    queryKey: ['servers-summary', 'virt'],
+    queryFn: async () => {
+      const { fetchServersSummary } = await import('../api/servers')
+      return fetchServersSummary('virt')
     },
     refetchInterval: 60_000,
   })
@@ -1352,17 +1364,13 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     const vmwareHvs = hypervisors.filter(h => h.type?.toLowerCase() === 'vmware')
     if (vmwareHvs.length === 0) { setHostsLoading(false); return }
 
-    Promise.all(
-      vmwareHvs.map(hv =>
-        fetch(`${API_BASE_URL}/hypervisors/${hv.id}/host-metrics`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => (data?.hosts || []).map((h: EsxHost) => ({ hvName: hv.name, host: h })))
-          .catch(() => [])
-      )
-    ).then(results => {
-      setAllHosts(results.flat())
-      setHostsLoading(false)
-    })
+    fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { hosts?: { hvName: string; host: EsxHost }[] } | null) => {
+        setAllHosts((data?.hosts || []).map(row => ({ hvName: row.hvName, host: row.host })))
+        setHostsLoading(false)
+      })
+      .catch(() => { setAllHosts([]); setHostsLoading(false) })
   }, [hypervisors])
 
   const dismissedProgressRef = React.useRef<Set<number>>(new Set())
@@ -1488,11 +1496,11 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     return `Hypervisor ${idx + 1} / ${scanQueue.length}`
   })()
 
-  // Stats
-  const poweredOn = vms.filter(v => isVmOnline(v.status, v.vm_power_state)).length
-  const poweredOff = vms.length - poweredOn
-  const totalVmCpu = vms.reduce((acc, v) => acc + (v.cpu_cores || 0), 0)
-  const totalVmRam = vms.reduce((acc, v) => acc + (v.memory_gb || 0), 0)
+  // Stats (toplamlar summary'den; sayfa içeriği vms)
+  const poweredOn = virtSummary?.online ?? vms.filter(v => isVmOnline(v.status, v.vm_power_state)).length
+  const poweredOff = Math.max(0, (virtSummary?.total ?? vmsTotal) - poweredOn)
+  const totalVmCpu = virtSummary?.cpu_cores ?? vms.reduce((acc, v) => acc + (v.cpu_cores || 0), 0)
+  const totalVmRam = virtSummary?.memory_gb ?? vms.reduce((acc, v) => acc + (v.memory_gb || 0), 0)
 
   // Host totals
   const totalHostCpu = allHosts.reduce((acc, h) => acc + (h.host.cpu_total_mhz || 0), 0)
@@ -1557,7 +1565,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
               <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
               <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
-              <StatCard icon={Monitor} label="Toplam VM" value={vms.length} sub={`${poweredOn} çalışıyor`} accent={NEON.info} />
+              <StatCard icon={Monitor} label="Toplam VM" value={virtSummary?.total ?? vmsTotal} sub={`${poweredOn} çalışıyor`} accent={NEON.info} />
               <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
               <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
               <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
@@ -1652,7 +1660,23 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
           </div>
         )}
 
-        {!allowInventoryEdit && activeTab === 'vms' && <VMTable vms={vms} hypervisors={hypervisors} />}
+        {!allowInventoryEdit && activeTab === 'vms' && (
+          <div className="space-y-3">
+            <VMTable vms={vms} hypervisors={hypervisors} />
+            {vmsTotal > 0 && (
+              <div className="flex items-center justify-between text-sm text-slate-400 px-1">
+                <span>{(vmPage - 1) * vmPageSize + 1}–{Math.min(vmPage * vmPageSize, vmsTotal)} / {vmsTotal}</span>
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled={vmPage <= 1} onClick={() => setVmPage(p => Math.max(1, p - 1))}
+                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">Önceki</button>
+                  <span>{vmPage} / {Math.max(1, Math.ceil(vmsTotal / vmPageSize))}</span>
+                  <button type="button" disabled={vmPage * vmPageSize >= vmsTotal} onClick={() => setVmPage(p => p + 1)}
+                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">Sonraki</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {!allowInventoryEdit && activeTab === 'hosts' && (
           <div className="space-y-4">

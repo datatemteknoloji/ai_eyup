@@ -1,0 +1,36 @@
+---
+description: Docker Compose, deploy ve operasyon notları
+globs: "{docker-compose*.yml,*.sh,.env.example,docs/**/*.md}"
+alwaysApply: false
+---
+
+# Deploy & ops
+
+## Compose dosyaları
+
+- `docker-compose.yml` — **dev**: source mount, bilinen admin şifresi riski
+- `docker-compose.prod.yml` — müşteri/prod (localhost bind, TLS, random secrets)
+- `docker-compose.build.yml` — imaj build
+
+## Kritik davranış
+
+- Backend: `network_mode: host` (SSH erişimi için); `env_file: .env`
+- Veri volume'ları host'ta `/data/data/...`
+- Ollama servisi `profiles: [ollama]` — profil yoksa çalışmaz
+- Prometheus bu ortamda down olabilir; Pushgateway ayakta olabilir
+
+## Kurulum script'leri
+
+- Dev: `./scripts/dev-setup.sh` → `docker compose up -d`
+- Prod paket: `scripts/build-distribution.sh` → `install-rhel.sh` / `update-rhel.sh`
+- Offline Ollama: `install-ollama-runtime.sh`, `--ollama-files`
+
+## Güvenlik
+
+- `SECRET_KEY` ve `POSTGRES_PASSWORD` zorunlu
+- Prod'da `ADMIN_DEFAULT_PASSWORD` rastgele üretilir; dev default `admin123`
+- `.env` ve credential'ları asla commit etme / chat'e yapıştırma
+
+## Doküman
+
+Önce: `docs/deployment.md`, `docs/INSTALL_RHEL.md`, `docs/scale-and-performance.md`

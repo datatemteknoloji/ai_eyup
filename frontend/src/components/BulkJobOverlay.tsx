@@ -109,6 +109,8 @@ export const BulkJobOverlay: React.FC<{
   useEffect(() => {
     let cancelled = false
     let finished = false
+    let delay = 1500
+    let timer: ReturnType<typeof setTimeout> | undefined
     setJob({ id: jobId, status: 'running', percent: 1, message: 'İşlem başlıyor...' })
 
     const tick = async () => {
@@ -121,16 +123,20 @@ export const BulkJobOverlay: React.FC<{
         if (j.status === 'done' || j.status === 'error') {
           finished = true
           onDoneRef.current?.(j)
+          return
         }
       } catch {
         /* poll again */
       }
+      if (!finished && !cancelled) {
+        delay = Math.min(delay + 500, 5000)
+        timer = setTimeout(() => { void tick() }, delay)
+      }
     }
-    tick()
-    const id = setInterval(tick, 1500)
+    void tick()
     return () => {
       cancelled = true
-      clearInterval(id)
+      if (timer) clearTimeout(timer)
     }
   }, [jobId])
 

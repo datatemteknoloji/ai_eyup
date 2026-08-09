@@ -38,6 +38,20 @@ class OpenShiftClient:
         self.api_url = (api_url or "").strip().rstrip("/")
         if self.api_url and not self.api_url.startswith("http"):
             self.api_url = f"https://{self.api_url}"
+        # Dinamik çözümleme: DNS → host /etc/hosts (compose extra_hosts yok)
+        self._tls_server_hostname: Optional[str] = None
+        try:
+            from app.services.host_resolve import rewrite_url_host
+            rewritten, note, orig_host = rewrite_url_host(self.api_url)
+            if rewritten and rewritten != self.api_url:
+                logger.info("OpenShift API host resolve: %s", note)
+                self.api_url = rewritten
+                self._tls_server_hostname = orig_host
+            elif note:
+                logger.debug("OpenShift API host resolve: %s", note)
+        except Exception as e:
+            logger.warning("OpenShift API host resolve atlandı: %s", e)
+
         self.username = username or ""
         self.password = password or ""
         self.verify_ssl = verify_ssl
@@ -55,6 +69,9 @@ class OpenShiftClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         })
+        # IP'ye yazıldıysa sanal host / yönlendirici için orijinal ad
+        if self._tls_server_hostname:
+            self.session.headers["Host"] = self._tls_server_hostname
 
     def _login_with_credentials(self) -> Tuple[str, str]:
         from app.services.openshift.oauth_helper import obtain_oauth_token
@@ -65,6 +82,32 @@ class OpenShiftClient:
 
     def _get(self, path: str, params: Optional[dict] = None, timeout: Optional[int] = None):
         return self.session.get(f"{self.api_url}{path}", params=params, timeout=timeout or self.timeout)
+
+    def _patch(
+        self,
+        path: str,
+        body: dict,
+        *,
+        content_type: str = "application/strategic-merge-patch+json",
+        timeout: Optional[int] = None,
+    ):
+        headers = {**self.session.headers, "Content-Type": content_type}
+        return self.session.patch(
+            f"{self.api_url}{path}",
+            json=body,
+            headers=headers,
+            timeout=timeout or self.timeout,
+        )
+
+    def _post(self, path: str, body: Optional[dict] = None, timeout: Optional[int] = None):
+        return self.session.post(
+            f"{self.api_url}{path}",
+            json=body if body is not None else {},
+            timeout=timeout or self.timeout,
+        )
+
+    def _delete(self, path: str, timeout: Optional[int] = None):
+        return self.session.delete(f"{self.api_url}{path}", timeout=timeout or self.timeout)
 
     def test_connection(self) -> Tuple[bool, str]:
         if not self.api_url:
@@ -128,7 +171,11 @@ class OpenShiftClient:
                 return float(s[:-1]) / 1_000_000_000
             if s.endswith("m"):  # millicores
                 return float(s[:-1]) / 1000
-            return float(s)
+            n = float(s)
+            # Suffix yok + büyük sayı → byte (PVC/PV capacity)
+            if n >= 1024 * 1024:
+                return n / (1024 ** 3)
+            return n
         except (TypeError, ValueError):
             return 0.0
 
@@ -157,16 +204,43 @@ class OpenShiftClient:
                 node_status = "Ready" if ready and ready.get("status") == "True" else "NotReady"
 
                 capacity = status_obj.get("capacity", {}) or {}
+                allocatable = status_obj.get("allocatable", {}) or {}
                 node_info = status_obj.get("nodeInfo", {}) or {}
+                cpu_cap = self._parse_quantity(capacity.get("cpu"))
+                mem_cap = round(self._parse_quantity(capacity.get("memory")), 2)
+                cpu_alloc = self._parse_quantity(allocatable.get("cpu")) or cpu_cap
+                mem_alloc = round(self._parse_quantity(allocatable.get("memory")), 2) or mem_cap
+
+                internal_ip = ""
+                external_ip = ""
+                hostname = name
+                for addr in status_obj.get("addresses") or []:
+                    if not isinstance(addr, dict):
+                        continue
+                    t, v = addr.get("type"), (addr.get("address") or "").strip()
+                    if not v:
+                        continue
+                    if t == "InternalIP" and not internal_ip:
+                        internal_ip = v
+                    elif t == "ExternalIP" and not external_ip:
+                        external_ip = v
+                    elif t == "Hostname" and v:
+                        hostname = v
 
                 nodes.append({
                     "name": name,
                     "role": role,
                     "status": node_status,
-                    "cpu_cores": self._parse_quantity(capacity.get("cpu")),
-                    "memory_gb": round(self._parse_quantity(capacity.get("memory")), 1),
+                    "cpu_cores": cpu_cap,
+                    "memory_gb": mem_cap,
+                    "cpu_allocatable": cpu_alloc,
+                    "memory_allocatable_gb": mem_alloc,
                     "kubelet_version": node_info.get("kubeletVersion", ""),
                     "os_image": node_info.get("osImage", ""),
+                    "internal_ip": internal_ip,
+                    "external_ip": external_ip,
+                    "hostname": hostname,
+                    "ip_address": internal_ip or external_ip,
                 })
             return nodes
         except Exception as e:
@@ -221,11 +295,11 @@ class OpenShiftClient:
                 for p in body.get("items", []) or []:
                     meta = p.get("metadata", {}) or {}
                     status_obj = p.get("status", {}) or {}
+                    spec = p.get("spec", {}) or {}
                     container_statuses = status_obj.get("containerStatuses", []) or []
                     ready_count = sum(1 for c in container_statuses if c.get("ready"))
-                    total_count = len(container_statuses) or len((p.get("spec", {}) or {}).get("containers", []) or [])
+                    total_count = len(container_statuses) or len(spec.get("containers", []) or [])
                     restart_count = sum(int(c.get("restartCount", 0) or 0) for c in container_statuses)
-                    # Waiting/terminated nedeni (CrashLoopBackOff vb.) — kısa string
                     wait_reason = None
                     for c in container_statuses:
                         state = c.get("state") or {}
@@ -238,14 +312,34 @@ class OpenShiftClient:
                             wait_reason = term["reason"]
                             break
 
+                    owners = meta.get("ownerReferences") or []
+                    owner_kind = owners[0].get("kind", "") if owners else ""
+                    owner_name = owners[0].get("name", "") if owners else ""
+
+                    cpu_req = 0.0
+                    mem_req = 0.0
+                    for c in (spec.get("containers") or []):
+                        req = ((c.get("resources") or {}).get("requests") or {})
+                        cpu_req += self._parse_quantity(req.get("cpu"))
+                        mem_req += self._parse_quantity(req.get("memory"))
+
+                    phase = status_obj.get("phase", "Unknown")
+                    display_status = wait_reason or phase
+
                     pods.append({
                         "namespace": meta.get("namespace", ""),
                         "name": meta.get("name", ""),
-                        "status": status_obj.get("phase", "Unknown"),
+                        "status": display_status,
+                        "phase": phase,
                         "reason": wait_reason,
-                        "node_name": (p.get("spec", {}) or {}).get("nodeName", ""),
+                        "node_name": spec.get("nodeName", ""),
                         "restart_count": restart_count,
                         "ready": f"{ready_count}/{total_count}",
+                        "owner_kind": owner_kind,
+                        "owner_name": owner_name,
+                        "cpu_request": round(cpu_req, 3),
+                        "memory_request_gb": round(mem_req, 3),
+                        "labels": meta.get("labels") or {},
                     })
                 continue_token = (body.get("metadata") or {}).get("continue") or None
                 if not continue_token:
@@ -295,16 +389,141 @@ class OpenShiftClient:
                 ingress = (status_obj.get("ingress") or [{}])[0]
                 conditions = ingress.get("conditions", []) or []
                 admitted = any(c.get("type") == "Admitted" and c.get("status") == "True" for c in conditions)
+                to = spec.get("to") or {}
                 items.append({
                     "namespace": meta.get("namespace", ""),
                     "name": meta.get("name", ""),
                     "host": spec.get("host", ""),
                     "status": "Admitted" if admitted else "Pending",
+                    "to_service": to.get("name", "") if to.get("kind") == "Service" else to.get("name", ""),
                 })
             return items
         except Exception as e:
             logger.error(f"OpenShift list_routes error: {e}", exc_info=True)
             return []
+
+    def list_services(self, namespace: Optional[str] = None) -> List[Dict]:
+        """Service envanteri — topology (Route → Service → Pod) için."""
+        try:
+            path = f"/api/v1/namespaces/{namespace}/services" if namespace else "/api/v1/services"
+            r = self._get(path, params={"limit": 1000}, timeout=30)
+            if r.status_code != 200:
+                return []
+            items = []
+            for svc in (r.json() or {}).get("items", []) or []:
+                meta = svc.get("metadata", {}) or {}
+                spec = svc.get("spec", {}) or {}
+                ports = spec.get("ports") or []
+                port_str = ",".join(
+                    f"{p.get('port')}/{p.get('protocol', 'TCP')}" for p in ports[:4]
+                )
+                items.append({
+                    "namespace": meta.get("namespace", ""),
+                    "name": meta.get("name", ""),
+                    "status": spec.get("type", "ClusterIP"),
+                    "selector": spec.get("selector") or {},
+                    "ports": port_str,
+                    "cluster_ip": spec.get("clusterIP", ""),
+                })
+            return items
+        except Exception as e:
+            logger.error(f"OpenShift list_services error: {e}", exc_info=True)
+            return []
+
+    def get_project_topology(self, namespace: str) -> Dict[str, Any]:
+        """Seçili proje için Route → Service → Deployment/owner → Pod → Node ilişkisi."""
+        ns = (namespace or "").strip()
+        if not ns:
+            return {"project": "", "nodes": [], "edges": [], "summary": {}}
+
+        routes = self.list_routes(ns)
+        services = self.list_services(ns)
+        deployments = self.list_deployments(ns)
+        pods = self.list_pods(ns)
+
+        graph_nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, str]] = []
+        seen: set = set()
+
+        def add_node(nid: str, kind: str, name: str, **extra):
+            if nid in seen:
+                return
+            seen.add(nid)
+            graph_nodes.append({"id": nid, "kind": kind, "name": name, **extra})
+
+        for rt in routes:
+            rid = f"route/{rt['name']}"
+            add_node(rid, "route", rt["name"], status=rt.get("status"), host=rt.get("host"))
+            svc = rt.get("to_service") or ""
+            if svc:
+                sid = f"service/{svc}"
+                add_node(sid, "service", svc, status="Service")
+                edges.append({"from": rid, "to": sid, "rel": "routes-to"})
+
+        for svc in services:
+            sid = f"service/{svc['name']}"
+            add_node(sid, "service", svc["name"], status=svc.get("status"), ports=svc.get("ports"))
+            sel = svc.get("selector") or {}
+            if sel:
+                for pod in pods:
+                    labels = pod.get("labels") or {}
+                    if all(labels.get(k) == v for k, v in sel.items()):
+                        pid = f"pod/{pod['name']}"
+                        add_node(
+                            pid, "pod", pod["name"],
+                            status=pod.get("status"), node_name=pod.get("node_name"),
+                            ready=pod.get("ready"), restart_count=pod.get("restart_count"),
+                        )
+                        edges.append({"from": sid, "to": pid, "rel": "selects"})
+                        if pod.get("node_name"):
+                            nid = f"node/{pod['node_name']}"
+                            add_node(nid, "node", pod["node_name"], status="")
+                            edges.append({"from": pid, "to": nid, "rel": "runs-on"})
+
+        for d in deployments:
+            did = f"deployment/{d['name']}"
+            add_node(did, "deployment", d["name"], status=d.get("status"), ready=d.get("ready"))
+            for pod in pods:
+                if pod.get("owner_kind") in ("ReplicaSet", "Deployment") and (
+                    (pod.get("owner_name") or "").startswith(d["name"]) or pod.get("owner_name") == d["name"]
+                ):
+                    pid = f"pod/{pod['name']}"
+                    add_node(
+                        pid, "pod", pod["name"],
+                        status=pod.get("status"), node_name=pod.get("node_name"),
+                        ready=pod.get("ready"), restart_count=pod.get("restart_count"),
+                    )
+                    edges.append({"from": did, "to": pid, "rel": "owns"})
+                    if pod.get("node_name"):
+                        nid = f"node/{pod['node_name']}"
+                        add_node(nid, "node", pod["node_name"], status="")
+                        edges.append({"from": pid, "to": nid, "rel": "runs-on"})
+
+        # Orphan pods (no edge yet)
+        for pod in pods:
+            pid = f"pod/{pod['name']}"
+            if pid not in seen:
+                add_node(
+                    pid, "pod", pod["name"],
+                    status=pod.get("status"), node_name=pod.get("node_name"),
+                    ready=pod.get("ready"), restart_count=pod.get("restart_count"),
+                )
+                if pod.get("node_name"):
+                    nid = f"node/{pod['node_name']}"
+                    add_node(nid, "node", pod["node_name"], status="")
+                    edges.append({"from": pid, "to": nid, "rel": "runs-on"})
+
+        return {
+            "project": ns,
+            "nodes": graph_nodes,
+            "edges": edges,
+            "summary": {
+                "routes": len(routes),
+                "services": len(services),
+                "deployments": len(deployments),
+                "pods": len(pods),
+            },
+        }
 
     def list_events(self, hours: int = 48) -> List[Dict]:
         """Türetilmiş alarm mantığı: Node NotReady, CrashLoopBackOff, OOMKilled, PVC sorunları, Deployment ilerleme sorunu."""
@@ -346,31 +565,31 @@ class OpenShiftClient:
         except Exception as e:
             logger.error(f"OpenShift list_events error: {e}", exc_info=True)
 
-        # Türetilmiş: CrashLoopBackOff / yüksek restart sayısı (Event API'de her zaman görünmez)
+        # Türetilmiş: CrashLoopBackOff / yüksek restart (list_pods reason alanından)
         try:
             for pod in self.list_pods():
-                for cs in pod.get("container_statuses", []) or []:
-                    waiting = (cs.get("state") or {}).get("waiting") or {}
-                    if waiting.get("reason") == "CrashLoopBackOff":
-                        events.append({
-                            "title": f"Pod/{pod['name']}: CrashLoopBackOff",
-                            "description": waiting.get("message", ""),
-                            "severity": "critical",
-                            "source_object": f"Pod/{pod['name']}",
-                            "namespace": pod.get("namespace", ""),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "reason": "CrashLoopBackOff",
-                        })
-                    if cs.get("restartCount", 0) >= 5:
-                        events.append({
-                            "title": f"Pod/{pod['name']}: Yüksek restart sayısı ({cs.get('restartCount')})",
-                            "description": f"Container {cs.get('name', '')} {cs.get('restartCount')} kez yeniden başladı",
-                            "severity": "warning",
-                            "source_object": f"Pod/{pod['name']}",
-                            "namespace": pod.get("namespace", ""),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "reason": "HighRestartCount",
-                        })
+                reason = pod.get("reason") or ""
+                restarts = int(pod.get("restart_count") or 0)
+                if reason == "CrashLoopBackOff" or (pod.get("status") or "") == "CrashLoopBackOff":
+                    events.append({
+                        "title": f"Pod/{pod['name']}: CrashLoopBackOff",
+                        "description": reason,
+                        "severity": "critical",
+                        "source_object": f"Pod/{pod['name']}",
+                        "namespace": pod.get("namespace", ""),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "reason": "CrashLoopBackOff",
+                    })
+                elif restarts >= 5:
+                    events.append({
+                        "title": f"Pod/{pod['name']}: Yüksek restart sayısı ({restarts})",
+                        "description": f"Pod {restarts} kez yeniden başladı",
+                        "severity": "warning",
+                        "source_object": f"Pod/{pod['name']}",
+                        "namespace": pod.get("namespace", ""),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "reason": "HighRestartCount",
+                    })
         except Exception as e:
             logger.debug(f"OpenShift derived pod events skipped: {e}")
 

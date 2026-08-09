@@ -54,6 +54,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_openshift_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
         self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
+        self.tasks.append(asyncio.create_task(self._periodic_windows_live_metrics()))
         self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
@@ -101,17 +102,21 @@ class BackgroundTaskManager:
 
                 db = SessionLocal()
                 try:
-                    logger.info(f"Running scheduled health check at {datetime.now()}")
-                    loop = asyncio.get_event_loop()
-                    stats = await loop.run_in_executor(
-                        None, ServerHealthChecker.update_server_statuses, db
-                    )
-                    if stats.get("updated", 0) > 0 or stats.get("checked", 0) > 0:
-                        logger.info(
-                            f"Health check: {stats.get('checked',0)} checked, "
-                            f"{stats.get('updated',0)} updated, "
-                            f"{stats.get('online',0)} online, {stats.get('offline',0)} offline"
+                    from app.services.fleet_mutex import fleet_lock
+                    with fleet_lock("health") as ok:
+                        if not ok:
+                            continue
+                        logger.info(f"Running scheduled health check at {datetime.now()}")
+                        loop = asyncio.get_event_loop()
+                        stats = await loop.run_in_executor(
+                            None, ServerHealthChecker.update_server_statuses, db
                         )
+                        if stats.get("updated", 0) > 0 or stats.get("checked", 0) > 0:
+                            logger.info(
+                                f"Health check: {stats.get('checked',0)} checked, "
+                                f"{stats.get('updated',0)} updated, "
+                                f"{stats.get('online',0)} online, {stats.get('offline',0)} offline"
+                            )
                 except Exception as e:
                     logger.error(f"Health check error: {e}", exc_info=True)
                 finally:
@@ -133,32 +138,36 @@ class BackgroundTaskManager:
             try:
                 db = SessionLocal()
                 try:
-                    from app.services.log_collector import collect_all_servers_logs
-                    from app.services.log_anomaly_detector import detect_log_anomalies
+                    from app.services.fleet_mutex import fleet_lock
+                    with fleet_lock("logs") as ok:
+                        if not ok:
+                            continue
+                        from app.services.log_collector import collect_all_servers_logs
+                        from app.services.log_anomaly_detector import detect_log_anomalies
 
-                    loop = asyncio.get_event_loop()
+                        loop = asyncio.get_event_loop()
 
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: collect_all_servers_logs(db, batch_mode=True),
-                    )
-                    if result.get("total_saved", 0) > 0 or result.get("total_servers", 0) > 0:
-                        logger.warning(
-                            "Log collection: saved=%s batch=%s/%s workers=%s",
-                            result.get("total_saved"),
-                            result.get("total_servers"),
-                            result.get("fleet_total"),
-                            result.get("workers"),
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda: collect_all_servers_logs(db, batch_mode=True),
                         )
+                        if result.get("total_saved", 0) > 0 or result.get("total_servers", 0) > 0:
+                            logger.warning(
+                                "Log collection: saved=%s batch=%s/%s workers=%s",
+                                result.get("total_saved"),
+                                result.get("total_servers"),
+                                result.get("fleet_total"),
+                                result.get("workers"),
+                            )
 
-                    anomalies = await loop.run_in_executor(
-                        None, detect_log_anomalies, db
-                    )
-                    if anomalies:
-                        critical = [a for a in anomalies if a["severity"] == "critical"]
-                        logger.warning(
-                            f"Log anomaly: {len(anomalies)} anomali ({len(critical)} kritik)"
+                        anomalies = await loop.run_in_executor(
+                            None, detect_log_anomalies, db
                         )
+                        if anomalies:
+                            critical = [a for a in anomalies if a["severity"] == "critical"]
+                            logger.warning(
+                                f"Log anomaly: {len(anomalies)} anomali ({len(critical)} kritik)"
+                            )
                 except Exception as e:
                     logger.error(f"Log collection/anomaly error: {e}")
                 finally:
@@ -293,12 +302,16 @@ class BackgroundTaskManager:
             try:
                 db = SessionLocal()
                 try:
-                    from app.services.metric_sync import MetricSyncService
-                    stats = await MetricSyncService.sync_all_servers_metrics(db, minutes=12)
-                    logger.info(
-                        f"Metric sync: {stats.get('synced_servers',0)}/{stats.get('total_servers',0)} "
-                        f"sunucu, {stats.get('total_metrics',0)} kayit"
-                    )
+                    from app.services.fleet_mutex import fleet_lock
+                    with fleet_lock("metric_sync") as ok:
+                        if not ok:
+                            continue
+                        from app.services.metric_sync import MetricSyncService
+                        stats = await MetricSyncService.sync_all_servers_metrics(db, minutes=12)
+                        logger.info(
+                            f"Metric sync: {stats.get('synced_servers',0)}/{stats.get('total_servers',0)} "
+                            f"sunucu, {stats.get('total_metrics',0)} kayit"
+                        )
                 except Exception as e:
                     logger.error(f"Metric sync error: {e}")
                 finally:
@@ -362,6 +375,12 @@ class BackgroundTaskManager:
 
                     from app.services import qa_cache
                     qa_cache.invalidate_all()
+                    try:
+                        from app.services.chat_cache_service import invalidate_context
+                        invalidate_context(db, platform="virt", all_for_platform=True)
+                        invalidate_context(db, platform="unified", all_for_platform=True)
+                    except Exception as _ice:
+                        logger.debug("chat QA invalidate after inventory: %s", _ice)
                 except Exception as e:
                     logger.error(f"Inventory sync error: {e}", exc_info=True)
                 finally:
@@ -722,63 +741,67 @@ class BackgroundTaskManager:
             try:
                 db = SessionLocal()
                 try:
-                    loop = asyncio.get_event_loop()
+                    from app.services.fleet_mutex import fleet_lock
+                    with fleet_lock("onboarding") as ok:
+                        if not ok:
+                            continue
+                        loop = asyncio.get_event_loop()
 
-                    from app.api.servers import update_ai_ready
-                    from app.api.windows import update_windows_ai_ready, install_exporter_all
-                    from app.services.auto_onboarding import (
-                        auto_install_node_exporter,
-                        collect_os_release_info,
-                        collect_windows_update_status,
-                        collect_linux_security_audit,
-                    )
-
-                    ai_stats = await loop.run_in_executor(
-                        None, lambda: update_ai_ready({"throttled": True}, db)
-                    )
-                    if ai_stats.get("ai_ready"):
-                        logger.info(f"Auto-onboarding: {ai_stats['ai_ready']} Linux sunucu AI Ready oldu")
-
-                    win_ai_stats = await loop.run_in_executor(
-                        None, lambda: update_windows_ai_ready({"throttled": True}, db)
-                    )
-                    if win_ai_stats.get("ai_ready_count"):
-                        logger.info(f"Auto-onboarding: {win_ai_stats['ai_ready_count']} Windows sunucu AI Ready oldu")
-
-                    os_stats = await loop.run_in_executor(None, collect_os_release_info, db)
-                    if os_stats.get("updated"):
-                        logger.info(f"Auto-onboarding: {os_stats['updated']} sunucunun OS/kernel bilgisi toplandı")
-
-                    ne_stats = await loop.run_in_executor(None, auto_install_node_exporter, db)
-                    if ne_stats.get("success"):
-                        logger.info(f"Auto-onboarding: {ne_stats['success']} sunucuya Node Exporter kuruldu")
-
-                    we_stats = await loop.run_in_executor(None, install_exporter_all, None, db)
-                    if we_stats.get("installed_count"):
-                        logger.info(f"Auto-onboarding: {we_stats['installed_count']} Windows sunucuya exporter kuruldu")
-
-                    # Yama/güvenlik raporları için cache — ağır işlemler olduğundan
-                    # (COM update search, SSH turu) 6 saatten eski kontrolü olanlar için çalışır.
-                    winupd_stats = await loop.run_in_executor(None, collect_windows_update_status, db)
-                    if winupd_stats.get("updated"):
-                        logger.info(f"Auto-onboarding: {winupd_stats['updated']} Windows sunucunun update/Defender durumu toplandı")
-
-                    secaudit_stats = await loop.run_in_executor(None, collect_linux_security_audit, db)
-                    if secaudit_stats.get("updated"):
-                        logger.info(f"Auto-onboarding: {secaudit_stats['updated']} Linux sunucunun güvenlik denetimi toplandı")
-
-                    # Uygulama/servis keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) —
-                    # sunucu bazında en fazla 12 saatte bir taranır (app_discovery.RESCAN_INTERVAL).
-                    from app.services.app_discovery import discover_applications_all_servers
-                    appdisc_stats = await loop.run_in_executor(None, discover_applications_all_servers, db)
-                    if appdisc_stats.get("scanned"):
-                        logger.info(
-                            f"Auto-onboarding: {appdisc_stats['scanned']} sunucuda uygulama taraması yapıldı "
-                            f"({appdisc_stats.get('apps_found', 0)} uygulama tespit edildi)"
+                        from app.api.servers import update_ai_ready
+                        from app.api.windows import update_windows_ai_ready, install_exporter_all
+                        from app.services.auto_onboarding import (
+                            auto_install_node_exporter,
+                            collect_os_release_info,
+                            collect_windows_update_status,
+                            collect_linux_security_audit,
                         )
 
-                    from app.services import qa_cache
-                    qa_cache.invalidate_all()
+                        ai_stats = await loop.run_in_executor(
+                            None, lambda: update_ai_ready({"throttled": True}, db)
+                        )
+                        if ai_stats.get("ai_ready"):
+                            logger.info(f"Auto-onboarding: {ai_stats['ai_ready']} Linux sunucu AI Ready oldu")
+
+                        win_ai_stats = await loop.run_in_executor(
+                            None, lambda: update_windows_ai_ready({"throttled": True}, db)
+                        )
+                        if win_ai_stats.get("ai_ready_count"):
+                            logger.info(f"Auto-onboarding: {win_ai_stats['ai_ready_count']} Windows sunucu AI Ready oldu")
+
+                        os_stats = await loop.run_in_executor(None, collect_os_release_info, db)
+                        if os_stats.get("updated"):
+                            logger.info(f"Auto-onboarding: {os_stats['updated']} sunucunun OS/kernel bilgisi toplandı")
+
+                        ne_stats = await loop.run_in_executor(None, auto_install_node_exporter, db)
+                        if ne_stats.get("success"):
+                            logger.info(f"Auto-onboarding: {ne_stats['success']} sunucuya Node Exporter kuruldu")
+
+                        we_stats = await loop.run_in_executor(None, install_exporter_all, None, db)
+                        if we_stats.get("installed_count"):
+                            logger.info(f"Auto-onboarding: {we_stats['installed_count']} Windows sunucuya exporter kuruldu")
+
+                        # Yama/güvenlik raporları için cache — ağır işlemler olduğundan
+                        # (COM update search, SSH turu) 6 saatten eski kontrolü olanlar için çalışır.
+                        winupd_stats = await loop.run_in_executor(None, collect_windows_update_status, db)
+                        if winupd_stats.get("updated"):
+                            logger.info(f"Auto-onboarding: {winupd_stats['updated']} Windows sunucunun update/Defender durumu toplandı")
+
+                        secaudit_stats = await loop.run_in_executor(None, collect_linux_security_audit, db)
+                        if secaudit_stats.get("updated"):
+                            logger.info(f"Auto-onboarding: {secaudit_stats['updated']} Linux sunucunun güvenlik denetimi toplandı")
+
+                        # Uygulama/servis keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) —
+                        # sunucu bazında en fazla 12 saatte bir taranır (app_discovery.RESCAN_INTERVAL).
+                        from app.services.app_discovery import discover_applications_all_servers
+                        appdisc_stats = await loop.run_in_executor(None, discover_applications_all_servers, db)
+                        if appdisc_stats.get("scanned"):
+                            logger.info(
+                                f"Auto-onboarding: {appdisc_stats['scanned']} sunucuda uygulama taraması yapıldı "
+                                f"({appdisc_stats.get('apps_found', 0)} uygulama tespit edildi)"
+                            )
+
+                        from app.services import qa_cache
+                        qa_cache.invalidate_all()
                 except Exception as e:
                     logger.error(f"Auto-onboarding error: {e}", exc_info=True)
                 finally:
@@ -833,6 +856,24 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Linux NL inventory collector error: {e}", exc_info=True)
                 await asyncio.sleep(_rt_sec("nlq_collector_interval_sec", 900))
+
+
+    async def _periodic_windows_live_metrics(self):
+        """Windows WinRM live-metrics cache — istek yolundan bağımsız yenileme."""
+        logger.info("Windows live-metrics cache task started")
+        await asyncio.sleep(90)
+        while self.running:
+            try:
+                from app.services import windows_live_metrics as wlm
+                # refresh_async başlatır veya zaten sürüyorsa no-op
+                wlm.refresh_async()
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                logger.info("Windows live-metrics task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Windows live-metrics task error: {e}", exc_info=True)
+                await asyncio.sleep(60)
 
 
 def _run_vm_sync_batch(db) -> None:

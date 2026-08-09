@@ -61,6 +61,46 @@ async def incident_stats(
     }
 
 
+_LIST_DESC_MAX = 200
+
+
+def _has_rca(rca_result) -> bool:
+    if not rca_result or not isinstance(rca_result, dict):
+        return False
+    analysis = rca_result.get("analysis")
+    return bool(analysis and str(analysis).strip())
+
+
+def _incident_list_item(inc: Incident, server_map: dict) -> dict:
+    """Liste kartı — ağır alanlar (rca_result / root_cause / resolution) yok."""
+    desc = inc.description or ""
+    if len(desc) > _LIST_DESC_MAX:
+        desc = desc[:_LIST_DESC_MAX] + "…"
+    server_names = []
+    for sid in (inc.affected_servers or []):
+        s = server_map.get(sid)
+        if s:
+            server_names.append(s)
+    related = inc.related_events or []
+    return {
+        "id": inc.id,
+        "title": inc.title,
+        "description": desc or None,
+        "severity": inc.severity,
+        "status": inc.status,
+        "source": inc.source,
+        "affected_servers": inc.affected_servers or [],
+        "affected_server_details": server_names,
+        "related_events": related,
+        "related_event_count": len(related),
+        "has_rca": _has_rca(inc.rca_result),
+        "assigned_to": inc.assigned_to,
+        "created_at": inc.created_at.isoformat() if inc.created_at else None,
+        "updated_at": inc.updated_at.isoformat() if inc.updated_at else None,
+        "resolved_at": inc.resolved_at.isoformat() if inc.resolved_at else None,
+    }
+
+
 @router.get("/")
 async def list_incidents(
     status: Optional[str] = None,
@@ -71,7 +111,7 @@ async def list_incidents(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    """Incident'ları listele"""
+    """Incident listesi (slim) — tam RCA/açıklama için GET /{id}."""
     q = db.query(Incident)
     if status:
         q = q.filter(Incident.status == status)
@@ -80,40 +120,29 @@ async def list_incidents(
     if search:
         q = q.filter(Incident.title.ilike(f"%{search}%"))
 
-    all_matching = q.order_by(desc(Incident.created_at)).all()
+    q = q.order_by(desc(Incident.created_at))
+
+    # Platform filtresi Python'da; yoksa SQL limit/offset
     if platform:
-        all_matching = filter_incidents_for_platform(all_matching, platform, db)
-    total = len(all_matching)
-    incidents = all_matching[offset : offset + limit]
+        all_matching = filter_incidents_for_platform(q.all(), platform, db)
+        total = len(all_matching)
+        incidents = all_matching[offset : offset + limit]
+    else:
+        total = q.count()
+        incidents = q.offset(offset).limit(limit).all()
 
-    result = []
+    all_server_ids: set = set()
     for inc in incidents:
-        # Affected server isimlerini getir
-        server_names = []
-        if inc.affected_servers:
-            servers = db.query(Server).filter(Server.id.in_(inc.affected_servers)).all()
-            server_names = [{"id": s.id, "name": s.name, "ip": s.ip_address} for s in servers]
+        all_server_ids.update(inc.affected_servers or [])
+    server_map: dict = {}
+    if all_server_ids:
+        for s in db.query(Server).filter(Server.id.in_(list(all_server_ids))).all():
+            server_map[s.id] = {"id": s.id, "name": s.name, "ip": s.ip_address}
 
-        result.append({
-            "id": inc.id,
-            "title": inc.title,
-            "description": inc.description,
-            "severity": inc.severity,
-            "status": inc.status,
-            "source": inc.source,
-            "affected_servers": inc.affected_servers or [],
-            "affected_server_details": server_names,
-            "related_events": inc.related_events or [],
-            "root_cause": inc.root_cause,
-            "resolution": inc.resolution,
-            "rca_result": inc.rca_result,
-            "assigned_to": inc.assigned_to,
-            "created_at": inc.created_at.isoformat() if inc.created_at else None,
-            "updated_at": inc.updated_at.isoformat() if inc.updated_at else None,
-            "resolved_at": inc.resolved_at.isoformat() if inc.resolved_at else None
-        })
-
-    return {"total": total, "incidents": result}
+    return {
+        "total": total,
+        "incidents": [_incident_list_item(inc, server_map) for inc in incidents],
+    }
 
 
 @router.post("/", status_code=201)
@@ -170,6 +199,15 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
 
     db.commit()
     db.refresh(inc)
+
+    # Dalga C1: resolved + çözüm metni → runbook adayı (Chroma'ya otomatik yazılmaz)
+    if (data.status and data.status in ("resolved", "closed")) or data.resolution:
+        try:
+            from app.services.runbook_candidates import maybe_create_runbook_candidate
+            maybe_create_runbook_candidate(db, inc)
+        except Exception as e:
+            logger.debug("Runbook candidate atlandı: %s", e)
+
     return {"success": True, "message": "Incident güncellendi", "resolved_events": resolved_events}
 
 

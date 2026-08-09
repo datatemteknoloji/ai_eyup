@@ -77,6 +77,8 @@ class Settings:
 
     # RAG (ChromaDB)
     RAG_CHROMA_PATH: str = os.getenv("RAG_CHROMA_PATH", "/app/chroma")
+    # Kurulum köküne göreli seed: /dttadvance/app/docs/rag_seed veya compose /app/docs/rag_seed
+    RAG_SEED_PATH: str = os.getenv("RAG_SEED_PATH", "/app/docs/rag_seed")
     RAG_RUNBOOK_TOP_K: int = int(os.getenv("RAG_RUNBOOK_TOP_K", "5"))
     RAG_INCIDENTS_TOP_K: int = int(os.getenv("RAG_INCIDENTS_TOP_K", "3"))
     RAG_METRICS_TOP_K: int = int(os.getenv("RAG_METRICS_TOP_K", "5"))
@@ -94,6 +96,9 @@ class Settings:
         p.strip() for p in os.getenv("PROMETHEUS_WINDOWS_JOBS", "windows-exporter").split(",") if p.strip()
     ] or ["windows-exporter"]
     
+    # Redis (Celery broker + lockout / bulk-job / session revoke)
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
     # Security - SECRET_KEY ZORUNLU!
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     if not SECRET_KEY:
@@ -101,11 +106,32 @@ class Settings:
         print("Set it in .env file: SECRET_KEY=your-random-secret-key-here")
         print("Generate with: openssl rand -hex 32")
         sys.exit(1)
-    
+    # Placeholder (GENERATE_WITH_*, CHANGE_ME*, …) — üretimde fail.
+    # Kaçış: ALLOW_INSECURE_SECRETS=1  |  rotate job: NEW_SECRET_KEY set
+    try:
+        from app.services.secret_policy import is_insecure_secret_value, validate_runtime_secrets
+        _allow = (os.getenv("ALLOW_INSECURE_SECRETS") or "").strip().lower() in ("1", "true", "yes", "on")
+        _rotate_job = bool((os.getenv("NEW_SECRET_KEY") or "").strip())
+        if is_insecure_secret_value(SECRET_KEY, min_len=24) and not _allow and not _rotate_job:
+            print("❌ FATAL: SECRET_KEY placeholder veya çok kısa!")
+            print("  Yeni kurulum: ./scripts/dev-setup.sh veya install-rhel.sh")
+            print("  Canlı veri:   ./scripts/rotate-secrets.sh")
+            print("  Geçici kaçış: ALLOW_INSECURE_SECRETS=1 (önerilmez)")
+            sys.exit(1)
+        if not _rotate_job:
+            _ok, _msgs = validate_runtime_secrets(secret_key=SECRET_KEY, strict=False)
+            for _m in _msgs:
+                if "SECRET_KEY" not in _m:
+                    print(f"⚠ {_m}")
+    except SystemExit:
+        raise
+    except Exception as _e:
+        print(f"⚠ secret policy check: {_e}")
+ 
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
     # İlk admin parolası (yalnızca hiç kullanıcı yokken seed'de kullanılır)
-    ADMIN_DEFAULT_PASSWORD: str = os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
+    ADMIN_DEFAULT_PASSWORD: str = os.getenv("ADMIN_DEFAULT_PASSWORD", "Kim13Sun")
     
     # CORS - Production'da sadece frontend domain
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")

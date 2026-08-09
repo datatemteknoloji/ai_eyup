@@ -85,11 +85,11 @@ const Ansible: React.FC = () => {
 
   // ── Data fetching ────────────────────────────────────────────────────────
   const { data: allServers = [] } = useQuery<Server[]>({
-    queryKey: ['servers'],
+    queryKey: ['servers', 'ansible-picker'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/servers/`)
-      if (!res.ok) throw new Error('Sunucular alınamadı')
-      return res.json()
+      const { fetchServersPage } = await import('../api/servers')
+      const p = await fetchServersPage<Server>({ page: 1, page_size: 200, ai_ready: true })
+      return p.items
     },
   })
 

@@ -188,6 +188,48 @@ def _vmware_cpu_mem_from_live(stats: dict) -> Tuple[Optional[float], Optional[fl
     )
 
 
+def _vmware_metric_row_dicts(
+    server: Server,
+    *,
+    cpu_percent: Optional[float],
+    mem_percent: Optional[float],
+    mem_used_mb: Optional[float],
+    mem_total_mb: Optional[float],
+    disk_read_iops: Optional[float] = None,
+    disk_write_iops: Optional[float] = None,
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """VMware snapshot satırlarını bulk_insert mapping olarak üretir (commit yok)."""
+    ts = now or datetime.utcnow()
+    pairs: List[Tuple[str, float, str]] = []
+    if cpu_percent is not None:
+        pairs.append(("cpu_usage_percent", cpu_percent, "percent"))
+    if mem_percent is not None:
+        pairs.append(("memory_usage_percent", mem_percent, "percent"))
+    if mem_used_mb is not None:
+        pairs.append(("memory_used_bytes", mem_used_mb * 1024 * 1024, "bytes"))
+    if mem_total_mb is not None:
+        pairs.append(("memory_total_bytes", mem_total_mb * 1024 * 1024, "bytes"))
+        if mem_used_mb is not None:
+            free_mb = max(mem_total_mb - mem_used_mb, 0)
+            pairs.append(("memory_available_bytes", free_mb * 1024 * 1024, "bytes"))
+    if disk_read_iops is not None:
+        pairs.append(("disk_read_iops", disk_read_iops, "count"))
+    if disk_write_iops is not None:
+        pairs.append(("disk_write_iops", disk_write_iops, "count"))
+    return [
+        {
+            "server_id": server.id,
+            "metric_name": name,
+            "value": float(val),
+            "unit": unit,
+            "labels": "vmware",
+            "timestamp": ts,
+        }
+        for name, val, unit in pairs
+    ]
+
+
 def _write_vmware_metric_rows(
     db: Session,
     server: Server,
@@ -199,44 +241,41 @@ def _write_vmware_metric_rows(
     disk_read_iops: Optional[float] = None,
     disk_write_iops: Optional[float] = None,
 ) -> int:
-    now = datetime.utcnow()
-    n = 0
-    rows = []
-    if cpu_percent is not None:
-        rows.append(("cpu_usage_percent", cpu_percent, "percent"))
-    if mem_percent is not None:
-        rows.append(("memory_usage_percent", mem_percent, "percent"))
-    if mem_used_mb is not None:
-        rows.append(("memory_used_bytes", mem_used_mb * 1024 * 1024, "bytes"))
-    if mem_total_mb is not None:
-        rows.append(("memory_total_bytes", mem_total_mb * 1024 * 1024, "bytes"))
-        free_mb = None
-        if mem_used_mb is not None:
-            free_mb = max(mem_total_mb - mem_used_mb, 0)
-        if free_mb is not None:
-            rows.append(("memory_available_bytes", free_mb * 1024 * 1024, "bytes"))
-    if disk_read_iops is not None:
-        rows.append(("disk_read_iops", disk_read_iops, "count"))
-    if disk_write_iops is not None:
-        rows.append(("disk_write_iops", disk_write_iops, "count"))
-    for name, val, unit in rows:
-        db.add(MetricData(
-            server_id=server.id,
-            metric_name=name,
-            value=float(val),
-            unit=unit,
-            labels="vmware",
-            timestamp=now,
-        ))
-        n += 1
-    if n:
+    rows = _vmware_metric_row_dicts(
+        server,
+        cpu_percent=cpu_percent,
+        mem_percent=mem_percent,
+        mem_used_mb=mem_used_mb,
+        mem_total_mb=mem_total_mb,
+        disk_read_iops=disk_read_iops,
+        disk_write_iops=disk_write_iops,
+    )
+    if not rows:
+        return 0
+    try:
+        db.bulk_insert_mappings(MetricData, rows)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("VMware metric write failed server=%s: %s", server.name, e)
+        return 0
+    return len(rows)
+
+
+def _flush_metric_mappings(db: Session, pending: List[Dict[str, Any]], chunk: int = 2000) -> int:
+    """pending satırları chunk'lı bulk_insert ile yazar; yazılan adedi döner."""
+    written = 0
+    while len(pending) >= chunk:
+        batch = pending[:chunk]
+        del pending[:chunk]
         try:
+            db.bulk_insert_mappings(MetricData, batch)
             db.commit()
+            written += len(batch)
         except Exception as e:
             db.rollback()
-            logger.warning("VMware metric write failed server=%s: %s", server.name, e)
-            return 0
-    return n
+            logger.warning("Metric bulk insert failed (%d rows): %s", len(batch), e)
+    return written
 
 
 class MetricSyncService:
@@ -390,6 +429,7 @@ class MetricSyncService:
 
         total = 0
         synced_ids: set = set()
+        pending: List[Dict[str, Any]] = []
         end_time = datetime.utcnow()
         start_time = end_time - timedelta(minutes=minutes)
         chunk_size = MetricSyncService._BATCH_CHUNK_SIZE
@@ -445,19 +485,18 @@ class MetricSyncService:
                                         float_val = float(val)
                                         if float_val != float_val or float_val in (float("inf"), float("-inf")):
                                             continue
-                                        db.add(MetricData(
-                                            server_id=srv.id,
-                                            metric_name=db_metric_name,
-                                            value=float_val,
-                                            unit=unit,
-                                            labels=category,
-                                            timestamp=datetime.utcfromtimestamp(float(ts)),
-                                        ))
-                                        total += 1
+                                        pending.append({
+                                            "server_id": srv.id,
+                                            "metric_name": db_metric_name,
+                                            "value": float_val,
+                                            "unit": unit,
+                                            "labels": category,
+                                            "timestamp": datetime.utcfromtimestamp(float(ts)),
+                                        })
                                         synced_ids.add(srv.id)
                                     except Exception:
                                         pass
-                            db.commit()
+                            total += _flush_metric_mappings(db, pending)
                         except Exception as e:
                             logger.debug("Batch metric sync error %s (chunk=%d): %s", db_metric_name, len(chunk), e)
                             try:
@@ -465,14 +504,25 @@ class MetricSyncService:
                             except Exception:
                                 pass
 
+        total += _flush_metric_mappings(db, pending)
+        if pending:
+            try:
+                db.bulk_insert_mappings(MetricData, pending)
+                db.commit()
+                total += len(pending)
+                pending.clear()
+            except Exception as e:
+                db.rollback()
+                logger.warning("Metric bulk insert final flush failed: %s", e)
+
         return {"servers": len(synced_ids), "metrics": total}
 
     @staticmethod
     def sync_vmware_fallback_batch(db: Session, servers: List[Server]) -> Dict[str, Any]:
         """
         VM'ler için metrik kaynağı her zaman vCenter'dır (Prometheus/node_exporter
-        kurulu olsa bile) — QuickStats → metric_data (cpu/mem). Disk IOPS de
-        vCenter PerfManager'dan (get_vm_disk_iops) alınır.
+        kurulu olsa bile) — QuickStats → metric_data (cpu/mem). Disk IOPS
+        get_all_vm_perf_io ile toplu alınır (VM başına SOAP yok).
         """
         from app.models.hypervisor import Hypervisor, HypervisorType
         from app.services.vmware.vcenter_client import VCenterClient
@@ -496,7 +546,8 @@ class MetricSyncService:
             # (ör. "Vcenter datatem") girilmiş olabilir; inventory_sync_service
             # ile aynı öncelik sırası kullanılmalı.
             vc_host = (hyp.ip_address or hyp.hostname or "").strip()
-            vc_pass = hyp.password or (hyp.connection_config or {}).get("password", "")
+            from app.services.hypervisor_credentials import hv_password
+            vc_pass = hv_password(hyp)
             if not (vc_host and hyp.username and vc_pass):
                 continue
             try:
@@ -514,6 +565,9 @@ class MetricSyncService:
                     by_ref = {str(x.get("vm_ref")): x for x in live if x.get("vm_ref")}
                     by_name = {(x.get("name") or "").lower(): x for x in live if x.get("name")}
 
+                    # Önce ref çözümle, sonra toplu IOPS
+                    resolved: List[Tuple[Server, Optional[dict], Optional[str]]] = []
+                    perf_refs: List[str] = []
                     for srv in group:
                         stats = None
                         vm_id = srv.hypervisor_vm_id
@@ -525,9 +579,25 @@ class MetricSyncService:
                             qs = vc.get_vm_quick_stats(str(vm_id))
                             if qs:
                                 stats = qs
-
                         if not stats:
                             continue
+                        perf_vm = srv.hypervisor_vm_id or (
+                            stats.get("vm_ref") if isinstance(stats, dict) else None
+                        )
+                        if perf_vm:
+                            perf_refs.append(str(perf_vm))
+                        resolved.append((srv, stats, str(perf_vm) if perf_vm else None))
+
+                    io_by_ref: Dict[str, Dict] = {}
+                    if perf_refs:
+                        try:
+                            io_by_ref = vc.get_all_vm_perf_io(list(dict.fromkeys(perf_refs))) or {}
+                        except Exception as ie:
+                            logger.debug("VMware batch disk iops skip hyp=%s: %s", hyp_id, ie)
+
+                    now = datetime.utcnow()
+                    pending_rows: List[Dict[str, Any]] = []
+                    for srv, stats, perf_vm in resolved:
                         cpu_p, mem_p, mu, mt = _vmware_cpu_mem_from_live(stats)
                         # Fleet live payload'da memorySizeMB yok → tek VM quickStats dene
                         if (cpu_p is None or mem_p is None or mt is None) and srv.hypervisor_vm_id:
@@ -540,28 +610,37 @@ class MetricSyncService:
                                 mt = mt if mt is not None else t2
 
                         read_iops = write_iops = None
-                        perf_vm = srv.hypervisor_vm_id or (stats.get("vm_ref") if isinstance(stats, dict) else None)
-                        if perf_vm:
-                            try:
-                                io = vc.get_vm_disk_iops(str(perf_vm))
-                                if io:
-                                    read_iops = io.get("disk_read_iops")
-                                    write_iops = io.get("disk_write_iops")
-                            except Exception as ie:
-                                logger.debug("VMware disk iops skip %s: %s", srv.name, ie)
+                        if perf_vm and perf_vm in io_by_ref:
+                            io = io_by_ref[perf_vm]
+                            read_iops = io.get("disk_read_iops")
+                            write_iops = io.get("disk_write_iops")
 
-                        wrote = _write_vmware_metric_rows(
-                            db, srv,
+                        rows = _vmware_metric_row_dicts(
+                            srv,
                             cpu_percent=cpu_p,
                             mem_percent=mem_p,
                             mem_used_mb=mu,
                             mem_total_mb=mt,
                             disk_read_iops=read_iops,
                             disk_write_iops=write_iops,
+                            now=now,
                         )
-                        if wrote:
-                            total_metrics += wrote
+                        if rows:
+                            pending_rows.extend(rows)
                             synced_servers += 1
+
+                    if pending_rows:
+                        try:
+                            # chunk'lı yaz
+                            while pending_rows:
+                                batch = pending_rows[:2000]
+                                del pending_rows[:2000]
+                                db.bulk_insert_mappings(MetricData, batch)
+                                db.commit()
+                                total_metrics += len(batch)
+                        except Exception as e:
+                            db.rollback()
+                            logger.warning("VMware metric bulk write failed hyp=%s: %s", hyp_id, e)
                 finally:
                     try:
                         vc.logout()
@@ -571,7 +650,7 @@ class MetricSyncService:
                 logger.error("VMware metric fallback hyp=%s: %s", hyp_id, e, exc_info=True)
 
         logger.info(
-            "VMware metric fallback: %s sunucu, %s kayit (node_exporter yok)",
+            "VMware metric fallback: %s sunucu, %s kayit (batch IOPS)",
             synced_servers, total_metrics,
         )
         return {"servers": synced_servers, "metrics": total_metrics}

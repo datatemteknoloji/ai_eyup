@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 
 from app.models.hypervisor import Hypervisor
+from app.services.hypervisor_credentials import hv_password
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _build_client(hv: Hypervisor):
     return VCenterClient(
         host=hv.ip_address or hv.hostname,
         username=hv.username or (hv.connection_config or {}).get("username", ""),
-        password=hv.password or (hv.connection_config or {}).get("password", ""),
+        password=hv_password(hv),
         port=hv.port or 443,
         verify_ssl=False,
     )

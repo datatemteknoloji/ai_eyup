@@ -1,1 +1,0 @@
-"""oVirt/RHEV integration services"""

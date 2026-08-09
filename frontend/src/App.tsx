@@ -1,71 +1,178 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import React, { Suspense, lazy } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { BrandingProvider } from './branding/BrandingContext'
+import { ThemeProvider } from './theme/ThemeProvider'
 import ErrorBoundary from './components/ErrorBoundary'
-import Login from './pages/Login'
-import AuditLog from './pages/AuditLog'
-import KnowledgeBase from './pages/KnowledgeBase'
-import Applications from './pages/Applications'
-import Servers from './pages/Servers'
-import Hypervisors from './pages/Hypervisors'
-import Agent from './pages/Agent'
-import AiAutomationHub from './pages/AiAutomationHub'
-import LiveMetrics from './pages/LiveMetrics'
-import Settings from './pages/Settings'
-import McpTools from './pages/McpTools'
-import Ansible from './pages/Ansible'
-import WindowsAnsible from './pages/WindowsAnsible'
-import PackageManager from './pages/PackageManager'
-import Repositories from './pages/Repositories'
-import SystemUpdate from './pages/SystemUpdate'
-import TerminalPage from './pages/TerminalPage'
-import {
-  LinuxInfraReportsPage, WindowsInfraReportsPage,
-  VirtInfraReportsPage, ExadataInfraReportsPage,
-} from './pages/PlatformInfraReportsPages'
-import ExecutiveDashboard from './pages/ExecutiveDashboard'
-import ExadataDashboard from './pages/ExadataDashboard'
-import OpenShiftDashboard from './pages/OpenShiftDashboard'
-import IntegrationsHub from './pages/IntegrationsHub'
-import PhysicalHostsPage from './pages/PhysicalHostsPage'
-import WindowsServers from './pages/WindowsServers'
-import WindowsLiveMetrics from './pages/WindowsLiveMetrics'
-import UCMDBImport from './pages/UCMDBImport'
-import Level1Ops from './pages/Level1Ops'
-import UserManager from './pages/UserManager'
 import Layout from './components/Layout'
-import {
-  AdminDashboardPage, LinuxDashboardPage, WindowsDashboardPage,
-} from './pages/PlatformDashboardPages'
 import { RequirePlatformAiops } from './components/RequirePlatformAiops'
-import {
-  LinuxOpsPage, VirtOpsPage, WindowsOpsPage,
-  LinuxEventsPage, VirtEventsPage, WindowsEventsPage,
-  LinuxIncidentsPage, VirtIncidentsPage, WindowsIncidentsPage,
-  LinuxAnalysisPage, VirtAnalysisPage, WindowsAnalysisPage,
-  ExadataOpsPage, ExadataEventsPage, ExadataIncidentsPage, ExadataAnalysisPage,
-  LinuxChatPage, WindowsChatPage, VirtChatPage, ExadataChatPage,
-  OpenShiftOpsPage, OpenShiftEventsPage, OpenShiftIncidentsPage, OpenShiftAnalysisPage, OpenShiftChatPage,
-} from './pages/PlatformAiopsPages'
+
+// Eager: login + auth shell (ilk boya)
+import Login from './pages/Login'
+
+// Route-level code splitting — ağır sayfalar ayrı chunk
+const AuditLog = lazy(() => import('./pages/AuditLog'))
+const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'))
+const Applications = lazy(() => import('./pages/Applications'))
+const Servers = lazy(() => import('./pages/Servers'))
+const Hypervisors = lazy(() => import('./pages/Hypervisors'))
+const Agent = lazy(() => import('./pages/Agent'))
+const AiAutomationHub = lazy(() => import('./pages/AiAutomationHub'))
+const LiveMetrics = lazy(() => import('./pages/LiveMetrics'))
+const Settings = lazy(() => import('./pages/Settings'))
+const McpTools = lazy(() => import('./pages/McpTools'))
+const Ansible = lazy(() => import('./pages/Ansible'))
+const WindowsAnsible = lazy(() => import('./pages/WindowsAnsible'))
+const PackageManager = lazy(() => import('./pages/PackageManager'))
+const Repositories = lazy(() => import('./pages/Repositories'))
+const SystemUpdate = lazy(() => import('./pages/SystemUpdate'))
+const TerminalPage = lazy(() => import('./pages/TerminalPage'))
+const ExecutiveDashboard = lazy(() => import('./pages/ExecutiveDashboard'))
+const ExadataDashboard = lazy(() => import('./pages/ExadataDashboard'))
+const OpenShiftDashboard = lazy(() => import('./pages/OpenShiftDashboard'))
+const OpenShiftExplorer = lazy(() => import('./pages/OpenShiftExplorer'))
+const OpenShiftVmConsolePage = lazy(() => import('./pages/OpenShiftVmConsolePage'))
+const IntegrationsHub = lazy(() => import('./pages/IntegrationsHub'))
+const PhysicalHostsPage = lazy(() => import('./pages/PhysicalHostsPage'))
+const WindowsServers = lazy(() => import('./pages/WindowsServers'))
+const WindowsLiveMetrics = lazy(() => import('./pages/WindowsLiveMetrics'))
+const UCMDBImport = lazy(() => import('./pages/UCMDBImport'))
+const Level1OpsCenter = lazy(() => import('./pages/level1/Level1OpsCenter'))
+const Level1Ops = lazy(() => import('./pages/level1/Level1Ops'))
+const Level1Console = lazy(() => import('./pages/level1/Level1Console'))
+const Level1Jobs = lazy(() => import('./pages/level1/Level1Jobs'))
+const Level1Audit = lazy(() => import('./pages/level1/Level1Audit'))
+const Level1Settings = lazy(() => import('./pages/level1/Level1Settings'))
+const UserManager = lazy(() => import('./pages/UserManager'))
+
+const LinuxInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.LinuxInfraReportsPage }))
+)
+const WindowsInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.WindowsInfraReportsPage }))
+)
+const VirtInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.VirtInfraReportsPage }))
+)
+const ExadataInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.ExadataInfraReportsPage }))
+)
+
+const AdminDashboardPage = lazy(() =>
+  import('./pages/PlatformDashboardPages').then((m) => ({ default: m.AdminDashboardPage }))
+)
+const LinuxDashboardPage = lazy(() =>
+  import('./pages/PlatformDashboardPages').then((m) => ({ default: m.LinuxDashboardPage }))
+)
+const WindowsDashboardPage = lazy(() =>
+  import('./pages/PlatformDashboardPages').then((m) => ({ default: m.WindowsDashboardPage }))
+)
+
+const LinuxOpsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.LinuxOpsPage }))
+)
+const VirtOpsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.VirtOpsPage }))
+)
+const WindowsOpsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.WindowsOpsPage }))
+)
+const LinuxEventsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.LinuxEventsPage }))
+)
+const VirtEventsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.VirtEventsPage }))
+)
+const WindowsEventsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.WindowsEventsPage }))
+)
+const LinuxIncidentsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.LinuxIncidentsPage }))
+)
+const VirtIncidentsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.VirtIncidentsPage }))
+)
+const WindowsIncidentsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.WindowsIncidentsPage }))
+)
+const LinuxAnalysisPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.LinuxAnalysisPage }))
+)
+const VirtAnalysisPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.VirtAnalysisPage }))
+)
+const WindowsAnalysisPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.WindowsAnalysisPage }))
+)
+const ExadataOpsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.ExadataOpsPage }))
+)
+const ExadataEventsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.ExadataEventsPage }))
+)
+const ExadataIncidentsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.ExadataIncidentsPage }))
+)
+const ExadataAnalysisPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.ExadataAnalysisPage }))
+)
+const LinuxChatPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.LinuxChatPage }))
+)
+const WindowsChatPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.WindowsChatPage }))
+)
+const VirtChatPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.VirtChatPage }))
+)
+const ExadataChatPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.ExadataChatPage }))
+)
+const OpenShiftOpsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftOpsPage }))
+)
+const OpenShiftEventsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftEventsPage }))
+)
+const OpenShiftIncidentsPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftIncidentsPage }))
+)
+const OpenShiftChatPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftChatPage }))
+)
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,          // 30 sn önce fetch edilmişse yeniden istek atma
-      gcTime: 5 * 60_000,         // 5 dk cache'de tut
-      retry: 1,                   // başarısızlıkta sadece 1 kez dene
-      refetchOnWindowFocus: false, // sekme odağında otomatik refetch yapma
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+      refetchIntervalInBackground: false,
     },
   },
 })
 
-// Layout wrapper — terminal dışında tüm sayfalara sidebar/header ekler
+const PageFallback: React.FC = () => (
+  <div className="min-h-[40vh] flex items-center justify-center">
+    <span className="w-8 h-8 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+  </div>
+)
+
 const WithLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Layout>{children}</Layout>
 )
 
-// Oturum koruması — giriş yoksa /login'e yönlendir
+const RouteErrorBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation()
+  return (
+    <ErrorBoundary resetKey={`${location.pathname}${location.search}`}>
+      {children}
+    </ErrorBoundary>
+  )
+}
+
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth()
   if (loading) {
@@ -79,14 +186,12 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>
 }
 
-// Admin koruması — admin değilse ana sayfaya yönlendir (menüden gizli olsa da URL ile erişimi engeller)
 const RequireAdmin: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth()
-  if (user?.role !== 'admin') return <Navigate to="/" replace />
+  if (user?.role !== 'admin' && !user?.is_admin) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
-// Modül koruması — kullanıcının ilgili modüle erişimi yoksa ana sayfaya yönlendir (menüden gizli olsa da URL ile erişimi engeller)
 const RequireModule: React.FC<{ moduleId: string; children: React.ReactNode }> = ({ moduleId, children }) => {
   const { hasModule } = useAuth()
   if (!hasModule(moduleId)) return <Navigate to="/" replace />
@@ -99,7 +204,6 @@ const RequireAnyModule: React.FC<{ moduleIds: string[]; children: React.ReactNod
   return <>{children}</>
 }
 
-// Ana sayfa — admin genel dashboard, diğerleri modül dashboard'una
 const HomeRedirect: React.FC = () => {
   const { hasModule, loading, user } = useAuth()
   if (loading) {
@@ -119,8 +223,6 @@ const HomeRedirect: React.FC = () => {
   if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
   if (hasModule('level1')) return <Navigate to="/level1" replace />
   if (hasModule('integrations')) return <Navigate to="/integrations" replace />
-  // Audit Log artık sadece admin — hiç modülü olmayan kullanıcı için döngüsel
-  // yönlendirme yerine bilgilendirici bir boş durum göster.
   return (
     <div className="min-h-[50vh] flex items-center justify-center text-center px-6">
       <div className="max-w-sm">
@@ -137,18 +239,22 @@ function App() {
       <BrandingProvider>
       <BrowserRouter>
         <AuthProvider>
+          <ThemeProvider>
+          <Suspense fallback={<PageFallback />}>
           <Routes>
-            {/* Login — Layout YOK */}
             <Route path="/login" element={<Login />} />
 
-            {/* Terminal — Layout YOK, tam ekran popup pencere */}
             <Route path="/terminal/:serverId" element={<TerminalPage />} />
+            <Route
+              path="/openshift/vms/:clusterId/:namespace/:name/console"
+              element={<OpenShiftVmConsolePage />}
+            />
 
-            {/* Diğer tüm sayfalar — oturum + Layout var */}
             <Route path="/*" element={
               <RequireAuth>
                 <WithLayout>
-                  <ErrorBoundary>
+                  <RouteErrorBoundary>
+                    <Suspense fallback={<PageFallback />}>
                     <Routes>
                       <Route path="/" element={<ErrorBoundary><HomeRedirect /></ErrorBoundary>} />
                       <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
@@ -165,7 +271,6 @@ function App() {
                       <Route path="/virt/compare" element={<Navigate to="/infra-reports?tab=compare" replace />} />
                       <Route path="/virt/reports" element={<Navigate to="/infra-reports" replace />} />
 
-                      {/* Linux AIOps */}
                       <Route path="/linux/ops" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/linux/chat" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/linux/events" element={<RequirePlatformAiops platform="linux"><ErrorBoundary><LinuxEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -175,7 +280,6 @@ function App() {
                       <Route path="/linux/rca" element={<Navigate to="/linux/analysis?tab=rca" replace />} />
                       <Route path="/linux/baseline" element={<Navigate to="/linux/analysis?tab=baseline" replace />} />
 
-                      {/* Sanallaştırma AIOps */}
                       <Route path="/virt/ops" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/virt/chat" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/virt/events" element={<RequirePlatformAiops platform="virt"><ErrorBoundary><VirtEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -185,7 +289,6 @@ function App() {
                       <Route path="/virt/rca" element={<Navigate to="/virt/analysis?tab=rca" replace />} />
                       <Route path="/virt/baseline" element={<Navigate to="/virt/analysis?tab=baseline" replace />} />
 
-                      {/* Windows AIOps */}
                       <Route path="/windows/aiops/ops" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/windows/aiops/chat" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/windows/aiops/events" element={<RequirePlatformAiops platform="windows"><ErrorBoundary><WindowsEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -195,7 +298,6 @@ function App() {
                       <Route path="/windows/aiops/rca" element={<Navigate to="/windows/aiops/analysis?tab=rca" replace />} />
                       <Route path="/windows/aiops/baseline" element={<Navigate to="/windows/aiops/analysis?tab=baseline" replace />} />
 
-                      {/* Exadata */}
                       <Route path="/exadata" element={<RequireModule moduleId="exadata"><ErrorBoundary><ExadataDashboard /></ErrorBoundary></RequireModule>} />
                       <Route path="/exadata/chat" element={<RequirePlatformAiops platform="exadata"><ErrorBoundary><ExadataChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/exadata/reports" element={<RequireModule moduleId="exadata"><ErrorBoundary><ExadataInfraReportsPage /></ErrorBoundary></RequireModule>} />
@@ -207,17 +309,16 @@ function App() {
                       <Route path="/exadata/rca" element={<Navigate to="/exadata/analysis?tab=rca" replace />} />
                       <Route path="/exadata/baseline" element={<Navigate to="/exadata/analysis?tab=baseline" replace />} />
 
-                      {/* OpenShift Container Platform */}
-                      <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftDashboard /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer initialSection="vms" /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/chat" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/incidents" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
-                      <Route path="/openshift/analysis" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
-                      <Route path="/openshift/rca" element={<Navigate to="/openshift/analysis?tab=rca" replace />} />
-                      <Route path="/openshift/baseline" element={<Navigate to="/openshift/analysis?tab=baseline" replace />} />
+                      <Route path="/openshift/analysis" element={<Navigate to="/openshift" replace />} />
+                      <Route path="/openshift/rca" element={<Navigate to="/openshift" replace />} />
+                      <Route path="/openshift/baseline" element={<Navigate to="/openshift?section=riskler" replace />} />
 
-                      {/* Eski AIOps yolları → Linux AIOps */}
                       <Route path="/ops" element={<Navigate to="/linux/ops" replace />} />
                       <Route path="/events" element={<Navigate to="/linux/events" replace />} />
                       <Route path="/incidents" element={<Navigate to="/linux/incidents" replace />} />
@@ -240,8 +341,13 @@ function App() {
                       <Route path="/integrations/exadata" element={<RequireAnyModule moduleIds={['integrations', 'exadata']}><ErrorBoundary><ExadataDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
-                      <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
-                      <Route path="/level1/:category" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1OpsCenter /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/ops/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/console/:id" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Console /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/jobs/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Jobs /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/audit" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Audit /></ErrorBoundary></RequireAdmin></RequireModule>} />
+                      <Route path="/level1/settings" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Settings /></ErrorBoundary></RequireAdmin></RequireModule>} />
+                      <Route path="/level1/:category" element={<Navigate to="/level1" replace />} />
                       <Route path="/modules" element={<Navigate to="/users" replace />} />
                       <Route path="/users" element={<RequireAdmin><ErrorBoundary><UserManager /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/chat" element={<RequireAnyModule moduleIds={['ai_automation', 'executive']}><ErrorBoundary><AiAutomationHub /></ErrorBoundary></RequireAnyModule>} />
@@ -258,11 +364,14 @@ function App() {
                       <Route path="/audit" element={<RequireAdmin><ErrorBoundary><AuditLog /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>
-                  </ErrorBoundary>
+                    </Suspense>
+                  </RouteErrorBoundary>
                 </WithLayout>
               </RequireAuth>
             } />
           </Routes>
+          </Suspense>
+          </ThemeProvider>
         </AuthProvider>
       </BrowserRouter>
       </BrandingProvider>

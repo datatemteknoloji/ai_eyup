@@ -2,21 +2,124 @@
 Servers API endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, selectinload
+from typing import List, Optional
 from app.core.database import get_db
 from app.core.inventory_guard import require_integrations_inventory
 from app.services.inventory_dedup import tag_inventory_source
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.schemas.server import ServerCreate, ServerUpdate, ServerResponse
-from app.services.monitoring.node_exporter_installer import NodeExporterInstaller
-from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
 from app.services.monitoring.server_health_checker import ServerHealthChecker
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_LIST_PAGE_SIZE_DEFAULT = 50
+_LIST_PAGE_SIZE_MAX = 200
+
+
+def _server_list_item(
+    s: Server,
+    *,
+    include_connection_config: bool = False,
+) -> dict:
+    """Sayfalı liste için slim sunucu DTO (SSH yok — DB cache NE alanları)."""
+    conn_config = getattr(s, "connection_config", None) or {}
+    hv_name = s.hypervisor.name if s.hypervisor else None
+    item = {
+        "id": s.id,
+        "name": s.name or "",
+        "hostname": s.hostname or "",
+        "ip_address": s.ip_address or "",
+        "status": s.status or "UNKNOWN",
+        "os_type": s.os_type or "",
+        "os_version": s.os_version or "",
+        "os_release_id": s.os_release_id or "",
+        "os_version_id": s.os_version_id or "",
+        "kernel_version": s.kernel_version or "",
+        "server_type": s.server_type or "VIRTUAL",
+        "cpu_cores": s.cpu_cores or 0,
+        "memory_gb": s.memory_gb or 0,
+        "ai_ready": bool(s.ai_ready),
+        "hypervisor_id": s.hypervisor_id,
+        "hypervisor_name": hv_name,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        "node_exporter": {
+            "installed": bool(getattr(s, "node_exporter_installed", False) or False),
+            "running": bool(getattr(s, "node_exporter_running", False) or False),
+        },
+    }
+    if include_connection_config:
+        item["connection_config"] = _mask_conn_config(conn_config)
+    return item
+
+
+def _apply_server_list_filters(
+    query,
+    *,
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    hide_offline: bool = False,
+    ai_ready: Optional[bool] = None,
+    server_type: Optional[str] = None,
+    os_filter: Optional[str] = None,
+    node_exporter: Optional[str] = None,
+    ip: Optional[str] = None,
+):
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                Server.name.ilike(like),
+                Server.hostname.ilike(like),
+                Server.ip_address.ilike(like),
+            )
+        )
+    if ip and ip.strip():
+        query = query.filter(Server.ip_address.ilike(f"%{ip.strip()}%"))
+    if hide_offline:
+        query = query.filter(Server.status != "OFFLINE")
+    if status and status.upper() != "ALL":
+        query = query.filter(Server.status == status.upper())
+    if ai_ready is not None:
+        query = query.filter(Server.ai_ready.is_(bool(ai_ready)))
+    if server_type and server_type.upper() != "ALL":
+        query = query.filter(Server.server_type == server_type.upper())
+    if os_filter and os_filter.lower() != "all":
+        os_l = os_filter.lower()
+        if os_l == "linux":
+            query = query.filter(
+                or_(
+                    Server.os_type.ilike("%linux%"),
+                    Server.os_type.ilike("%rhel%"),
+                    Server.os_type.ilike("%ol%"),
+                    Server.os_type.ilike("%ubuntu%"),
+                    Server.os_type.ilike("%centos%"),
+                    Server.os_type.ilike("%rocky%"),
+                    Server.os_type.ilike("%sles%"),
+                    Server.os_release_id.isnot(None),
+                ),
+                ~Server.os_type.ilike("%windows%"),
+            )
+        elif os_l == "other":
+            query = query.filter(
+                or_(Server.os_type.is_(None), Server.os_type == "", Server.os_type.ilike("%other%"), Server.os_type.ilike("%unknown%")),
+            )
+    if node_exporter and node_exporter.lower() != "all":
+        ne = node_exporter.lower()
+        if ne == "running":
+            query = query.filter(Server.node_exporter_running.is_(True))
+        elif ne == "installed":
+            query = query.filter(Server.node_exporter_installed.is_(True))
+        elif ne == "not_installed":
+            query = query.filter(
+                or_(Server.node_exporter_installed.is_(False), Server.node_exporter_installed.is_(None))
+            )
+    return query
 
 
 def _mask_conn_config(cfg: dict | None) -> dict:
@@ -374,109 +477,151 @@ def list_servers(
     db: Session = Depends(get_db),
     include_node_exporter_status: bool = False,
     platform: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(_LIST_PAGE_SIZE_DEFAULT, ge=1, le=_LIST_PAGE_SIZE_MAX),
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    hide_offline: bool = False,
+    ai_ready: Optional[bool] = None,
+    server_type: Optional[str] = None,
+    os_filter: Optional[str] = Query(None, alias="os"),
+    node_exporter: Optional[str] = None,
+    ip: Optional[str] = None,
+    include_connection_config: bool = False,
 ):
     """
-    Sunucuları listele.
+    Sunucuları sayfalı listele.
 
-    `platform` verilmezse (varsayılan) tüm sunucular döner — Ansible, Paket
-    Yöneticisi, Sistem Güncelleme gibi platform-bağımsız araçlar bunu kullanır.
-    `platform=linux` — yalnızca Linux modül envanteri (VM, Windows, Exadata hariç).
-    `platform=exadata` — Exadata node'larına bağlı sunucular.
-
-    NOT: kasıtlı olarak senkron `def` — include_node_exporter_status=True iken
-    her sunucu için SSH (NodeExporterInstaller) senkron/bloklayan I/O yapar; bu
-    hiç `await` kullanmayan bir gövdeydi ama `async def` olduğu için o SSH turu
-    boyunca event loop'u kilitliyordu (10k sunucuda ciddi bir "hang" riski).
-    FastAPI senkron endpoint'leri otomatik thread pool'da çalıştırır.
+    Dönüş: ``{ items, total, page, page_size }``.
+    `include_node_exporter_status` artık SSH yapmaz — DB cache alanları kullanılır (deprecated flag).
     """
+    del include_node_exporter_status  # SSH list path kaldırıldı; DB alanları yeterli
     try:
-        query = db.query(Server)
+        query = db.query(Server).options(selectinload(Server.hypervisor))
         if platform in ("linux", "windows", "virt", "exadata"):
             from app.services.platform_scope import apply_server_platform_filter
-            servers = apply_server_platform_filter(query, platform, db).all()
-        else:
-            servers = query.all()
-        result = []
-        conn_config = None
-        for s in servers:
-            conn_config = getattr(s, "connection_config", None) or {}
-            # Hypervisor adı (relationship üzerinden)
-            hv_name = s.hypervisor.name if s.hypervisor else None
-            server_data = {
-                "id": s.id,
-                "name": s.name or "",
-                "hostname": s.hostname or "",
-                "ip_address": s.ip_address or "",
-                "status": s.status or "UNKNOWN",
-                "os_type":        s.os_type or "",
-                "os_version":     s.os_version or "",
-                "os_release_id":  s.os_release_id or "",
-                "os_version_id":  s.os_version_id or "",
-                "kernel_version": s.kernel_version or "",
-                "server_type": s.server_type or "VIRTUAL",
-                "cpu_cores": s.cpu_cores or 0,
-                "memory_gb": s.memory_gb or 0,
-                "ai_ready": bool(s.ai_ready),
-                "hypervisor_id":   s.hypervisor_id,
-                "hypervisor_name": hv_name,
-                "connection_config": _mask_conn_config(conn_config),
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-                "updated_at": s.updated_at.isoformat() if s.updated_at else None
-            }
-            
-            # Node Exporter durumunu ekle (ONLINE sunucular: SSH varsa SSH, yoksa/hatada Prometheus)
-            if include_node_exporter_status:
-                if s.status == "ONLINE":
-                    if conn_config and conn_config.get("username"):
-                        try:
-                            installer = NodeExporterInstaller(s)
-                            node_exporter_status = installer.check_status()
-                            installer.connector.close()
-                            server_data["node_exporter"] = {
-                                "installed": node_exporter_status.get("installed", False),
-                                "running": node_exporter_status.get("running", False)
-                            }
-                        except Exception:
-                            server_data["node_exporter"] = {"installed": False, "running": False}
-                        # SSH sonucu kurulu/çalışır göstermiyorsa Prometheus fallback
-                        if not server_data["node_exporter"]["installed"]:
-                            if node_exporter_up_for_server(s.ip_address, s.hostname):
-                                server_data["node_exporter"] = {"installed": True, "running": True}
-                    else:
-                        # Credential yok ama ONLINE: sadece Prometheus'tan bak (sunucuda node_exporter çalışıyor olabilir)
-                        if s.ip_address or s.hostname:
-                            up = node_exporter_up_for_server(s.ip_address, s.hostname)
-                            server_data["node_exporter"] = {"installed": up, "running": up}
-                        else:
-                            server_data["node_exporter"] = {"installed": False, "running": False}
-                else:
-                    server_data["node_exporter"] = {"installed": False, "running": False}
-            
-            # Node Exporter: gerçek zamanlı istenmediyse DB cache kullan
-            if not include_node_exporter_status:
-                server_data["node_exporter"] = {
-                    "installed": bool(getattr(s, "node_exporter_installed", False) or False),
-                    "running": bool(getattr(s, "node_exporter_running", False) or False)
-                }
-            
-            result.append(server_data)
-        
-        return result
+            query = apply_server_platform_filter(query, platform, db)
+        query = _apply_server_list_filters(
+            query,
+            q=q,
+            status=status,
+            hide_offline=hide_offline,
+            ai_ready=ai_ready,
+            server_type=server_type,
+            os_filter=os_filter,
+            node_exporter=node_exporter,
+            ip=ip,
+        )
+        total = query.count()
+        servers = (
+            query.order_by(Server.name.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        items = [
+            _server_list_item(s, include_connection_config=include_connection_config)
+            for s in servers
+        ]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing servers: {str(e)}")
 
-@router.get("/ai-ready/list")
-async def list_ai_ready_servers(
+
+@router.get("/summary")
+def servers_summary(
+    db: Session = Depends(get_db),
     platform: str | None = None,
+):
+    """KPI / dashboard için aggregate sayılar — full envanter çekilmesin."""
+    try:
+        def _base():
+            q = db.query(Server)
+            if platform in ("linux", "windows", "virt", "exadata"):
+                from app.services.platform_scope import apply_server_platform_filter
+                q = apply_server_platform_filter(q, platform, db)
+            return q
+
+        total = _base().count()
+        by_status_rows = (
+            _base()
+            .with_entities(Server.status, func.count(Server.id))
+            .group_by(Server.status)
+            .all()
+        )
+        by_status = {(st or "UNKNOWN"): int(n) for st, n in by_status_rows}
+        online = int(by_status.get("ONLINE", 0))
+        ai_ready = _base().filter(Server.ai_ready.is_(True)).count()
+        ne_installed = _base().filter(Server.node_exporter_installed.is_(True)).count()
+        ne_running = _base().filter(Server.node_exporter_running.is_(True)).count()
+
+        os_rows = (
+            _base()
+            .with_entities(Server.os_type, func.count(Server.id))
+            .group_by(Server.os_type)
+            .all()
+        )
+        by_os = {(os_t or "unknown"): int(n) for os_t, n in os_rows}
+        cpu_cores = int(
+            _base().with_entities(func.coalesce(func.sum(Server.cpu_cores), 0)).scalar() or 0
+        )
+        memory_gb = float(
+            _base().with_entities(func.coalesce(func.sum(Server.memory_gb), 0)).scalar() or 0
+        )
+
+        return {
+            "total": total,
+            "online": online,
+            "offline": int(by_status.get("OFFLINE", 0)),
+            "warning": int(by_status.get("WARNING", 0)),
+            "critical": int(by_status.get("CRITICAL", 0)),
+            "ai_ready": ai_ready,
+            "node_exporter_installed": ne_installed,
+            "node_exporter_running": ne_running,
+            "cpu_cores": cpu_cores,
+            "memory_gb": memory_gb,
+            "by_status": by_status,
+            "by_os": by_os,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error summarizing servers: {str(e)}")
+
+
+@router.get("/ai-ready/list")
+def list_ai_ready_servers(
+    platform: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(_LIST_PAGE_SIZE_MAX, ge=1, le=_LIST_PAGE_SIZE_MAX),
+    q: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """AI ready sunucuları listele — isteğe bağlı modül filtresi."""
+    """AI ready sunucuları sayfalı listele (slim; connection_config yok)."""
     try:
         from app.services.platform_scope import apply_server_platform_filter
-        query = db.query(Server).filter(Server.ai_ready == True)
+        query = db.query(Server).filter(Server.ai_ready.is_(True))
         query = apply_server_platform_filter(query, platform, db)
-        servers = query.all()
-        return [{
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            query = query.filter(
+                or_(
+                    Server.name.ilike(like),
+                    Server.hostname.ilike(like),
+                    Server.ip_address.ilike(like),
+                )
+            )
+        total = query.count()
+        servers = (
+            query.order_by(Server.name.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        items = [{
             "id": s.id,
             "name": s.name,
             "hostname": s.hostname,
@@ -488,10 +633,13 @@ async def list_ai_ready_servers(
             "cpu_cores": s.cpu_cores,
             "memory_gb": s.memory_gb,
             "ai_ready": s.ai_ready,
-            "connection_config": _mask_conn_config(s.connection_config),
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "updated_at": s.updated_at.isoformat() if s.updated_at else None
         } for s in servers]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing AI ready servers: {str(e)}")
 
@@ -592,10 +740,25 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
                     )
                     if mem_out.strip().isdigit():
                         db_server.memory_gb = int(mem_out.strip())
+                    # Fiziksel / sanal otomatik tespit (datatem / connection user)
+                    try:
+                        from app.services.virt_detect import DETECT_SCRIPT, apply_detected_type, parse_detect_stdout
+                        dok, dout, _ = ssh.execute_command(DETECT_SCRIPT, cmd_timeout=25)
+                        if dok or dout:
+                            det = parse_detect_stdout(dout)
+                            apply_detected_type(
+                                db_server,
+                                server_type=det["server_type"],
+                                virtualization=str(det.get("virtualization") or ""),
+                            )
+                    except Exception as virt_err:  # noqa: BLE001
+                        logger.debug("virt detect on create: %s", virt_err)
                     ssh.close()
                 else:
                     db_server.ai_ready = False
                     db_server.status = "OFFLINE"
+                    if not db_server.hypervisor_id and (db_server.server_type or "").upper() not in ("PHYSICAL", "VIRTUAL"):
+                        db_server.server_type = "UNKNOWN"
                 db.commit()
                 db.refresh(db_server)
             except Exception as ssh_err:
@@ -609,6 +772,13 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
         flag_modified(db_server, "connection_config")
         db.commit()
         db.refresh(db_server)
+
+        # Level 1 Ops uyumu: ainew SoT → Dropt projeksiyon (best-effort)
+        try:
+            from app.services.level1_inventory import best_effort_ensure_after_ainew_create
+            best_effort_ensure_after_ainew_create(db_server, actor_username="integrations")
+        except Exception as ens_err:  # noqa: BLE001
+            logger.warning("Dropt ensure after create skipped: %s", ens_err)
 
         return {
             "id": db_server.id,
@@ -831,11 +1001,21 @@ async def check_all_servers_health(
         finally:
             bg.close()
 
-    threading.Thread(target=_bg, daemon=True, name="check-health").start()
+    queued_via = "thread"
+    try:
+        from app.worker import enqueue_check_health
+        if enqueue_check_health(job_id):
+            queued_via = "celery"
+        else:
+            threading.Thread(target=_bg, daemon=True, name="check-health").start()
+    except Exception:
+        threading.Thread(target=_bg, daemon=True, name="check-health").start()
+
     return {
         "success": True,
         "queued": True,
         "job_id": job_id,
+        "queued_via": queued_via,
         "message": f"Durum kontrolü arka planda başladı ({total_hint} sunucu).",
         "stats": None,
     }

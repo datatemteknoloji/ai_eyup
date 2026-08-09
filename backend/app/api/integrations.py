@@ -32,6 +32,11 @@ async def integrations_summary(db: Session = Depends(get_db)):
     exadata_racks = db.query(ExadataRack).count()
     exadata_nodes = db.query(ExadataNode).count()
 
+    from app.models.openshift import OpenShiftCluster, OpenShiftNode, OpenShiftProject
+    ocp_clusters = db.query(OpenShiftCluster).count()
+    ocp_nodes = db.query(OpenShiftNode).count()
+    ocp_projects = db.query(OpenShiftProject).count()
+
     ucmdb_count = 0
     for s in db.query(Server).all():
         sources = (s.connection_config or {}).get("inventory_sources") or []
@@ -75,6 +80,15 @@ async def integrations_summary(db: Session = Depends(get_db)):
                 "linked_servers": exadata_linked,
                 "path": "/integrations/exadata",
             },
+            {
+                "id": "openshift",
+                "name": "OpenShift",
+                "description": "Cluster bağlantısı, node/kapasite ve sync",
+                "count": ocp_clusters,
+                "node_count": ocp_nodes,
+                "project_count": ocp_projects,
+                "path": "/integrations/openshift",
+            },
         ],
         "inventory": {
             "total_servers": total_servers,
@@ -82,6 +96,7 @@ async def integrations_summary(db: Session = Depends(get_db)):
             "physical_hosts": linux_physical,
             "duplicate_groups": len(duplicate_groups),
             "duplicate_records": sum(g["count"] for g in duplicate_groups),
+            "openshift_clusters": ocp_clusters,
         },
     }
 

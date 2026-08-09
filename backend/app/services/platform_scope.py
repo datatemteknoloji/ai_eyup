@@ -66,8 +66,12 @@ def is_vm(server: Server) -> bool:
     hypervisor sync ile gelen VM'ler (`hypervisor_id` dolu) hem de
     UCMDB/CMDB gibi başka kaynaklardan `server_type=VIRTUAL` olarak
     işaretlenmiş sunucular VM sayılır.
+    `UNKNOWN` (henüz detect edilmemiş) VM sayılmaz.
     """
-    return bool(server.hypervisor_id) or (server.server_type or "").upper() == "VIRTUAL"
+    st = (server.server_type or "").upper()
+    if st == "UNKNOWN":
+        return False
+    return bool(server.hypervisor_id) or st == "VIRTUAL"
 
 
 def vm_filter_condition():
@@ -117,12 +121,14 @@ def get_linux_module_server_id_set(db: Session) -> Set[int]:
 
 
 def is_physical_host(server: Server, exadata_ids: Optional[Set[int]] = None) -> bool:
-    """Gerçek fiziksel host — VM, Windows ve Exadata hariç.
+    """Gerçek fiziksel host — VM, Windows, Exadata ve UNKNOWN hariç.
 
     `is_linux_module_server` (OS izleme görünümü) artık Linux guest OS'li
     VM'leri de içerdiği için, "Entegrasyonlar → Fiziksel Hostlar" gibi
     yalnızca donanım envanterini gösteren yerler bu daha katı filtreyi kullanır.
     """
+    if (server.server_type or "").upper() == "UNKNOWN":
+        return False
     return is_linux_module_server(server, exadata_ids) and not is_vm(server)
 
 

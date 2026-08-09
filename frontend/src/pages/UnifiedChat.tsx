@@ -3,10 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
-import * as XLSX from 'xlsx'
 import { FileDown, Globe, Wrench } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
+import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
+import ChatPinFact from '../components/ChatPinFact'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -51,9 +52,10 @@ function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
   URL.revokeObjectURL(url)
 }
 
-function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
+async function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
   const rows = _parseMdTable(mdTable)
   if (rows.length === 0) return
+  const XLSX = await import('xlsx')
   const ws = XLSX.utils.aoa_to_sheet(rows)
   ws['!cols'] = rows[0].map((_, ci) => ({
     wch: Math.max(...rows.map(r => String(r[ci] || '').replace(/\n/g, ' ').length), 12)
@@ -144,8 +146,9 @@ const UnifiedChat: React.FC<{
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('unified_chat_selected_model') || 'llama3:70b')
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
-  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'tools' | 'streaming'>('idle')
   const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
+  const [clarifyOptions, setClarifyOptions] = useState<{ id: string; label: string; prompt: string }[] | null>(null)
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -278,6 +281,7 @@ const UnifiedChat: React.FC<{
     setPendingUserMessage(messageText)
     setStreamingText('')
     setToolCalls([])
+    setClarifyOptions(null)
     setThinkingPhase(needsContext ? 'context' : 'streaming')
 
     const ctrl = new AbortController()
@@ -327,6 +331,9 @@ const UnifiedChat: React.FC<{
               }
               setThinkingPhase('streaming')
             }
+            if (chunk.phase === 'collecting') setThinkingPhase('context')
+            if (chunk.phase === 'tools') setThinkingPhase('tools')
+            if (chunk.phase === 'answering') setThinkingPhase('streaming')
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
@@ -346,6 +353,9 @@ const UnifiedChat: React.FC<{
                 next[realIdx] = { ...next[realIdx], done: true }
                 return next
               })
+            }
+            if (chunk.type === 'clarify' && Array.isArray(chunk.options)) {
+              setClarifyOptions(chunk.options)
             }
             if (chunk.error) {
               setStreamingText(`**Hata:** ${chunk.error}`)
@@ -408,7 +418,8 @@ const UnifiedChat: React.FC<{
   }
 
   const thinkingLabel =
-    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (Linux SSH / Windows WinRM / Sanallaştırma)...' :
+    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (Linux SSH / Windows WinRM / RAG)...' :
+    thinkingPhase === 'tools' ? 'Tanı araçları çalışıyor...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
   return (
@@ -525,6 +536,18 @@ const UnifiedChat: React.FC<{
                               </>
                             )}
                           </div>
+                          {msg.id > 0 && (
+                            <>
+                              <ChatFeedbackButtons
+                                platform="unified"
+                                question={priorUserQuestion(messages, msg.id)}
+                                answer={msg.content}
+                                sessionId={selectedSessionId}
+                                messageId={msg.id}
+                              />
+                              <ChatPinFact />
+                            </>
+                          )}
                         </div>
                       )}
                       <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
@@ -557,6 +580,15 @@ const UnifiedChat: React.FC<{
                           <ThinkingDots />
                         </div>
                       )}
+                      {thinkingPhase === 'tools' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-cyan-400/90">
+                            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span>{thinkingLabel}</span>
+                          </div>
+                          <ThinkingDots />
+                        </div>
+                      )}
                       {thinkingPhase === 'streaming' && streamingText && (
                         <div>
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
@@ -572,6 +604,24 @@ const UnifiedChat: React.FC<{
                 )}
 
                 <div ref={messagesEndRef} />
+              </div>
+            )}
+
+            {clarifyOptions && clarifyOptions.length > 0 && !isLoading && (
+              <div className="px-1 pb-2 flex flex-wrap gap-2">
+                {clarifyOptions.map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setClarifyOptions(null)
+                      sendMessage(opt.prompt)
+                    }}
+                    className="text-left text-xs px-3 py-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 hover:border-sky-400/60 transition-colors"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>

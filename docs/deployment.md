@@ -7,17 +7,35 @@ ainew is deployed via Docker Compose. All services run as containers except Olla
 ## Environment variables reference
 
 Create a `.env` file in the project root. All variables have defaults except `SECRET_KEY` and `POSTGRES_PASSWORD`.
+Placeholder values (`GENERATE_WITH_*`, `CHANGE_ME*`) are rejected at backend startup — use `./scripts/dev-setup.sh`, `install-rhel.sh`, or `./scripts/rotate-secrets.sh`. See [migration-and-secrets.md](migration-and-secrets.md).
+
+### Internal hostnames (OpenShift / AD)
+
+Do **not** put customer-specific names in `docker-compose*.yml` `extra_hosts`.  
+Backend mounts the host OS file at `/host-etc-hosts` (`HOST_ETC_HOSTS`). Resolution order:
+
+1. System DNS / host resolver (`getaddrinfo`)
+2. Fallback: parse mounted `/etc/hosts`
+
+On the **install host**, add lines such as:
+
+```text
+192.168.x.y api.ocp.example.local oauth-openshift.apps.ocp.example.local
+```
+
+Changing `/etc/hosts` does not require recreating containers (read-only bind mount).
 
 | Variable | Default | Description |
 |---|---|---|
 | `SECRET_KEY` | **required** | JWT signing key. Generate with `openssl rand -hex 32` |
+| `HOST_ETC_HOSTS` | `/host-etc-hosts` | Mount path for host OS `/etc/hosts` (AD + OpenShift name fallback). Put `*.local` / internal names on the **host** `/etc/hosts` — do not hardcode in compose `extra_hosts`. |
 | `POSTGRES_PASSWORD` | `postgres` | PostgreSQL password. Change in production |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama API base URL |
 | `OLLAMA_TIMEOUT_SECONDS` | `60` | Seconds before an Ollama request times out |
 | `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus API URL (for metric queries) |
 | `PUSHGATEWAY_URL` | `http://localhost:9091` | Prometheus Pushgateway URL |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed frontend origins |
-| `ADMIN_DEFAULT_PASSWORD` | `admin123` | Initial admin password (only used if no users exist) |
+| `ADMIN_DEFAULT_PASSWORD` | `Kim13Sun` | Initial admin password (only used if no users exist) |
 | `AGENT_MODEL` | `llama3.2:3b` | Model used by the tool-calling AI Agent. Must already be pulled in Ollama |
 | `AGENT_GUARD_ENABLED` | `false` | Whether a separate safety-classifier model screens Agent tool calls |
 | `AGENT_GUARD_MODEL` | `llama3.2:3b` | Guard/safety-classifier model (only used if `AGENT_GUARD_ENABLED=true`) |

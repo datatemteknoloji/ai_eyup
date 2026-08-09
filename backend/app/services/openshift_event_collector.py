@@ -22,19 +22,25 @@ def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[s
     ext_key = f"ocp{cluster.id}-{item.get('source_object')}-{item.get('reason')}-{item.get('timestamp')}"
     since = datetime.utcnow() - timedelta(days=7)
 
-    existing_rows = (
+    # PostgreSQL JSON (non-JSONB): contains()/LIKE kırılır — astext ile filtrele
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    existing = (
         db.query(SystemEvent)
-        .filter(SystemEvent.source == OPENSHIFT_SOURCE, SystemEvent.created_at >= since)
-        .all()
+        .filter(
+            SystemEvent.source == OPENSHIFT_SOURCE,
+            SystemEvent.created_at >= since,
+            cast(SystemEvent.raw_data, JSONB)["external_key"].astext == ext_key,
+        )
+        .first()
     )
-    for ev in existing_rows:
-        raw = ev.raw_data or {}
-        if raw.get("external_key") == ext_key:
-            ev.last_seen = now
-            ev.occurrence_count = (ev.occurrence_count or 1) + 1
-            if item.get("severity"):
-                ev.severity = item["severity"]
-            return False
+    if existing:
+        existing.last_seen = now
+        existing.occurrence_count = (existing.occurrence_count or 1) + 1
+        if item.get("severity"):
+            existing.severity = item["severity"]
+        return False
 
     title = item.get("title") or "OpenShift olayı"
     event = SystemEvent(
@@ -66,17 +72,9 @@ def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[s
 
 def sync_openshift_events_for_cluster(db: Session, cluster: OpenShiftCluster, hours: int = 48) -> Dict[str, Any]:
     """Tek OpenShift cluster'ı için event sync."""
-    from app.services.openshift.ocp_client import OpenShiftClient
+    from app.services.openshift.cluster_ops import client_from_cluster
 
-    cc = cluster.connection_config or {}
-    use_creds = bool(cc.get("username")) and bool(cc.get("password"))
-    client = OpenShiftClient(
-        api_url=cc.get("api_url") or cluster.api_url,
-        token="" if use_creds else (cc.get("token") or ""),
-        username=cc.get("username") or "",
-        password=cc.get("password") or "",
-        verify_ssl=bool(cc.get("verify_ssl", False)),
-    )
+    client = client_from_cluster(cluster)
 
     try:
         items = client.list_events(hours=hours)

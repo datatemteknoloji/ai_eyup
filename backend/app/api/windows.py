@@ -10,10 +10,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import or_
 import json
 
 from app.core.database import get_db
@@ -29,11 +29,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 GLOBAL_WINRM_KEY = "global_winrm_credential"
-
-# /live-metrics "single-flight" cache — bkz. get_live_metrics NOT açıklaması.
-_LIVE_METRICS_CACHE: Dict[str, Any] = {"data": None, "ts": 0.0}
-_LIVE_METRICS_LOCK = threading.Lock()
-_LIVE_METRICS_TTL_SEC = 20
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,40 +106,60 @@ class ScheduleRebootRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.get("/servers")
-def list_windows_servers(
-    db: Session = Depends(get_db),
+def _collect_windows_server_rows(
+    db: Session,
+    *,
     include_unclassified: bool = False,
-):
-    """
-    List Windows servers.
-    - Confirmed: os_type contains 'windows' or connection_config.winrm=True
-    - Unclassified (include_unclassified=True): os_type is empty/"other" from hypervisor sync
-    """
-    servers = db.query(Server).all()
-    gcred = _get_global_winrm(db)  # check once for all servers
-    result = []
-    for s in servers:
-        os_low = (s.os_type or "").lower()
-        cfg = s.connection_config or {}
-        is_confirmed_windows = "windows" in os_low or bool(cfg.get("winrm"))
-        is_unclassified = (
-            s.hypervisor_id is not None and
-            os_low in ("", "other", "unknown") and
-            not any(x in os_low for x in ("linux", "rhel", "centos", "ubuntu", "ol", "rocky"))
+    q: Optional[str] = None,
+) -> List[dict]:
+    """Windows envanter satırlarını üretir (sayfalama öncesi)."""
+    from app.services.platform_scope import is_windows_server
+
+    gcred = _get_global_winrm(db)
+    query = db.query(Server).options(selectinload(Server.hypervisor))
+    conds = [Server.os_type.ilike("%windows%")]
+    if include_unclassified:
+        conds.append(
+            (Server.hypervisor_id.isnot(None))
+            & or_(
+                Server.os_type.is_(None),
+                Server.os_type == "",
+                Server.os_type.ilike("other"),
+                Server.os_type.ilike("unknown"),
+            )
+        )
+    query = query.filter(or_(*conds))
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                Server.name.ilike(like),
+                Server.hostname.ilike(like),
+                Server.ip_address.ilike(like),
+            )
         )
 
+    result = []
+    for s in query.order_by(Server.name.asc()).all():
+        os_low = (s.os_type or "").lower()
+        cfg = s.connection_config or {}
+        is_confirmed_windows = is_windows_server(s) or "windows" in os_low or bool(cfg.get("winrm"))
+        is_unclassified = (
+            s.hypervisor_id is not None
+            and os_low in ("", "other", "unknown")
+            and not any(x in os_low for x in ("linux", "rhel", "centos", "ubuntu", "ol", "rocky"))
+        )
         if not is_confirmed_windows and not (include_unclassified and is_unclassified):
             continue
 
-        # winrm_configured: server-specific OR global credential available
         winrm_port = cfg.get("winrm_port")
         has_server_winrm = bool(cfg.get("winrm")) or (winrm_port and int(winrm_port) >= 5985)
         has_server_creds = bool(cfg.get("username") or cfg.get("winrm_username"))
         has_own_winrm = has_server_winrm and has_server_creds
         has_global_winrm = bool(gcred) and bool(s.ip_address or s.hostname)
-
-        effective_port = (winrm_port or (5985 if has_server_winrm else None)) or (gcred["port"] if gcred else None)
+        effective_port = (winrm_port or (5985 if has_server_winrm else None)) or (
+            gcred["port"] if gcred else None
+        )
 
         result.append({
             "id": s.id,
@@ -167,9 +182,50 @@ def list_windows_servers(
             "windows_exporter_running": bool(s.windows_exporter_running),
         })
 
-    # Sort: confirmed first, then by name
     result.sort(key=lambda x: (0 if x["confirmed_windows"] else 1, x["name"] or ""))
     return result
+
+
+@router.get("/servers")
+def list_windows_servers(
+    db: Session = Depends(get_db),
+    include_unclassified: bool = False,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    q: Optional[str] = None,
+):
+    """
+    List Windows servers (paginated).
+    Returns ``{ items, total, page, page_size }``.
+    """
+    result = _collect_windows_server_rows(
+        db, include_unclassified=include_unclassified, q=q
+    )
+    total = len(result)
+    start = (page - 1) * page_size
+    return {
+        "items": result[start : start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/servers/summary")
+def windows_servers_summary(
+    db: Session = Depends(get_db),
+    include_unclassified: bool = False,
+):
+    """Windows KPI sayıları."""
+    items = _collect_windows_server_rows(db, include_unclassified=include_unclassified)
+    return {
+        "total": len(items),
+        "online": sum(1 for s in items if s.get("status") == "ONLINE"),
+        "winrm_configured": sum(1 for s in items if s.get("winrm_configured")),
+        "ai_ready": sum(1 for s in items if s.get("ai_ready")),
+        "windows_exporter_running": sum(1 for s in items if s.get("windows_exporter_running")),
+        "confirmed_windows": sum(1 for s in items if s.get("confirmed_windows")),
+    }
 
 
 @router.post("/servers/{server_id}/test-connection")
@@ -479,93 +535,39 @@ def get_performance(server_id: int, db: Session = Depends(get_db)):
 @router.get("/live-metrics")
 def get_live_metrics(db: Session = Depends(get_db)):
     """
-    Tüm AI Ready Windows sunucularından WinRM üzerinden CPU/RAM/Disk
-    kullanımını paralel olarak toplar (node_exporter/Prometheus gerektirmez).
-    AI Ready olmayan sunucular WinRM sorgusuna girmeden 'offline' olarak döner.
-
-    NOT: Sonuç kısa TTL'li (20sn) bir cache + lock ("single-flight") ile
-    paylaşılır. Frontend bu uç noktayı 30sn'de bir polluyor (bkz.
-    WindowsLiveMetrics.tsx); 10k ölçekte binlerce Windows sunucu varsa TEK bir
-    WinRM fan-out turu dakikalar sürebilir. Cache olmadan her yeni istek
-    (birden fazla açık sekme/kullanıcı dahil) kendi fan-out'unu başlatır ve
-    istekler tamamlanan turlardan daha hızlı birikip WinRM bağlantı fırtınasına
-    ve thread havuzu tükenmesine yol açar — cache bayatken gelen ilk istek
-    hesaplar, aynı anda gelenler kilidi bekleyip taze sonucu okur.
+    Windows canlı metrikleri — yalnızca cache okur (istek yolunda WinRM yok).
+    Bayat/boşsa arka plan refresh tetiklenir; FE poll ile taze veriyi alır.
     """
-    now = time.monotonic()
-    with _LIVE_METRICS_LOCK:
-        if _LIVE_METRICS_CACHE["data"] is not None and (now - _LIVE_METRICS_CACHE["ts"]) < _LIVE_METRICS_TTL_SEC:
-            return _LIVE_METRICS_CACHE["data"]
+    del db  # cache path; refresh kendi session'ını açar
+    from app.services import windows_live_metrics as wlm
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+    cached = wlm.get_cached_payload()
+    wlm.refresh_if_stale()
+    if cached is not None:
+        return cached
+    return {
+        "servers": [],
+        "total": 0,
+        "online": 0,
+        "avg_cpu_pct": None,
+        "avg_mem_pct": None,
+        "refreshing": True,
+        "stale": True,
+        "age_sec": None,
+        "message": "İlk WinRM turu arka planda; kısa süre sonra yenileyin.",
+    }
 
-        from app.services.bulk_concurrency import bulk_ssh_workers
-        from app.services.platform_scope import is_windows_server
 
-        servers = [s for s in db.query(Server).all() if is_windows_server(s)]
-        gcred = _get_global_winrm(db)
-
-        ready = [s for s in servers if s.ai_ready]
-        not_ready = [s for s in servers if not s.ai_ready]
-
-        def _fetch_one(server: Server):
-            try:
-                client = _build_client(server, db)
-            except HTTPException:
-                return server.id, {"error": "WinRM kimlik bilgisi yok"}
-            collector = WindowsInfoCollector(client)
-            return server.id, collector.get_performance()
-
-        perf_by_id: Dict[int, Dict[str, Any]] = {}
-        if ready:
-            with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="winrm-live-metrics") as pool:
-                futures = {pool.submit(_fetch_one, s): s for s in ready}
-                for fut in as_completed(futures):
-                    sid, perf = fut.result()
-                    perf_by_id[sid] = perf
-
-        results = []
-        for s in ready:
-            perf = perf_by_id.get(s.id, {})
-            results.append({
-                "id": s.id,
-                "name": s.name or s.hostname or f"#{s.id}",
-                "ip_address": s.ip_address,
-                "status": s.status,
-                "ai_ready": True,
-                "cpu_pct": perf.get("cpu_pct"),
-                "mem_used_pct": perf.get("mem_used_pct"),
-                "mem_total_gb": perf.get("mem_total_gb"),
-                "mem_free_gb": perf.get("mem_free_gb"),
-                "disks": perf.get("disks") or [],
-                "uptime_days": perf.get("uptime_days"),
-                "last_boot": perf.get("last_boot"),
-                "error": perf.get("error"),
-            })
-        for s in not_ready:
-            results.append({
-                "id": s.id,
-                "name": s.name or s.hostname or f"#{s.id}",
-                "ip_address": s.ip_address,
-                "status": s.status,
-                "ai_ready": False,
-                "cpu_pct": None, "mem_used_pct": None, "mem_total_gb": None, "mem_free_gb": None,
-                "disks": [], "uptime_days": None, "last_boot": None,
-                "error": "AI Ready değil — WinRM bağlantısı kurulamadı",
-            })
-
-        results.sort(key=lambda r: (0 if r["ai_ready"] else 1, r["name"] or ""))
-        successful = [r for r in results if r["ai_ready"] and r["cpu_pct"] is not None]
-        payload = {
-            "servers": results,
-            "total": len(results),
-            "online": len(successful),
-            "avg_cpu_pct": round(sum(r["cpu_pct"] for r in successful) / len(successful), 1) if successful else None,
-            "avg_mem_pct": round(sum(r["mem_used_pct"] for r in successful) / len(successful), 1) if successful else None,
-        }
-        _LIVE_METRICS_CACHE["data"] = payload
-        _LIVE_METRICS_CACHE["ts"] = time.monotonic()
-        return payload
+@router.post("/live-metrics/refresh")
+def refresh_live_metrics():
+    """WinRM fan-out'u arka planda başlat (HTTP beklemez)."""
+    from app.services import windows_live_metrics as wlm
+    started = wlm.refresh_async()
+    return {
+        "started": started,
+        "refreshing": True,
+        "message": "Yenileme başlatıldı" if started else "Yenileme zaten sürüyor",
+    }
 
 
 @router.get("/servers/{server_id}/services")
@@ -724,14 +726,13 @@ def uninstall_exporter(server_id: int, db: Session = Depends(get_db)):
 @router.post("/exporter/install-all")
 def install_exporter_all(body: dict = None, db: Session = Depends(get_db)):
     """
-    Tüm AI Ready Windows sunucularına windows_exporter'ı paralel olarak kurar
-    (henüz kurulu olmayanlara). Node Exporter'ın Linux'taki bulk-install akışının
-    Windows eşleniği — kurulum WinRM üzerinden PowerShell ile yapılır.
+    Tüm AI Ready Windows sunucularına windows_exporter kur — arka plan job.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
 
+    from app.core.database import ThreadSessionLocal
+    from app.services import bulk_job_tracker as jobs
     from app.services.platform_scope import is_windows_server
-    from app.services.monitoring.prometheus_metrics import sync_windows_exporter_targets_from_db
 
     server_ids = (body or {}).get("server_ids")
     q = db.query(Server).filter(Server.ai_ready == True)  # noqa: E712
@@ -744,59 +745,96 @@ def install_exporter_all(body: dict = None, db: Session = Depends(get_db)):
 
     if not candidates:
         return {"tested": 0, "installed_count": 0, "failed_count": 0, "results": [],
+                "job_id": None, "status": "done",
                 "message": "Kurulacak (AI Ready, henüz windows_exporter'sız) sunucu bulunamadı."}
 
-    # Global credential'ı thread'ler başlamadan önce ana thread'de tek seferlik oku —
-    # SQLAlchemy session thread-safe olmadığı için worker thread'lerde db.query() yapılmaz.
-    gcred = _get_global_winrm(db)
+    ids = [s.id for s in candidates]
+    job_id = jobs.create_job(
+        "windows_exporter_install_all",
+        "Windows Exporter toplu kurulum",
+        total=len(ids),
+        message="WinRM kurulum başlıyor...",
+    )
 
-    def _install_one(server: Server):
+    def _run():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from app.services.monitoring.prometheus_metrics import sync_windows_exporter_targets_from_db
+
+        thread_db = ThreadSessionLocal()
         try:
-            client = WinRMClient.from_server(server)
-            if not client:
-                if not gcred:
-                    raise ValueError("WinRM kimlik bilgisi bulunamadı (sunucuya özel veya global tanımlı değil)")
-                host = server.ip_address or server.hostname
-                if not host:
-                    raise ValueError("Sunucunun IP adresi veya hostname'i yok")
-                client = WinRMClient(
-                    host=host,
-                    username=gcred["username"],
-                    password=gcred["password"],
-                    port=gcred.get("port", 5985),
-                    use_https=gcred.get("use_https", False),
-                )
-            result = WindowsExporterInstaller(client).install()
-            return server.id, server.name, bool(result.get("success")), result.get("error") or ""
+            srv_list = thread_db.query(Server).filter(Server.id.in_(ids)).all()
+            gcred = _get_global_winrm(thread_db)
+
+            def _install_one(server: Server):
+                try:
+                    client = WinRMClient.from_server(server)
+                    if not client:
+                        if not gcred:
+                            raise ValueError("WinRM kimlik bilgisi bulunamadı")
+                        host = server.ip_address or server.hostname
+                        if not host:
+                            raise ValueError("Sunucunun IP adresi veya hostname'i yok")
+                        client = WinRMClient(
+                            host=host,
+                            username=gcred["username"],
+                            password=gcred["password"],
+                            port=gcred.get("port", 5985),
+                            use_https=gcred.get("use_https", False),
+                        )
+                    result = WindowsExporterInstaller(client).install()
+                    return server.id, server.name, bool(result.get("success")), result.get("error") or ""
+                except Exception as exc:
+                    return server.id, server.name, False, str(exc)
+
+            results = []
+            done = 0
+            with ThreadPoolExecutor(max_workers=10, thread_name_prefix="winexp-install") as pool:
+                futures = {pool.submit(_install_one, s): s for s in srv_list}
+                for fut in as_completed(futures):
+                    sid, name, ok, err = fut.result()
+                    results.append({"id": sid, "name": name, "success": ok, "error": err})
+                    done += 1
+                    jobs.tick(
+                        job_id,
+                        done=done,
+                        total=len(srv_list),
+                        ok_delta=1 if ok else 0,
+                        fail_delta=0 if ok else 1,
+                        message=f"Exporter {done}/{len(srv_list)}",
+                    )
+
+            for r in results:
+                if r["success"]:
+                    row = thread_db.query(Server).filter_by(id=r["id"]).first()
+                    if row:
+                        row.windows_exporter_installed = True
+                        row.windows_exporter_running = True
+            thread_db.commit()
+            try:
+                sync_windows_exporter_targets_from_db(thread_db)
+            except Exception as exc:
+                logger.warning("windows_exporter target sync başarısız: %s", exc)
+
+            installed = sum(1 for r in results if r["success"])
+            payload = {
+                "tested": len(results),
+                "installed_count": installed,
+                "failed_count": len(results) - installed,
+                "results": results,
+            }
+            jobs.finish(job_id, status="done", message=f"{installed}/{len(results)} kuruldu", result=payload)
         except Exception as exc:
-            return server.id, server.name, False, str(exc)
+            logger.exception("windows exporter install-all failed")
+            jobs.finish(job_id, status="error", message=str(exc), error=str(exc))
+        finally:
+            thread_db.close()
 
-    results = []
-    with ThreadPoolExecutor(max_workers=10, thread_name_prefix="winexp-install") as pool:
-        futures = {pool.submit(_install_one, s): s for s in candidates}
-        for fut in as_completed(futures):
-            sid, name, ok, err = fut.result()
-            results.append({"id": sid, "name": name, "success": ok, "error": err})
-
-    for r in results:
-        if r["success"]:
-            row = db.query(Server).filter_by(id=r["id"]).first()
-            if row:
-                row.windows_exporter_installed = True
-                row.windows_exporter_running = True
-    db.commit()
-
-    try:
-        sync_windows_exporter_targets_from_db(db)
-    except Exception as exc:
-        logger.warning("windows_exporter target sync başarısız: %s", exc)
-
-    installed = sum(1 for r in results if r["success"])
+    threading.Thread(target=_run, daemon=True, name=f"winexp-{job_id}").start()
     return {
-        "tested": len(results),
-        "installed_count": installed,
-        "failed_count": len(results) - installed,
-        "results": sorted(results, key=lambda r: r["name"] or ""),
+        "job_id": job_id,
+        "tested": len(ids),
+        "status": "running",
+        "message": f"{len(ids)} sunucu için kurulum arka planda başladı",
     }
 
 

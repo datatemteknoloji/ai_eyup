@@ -14,6 +14,20 @@ try:
 except Exception as e:
     logger.error(f"Could not load auth router: {e}", exc_info=True)
 
+# Kimlik (AD / SSO ayarları)
+try:
+    from app.api import identity
+    api_router.include_router(identity.router, prefix="/identity", tags=["identity"])
+except Exception as e:
+    logger.error(f"Could not load identity router: {e}", exc_info=True)
+
+# Güvenlik (oturum, MFA, TLS, politika)
+try:
+    from app.api import security as security_api
+    api_router.include_router(security_api.router, prefix="/security", tags=["security"])
+except Exception as e:
+    logger.error(f"Could not load security router: {e}", exc_info=True)
+
 # Audit Log
 try:
     from app.api import audit
@@ -210,12 +224,20 @@ try:
 except Exception as e:
     logger.error(f"Could not load ucmdb router: {e}", exc_info=True)
 
-# Level 1 Operations (runbook tabanlı SSH operasyonlar)
+# Level 1 Operations (runbook tabanlı SSH operasyonlar) — legacy checklist kaldırıldı;
+# Dropt Ops entegrasyonu level1_dropt üzerinden.
 try:
-    from app.api import level1
-    api_router.include_router(level1.router, prefix="/level1", tags=["level1"])
+    from app.api import level1_dropt
+    api_router.include_router(level1_dropt.router, prefix="/level1", tags=["level1"])
 except Exception as e:
-    logger.error(f"Could not load level1 router: {e}", exc_info=True)
+    logger.error(f"Could not load level1_dropt router: {e}", exc_info=True)
+
+# Eski level1 runbook API — bilinçli olarak yüklenmiyor (Dropt gömme).
+# try:
+#     from app.api import level1
+#     api_router.include_router(level1.router, prefix="/level1", tags=["level1"])
+# except Exception as e:
+#     logger.error(f"Could not load level1 router: {e}", exc_info=True)
 
 # Modül yönetimi
 try:
@@ -295,3 +317,12 @@ try:
     )
 except Exception as e:
     logger.error(f"Could not load platform_update router: {e}", exc_info=True)
+
+# Platform Durumu (container status / logs / restart)
+try:
+    from app.api import platform_status
+    api_router.include_router(
+        platform_status.router, prefix="/platform", tags=["platform"]
+    )
+except Exception as e:
+    logger.error(f"Could not load platform_status router: {e}", exc_info=True)

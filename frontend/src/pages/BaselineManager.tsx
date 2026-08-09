@@ -206,12 +206,12 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
   const { data: serversData } = useQuery({
     queryKey: ['servers-list', platform],
     queryFn: async () => {
-      const params = appendPlatform(new URLSearchParams({ limit: '100' }), platform)
-      const r = await fetch(`${API_BASE_URL}/servers/?${params}`)
-      return r.json()
+      const { fetchServersPage, unwrapPaginated } = await import('../api/servers')
+      const plat = platform === 'virt' ? 'virt' : platform === 'windows' ? 'windows' : platform === 'exadata' ? 'exadata' : 'linux'
+      return fetchServersPage({ platform: plat, page: 1, page_size: 100 })
     },
   })
-  const serversRaw: Server[] = serversData?.servers ?? serversData ?? []
+  const serversRaw: Server[] = (serversData?.items ?? []) as unknown as Server[]
   const servers = platform === 'virt' ? [] : serversRaw
 
   // Tekrarlayan metrikler

@@ -54,7 +54,8 @@ def server_can_snapshot(server: Server) -> bool:
 def get_vm_client(hypervisor: Hypervisor):
     host = hypervisor.ip_address or hypervisor.hostname
     username = hypervisor.username or (hypervisor.connection_config or {}).get("username", "")
-    password = hypervisor.password or (hypervisor.connection_config or {}).get("password", "")
+    from app.services.hypervisor_credentials import hv_password
+    password = hv_password(hypervisor)
     port = hypervisor.port or 443
 
     if hypervisor.hypervisor_type == HypervisorType.VMWARE:
@@ -91,7 +92,7 @@ def _apply_vm_details_to_server(server: Server, details: dict, db: Session) -> N
         "vm_name", "vm_guest_hostname", "vm_guest_ip",
         "vm_cpu_count", "vm_memory_mb", "vm_disk_gb",
         "vm_power_state", "vm_tools_status", "vm_network_info",
-        "vm_cluster", "vm_datastore", "vm_esx_host", "vm_hardware_version",
+        "vm_cluster", "vm_datastore", "vm_hardware_version",
     ):
         val = details.get(field)
         if val is not None and val != "":

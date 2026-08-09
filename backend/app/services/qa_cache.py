@@ -38,27 +38,9 @@ _HOT_TTL_SECONDS = 60 * 60        # 10+ kez sorulmuşsa: 1 saat
 _WARM_HIT_THRESHOLD = 3
 _HOT_HIT_THRESHOLD = 10
 
-_redis_client = None
-_redis_unavailable = False
-
-
 def _get_redis():
-    global _redis_client, _redis_unavailable
-    if _redis_unavailable:
-        return None
-    if _redis_client is not None:
-        return _redis_client
-    try:
-        import redis
-        url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        client = redis.from_url(url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
-        client.ping()
-        _redis_client = client
-        return client
-    except Exception as exc:
-        logger.warning("[QACache] Redis kullanılamıyor, önbellek devre dışı: %s", exc)
-        _redis_unavailable = True
-        return None
+    from app.core.redis_client import get_redis
+    return get_redis()
 
 
 _PUNCT_TABLE = str.maketrans("", "", "?!.,;:'\"()[]{}")

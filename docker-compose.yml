@@ -1,5 +1,12 @@
 # Ortak log sürücüsü — json-file Docker meta timestamp tutar;
 # uygulamalar da kendi satırlarına tarih-saat yazar (TZ ile).
+#
+# Dropt Level 1 sidecar bu dosyaya include edilir — tek komut:
+#   docker compose up -d
+#   docker compose down
+include:
+  - path: docker-compose.dropt.yml
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -88,37 +95,75 @@ services:
       - PROMETHEUS_URL=http://localhost:9090
       - PUSHGATEWAY_URL=http://localhost:9091
       - SECRET_KEY=${SECRET_KEY}
-      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-Kim13Sun}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - APP_VERSION=${APP_VERSION:-}
+      - AINEW_BRIDGE_SECRET=${AINEW_BRIDGE_SECRET:-}
+      - DROPT_API_URL=${DROPT_API_URL:-http://127.0.0.1:8001}
       # RAG reranker (HuggingFace) modeli burada cache'lenir — kalıcı volume
       # olmazsa her container recreate'inde ~2GB model yeniden indirilir.
       - HF_HOME=/app/hf_cache
+      - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
+      - DOCKER_SOCK=/var/run/docker.sock
+      - DROPT_POSTGRES_USER=${DROPT_POSTGRES_USER:-dtt}
+      - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
+      - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
+      - HOST_ETC_HOSTS=/host-etc-hosts
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
       - ./backend/VERSION:/app/VERSION:ro
+      - ./docs/rag_seed:/app/docs/rag_seed:ro
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
       - /data/data/chroma:/app/chroma
       - /data/data/repos:/app/repos
       - /data/data/uploads:/app/uploads
       - /data/data/hf_cache:/app/hf_cache
-    # OpenShift cluster (ocp.datatem.local) *.local alanı yerel router DNS'inde çözülüyor
-    # ama container'ın (network_mode: host olsa da kendi /etc/hosts + daemon DNS'i kullanır)
-    # varsayılan DNS'i genel internet sunucularına (8.8.8.8/1.1.1.1) sabit — bu yüzden
-    # cluster hostname'leri burada elle eşleniyor.
-    extra_hosts:
-      - "api.ocp.datatem.local:192.168.1.240"
-      - "console-openshift-console.apps.ocp.datatem.local:192.168.1.240"
-      - "oauth-openshift.apps.ocp.datatem.local:192.168.1.240"
+      # Platform Durumu + tam DB yedek (pg_dump exec)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # AD / OpenShift hostname — host OS /etc/hosts (dinamik; compose extra_hosts yok)
+      - /etc/hosts:/host-etc-hosts:ro
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
 
-  # Frontend
+  # Celery worker — bulk health check vb. (Wave 6). Aynı image: backend (rebuild gerekmez).
+  worker:
+    image: ainew-backend:latest
+    container_name: server_management_worker
+    logging: *default-logging
+    network_mode: "host"
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ:-Europe/Istanbul}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@localhost:5432/server_management
+      - REDIS_URL=redis://localhost:6379/0
+      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-Kim13Sun}
+      - APP_VERSION=${APP_VERSION:-}
+      - HOST_ETC_HOSTS=/host-etc-hosts
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/VERSION:/app/VERSION:ro
+      - /data/data/chroma:/app/chroma
+      - /data/data/repos:/app/repos
+      - /data/data/uploads:/app/uploads
+      - /etc/hosts:/host-etc-hosts:ro
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  # Frontend — HTTPS (80→443 redirect). Sertifikalar: ${DATA_DIR}/certs/{server.crt,server.key}
   frontend:
     build:
       context: ./frontend
@@ -128,7 +173,13 @@ services:
     environment:
       TZ: ${TZ:-Europe/Istanbul}
     ports:
+      - "80:80"
+      - "443:443"
+      # Geriye uyumluluk: eski http://host:3000 → konteyner HTTP (prod nginx 301 → https://host/)
       - "3000:80"
+    volumes:
+      - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:Z,ro
+      - ${DATA_DIR:-/data/data}/certs:/etc/nginx/certs:Z,ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -180,7 +231,7 @@ services:
     logging: *default-logging
     environment:
       - TZ=${TZ:-Europe/Istanbul}
-      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_HOST=http://192.168.1.222:11434
     ports:
       - "11434:11434"
     volumes:

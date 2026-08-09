@@ -11,7 +11,7 @@ Müşteri ortamlarında tekrarlanabilir kurulum için tasarlanmıştır.
 | CPU | 4 çekirdek |
 | RAM | 8 GB (Ollama ile yerel LLM kullanılacaksa 16 GB+ önerilir) |
 | Disk | 50 GB boş alan (kurulumda seçeceğiniz kurulum dizini altında büyür, varsayılan `/data`) |
-| Ağ | 80/443 (arayüz), 9090/9091 (Prometheus/Pushgateway) — dahili ağda açık olmalı |
+| Ağ | 80/443 (arayüz HTTPS), 9090/9091 (Prometheus/Pushgateway) — dahili ağda açık olmalı; Level 1 Dropt API host-local `:8001` |
 | Yetki | root / sudo |
 
 Ollama ile yerel LLM (opsiyonel AI Chat/Agent özellikleri) kullanılacaksa GPU önerilir
@@ -79,8 +79,11 @@ dosyalarını bozmaz, sadece eksikleri tamamlar. Yaptıkları:
    Paket + kalıcı veri + (yeni Docker kurulumunda) Docker data-root hep `/data` altındadır.
    Veriler `/data/data/` altında; Docker imajları `/data/docker/` altında.
    `/opt` ve `/var/lib/server_management` kullanılmaz.
-3. `.env` dosyası: `SECRET_KEY`, `POSTGRES_PASSWORD`, `ADMIN_DEFAULT_PASSWORD`
-   rastgele üretilir; `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır
+3. `.env` dosyası: `SECRET_KEY` / `POSTGRES_PASSWORD` rastgele üretilir
+   (`GENERATE_WITH_*` placeholder'ları da değiştirilir);
+   `ADMIN_DEFAULT_PASSWORD=Kim13Sun` (sabit ilk admin parolası);
+   `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır.
+   Taşıma / rotate: `docs/migration-and-secrets.md`, `./scripts/rotate-secrets.sh`.
 4. Self-signed TLS sertifikası (`<kurulum-dizini>/data/certs`) — 10 yıl geçerli
 5. `firewalld` üzerinde 80/443/9090/9091 portlarının açılması
 6. İmajların yüklenmesi (`docker load`, offline modda) veya derlenmesi (online modda)
@@ -230,37 +233,7 @@ ağa hiç çıkmaz.
 Bu paket Ollama imajını ve embedding modelini doğrudan `images/` altına gömer;
 hedef sunucuda hiçbir zaman internete çıkılmaz.
 
-### 5.4 Büyük bir chat modelini air-gapped kurma (GPT-OSS 20B örneği)
-
-`nomic-embed-text` dışında büyük bir chat modelini (ör. `gpt-oss:20b`, ~13GB)
-internetsiz bir sunucuya kurmak için ayrı bir GitHub release ve bunun için
-özel yazılmış idempotent bir script vardır:
-[`ollama-gpt-oss-20b-v1`](https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1) —
-`gpt-oss:20b` (chat) + `nomic-embed-text` (embedding) birlikte paketlenmiştir.
-
-```bash
-# İnternet erişimi olan bir makinede indirin:
-mkdir ollama-gpt-oss-20b && cd ollama-gpt-oss-20b
-gh release download ollama-gpt-oss-20b-v1 --repo datatemteknoloji/ai_eyup
-# veya tarayıcıdan: https://github.com/datatemteknoloji/ai_eyup/releases/tag/ollama-gpt-oss-20b-v1
-
-# İndirilen TÜM dosyaları (7 adet .part0N + .sha256 dosyaları +
-# ollama-models-nomic-embed-text.tar.gz) hedef sunucuya taşıyın (scp/USB)
-
-# Hedef sunucuda (Ollama imajı zaten kurulu olmalı — with-ollama paketiyle
-# kurulduysanız zaten kuruludur):
-sudo ./install-ollama-model.sh --model gpt-oss:20b --from /path/to/indirilen-dosyalar --set-default
-```
-
-`install-ollama-model.sh`, `--ollama-files` / `install-ollama-runtime.sh`
-akışından farklı olarak **yalnızca belirtilen modelin** zaten kurulu olup
-olmadığına bakar (diskte BAŞKA bir model olması onu atlamaz) — bu yüzden
-`nomic-embed-text` zaten kurulu, sadece bir chat modeli eklenmek istenen
-sistemlerde de güvenle kullanılabilir. `--set-default` ile `.env`'deki
-`AGENT_MODEL` bu modele çekilir (Ayarlar → AI Model'den de değiştirilebilir).
-Detaylar ve elle kurulum adımları için release'in `README.md`'sine bakın.
-
-### 5.5 Eski chat LLM export/import akışı (elle model taşıma)
+### 5.4 Eski chat LLM export/import akışı (elle model taşıma)
 
 `nomic-embed-text` dışında büyük chat modellerini (ör. `llama3.2:3b`) bir
 makineden diğerine taşımak için hâlâ kullanılabilir:

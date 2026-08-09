@@ -819,9 +819,9 @@ const FocusedServerView: React.FC<{
 }
 
 // ── Windows Exporter Toplu Kurulum Butonu ───────────────────────────────────────
-const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart?: (jobId: string) => void }> = ({ onDone, onJobStart }) => {
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<{ installed_count: number; failed_count: number; tested: number } | null>(null)
+  const [result, setResult] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const handleClick = async () => {
@@ -831,9 +831,13 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void }> = ({ onD
       const r = await fetch(`${WIN_API}/exporter/install-all`, { method: 'POST' })
       if (r.ok) {
         const d = await r.json()
-        setResult(d)
-        onDone()
-        setTimeout(() => setResult(null), 8000)
+        if (d.job_id && onJobStart) {
+          onJobStart(d.job_id)
+        } else {
+          setResult(d.message || `${d.installed_count ?? 0} kuruldu`)
+          onDone()
+          setTimeout(() => setResult(null), 8000)
+        }
       }
     } finally { setLoading(false) }
   }
@@ -863,12 +867,12 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void }> = ({ onD
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            Kuruluyor...
+            Başlatılıyor...
           </>
         ) : result ? (
           <>
             <CheckCircle2 size={14} className="text-green-300" />
-            {result.installed_count} kuruldu · {result.failed_count} başarısız
+            <span className="truncate text-xs max-w-[180px]">{result}</span>
           </>
         ) : (
           <>
@@ -891,18 +895,62 @@ const WindowsServers: React.FC = () => {
   const [selected, setSelected] = useState<WindowsServer | null>(null)
   const [credServer, setCredServer] = useState<WindowsServer | null>(null)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = 50
   const [showUnclassified, setShowUnclassified] = useState(false)
+  const [pageBulkJobId, setPageBulkJobId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  const { data: servers = [], isLoading, refetch } = useQuery<WindowsServer[]>({
-    queryKey: ['windows-servers', showUnclassified],
+  useEffect(() => { setPage(1) }, [search, showUnclassified])
+
+  useEffect(() => {
+    let cancelled = false
+    restoreActiveBulkJobId().then(id => {
+      if (!cancelled && id) setPageBulkJobId(id)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    persistBulkJobId(pageBulkJobId)
+  }, [pageBulkJobId])
+
+  const { data: serversPage, isLoading, refetch } = useQuery({
+    queryKey: ['windows-servers', showUnclassified, page, pageSize, search],
     queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers?include_unclassified=${showUnclassified}`)
+      const sp = new URLSearchParams({
+        include_unclassified: String(showUnclassified),
+        page: String(page),
+        page_size: String(pageSize),
+      })
+      if (search.trim()) sp.set('q', search.trim())
+      const r = await fetch(`${WIN_API}/servers?${sp}`)
       if (!r.ok) throw new Error('Yüklenemedi')
-      return r.json()
+      const data = await r.json()
+      if (Array.isArray(data)) {
+        return { items: data as WindowsServer[], total: data.length, page: 1, page_size: data.length }
+      }
+      return data as { items: WindowsServer[]; total: number; page: number; page_size: number }
     },
     refetchInterval: 60_000,
   })
+
+  const { data: winSummary } = useQuery({
+    queryKey: ['windows-servers-summary', showUnclassified],
+    queryFn: async () => {
+      const r = await fetch(`${WIN_API}/servers/summary?include_unclassified=${showUnclassified}`)
+      if (!r.ok) return null
+      return r.json() as Promise<{
+        total: number; online: number; winrm_configured: number; ai_ready: number
+        windows_exporter_running: number; confirmed_windows: number
+      }>
+    },
+    refetchInterval: 60_000,
+  })
+
+  const servers = serversPage?.items ?? []
+  const totalServers = serversPage?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
 
   const testConn = useMutation({
     mutationFn: async (id: number) => {
@@ -912,21 +960,23 @@ const WindowsServers: React.FC = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['windows-servers'] }),
   })
 
-  const filtered = servers.filter(s =>
-    !search ||
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.ip_address?.includes(search)
-  )
-
+  const filtered = servers
   const confirmedWindows = servers.filter(s => s.confirmed_windows)
   const unclassified = servers.filter(s => !s.confirmed_windows)
-  const online = servers.filter(s => s.status === 'ONLINE').length
-  const configured = servers.filter(s => s.winrm_configured).length
-  const aiReadyCount = servers.filter(s => s.ai_ready).length
-  const exporterRunningCount = servers.filter(s => s.windows_exporter_running).length
+  const online = winSummary?.online ?? servers.filter(s => s.status === 'ONLINE').length
+  const configured = winSummary?.winrm_configured ?? servers.filter(s => s.winrm_configured).length
+  const aiReadyCount = winSummary?.ai_ready ?? servers.filter(s => s.ai_ready).length
+  const exporterRunningCount = winSummary?.windows_exporter_running ?? servers.filter(s => s.windows_exporter_running).length
 
   return (
     <div className="space-y-6">
+      {pageBulkJobId && (
+        <BulkJobOverlay
+          jobId={pageBulkJobId}
+          onDone={() => { setPageBulkJobId(null); refetch() }}
+          onDismiss={() => setPageBulkJobId(null)}
+        />
+      )}
       {credServer && (
         <CredentialModal server={credServer} onClose={() => setCredServer(null)} />
       )}
@@ -962,7 +1012,15 @@ const WindowsServers: React.FC = () => {
             </label>
           )}
           {!routeTab && <WinRmAiReadyButton onDone={refetch} />}
-          {!routeTab && <WindowsExporterInstallAllButton onDone={refetch} />}
+          {!routeTab && (
+            <WindowsExporterInstallAllButton
+              onDone={refetch}
+              onJobStart={(jobId) => {
+                beginBulkJobModal(jobId)
+                setPageBulkJobId(jobId)
+              }}
+            />
+          )}
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
             <RefreshCw size={14} /> Yenile
@@ -977,8 +1035,8 @@ const WindowsServers: React.FC = () => {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         {[
-          { label: 'Windows Tespit', value: confirmedWindows.length, color: 'text-blue-400' },
-          { label: 'OS Belirsiz', value: unclassified.length, color: 'text-amber-400' },
+          { label: 'Windows Tespit', value: winSummary?.confirmed_windows ?? confirmedWindows.length, color: 'text-blue-400' },
+          { label: 'OS Belirsiz', value: Math.max(0, (winSummary?.total ?? totalServers) - (winSummary?.confirmed_windows ?? confirmedWindows.length)), color: 'text-amber-400' },
           { label: 'Aktif', value: online, color: 'text-green-400' },
           { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
           { label: 'AI Ready', value: aiReadyCount, color: 'text-emerald-400' },
@@ -1028,6 +1086,7 @@ const WindowsServers: React.FC = () => {
           </p>
         </div>
       ) : (
+        <>
         <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
           <table className="w-full">
             <thead>
@@ -1138,6 +1197,19 @@ const WindowsServers: React.FC = () => {
             </tbody>
           </table>
         </div>
+        {totalServers > 0 && (
+          <div className="flex items-center justify-between text-sm text-slate-400 px-1">
+            <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalServers)} / {totalServers}</span>
+            <div className="flex items-center gap-2">
+              <button type="button" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">Önceki</button>
+              <span>{page} / {totalPages}</span>
+              <button type="button" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">Sonraki</button>
+            </div>
+          </div>
+        )}
+        </>
       )}
       </>
       )}

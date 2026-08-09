@@ -114,6 +114,30 @@ def add_chunks(
     logger.info(f"RAG store: added {len(ids)} chunks to {collection_name}")
 
 
+def upsert_chunks(
+    collection_name: str,
+    ids: List[str],
+    documents: List[str],
+    metadatas: Optional[List[dict]] = None,
+    embeddings: Optional[List[List[float]]] = None,
+) -> None:
+    """Chunk'ları ekle veya aynı id ile güncelle (incremental reindex için)."""
+    if not ids or not documents:
+        return
+    if embeddings is not None and len(embeddings) != len(documents):
+        raise ValueError("embeddings length must match documents")
+    coll = get_collection(collection_name)
+    if metadatas is None:
+        metadatas = [{}] * len(ids)
+    coll.upsert(
+        ids=ids,
+        documents=documents,
+        metadatas=metadatas,
+        embeddings=embeddings,
+    )
+    logger.info(f"RAG store: upserted {len(ids)} chunks to {collection_name}")
+
+
 def query_collection(
     collection_name: str,
     query_embedding: List[float],
@@ -152,6 +176,52 @@ def clear_collection(collection_name: str) -> None:
         metadata={"hnsw:space": "cosine"},
     )
     logger.info(f"RAG store: cleared {collection_name}")
+
+
+def delete_chunk_ids(collection_name: str, ids: List[str]) -> int:
+    """Belirli chunk id'lerini sil. Dönüş: silinen adet (best-effort)."""
+    if not ids:
+        return 0
+    try:
+        coll = get_collection(collection_name)
+        # Chroma batch limit — parçala
+        n = 0
+        for i in range(0, len(ids), 400):
+            batch = ids[i : i + 400]
+            coll.delete(ids=batch)
+            n += len(batch)
+        logger.info("RAG store: deleted %s ids from %s", n, collection_name)
+        return n
+    except Exception as e:
+        logger.warning("RAG delete_chunk_ids failed (%s): %s", collection_name, e)
+        return 0
+
+
+def prune_ids_not_in_keep(
+    collection_name: str,
+    keep_ids: set,
+    *,
+    id_prefix: str,
+    scan_limit: int = 20000,
+) -> int:
+    """Collection'da id_prefix ile başlayan, keep_ids dışında kalan kayıtları sil (stale RAG)."""
+    try:
+        coll = get_collection(collection_name)
+        total = coll.count()
+        if total == 0:
+            return 0
+        result = coll.get(include=[], limit=min(scan_limit, max(total, 1)))
+        existing = result.get("ids") or []
+        to_delete = [
+            i for i in existing
+            if str(i).startswith(id_prefix) and i not in keep_ids
+        ]
+        if not to_delete:
+            return 0
+        return delete_chunk_ids(collection_name, to_delete)
+    except Exception as e:
+        logger.warning("RAG prune failed (%s %s): %s", collection_name, id_prefix, e)
+        return 0
 
 
 def count_collection(collection_name: str) -> int:

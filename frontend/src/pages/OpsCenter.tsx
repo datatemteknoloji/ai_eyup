@@ -149,7 +149,7 @@ function MetricWidget({ icon, label, count, critCount, color, active, onClick }:
     <button
       type="button"
       onClick={onClick}
-      className={`flex-1 text-left bg-slate-800/60 border rounded-xl px-4 py-3 transition-all ${
+      className={`ops-metric-widget flex-1 text-left bg-slate-800/60 border rounded-xl px-4 py-3 transition-all ${
         onClick ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-slate-800' : ''
       } ${active ? 'border-cyan-500/60 ring-1 ring-cyan-500/30' : 'border-slate-700/60'}`}
     >
@@ -157,12 +157,12 @@ function MetricWidget({ icon, label, count, critCount, color, active, onClick }:
         <div className={`flex items-center gap-2 text-sm font-medium ${color}`}>
           {icon} {label}
         </div>
-        <span className={`text-lg font-bold ${count > 0 ? color : 'text-slate-600'}`}>{count}</span>
+        <span className={`text-lg font-bold ${count > 0 ? color : 'ops-metric-count-zero text-slate-600'}`}>{count}</span>
       </div>
-      <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+      <div className="ops-metric-track h-1 bg-slate-700 rounded-full overflow-hidden">
         <div className="h-full rounded-full transition-all duration-500" style={{
           width: `${pct}%`,
-          backgroundColor: count > 0 ? (critCount > 0 ? '#ef4444' : '#f59e0b') : '#334155'
+          backgroundColor: count > 0 ? (critCount > 0 ? '#ef4444' : '#f59e0b') : 'var(--border-strong)'
         }} />
       </div>
       {critCount > 0 && <div className="text-[10px] text-red-400 mt-1">{critCount} kritik</div>}

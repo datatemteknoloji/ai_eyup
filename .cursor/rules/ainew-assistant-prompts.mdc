@@ -1,0 +1,30 @@
+---
+description: ainew ürün asistanı kurallarının nerede düzenleneceği (OV/KubeVirt dahil)
+alwaysApply: false
+globs: backend/app/api/*chat*.py,backend/app/services/unified_tool_chat.py,backend/app/services/infra_summary.py,backend/app/services/hypervisor_intelligence.py,backend/app/services/chat_planning_intent.py
+---
+
+# ainew — Ürün asistanı kuralları (sen de düzenleyebilirsin)
+
+Cursor’daki `.cursor/rules/*.mdc` dosyaları **yalnızca Cursor Agent** içindir.
+Uygulama içi sohbet (Unified / Linux / Virt / OpenShift) kuralları **backend prompt** dosyalarındadır.
+
+## Nerede düzenlenir?
+
+| Amaç | Dosya |
+|------|--------|
+| Unified nihai cevap kimliği / yanıt kuralları | `backend/app/api/unified_chat.py` → `_build_prompt()` |
+| Unified/Linux/… agentic tool döngüsü sistem promptu | `backend/app/services/unified_tool_chat.py` → `SYSTEM_PROMPT`, `_PLATFORM_HINTS` |
+| Envanter özeti metni (modele context) | `backend/app/services/infra_summary.py` |
+| Sanallaştırma chat personası | `backend/app/services/hypervisor_intelligence.py` → `_VIRTUALIZATION_PERSONA` |
+| Linux / Windows chat | `backend/app/api/chat.py`, `backend/app/api/windows_chat.py` |
+| Agent (LangGraph) | `backend/app/services/agent/orchestrator.py` |
+
+Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend` (source mount varsa çoğu zaman reload yeter).
+
+## Sabit ürün kuralı — OpenShift Virtualization
+
+- OpenShift Virtualization (KubeVirt) **sanallaştırma ortamıdır**.
+- OpenShift → Virtual Machines listesi OV’yi gösterir.
+- Yalnızca `hypervisors` tablosunda VMware görmek “OV yok / sayılmaz” demek **yanlıştır**.
+- Doğru ayrım: VMware = hypervisor kaydı; OV = OCP/KubeVirt yüzeyi (veya `openshift_virt` kaydı). İkisi de sanallaştırmadır.

@@ -18,13 +18,51 @@ ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3, "superadmin": 3}
 
 
 def _resolve_user(
-    creds: Optional[HTTPAuthorizationCredentials], db: Session
+    creds: Optional[HTTPAuthorizationCredentials], db: Session, *, touch: bool = False
 ) -> Optional[User]:
     if not creds or not creds.credentials:
         return None
     payload = decode_access_token(creds.credentials)
     if not payload:
         return None
+    # MFA ara token'ları API erişimi vermez
+    if payload.get("purpose"):
+        return None
+    jti = payload.get("jti") or ""
+    if jti:
+        from app.models.security import UserSession
+        from app.services import user_sessions
+        from app.services.security_policy import get_security_policy
+        from app.services.user_sessions import SessionIdleError
+
+        # Redis denylist (Wave 6) — revoke sonrası multi-worker anında
+        if user_sessions.is_jti_revoked_cached(jti):
+            return None
+
+        # İptal edilmiş oturum kaydı varsa reddet
+        revoked = (
+            db.query(UserSession.id)
+            .filter(UserSession.jti == jti, UserSession.revoked_at.isnot(None))
+            .first()
+        )
+        if revoked:
+            return None
+        row = user_sessions.get_active_session(db, jti)
+        if row is not None:
+            try:
+                if touch:
+                    policy = get_security_policy(db)
+                    user_sessions.touch_session(db, row, idle_minutes=policy.session_idle_minutes)
+            except SessionIdleError:
+                return None
+        # Session kaydı olan yeni login'ler: süresi dolmuş kayıt → reddet
+        expired_row = (
+            db.query(UserSession.id)
+            .filter(UserSession.jti == jti)
+            .first()
+        )
+        if expired_row is not None and row is None:
+            return None
     uid = payload.get("uid")
     user = None
     if uid is not None:
@@ -41,7 +79,7 @@ def get_current_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    user = _resolve_user(creds, db)
+    user = _resolve_user(creds, db, touch=True)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -57,7 +95,7 @@ def get_current_user_optional(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
-    return _resolve_user(creds, db)
+    return _resolve_user(creds, db, touch=False)
 
 
 def require_role(min_role: str):

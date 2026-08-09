@@ -162,6 +162,15 @@ def extract_and_store_facts(
 
         if touched:
             db.commit()
+            try:
+                from app.services.chat_cache_service import invalidate_context
+                invalidate_context(
+                    db,
+                    platform=platform if platform in ("linux", "windows") else "linux",
+                    server_ids=[server.id],
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.debug(f"Fact learning atlandi ({getattr(server, 'name', '?')}): {e}")
         try:
@@ -289,7 +298,18 @@ def get_learned_facts_block(db: Session, server, max_items: int = 25) -> str:
             val = (r.value or "").replace("\n", " ").strip()
             if len(val) > 200:
                 val = val[:200] + "…"
-            lines.append(f"- [{r.category}] {r.key} = {val} (son dogrulama: {_age_label(r.last_confirmed_at)})")
+            src = (r.source or "ssh").strip().lower()
+            age = _age_label(r.last_confirmed_at)
+            if src == "manual":
+                lines.append(
+                    f"- [{r.category}] {r.key} = {val} "
+                    f"(MANUEL SABITLEME — canli SSH/WinRM ile celisirse CANLI veriyi esas al; "
+                    f"son dogrulama: {age})"
+                )
+            else:
+                lines.append(
+                    f"- [{r.category}] {r.key} = {val} (kaynak={src}, son dogrulama: {age})"
+                )
         return "\n".join(lines)
     except Exception as e:
         logger.debug(f"Learned facts block olusturulamadi: {e}")

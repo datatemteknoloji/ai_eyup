@@ -5,6 +5,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Server, Cpu, Zap, Boxes, Shield } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { fetchServersSummary } from '../api/servers'
 import type { PlatformKey } from '../config/platformAiops'
 
 type Stat = { label: string; value: string | number; icon: React.ReactNode }
@@ -29,18 +30,17 @@ export function ChatPlatformStatsBar({
 }: {
   platform: PlatformKey | 'all' | 'windows'
 }) {
-  const { data: linuxStats } = useQuery({
-    queryKey: ['chat-stats', 'linux'],
-    enabled: platform === 'linux' || platform === 'exadata',
+  const summaryPlatform =
+    platform === 'all' || platform === 'windows'
+      ? null
+      : (platform as 'linux' | 'virt' | 'exadata' | 'openshift')
+
+  const { data: platStats } = useQuery({
+    queryKey: ['chat-stats', 'platform', platform],
+    enabled: summaryPlatform === 'linux' || summaryPlatform === 'exadata' || summaryPlatform === 'virt',
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=${platform === 'exadata' ? 'exadata' : 'linux'}`)
-      if (!r.ok) return { total: 0, online: 0 }
-      const list = await r.json()
-      const arr = Array.isArray(list) ? list : []
-      return {
-        total: arr.length,
-        online: arr.filter((s: { status?: string }) => (s.status || '').toUpperCase() === 'ONLINE').length,
-      }
+      const s = await fetchServersSummary(summaryPlatform === 'virt' ? 'virt' : summaryPlatform === 'exadata' ? 'exadata' : 'linux')
+      return { total: s.total, online: s.online, ai_ready: s.ai_ready }
     },
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -48,33 +48,12 @@ export function ChatPlatformStatsBar({
 
   const { data: winStats } = useQuery({
     queryKey: ['chat-stats', 'windows'],
-    enabled: platform === 'windows',
+    enabled: platform === 'windows' || platform === 'all',
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=windows`)
-      if (!r.ok) return { total: 0, online: 0 }
-      const list = await r.json()
-      const arr = Array.isArray(list) ? list : []
-      return {
-        total: arr.length,
-        online: arr.filter((s: { status?: string }) => (s.status || '').toUpperCase() === 'ONLINE').length,
-      }
-    },
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  })
-
-  const { data: ocpStats } = useQuery({
-    queryKey: ['chat-stats', 'openshift'],
-    enabled: platform === 'openshift',
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/ops/summary`)
-      if (!r.ok) return null
-      return r.json() as Promise<{
-        critical?: number
-        warning?: number
-        total?: number
-        open_incidents?: number
-      }>
+      const r = await fetch(`${API_BASE_URL}/windows/servers/summary`)
+      if (!r.ok) return { total: 0, online: 0, ai_ready: 0 }
+      const s = await r.json()
+      return { total: s.total || 0, online: s.online || 0, ai_ready: s.ai_ready || 0 }
     },
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -85,65 +64,58 @@ export function ChatPlatformStatsBar({
     enabled: platform === 'all',
     queryFn: async () => {
       const [linux, win] = await Promise.all([
-        fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=linux`).then(r => r.ok ? r.json() : []),
-        fetch(`${API_BASE_URL}/servers/ai-ready/list?platform=windows`).then(r => r.ok ? r.json() : []),
+        fetchServersSummary('linux'),
+        fetch(`${API_BASE_URL}/windows/servers/summary`).then(r => r.ok ? r.json() : { total: 0, online: 0, ai_ready: 0 }),
       ])
       return {
-        linux: Array.isArray(linux) ? linux.length : 0,
-        windows: Array.isArray(win) ? win.length : 0,
+        total: (linux.total || 0) + (win.total || 0),
+        online: (linux.online || 0) + (win.online || 0),
+        ai_ready: (linux.ai_ready || 0) + (win.ai_ready || 0),
       }
     },
     staleTime: 30_000,
     refetchInterval: 60_000,
   })
 
-  if (platform === 'linux' || platform === 'exadata') {
-    if (!linuxStats) return null
+  if (platform === 'openshift') return null
+
+  if (platform === 'linux' || platform === 'exadata' || platform === 'virt') {
+    const s = platStats
+    if (!s) return null
     return (
       <StatsRow
         stats={[
-          { icon: <Server size={14} />, label: platform === 'exadata' ? 'Exadata node' : 'AI Ready', value: linuxStats.total },
-          { icon: <Zap size={14} />, label: 'Online', value: linuxStats.online },
+          { label: platform === 'virt' ? 'VM' : 'Envanter', value: s.total, icon: <Server size={12} /> },
+          { label: 'Online', value: s.online, icon: <Zap size={12} /> },
+          { label: 'AI Ready', value: s.ai_ready, icon: <Cpu size={12} /> },
         ]}
       />
     )
   }
 
   if (platform === 'windows') {
-    if (!winStats) return null
+    const s = winStats
+    if (!s) return null
     return (
       <StatsRow
         stats={[
-          { icon: <Shield size={14} />, label: 'AI Ready', value: winStats.total },
-          { icon: <Zap size={14} />, label: 'Online', value: winStats.online },
+          { label: 'Windows', value: s.total, icon: <Boxes size={12} /> },
+          { label: 'Online', value: s.online, icon: <Zap size={12} /> },
+          { label: 'AI Ready', value: s.ai_ready, icon: <Shield size={12} /> },
         ]}
       />
     )
   }
 
-  if (platform === 'openshift') {
-    if (!ocpStats) return null
-    return (
-      <StatsRow
-        stats={[
-          { icon: <Boxes size={14} />, label: 'Olay', value: ocpStats.total ?? ((ocpStats.critical ?? 0) + (ocpStats.warning ?? 0)) },
-          { icon: <Cpu size={14} />, label: 'Kritik', value: ocpStats.critical ?? 0 },
-          { icon: <Zap size={14} />, label: 'Uyarı', value: ocpStats.warning ?? 0 },
-        ]}
-      />
-    )
-  }
-
-  if (platform === 'all' && allStats) {
-    return (
-      <StatsRow
-        stats={[
-          { icon: <Server size={14} />, label: 'Linux AI Ready', value: allStats.linux },
-          { icon: <Shield size={14} />, label: 'Windows AI Ready', value: allStats.windows },
-        ]}
-      />
-    )
-  }
-
-  return null
+  const s = allStats
+  if (!s) return null
+  return (
+    <StatsRow
+      stats={[
+        { label: 'Toplam', value: s.total, icon: <Server size={12} /> },
+        { label: 'Online', value: s.online, icon: <Zap size={12} /> },
+        { label: 'AI Ready', value: s.ai_ready, icon: <Cpu size={12} /> },
+      ]}
+    />
+  )
 }

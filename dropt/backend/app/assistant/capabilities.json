@@ -1,0 +1,590 @@
+{
+  "version": "1.2",
+  "product": "Dropt Ops Portal",
+  "role": "operations_router",
+  "note": "title_tr / title_en must match UI ops_* / child menu labels exactly; route must match App.tsx",
+  "capabilities": [
+    {
+      "id": "asm_add_disk",
+      "module": "asm",
+      "action": "add_disk",
+      "route": "/app/asm",
+      "title_tr": "ASM disk ekle",
+      "title_en": "Add ASM disk",
+      "summary_tr": "Oracle ASM için multipath veya sanal diske partition + oracleasm createdisk. <2TiB fdisk, ≥2TiB parted GPT. Cluster primary/peer.",
+      "keywords": [
+        "asm", "oracleasm", "createdisk", "multipath", "wwid", "lun", "disk ekle",
+        "asm disk", "scandisks", "mpath", "storage disk", "oracle disk",
+        "parted", "fdisk", "2tb", "2tib", "gpt", "asm grup", "disk group"
+      ],
+      "example_intents": [
+        "Cluster'a yeni LUN eklendi ASM'e alınacak",
+        "oracleasm createdisk yapmamız lazım",
+        "multipath diskleri ASM disk group'a ekle",
+        "2.5TB disk ASM'e ekle"
+      ],
+      "required_inputs": ["sunucu", "alias öneki (örn. DATA)", "WWID listesi (fiziksel)", "talep id"],
+      "checklist_tr": [
+        "Sunucu(lar)ı seçin (cluster max 2, primary belirleyin)",
+        "Fiziksel: SCSI tara → WWID listesi kontrol",
+        "Mevcut ASM gruplarından chip ile alias öneki seçin veya elle girin",
+        "Partition: <2TiB fdisk, ≥2TiB parted (GPT, 0%–100%)",
+        "Diskleri sağa sürükleyip önizleme → uygula"
+      ],
+      "out_of_scope_tr": "ASM disk group oluşturma / rebalance portalda yok (DBA)."
+    },
+    {
+      "id": "filesystem",
+      "module": "filesystem",
+      "action": "manage",
+      "route": "/app/filesystem",
+      "title_tr": "FileSystem Management",
+      "title_en": "FileSystem Management",
+      "summary_tr": "FS menüsü: Extend, Create FS veya Disk organizer.",
+      "keywords": [
+        "filesystem", "filesystem management", "dosya sistemi", "lvm", "vg", "lv",
+        "disk", "mount", "alan yönetimi"
+      ],
+      "example_intents": [
+        "FileSystem Management aç",
+        "Disk alanı işlemleri"
+      ],
+      "required_inputs": ["sunucu"],
+      "checklist_tr": ["Sunucu seçin", "Extend / Create FS / Disk organizer seçin"],
+      "out_of_scope_tr": "Oracle ASM alanı FileSystem Management ekranından yönetilmez."
+    },
+    {
+      "id": "filesystem_extend",
+      "module": "filesystem",
+      "action": "extend",
+      "route": "/app/filesystem?mode=extend",
+      "title_tr": "Extend (büyüt)",
+      "title_en": "Extend",
+      "summary_tr": "Mevcut filesystem/LV alanını büyütme; gerekirse disk ekleyip vgextend.",
+      "keywords": [
+        "extend", "büyüt", "lvextend", "disk büyüt", "alan ekle", "gb ekle",
+        "filesystem büyüt", "lv büyüt", "+100%FREE", "use all free"
+      ],
+      "example_intents": [
+        "/data altına 100GB ekleyin",
+        "LV büyütmemiz gerekiyor",
+        "Filesystem extend"
+      ],
+      "required_inputs": ["sunucu", "mount", "boyut veya tüm boş alan"],
+      "checklist_tr": [
+        "Sunucuyu seçin",
+        "Extend seçin",
+        "FS seçip boyut / disk alanlarını doldurun",
+        "Önizleme → uygula"
+      ],
+      "out_of_scope_tr": "Root VG’de yalnızca izinli mount’lar (/home /var /tmp /var/tmp)."
+    },
+    {
+      "id": "filesystem_create",
+      "module": "filesystem",
+      "action": "create",
+      "route": "/app/filesystem?mode=create",
+      "title_tr": "Create FS",
+      "title_en": "Create FS",
+      "summary_tr": "Non-root VG üzerinde yeni LV + filesystem oluşturma.",
+      "keywords": [
+        "create fs", "yeni filesystem", "lvcreate", "yeni disk", "mount oluştur",
+        "xfs", "ext4", "1G disk", "yeni lv"
+      ],
+      "example_intents": [
+        "Yeni diskten filesystem oluştur",
+        "1G /app disk oluştur",
+        "Create FS"
+      ],
+      "required_inputs": ["sunucu", "VG", "mount", "boyut veya tüm boş alan"],
+      "checklist_tr": [
+        "Sunucuyu seçin",
+        "Create FS seçin",
+        "VG + mount + boyut doldurun",
+        "Önizleme → uygula"
+      ],
+      "out_of_scope_tr": "Root VG üzerinde yeni FS oluşturulmaz."
+    },
+    {
+      "id": "filesystem_organize",
+      "module": "filesystem",
+      "action": "organize",
+      "route": "/app/filesystem?mode=organize",
+      "title_tr": "Disk organizer",
+      "title_en": "Disk organizer",
+      "summary_tr": "Mevcut non-root FS alanını birden fazla mount noktasına bölme (destructive).",
+      "keywords": [
+        "disk organizer", "organize", "parçala", "bölüm", "slice", "partition fs",
+        "mount parçala", "disk organize"
+      ],
+      "example_intents": [
+        "/data'yı nereye parçalarım",
+        "Disk organizer",
+        "Filesystem'i böl"
+      ],
+      "required_inputs": ["sunucu", "kaynak mount", "slice mount/boyut listesi"],
+      "checklist_tr": [
+        "Sunucuyu seçin",
+        "Disk organizer seçin",
+        "Kaynak FS ve slice’ları tanımlayın",
+        "Önizleme → uygula"
+      ],
+      "out_of_scope_tr": "Destructive işlem; root VG FS’leri organize edilmez."
+    },
+    {
+      "id": "network_mgmt",
+      "module": "network",
+      "action": "menu",
+      "route": "/app/network",
+      "title_tr": "Network Management",
+      "title_en": "Network Management",
+      "summary_tr": "Ağ işlemleri menüsü: Add Network, Add VLAN veya IP Değişikliği.",
+      "keywords": [
+        "network management", "ağ yönetimi", "network", "nic", "arayüz",
+        "network interface", "ağ menü"
+      ],
+      "example_intents": [
+        "Ağ yönetimi",
+        "Network Management aç"
+      ],
+      "required_inputs": ["sunucu"],
+      "checklist_tr": ["Sunucu seçin", "Add Network / Add VLAN / IP Değişikliği seçin"],
+      "out_of_scope_tr": "Switch tarafı yapılandırma portal dışı."
+    },
+    {
+      "id": "network_add",
+      "module": "network",
+      "action": "add_network",
+      "route": "/app/network?tab=network",
+      "title_tr": "Add Network",
+      "title_en": "Add Network",
+      "summary_tr": "Ethernet veya bond ile IP/subnet/gateway; isteğe bağlı VLAN ID (access/trunk).",
+      "keywords": [
+        "add network", "yeni network", "ethernet", "bond", "bond mode",
+        "active-backup", "lacp", "slave", "ip ekle", "gateway", "subnet",
+        "yeni interface", "nic ekle", "network interface ekle"
+      ],
+      "example_intents": [
+        "Yeni network interface lazım",
+        "Bond ile IP ekle",
+        "Ethernet IP ver",
+        "Add Network"
+      ],
+      "required_inputs": ["sunucu", "connection type", "interface/slaves", "IP/subnet/gateway"],
+      "checklist_tr": [
+        "Sunucu seçin",
+        "Add Network seçin",
+        "ethernet veya bond seçin",
+        "IP/subnet/gateway (opsiyonel VLAN ID) doldurun",
+        "Önizleme → uygula"
+      ],
+      "out_of_scope_tr": "Yönetim / docker / ilo arayüzleri listelenmez. Switch tarafı portal dışı."
+    },
+    {
+      "id": "network_ip_change",
+      "module": "network",
+      "action": "change_ip",
+      "route": "/app/network?tab=ipchange",
+      "title_tr": "IP Değişikliği",
+      "title_en": "IP Change",
+      "summary_tr": "Mevcut IP taşıyan arayüzde IP/subnet/gateway (ana IP ise DNS) düzenleme; HPSA best-effort; birincil IP için DNS talep checklist.",
+      "keywords": [
+        "ip değişikliği", "ip değiştir", "change ip", "ip change", "dns kayıt",
+        "nameserver", "dns-search", "resolv.conf", "ana ip", "birincil ip", "ikincil ip",
+        "ip update", "gateway değiştir", "subnet değiştir", "hpsa", "bs_software", "bs_hardware"
+      ],
+      "example_intents": [
+        "Sunucu IP değiştir",
+        "Ana IP'yi güncelle",
+        "Interface IP'sini değiştir",
+        "IP Değişikliği",
+        "ikincil IP değiştir"
+      ],
+      "required_inputs": ["sunucu", "interface", "IP/subnet/gateway"],
+      "checklist_tr": [
+        "Sunucu seçin",
+        "IP Değişikliği seçin",
+        "IP taşıyan interface seçin (DNS sonucu + birincil/ikincil bilgisi)",
+        "Alanları düzenleyin (birincil IP ise DNS zorunlu)",
+        "Önizleme → uygula",
+        "Apply aynı oturumda HPSA bs_software/bs_hardware (hata IP job'unu bozmaz)",
+        "Başarı sonrası: birincil IP ise DNS talebi; izleme bilgilendirme maili (TR/EN checklist)"
+      ],
+      "out_of_scope_tr": "DNS kaydı portalda oluşturulmaz; talep/mail metni checklist’te üretilir. İkincil IP’de DNS talebi gerekmez. docker/ilo/idrac listelenmez."
+    },
+    {
+      "id": "vlan_add",
+      "module": "vlan",
+      "action": "add",
+      "route": "/app/network?tab=vlan",
+      "title_tr": "Add VLAN",
+      "title_en": "Add VLAN",
+      "summary_tr": "Parent arayüz üzerinde VLAN + IP/gateway yapılandırması.",
+      "keywords": [
+        "vlan", "vlan ekle", "add vlan", "vlan id", "parent interface", "trunk"
+      ],
+      "example_intents": [
+        "Sunucuya VLAN 120 IP verin",
+        "VLAN ekle",
+        "Add VLAN"
+      ],
+      "required_inputs": ["sunucu", "parent interface", "VLAN id", "IP/subnet/gateway"],
+      "checklist_tr": [
+        "Sunucu seçin",
+        "Add VLAN seçin",
+        "Parent + VLAN + IP alanlarını doldurun",
+        "Önizleme → uygula"
+      ],
+      "out_of_scope_tr": "Switch tarafı VLAN trunk portal dışı."
+    },
+    {
+      "id": "hostname",
+      "module": "hostname",
+      "action": "set",
+      "route": "/app/hostname",
+      "title_tr": "Hostname değiştir",
+      "title_en": "Change hostname",
+      "summary_tr": "FQDN/hostname ve /etc/hosts güncelleme; Centrify leave/join + HPSA best-effort.",
+      "keywords": ["hostname", "fqdn", "makine adı", "hosts", "rename server", "centrify", "adleave", "adjoin"],
+      "example_intents": ["Sunucu adını db01.prod.local yapın"],
+      "required_inputs": ["sunucu", "yeni FQDN"],
+      "checklist_tr": [
+        "Sunucu seçin",
+        "Yeni FQDN girin (domain = FQDN ilk '.' sonrası)",
+        "Önizleme → uygula",
+        "Centrify varsa leave→hostname→join (Settings Centrify creds; hata hostname success bozmaz)",
+        "HPSA bs_* best-effort",
+        "Başarı sonrası: DNS talebi + ekiplere mail (CC: Unix Linux Sistem Tasarım ve Planlama)"
+      ],
+      "out_of_scope_tr": "DNS kaydı portalda oluşturulmaz; talep/mail metni checklist’te üretilir. Centrify/HPSA hatası hostname job'unu fail etmez."
+    },
+    {
+      "id": "sudoers",
+      "module": "sudoers",
+      "action": "grant",
+      "route": "/app/sudoers",
+      "title_tr": "Sudo yetkisi",
+      "title_en": "Sudo access",
+      "summary_tr": "Kullanıcı/gruba sudoers kuralı.",
+      "keywords": ["sudo", "sudoers", "yetki", "nopasswd", "wheel", "root yetkisi"],
+      "example_intents": ["oracle kullanıcısına sudo verin"],
+      "required_inputs": ["sunucu", "kullanıcı veya grup", "kural şablonu"],
+      "checklist_tr": ["Sunucu seçin", "Hedef kullanıcı/grup ve şablon", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "local_users",
+      "module": "local_users",
+      "action": "manage",
+      "route": "/app/local-users",
+      "title_tr": "Yerel kullanıcılar",
+      "title_en": "Local users",
+      "summary_tr": "Linux local user/group yönetimi.",
+      "keywords": ["useradd", "local user", "kullanıcı ekle", "grup", "passwd", "hesap"],
+      "example_intents": ["Sunucuya appuser oluşturun"],
+      "required_inputs": ["sunucu", "kullanıcı adı"],
+      "checklist_tr": ["Sunucu seçin", "Kullanıcı işlemlerini uygulayın"],
+      "out_of_scope_tr": "AD/LDAP kullanıcı oluşturma Identity ayarlarından ayrıdır."
+    },
+    {
+      "id": "path_perms",
+      "module": "path_perms",
+      "action": "set",
+      "route": "/app/path-perms",
+      "title_tr": "Path izinleri",
+      "title_en": "Path permissions",
+      "summary_tr": "Dizin/dosya owner ve chmod.",
+      "keywords": ["chmod", "chown", "izin", "permission", "owner", "dizin yetkisi"],
+      "example_intents": ["/opt/app oracle:oinstall 775 yapın"],
+      "required_inputs": ["sunucu", "path", "owner/mode"],
+      "checklist_tr": ["Sunucu ve path", "Owner/mode", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "limits",
+      "module": "limits",
+      "action": "set",
+      "route": "/app/limits",
+      "title_tr": "Security Limits",
+      "title_en": "Security Limits",
+      "summary_tr": "limits.conf (nproc, nofile vb.).",
+      "keywords": ["limits", "nproc", "nofile", "ulimit", "security limits", "limits.conf"],
+      "example_intents": ["oracle için nofile 65536"],
+      "required_inputs": ["sunucu", "domain", "limit türü ve değer"],
+      "checklist_tr": ["Sunucu seçin", "Limit satırlarını girin", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "sysctl",
+      "module": "sysctl",
+      "action": "set",
+      "route": "/app/sysctl",
+      "title_tr": "HugePages / sysctl",
+      "title_en": "HugePages / sysctl",
+      "summary_tr": "sysctl parametreleri, shm, hugepages.",
+      "keywords": [
+        "sysctl", "hugepages", "kernel", "shmmax", "shmall", "vm.nr_hugepages",
+        "sem", "kernel parametre"
+      ],
+      "example_intents": ["HugePages ayarlayın", "kernel.sem değerlerini güncelleyin"],
+      "required_inputs": ["sunucu", "sysctl key=value satırları"],
+      "checklist_tr": ["Sunucu seçin", "Parametreleri yapıştırın", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "packages",
+      "module": "packages",
+      "action": "install",
+      "route": "/app/packages",
+      "title_tr": "Paket kur",
+      "title_en": "Install packages",
+      "summary_tr": "dnf/yum paket veya portal/NFS local RPM.",
+      "keywords": [
+        "paket", "rpm", "dnf", "yum", "install", "package", "oracle preinstall",
+        "localinstall", "repo", "docker", "kurulum", "paket kur"
+      ],
+      "example_intents": [
+        "oracle-database-preinstall kurun",
+        "Şu RPM'leri yükleyin",
+        "bir sunucuya docker paketi kurulması",
+        "docker kur"
+      ],
+      "required_inputs": ["sunucu", "paket adı veya keyword/RPM"],
+      "checklist_tr": ["Sunucu seçin", "Paket/keyword seçin", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "services",
+      "module": "services",
+      "action": "manage",
+      "route": "/app/services",
+      "title_tr": "Servis yönetimi",
+      "title_en": "Service control",
+      "summary_tr": "systemctl start/stop/enable/disable/restart.",
+      "keywords": ["systemctl", "servis", "service", "start", "stop", "enable", "restart", "daemon"],
+      "example_intents": ["chronyd'yi enable edin", "httpd restart"],
+      "required_inputs": ["sunucu", "unit adı", "aksiyon"],
+      "checklist_tr": ["Sunucu seçin", "Unit ve aksiyon", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "mail_config",
+      "module": "mail_config",
+      "action": "configure",
+      "route": "/app/mail-config",
+      "title_tr": "Mail Config",
+      "title_en": "Mail Config",
+      "summary_tr": "Postfix kaldır, sendmail kur, DS smart host.",
+      "keywords": [
+        "sendmail", "postfix", "smtp", "mail", "relay", "smart host", "DS",
+        "mail yapılandır", "e-posta sunucu"
+      ],
+      "example_intents": ["Sunucuda sendmail relay ayarlayın", "Postfix kaldırıp sendmail kurun"],
+      "required_inputs": ["sunucu", "SMTP/DS host (Settings'teki mail ayarı)"],
+      "checklist_tr": [
+        "Settings'te SMTP host tanımlı olsun",
+        "Mail Config ekranında sunucu seçip çalıştırın"
+      ],
+      "out_of_scope_tr": "Kurumsal SMTP sunucu kurulumu portal dışı."
+    },
+    {
+      "id": "reboot",
+      "module": "reboot",
+      "action": "immediate",
+      "route": "/app/reboot",
+      "title_tr": "Yeniden başlat",
+      "title_en": "Reboot",
+      "summary_tr": "Onaylı sunucu reboot.",
+      "keywords": ["reboot", "restart server", "yeniden başlat", "shutdown -r"],
+      "example_intents": ["Sunucuyu reboot edin"],
+      "required_inputs": ["sunucu", "hostname onayı"],
+      "checklist_tr": ["Sunucu seçin", "Hostname onayını yazın", "Önizleme → uygula"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "log_collect",
+      "module": "logs",
+      "action": "collect",
+      "route": "/app/logs",
+      "title_tr": "Log paketi",
+      "title_en": "Log package",
+      "summary_tr": "Sunucudan log/sos benzeri toplama.",
+      "keywords": ["log", "sosreport", "log topla", "diagnostic", "support log"],
+      "example_intents": ["Sunucudan log toplayın"],
+      "required_inputs": ["sunucu"],
+      "checklist_tr": ["Sunucu seçin", "Toplama işlemini başlatın"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "terminal",
+      "module": "terminal",
+      "action": "shell",
+      "route": "/app/terminal",
+      "title_tr": "Terminal aç",
+      "title_en": "Open terminal",
+      "summary_tr": "Tarayıcıdan SSH benzeri konsol.",
+      "keywords": ["terminal", "ssh", "konsol", "shell", "komut satırı", "web terminal"],
+      "example_intents": ["Sunucuya terminal ile bağlanayım"],
+      "required_inputs": ["sunucu"],
+      "checklist_tr": ["Sunucu seçip terminali açın"],
+      "out_of_scope_tr": "Asistan komut çalıştırmaz; yalnızca yönlendirir."
+    },
+    {
+      "id": "servers",
+      "module": "servers",
+      "action": "inventory",
+      "route": "/app/servers",
+      "title_tr": "Sunucular",
+      "title_en": "Servers",
+      "summary_tr": "Portal envanteri: listele, özet/dağılım (OS, status, key, virt, tag), IP/status/tag/OS filtrele; sunucu ekle.",
+      "keywords": [
+        "sunucu ekle", "inventory", "envanter", "server register", "hedef sunucu",
+        "ip listesi", "ip altı", "ip üstü", "hangi sunucu", "sunucu listesi",
+        "ready", "unreachable", "ssh key", "tag", "192.168", "envanter sorgu",
+        "kaç çeşit os", "os dağılımı", "işletim sistemi", "os özeti", "status dağılımı",
+        "kaç sunucu", "key yok", "sanal kaç", "fiziksel", "rhel 9", "os major"
+      ],
+      "example_intents": [
+        "Yeni sunucuyu portala ekleyin",
+        "192.168.1.100 altındaki IP'leri göster",
+        "ready olmayan sunucular hangileri",
+        "envanterdeki sunucuları listele",
+        "tag=prod sunucular",
+        "sunucu envanterimizde kaç çeşit OS var?",
+        "OS major dağılımı nedir?",
+        "status özeti / kaç ready kaç unreachable",
+        "SSH key olmayan sunucular",
+        "RHEL 9 olanlar hangileri?",
+        "kaç sanal kaç fiziksel sunucu var?"
+      ],
+      "required_inputs": [],
+      "checklist_tr": [
+        "Asistan readonly özet/liste üretir (uygulama yok)",
+        "Gerekirse Sunucular sayfasından inceleyin / düzenleyin"
+      ],
+      "out_of_scope_tr": "Asistan sunucu eklemez/silmez; yalnızca portal DB sorgusu ve yönlendirme."
+    },
+    {
+      "id": "jobs",
+      "module": "jobs",
+      "action": "status",
+      "route": "/app/jobs",
+      "title_tr": "İşler",
+      "title_en": "Jobs",
+      "summary_tr": "Job listesi / durum / hata özeti (readonly sorgu).",
+      "keywords": [
+        "job", "iş durumu", "preview", "apply", "talep", "görev",
+        "failed", "başarısız job", "job neden", "son işler", "running job"
+      ],
+      "example_intents": [
+        "68 numaralı job neden düştü?",
+        "failed job'ları listele",
+        "son 10 iş",
+        "talep T-123 işleri"
+      ],
+      "required_inputs": [],
+      "checklist_tr": ["Sorgu sonucunu inceleyin", "Ayrıntı için İşler sayfasını açın"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "audit",
+      "module": "audit",
+      "action": "query",
+      "route": "/app/audit",
+      "title_tr": "Denetim",
+      "title_en": "Audit",
+      "summary_tr": "Portal audit kayıtları (kim / ne / ne zaman).",
+      "keywords": [
+        "audit", "denetim", "log kim", "aksiyon geçmişi", "kim uyguladı",
+        "audit kaydı", "kullanıcı aktivite"
+      ],
+      "example_intents": [
+        "job 68 audit kayıtları",
+        "oracle kullanıcısının son aksiyonları",
+        "kim reboot uyguladı"
+      ],
+      "required_inputs": [],
+      "checklist_tr": ["Sorgu sonucunu inceleyin", "Denetim sayfasından detaya gidin"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "portal_users",
+      "module": "portal_users",
+      "action": "query",
+      "route": "/app/users",
+      "title_tr": "Portal kullanıcıları",
+      "title_en": "Portal users",
+      "summary_tr": "Portal kullanıcı listesi (Admin).",
+      "keywords": [
+        "portal kullanıcı", "kaç admin", "AD kullanıcı", "pasif hesap",
+        "portal users", "yetkili kullanıcı", "portal users page"
+      ],
+      "example_intents": [
+        "kaç aktif admin var",
+        "AD kaynaklı kullanıcıları listele",
+        "pasif portal hesapları"
+      ],
+      "required_inputs": [],
+      "checklist_tr": ["Admin yetkisi gerekir", "Portal Kullanıcıları sayfasını açın"],
+      "out_of_scope_tr": "Operator bu listeyi göremez."
+    },
+    {
+      "id": "package_repos",
+      "module": "package_repos",
+      "action": "query",
+      "route": "/app/settings",
+      "title_tr": "Paket repo ayarları",
+      "title_en": "Package repo settings",
+      "summary_tr": "Local paket keyword/repo özeti (Admin).",
+      "keywords": [
+        "paket repo", "keyword", "local repo", "subscription", "docker keyword",
+        "rpm keyword"
+      ],
+      "example_intents": [
+        "docker keyword tanımlı mı",
+        "local paket repo listesi"
+      ],
+      "required_inputs": [],
+      "checklist_tr": ["Admin · Ayarlar / paket repo"],
+      "out_of_scope_tr": null
+    },
+    {
+      "id": "settings_info",
+      "module": "settings",
+      "action": "query",
+      "route": "/app/settings",
+      "title_tr": "Portal ayarları",
+      "title_en": "Portal settings",
+      "summary_tr": "App adı, SMTP host, Centrify tab özeti (readonly).",
+      "keywords": [
+        "smtp", "mail host", "app adı", "automation user", "ayarlar nedir",
+        "centrify", "centrify credentials", "ayarlar centrify"
+      ],
+      "example_intents": ["SMTP host ne?", "uygulama adı nedir", "Centrify ayarları nerede"],
+      "required_inputs": [],
+      "checklist_tr": ["Readonly özet", "Değişiklik Ayarlar sayfasında (Centrify sekmesi dahil)"],
+      "out_of_scope_tr": "Şifre / secret gösterilmez."
+    },
+    {
+      "id": "ops_catalog",
+      "module": "ops",
+      "action": "catalog",
+      "route": "/app",
+      "title_tr": "Ops katalog",
+      "title_en": "Ops catalog",
+      "summary_tr": "İzinli sysctl / sudo şablon / VLAN pool / limits kalemleri.",
+      "keywords": [
+        "izinli sysctl", "sysctl listesi", "sudo şablon", "vlan pool",
+        "limits kalemi", "whitelist sysctl"
+      ],
+      "example_intents": [
+        "izinli sysctl parametreleri neler",
+        "sudo şablonlarını göster",
+        "vlan havuzları"
+      ],
+      "required_inputs": [],
+      "checklist_tr": ["Katalog özetini inceleyin"],
+      "out_of_scope_tr": null
+    }
+  ]
+}

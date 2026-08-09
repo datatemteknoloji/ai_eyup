@@ -4,10 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
-import * as XLSX from 'xlsx'
 import { FileDown, Shield, Wrench } from 'lucide-react'
 import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
+import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
+import ChatPinFact from '../components/ChatPinFact'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -52,9 +53,10 @@ function downloadTableAsCsv(mdTable: string, filename = 'tablo.csv') {
   URL.revokeObjectURL(url)
 }
 
-function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
+async function downloadTableAsXlsx(mdTable: string, filename = 'tablo.xlsx') {
   const rows = _parseMdTable(mdTable)
   if (rows.length === 0) return
+  const XLSX = await import('xlsx')
   const ws = XLSX.utils.aoa_to_sheet(rows)
   ws['!cols'] = rows[0].map((_, ci) => ({
     wch: Math.max(...rows.map(r => String(r[ci] || '').replace(/\n/g, ' ').length), 12)
@@ -149,7 +151,7 @@ const WindowsChat: React.FC<{
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('windows_chat_selected_model') || 'llama3:70b')
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState<string>('')
-  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'streaming'>('idle')
+  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'tools' | 'streaming'>('idle')
   const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
@@ -193,11 +195,11 @@ const WindowsChat: React.FC<{
   const queryClient = useQueryClient()
 
   const { data: servers = [] } = useQuery<Server[]>({
-    queryKey: ['ai-ready-servers'],
+    queryKey: ['ai-ready-servers', 'windows-chat'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/servers/ai-ready/list`)
-      if (!res.ok) throw new Error('Failed')
-      return res.json()
+      const { fetchAiReadyPage } = await import('../api/servers')
+      const p = await fetchAiReadyPage<Server>({ platform: 'windows', page: 1, page_size: 200 })
+      return p.items
     }
   })
 
@@ -370,6 +372,9 @@ const WindowsChat: React.FC<{
               }
               setThinkingPhase('streaming')
             }
+            if (chunk.phase === 'collecting') setThinkingPhase('context')
+            if (chunk.phase === 'tools') setThinkingPhase('tools')
+            if (chunk.phase === 'answering') setThinkingPhase('streaming')
             if (chunk.token) {
               accumulated += chunk.token
               setStreamingText(accumulated)
@@ -458,7 +463,8 @@ const WindowsChat: React.FC<{
   })
 
   const thinkingLabel =
-    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (WinRM / Event Log)...' :
+    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (WinRM / Event Log / RAG)...' :
+    thinkingPhase === 'tools' ? 'Tanı araçları çalışıyor...' :
     thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
 
   return (
@@ -644,6 +650,22 @@ const WindowsChat: React.FC<{
                               </>
                             )}
                           </div>
+                          {msg.id > 0 && (
+                            <>
+                              <ChatFeedbackButtons
+                                platform="windows"
+                                question={priorUserQuestion(messages, msg.id)}
+                                answer={msg.content}
+                                serverIds={selectedServers}
+                                sessionId={selectedSessionId}
+                                messageId={msg.id}
+                              />
+                              <ChatPinFact
+                                serverIds={selectedServers}
+                                serverOptions={aiReadyWindowsServers.map((s) => ({ id: s.id, name: s.name }))}
+                              />
+                            </>
+                          )}
                         </div>
                       )}
                       <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
@@ -671,6 +693,15 @@ const WindowsChat: React.FC<{
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
                             <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span>{thinkingLabel}</span>
+                          </div>
+                          <ThinkingDots />
+                        </div>
+                      )}
+                      {thinkingPhase === 'tools' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-cyan-400/90">
+                            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                             <span>{thinkingLabel}</span>
                           </div>
                           <ThinkingDots />

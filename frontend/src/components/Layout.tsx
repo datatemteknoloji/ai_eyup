@@ -8,9 +8,10 @@ import {
   Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check, AlertTriangle, Crown, Boxes,
+  KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useTheme } from '../theme/ThemeProvider'
 import {
   buildPlatformAiopsChildren,
   PLATFORM_AIOPS_LABEL,
@@ -117,6 +118,7 @@ type LinkChild = {
   badge?: () => React.ReactNode
   moduleId?: string
   moduleIds?: string[]
+  adminOnly?: boolean
 }
 type SubgroupChild = {
   type: 'subgroup'
@@ -127,10 +129,11 @@ type SubgroupChild = {
   badge?: () => React.ReactNode
   moduleId?: string
   moduleIds?: string[]
+  adminOnly?: boolean
 }
 type GroupChild = LinkChild | SubgroupChild
 type MenuItem =
-  | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string; moduleIds?: string[] }
+  | { type: 'link'; path: string; name: string; icon: React.ReactNode; moduleId?: string; moduleIds?: string[]; adminOnly?: boolean }
   | { type: 'group'; key: string; name: string; icon: React.ReactNode; children: GroupChild[]; moduleId?: string; moduleIds?: string[] }
   | { type: 'section'; label: string }
 
@@ -142,11 +145,16 @@ function collectGroupPaths(children: GroupChild[]): string[] {
   return children.flatMap(c => (c.type === 'link' ? [c.path] : collectGroupPaths(c.children)))
 }
 
-function childVisible(child: GroupChild, hasModule: (id: string) => boolean): boolean {
+function childVisible(
+  child: GroupChild,
+  hasModule: (id: string) => boolean,
+  isAdmin: boolean,
+): boolean {
+  if (child.adminOnly && !isAdmin) return false
   const ids = child.moduleIds ?? (child.moduleId ? [child.moduleId] : undefined)
   if (ids && !ids.some(id => hasModule(id))) return false
   if (child.type === 'subgroup') {
-    return child.children.some(c => childVisible(c, hasModule))
+    return child.children.some(c => childVisible(c, hasModule, isAdmin))
   }
   return true
 }
@@ -154,6 +162,8 @@ function childVisible(child: GroupChild, hasModule: (id: string) => boolean): bo
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
   const { user, logout, hasModule } = useAuth()
+  const isAdmin = user?.role === 'admin' || !!user?.is_admin
+  const { theme, toggleTheme } = useTheme()
   const { appName, logoUrl, version } = useBranding()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -162,70 +172,54 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   const canLinuxAiops = hasModule('linux')
+  const canWindows = hasModule('windows')
+  const canVirt = hasModule('virtualization')
+  const canExadata = hasModule('exadata')
+  const canOpenshift = hasModule('openshift')
 
-  const { data: opsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
-    queryKey: ['ops-summary-nav'],
+  type NavOpsSummary = { critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }
+  const emptyOps: NavOpsSummary = { critical: 0, warning: 0, total: 0, action_needed: false }
+
+  // Tek query — 5 ayrı 60s poll yerine bir turda Promise.all (Wave 4)
+  const { data: navOps } = useQuery<Record<string, NavOpsSummary>>({
+    queryKey: ['nav-ops-summaries', canLinuxAiops, canWindows, canVirt, canExadata, canOpenshift],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/ops/summary?platform=linux`)
-      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
-      return r.json()
+      const jobs: Array<Promise<[string, NavOpsSummary]>> = []
+      const fetchOne = async (key: string, url: string): Promise<[string, NavOpsSummary]> => {
+        try {
+          const r = await fetch(url)
+          if (!r.ok) return [key, emptyOps]
+          return [key, await r.json()]
+        } catch {
+          return [key, emptyOps]
+        }
+      }
+      if (canLinuxAiops) jobs.push(fetchOne('linux', `${API_BASE_URL}/ops/summary?platform=linux`))
+      if (canWindows) jobs.push(fetchOne('windows', `${API_BASE_URL}/ops/summary?platform=windows`))
+      if (canVirt) jobs.push(fetchOne('virt', `${API_BASE_URL}/hypervisors/ops/summary`))
+      if (canExadata) jobs.push(fetchOne('exadata', `${API_BASE_URL}/exadata/ops/summary`))
+      if (canOpenshift) jobs.push(fetchOne('openshift', `${API_BASE_URL}/openshift/ops/summary`))
+      if (!jobs.length) return {}
+      return Object.fromEntries(await Promise.all(jobs))
     },
-    refetchInterval: 60_000,
-    staleTime: 45_000,
-    enabled: canLinuxAiops,
+    refetchInterval: 90_000,
+    staleTime: 60_000,
+    enabled: canLinuxAiops || canWindows || canVirt || canExadata || canOpenshift,
   })
 
-  const { data: windowsOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
-    queryKey: ['windows-ops-summary'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/ops/summary?platform=windows`)
-      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
-      return r.json()
-    },
-    refetchInterval: 60_000,
-    staleTime: 45_000,
-    enabled: hasModule('windows'),
-  })
+  const opsSummary = navOps?.linux
+  const windowsOpsSummary = navOps?.windows
+  const virtOpsSummary = navOps?.virt
+  const exadataOpsSummary = navOps?.exadata
+  const openshiftOpsSummary = navOps?.openshift
 
-  const { data: virtOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
-    queryKey: ['virt-ops-summary'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/ops/summary`)
-      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
-      return r.json()
-    },
-    refetchInterval: 60_000,
-    staleTime: 45_000,
-    enabled: hasModule('virtualization'),
-  })
-
-  const { data: exadataOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
-    queryKey: ['exadata-ops-summary'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/exadata/ops/summary`)
-      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
-      return r.json()
-    },
-    refetchInterval: 60_000,
-    staleTime: 45_000,
-    enabled: hasModule('exadata'),
-  })
-
-  const { data: openshiftOpsSummary } = useQuery<{ critical: number; warning: number; total?: number; open_incidents?: number; action_needed: boolean }>({
-    queryKey: ['openshift-ops-summary'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/ops/summary`)
-      if (!r.ok) return { critical: 0, warning: 0, total: 0, action_needed: false }
-      return r.json()
-    },
-    refetchInterval: 60_000,
-    staleTime: 45_000,
-    enabled: hasModule('openshift'),
-  })
-
-  const isActive = (path: string) =>
-    location.pathname === path ||
-    (path === '/dashboard' && location.pathname === '/')
+  const isActive = (path: string) => {
+    if (path === '/dashboard' && location.pathname === '/') return true
+    if (path === '/openshift') {
+      return location.pathname === '/openshift'
+    }
+    return location.pathname === path
+  }
 
   const isGroupActive = (paths: string[]) => paths.some(p => isActive(p))
 
@@ -239,7 +233,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary))
   const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary))
   const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary))
-  const openshiftAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('openshift', openshiftOpsSummary))
 
   const menuItems: MenuItem[] = [
     // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
@@ -325,17 +318,49 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
 
-    // ── OpenShift Container Platform ──────────────────────────────────────
+    // ── OpenShift ─────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'openshift', name: 'OpenShift Container Platform', icon: <Boxes size={18} />, moduleId: 'openshift',
+      type: 'group', key: 'openshift', name: 'OpenShift', icon: <Boxes size={18} />, moduleId: 'openshift',
       children: [
-        { type: 'link', path: '/openshift', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
         {
-          type: 'subgroup', key: 'openshift-aiops', name: PLATFORM_AIOPS_LABEL.openshift, icon: <Brain size={15} />,
-          moduleId: 'openshift',
-          badge: aiopsTotalBadge(openshiftOpsSummary),
-          children: openshiftAiopsLinks,
+          type: 'link', path: '/openshift/ops', name: 'Komuta Merkezi', icon: <Zap size={15} />,
+          badge: () => {
+            const n = openshiftOpsSummary?.critical ?? 0
+            if (n <= 0) return null
+            return (
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                {n > 99 ? '99+' : n}
+              </span>
+            )
+          },
         },
+        { type: 'link', path: '/openshift', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/openshift/vms', name: 'Virtual Machines', icon: <Monitor size={15} /> },
+        {
+          type: 'link', path: '/openshift/events', name: 'Events', icon: <ClipboardList size={15} />,
+          badge: () => {
+            const n = openshiftOpsSummary?.warning ?? 0
+            if (n <= 0) return null
+            return (
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {n > 99 ? '99+' : n}
+              </span>
+            )
+          },
+        },
+        {
+          type: 'link', path: '/openshift/incidents', name: 'Incidents', icon: <AlertTriangle size={15} />,
+          badge: () => {
+            const n = openshiftOpsSummary?.open_incidents ?? 0
+            if (n <= 0) return null
+            return (
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {n > 99 ? '99+' : n}
+              </span>
+            )
+          },
+        },
+        { type: 'link', path: '/openshift/chat', name: 'Asistan', icon: <Brain size={15} /> },
       ],
     },
 
@@ -356,12 +381,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
       children: [
-        { type: 'link', path: '/level1',            name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
-        { type: 'link', path: '/level1/disk',       name: 'Disk & Depolama',   icon: <HardDrive size={15} /> },
-        { type: 'link', path: '/level1/asm',        name: 'Oracle ASM',        icon: <Database size={15} /> },
-        { type: 'link', path: '/level1/lvm',        name: 'LVM Yönetimi',      icon: <Layers size={15} /> },
-        { type: 'link', path: '/level1/service',    name: 'Servis Yönetimi',   icon: <Settings size={15} /> },
-        { type: 'link', path: '/level1/user',       name: 'Kullanıcı & Erişim',icon: <Users size={15} /> },
+        { type: 'link', path: '/level1', name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
+        { type: 'link', path: '/level1/jobs', name: 'İşler', icon: <ClipboardList size={15} /> },
+        { type: 'link', path: '/level1/audit', name: 'Denetim', icon: <ScrollText size={15} />, adminOnly: true },
+        { type: 'link', path: '/level1/settings', name: 'Ayarlar', icon: <Settings size={15} />, adminOnly: true },
       ],
     },
 
@@ -399,7 +422,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           } ${
             childActive
               ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -411,7 +434,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   const renderGroupChild = (child: GroupChild) => {
-    if (!childVisible(child, hasModule)) return null
+    if (!childVisible(child, hasModule, isAdmin)) return null
 
     if (child.type === 'link') {
       return renderLinkChild(child)
@@ -427,7 +450,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <button
           onClick={() => toggleGroup(child.key, subActive)}
           className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
-            subActive ? 'text-white bg-slate-700/40' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            subActive ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -437,7 +460,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </button>
         {isSubOpen && (
           <ul className="mt-0.5 ml-2 pl-2 border-l border-slate-700/40 space-y-0.5">
-            {child.children.filter(c => childVisible(c, hasModule)).map(link => renderLinkChild(link, true))}
+            {child.children.filter(c => childVisible(c, hasModule, isAdmin)).map(link => renderLinkChild(link, true))}
           </ul>
         )}
       </li>
@@ -445,13 +468,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   const renderGroupItem = (item: Extract<MenuItem, { type: 'group' }>) => {
-    const visibleChildren = item.children.filter(c => childVisible(c, hasModule))
+    const visibleChildren = item.children.filter(c => childVisible(c, hasModule, isAdmin))
     const isOpen = openGroups[item.key] ?? isGroupActive(collectGroupPaths(visibleChildren))
     const groupPaths = collectGroupPaths(visibleChildren)
     const groupActive = isGroupActive(groupPaths)
 
     const flatLinks = visibleChildren.flatMap(c =>
-      c.type === 'link' ? [c] : c.children.filter(l => childVisible(l, hasModule)),
+      c.type === 'link' ? [c] : c.children.filter(l => childVisible(l, hasModule, isAdmin)),
     )
 
     return (
@@ -460,8 +483,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           onClick={() => sidebarOpen && toggleGroup(item.key, groupActive)}
           className={`w-full flex items-center px-3 py-2 rounded-lg transition-all duration-200 ${
             groupActive
-              ? 'text-white bg-slate-700/60'
-              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{item.icon}</span>
@@ -493,7 +516,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className={`flex items-center justify-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     childActive
                       ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                   }`}
                 >
                   <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -507,11 +530,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   return (
-    <div className="h-screen bg-slate-900 flex overflow-hidden">
+    <div className="h-screen flex overflow-hidden" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Sidebar — viewport'a sabit; yalnızca iç menü kayar */}
-      <aside className={`${sidebarOpen ? 'w-60' : 'w-16'} h-full bg-slate-800 border-r border-slate-700 transition-all duration-300 flex flex-col flex-shrink-0`}>
+      <aside
+        className={`${sidebarOpen ? 'w-60' : 'w-16'} h-full border-r transition-all duration-300 flex flex-col flex-shrink-0`}
+        style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
+      >
         {/* Logo */}
-        <div className={`${sidebarOpen ? 'min-h-[5.5rem] py-3' : 'h-14'} flex items-start justify-between px-3 border-b border-slate-700 flex-shrink-0 gap-1`}>
+        <div
+          className={`${sidebarOpen ? 'min-h-[5.5rem] py-3' : 'h-14'} flex items-start justify-between px-3 border-b flex-shrink-0 gap-1`}
+          style={{ borderColor: 'var(--border-strong)' }}
+        >
           {sidebarOpen && (
             <div className="flex flex-col items-start gap-2 min-w-0 flex-1 pt-0.5">
               {logoUrl ? (
@@ -525,12 +554,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <span className="text-white font-bold text-sm">DT</span>
                 </div>
               )}
-              <span className="text-white font-semibold text-sm leading-tight">{appName}</span>
+              <span className="font-semibold text-sm leading-tight" style={{ color: 'var(--text-primary)' }}>{appName}</span>
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors flex-shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
+            className={`p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
           >
             {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
           </button>
@@ -566,7 +595,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 ${
                         active
                           ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                       }`}
                     >
                       <span className="flex-shrink-0 text-current">{item.icon}</span>
@@ -600,12 +629,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Top Bar */}
-        <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-5 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold text-white">{pageTitle}</h1>
+        <header
+          className="h-14 border-b flex items-center justify-between px-5 flex-shrink-0"
+          style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-3 pr-4">
+            <h1 className="shrink-0 text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{pageTitle}</h1>
+            {/* Level 1 Operasyon Merkezi: Sunucular / envanter / yenile buraya portal ile gelir */}
+            {(location.pathname === '/level1' || location.pathname === '/level1/') && (
+              <div id="level1-ops-header-slot" className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1 overflow-hidden" />
+            )}
           </div>
           <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2 text-sm text-slate-400">
+            <div className="flex items-center space-x-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               <span className="hidden sm:inline">Sistem Aktif</span>
             </div>
@@ -616,8 +652,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               >
                 {sidebarOpen && (
                   <div className="text-right leading-tight hidden sm:block">
-                    <div className="text-sm text-white font-medium">{user?.full_name || user?.username || 'Kullanıcı'}</div>
-                    <div className="text-[10px] text-slate-400 uppercase">{user?.role || ''}</div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user?.full_name || user?.username || 'Kullanıcı'}</div>
+                    <div className="text-[10px] uppercase" style={{ color: 'var(--text-muted)' }}>{user?.role || ''}</div>
                   </div>
                 )}
                 <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-sky-500 rounded-full flex items-center justify-center">
@@ -630,14 +666,26 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-20 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-700">
-                      <div className="text-sm text-white font-medium truncate">{user?.username}</div>
-                      <div className="text-xs text-slate-400 truncate">{user?.email || '—'}</div>
+                  <div
+                    className="absolute right-0 mt-2 w-52 border rounded-xl shadow-2xl z-20 overflow-hidden"
+                    style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)' }}
+                  >
+                    <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border-strong)' }}>
+                      <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{user?.username}</div>
+                      <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{user?.email || '—'}</div>
                     </div>
                     <button
+                      onClick={() => { toggleTheme(); }}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+                      {theme === 'dark' ? 'Açık tema' : 'Koyu tema'}
+                    </button>
+                    <button
                       onClick={() => { setUserMenuOpen(false); setShowChangePassword(true) }}
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      style={{ color: 'var(--text-secondary)' }}
                     >
                       <KeyRound size={14} /> Şifremi Değiştir
                     </button>
@@ -645,15 +693,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       <Link
                         to="/settings"
                         onClick={() => setUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700/60"
+                        className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                        style={{ color: 'var(--text-secondary)' }}
                       >
                         <Settings size={14} /> Ayarlar
                       </Link>
                     )}
-                    <div className="border-t border-slate-700/60 my-1" />
+                    <div className="border-t my-1" style={{ borderColor: 'var(--border)' }} />
                     <button
                       onClick={logout}
-                      className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-red-300 hover:bg-red-500/10"
+                      className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10"
                     >
                       <LogOut size={14} /> Çıkış Yap
                     </button>
@@ -664,17 +713,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        {/* Page Content — chat tam ekran iç scroll; diğer sayfalar main scroll */}
-        <main className={`flex-1 min-h-0 p-5 bg-slate-900 ${
+        {/* Page Content — chat/konsol tam ekran; diğer sayfalar main scroll */}
+        <main
+          className={`flex-1 min-h-0 p-5 ${
           (() => {
             const p = location.pathname
             const isChat = p.endsWith('/chat')
               || p.includes('/chat/')
               || p.includes('unified-chat')
               || /\/(linux|windows|virt|exadata|openshift)\/.*chat/.test(p)
-            return isChat ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+            const isLevel1Fill = p.startsWith('/level1/console') || p.startsWith('/level1/ops')
+            return (isChat || isLevel1Fill) ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
           })()
-        }`}>
+        }`}
+          style={{ background: 'var(--bg-base)' }}
+        >
           {children}
         </main>
       </div>

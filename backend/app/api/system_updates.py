@@ -186,46 +186,100 @@ def list_servers_for_update(distro: Optional[str] = None, db: Session = Depends(
 
 @router.post("/check")
 def check_updates(req: CheckRequest, db: Session = Depends(get_db)):
+    """
+    Sunucularda güncelleme kontrolü — arka plan job.
+    Dönüş: ``{ job_id, status }``; sonuç job.result içinde (GET /servers/bulk-jobs/{id}).
+    """
+    import threading
+
+    from app.core.database import ThreadSessionLocal
+    from app.services import bulk_job_tracker as jobs
+
     servers = db.query(Server).filter(Server.id.in_(req.server_ids)).all()
-    global_cred = _get_global_cred(db)
-    repo_content = None
-    repo_name = None
+    if not servers:
+        return {"job_id": None, "status": "done", "results": {}}
 
-    if req.repo_id:
-        repo = db.query(RepoSource).filter_by(id=req.repo_id).first()
-        if not repo:
-            raise HTTPException(404, "Repo bulunamadı")
-        from app.services.repo_sync_service import generate_repo_file
-        repo_content = generate_repo_file(repo, _get_management_ip(), 8000)
-        repo_name = repo.name
-    results = {}
+    ids = [s.id for s in servers]
+    job_id = jobs.create_job(
+        "sysupdate_check",
+        "Sistem güncelleme kontrolü",
+        total=len(ids),
+        message="SSH kontrol başlıyor...",
+    )
 
-    def _check_one(srv):
-        pkgs = check_available_updates(
-            srv,
-            req.update_type,
-            global_cred,
-            repo_file_content=repo_content,
-            repo_name=repo_name,
-            override_username=req.override_username,
-            override_password=req.override_password,
-            override_sudo_password=req.override_sudo_password,
-            priv_method=req.priv_method or "sudo",
-        )
-        return str(srv.id), {
-            "server_name": srv.name, "server_ip": srv.ip_address, "packages": pkgs,
-            "count": len([p for p in pkgs if "error" not in p]),
-            "security_count": len([p for p in pkgs if p.get("is_security")]),
-            "kernel_count":   len([p for p in pkgs if p.get("is_kernel")]),
-        }
+    # Capture request fields for background thread
+    update_type = req.update_type
+    repo_id = req.repo_id
+    override_username = req.override_username
+    override_password = req.override_password
+    override_sudo_password = req.override_sudo_password
+    priv_method = req.priv_method or "sudo"
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        from concurrent.futures import as_completed
-        futures = {pool.submit(_check_one, s): s for s in servers}
-        for f in as_completed(futures):
-            sid, data = f.result()
-            results[sid] = data
-    return results
+    def _run():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        thread_db = ThreadSessionLocal()
+        try:
+            srv_list = thread_db.query(Server).filter(Server.id.in_(ids)).all()
+            global_cred = _get_global_cred(thread_db)
+            repo_content = None
+            repo_name = None
+            if repo_id:
+                repo = thread_db.query(RepoSource).filter_by(id=repo_id).first()
+                if repo:
+                    from app.services.repo_sync_service import generate_repo_file
+                    repo_content = generate_repo_file(repo, _get_management_ip(), 8000)
+                    repo_name = repo.name
+
+            results = {}
+
+            def _check_one(srv):
+                pkgs = check_available_updates(
+                    srv,
+                    update_type,
+                    global_cred,
+                    repo_file_content=repo_content,
+                    repo_name=repo_name,
+                    override_username=override_username,
+                    override_password=override_password,
+                    override_sudo_password=override_sudo_password,
+                    priv_method=priv_method,
+                )
+                return str(srv.id), {
+                    "server_name": srv.name, "server_ip": srv.ip_address, "packages": pkgs,
+                    "count": len([p for p in pkgs if "error" not in p]),
+                    "security_count": len([p for p in pkgs if p.get("is_security")]),
+                    "kernel_count":   len([p for p in pkgs if p.get("is_kernel")]),
+                }
+
+            done = 0
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = {pool.submit(_check_one, s): s for s in srv_list}
+                for f in as_completed(futures):
+                    sid, data = f.result()
+                    results[sid] = data
+                    done += 1
+                    jobs.tick(
+                        job_id,
+                        done=done,
+                        total=len(srv_list),
+                        message=f"Kontrol {done}/{len(srv_list)}",
+                    )
+
+            jobs.finish(
+                job_id,
+                status="done",
+                message=f"{len(results)} sunucu kontrol edildi",
+                result=results,
+            )
+        except Exception as exc:
+            logger.exception("sysupdate check failed")
+            jobs.finish(job_id, status="error", message=str(exc), error=str(exc))
+        finally:
+            thread_db.close()
+
+    threading.Thread(target=_run, daemon=True, name=f"sysupdate-check-{job_id}").start()
+    return {"job_id": job_id, "status": "running", "queued": len(ids)}
 
 
 # ─── AI Repo Önerisi ──────────────────────────────────────────────────────────

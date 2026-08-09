@@ -1,0 +1,859 @@
+{
+  "manifest_version": "1.0",
+  "generated_for": "Dropt Ops Portal → host application merge",
+  "source_product": "Dropt Ops Portal",
+  "source_root_hint": "/dttadvance/app",
+  "audience": "Cursor agent in the TARGET (host) repository",
+  "purpose": "Embed Dropt operations under a host app menu. Host already has login and (optionally) security. Host has a vCenter-backed server list; double-click should open Dropt ops like ServerConsole today. Dropt-specific settings stay under a Dropt submenu chosen by the integrator.",
+
+  "merge_goals": {
+    "omit": [
+      "standalone_login_page",
+      "settings_tab_general",
+      "settings_tab_account",
+      "dropt_native_servers_crud_ui_if_host_list_used",
+      "portal_users_admin_ui_if_host_manages_users",
+      "dashboard_optional"
+    ],
+    "keep_under_dropt_submenu": [
+      "all_ops_wizards",
+      "server_console_embedded_ops",
+      "jobs",
+      "job_detail",
+      "audit",
+      "settings_automation",
+      "settings_mail",
+      "settings_assistant",
+      "settings_repos",
+      "settings_centrify",
+      "settings_backup"
+    ],
+    "relocate_if_host_missing": [
+      "security_sessions",
+      "security_mfa"
+    ],
+    "omit_security_if_host_has": [
+      "security_auth_ad_sso",
+      "security_tls",
+      "security_policy_password"
+    ],
+    "replace_with_host": [
+      "server_inventory_list_ui",
+      "login_auth_ui"
+    ]
+  },
+
+  "architecture": {
+    "recommended_model": "Dropt backend remains a FastAPI service (or sub-app). Host UI embeds Dropt React ops surfaces. Auth is bridged from host session to Dropt API token.",
+    "layers": [
+      {
+        "id": "host_shell",
+        "owns": ["login", "main_nav", "vcenter_server_list", "top_level_settings"]
+      },
+      {
+        "id": "dropt_ops_surface",
+        "owns": ["ops_wizards", "server_console", "jobs", "audit", "dropt_settings_panels"]
+      },
+      {
+        "id": "dropt_backend",
+        "owns": ["ssh_jobs", "target_server_records", "centrify", "hpsa_hooks", "assistant_catalog", "secrets"]
+      }
+    ],
+    "critical_integration_points": [
+      {
+        "id": "auth_bridge",
+        "detail": "Dropt FE uses localStorage key dtt_access_token via frontend/src/session.ts. Host must set a valid Dropt JWT (or change FE to accept host Authorization header / cookie bridge). All /api/* calls require Bearer token."
+      },
+      {
+        "id": "server_identity_mapping",
+        "detail": "Ops APIs require Dropt TargetServer.id. Host vCenter rows must map to Dropt server records (upsert by IP/hostname/UUID). Double-click must resolve to dropt_server_id before opening console/ops."
+      },
+      {
+        "id": "embedded_ops_pattern",
+        "detail": "Preferred UX: host server double-click → ServerConsolePage (or equivalent) with OpsWizardContext { embedded:true, serverId, onAfterPreview }. Wizards use useAfterPreview() — embedded stays on console; standalone navigates to /app/jobs/:id."
+      },
+      {
+        "id": "talep_id",
+        "detail": "Most write ops require Talep ID + Preview → Apply job flow. Do not auto-apply."
+      }
+    ]
+  },
+
+  "tech_stack_source": {
+    "frontend": {
+      "path": "frontend/",
+      "stack": "React + Vite + TypeScript + react-router-dom + Tailwind-like CSS vars",
+      "entry": "frontend/src/main.tsx",
+      "routes": "frontend/src/App.tsx",
+      "shell": "frontend/src/components/AppShell.tsx",
+      "api_client": "frontend/src/api.ts",
+      "i18n": "frontend/src/i18n/messages.ts + I18nProvider",
+      "session": "frontend/src/session.ts (dtt_access_token, dtt_user)"
+    },
+    "backend": {
+      "path": "backend/",
+      "stack": "FastAPI + SQLModel + PostgreSQL + Redis + SSH",
+      "entry": "backend/app/main.py",
+      "job_modules": "backend/app/modules/",
+      "registry": "backend/app/modules/registry.py",
+      "assistant_catalog": "backend/app/assistant/capabilities.json"
+    },
+    "deploy": "docker compose (api, frontend, db, redis)"
+  },
+
+  "auth_and_session": {
+    "login_route": "/",
+    "login_component": "frontend/src/pages/LoginPage.tsx",
+    "api_prefix": "/api/auth",
+    "token_storage": "localStorage.dtt_access_token",
+    "require_auth_wrapper": "App.tsx RequireAuth → Navigate to / if no token",
+    "host_merge": {
+      "login_page": "omit",
+      "require_auth": "replace_with_host_gate_or_token_bridge",
+      "notes": "If host SSO already authenticates users, implement token exchange endpoint or shared JWT validation so Dropt API accepts host identity with mapped role (admin/operator)."
+    }
+  },
+
+  "navigation_source": {
+    "app_shell_items": [
+      { "path": "/app", "label_key": "nav_dashboard", "host_merge": "omit_or_optional" },
+      { "path": "/app/servers", "label_key": "nav_servers", "host_merge": "replace_with_host_vcenter_list" },
+      { "path": "/app/jobs", "label_key": "nav_jobs", "host_merge": "keep_under_dropt_submenu" },
+      { "path": "/app/audit", "label_key": "nav_audit", "host_merge": "keep_under_dropt_submenu" },
+      { "path": "/app/users", "label_key": "nav_portal_users", "host_merge": "omit_if_host_manages_users", "admin_only": true },
+      { "path": "/app/system", "label_key": "nav_system", "host_merge": "omit_or_dropt_admin_only", "admin_only": true },
+      { "path": "/app/settings", "label_key": "nav_settings", "host_merge": "split_panels_see_settings" }
+    ]
+  },
+
+  "pages": [
+    {
+      "id": "login",
+      "route": "/",
+      "component": "frontend/src/pages/LoginPage.tsx",
+      "kind": "shell",
+      "host_merge": "omit",
+      "notes": "Host has login."
+    },
+    {
+      "id": "dashboard",
+      "route": "/app",
+      "component": "frontend/src/pages/DashboardPage.tsx",
+      "kind": "shell",
+      "host_merge": "omit_or_optional"
+    },
+    {
+      "id": "servers_list",
+      "route": "/app/servers",
+      "component": "frontend/src/pages/ServersPage.tsx",
+      "kind": "inventory",
+      "host_merge": "replace_with_host_vcenter_list",
+      "behaviors": {
+        "double_click_row": "navigate(/app/servers/:id) → ServerConsolePage",
+        "ops_context_menu": "ServerOpsMenu + buildOpsUrl(path, {ids, hostnames})",
+        "admin_crud": "create/edit/delete/import/test connection — not needed if host owns inventory"
+      },
+      "api": ["/api/servers"],
+      "notes": "Reuse double-click → console pattern on host list. Ensure each host row maps to dropt TargetServer.id."
+    },
+    {
+      "id": "server_console",
+      "route": "/app/servers/:id",
+      "component": "frontend/src/pages/ServerConsolePage.tsx",
+      "kind": "ops_host",
+      "host_merge": "keep_adapt_paths",
+      "critical": true,
+      "details": {
+        "opens_ops_via": "ServerOpsMenu → setWizardPath",
+        "embedded_context": "OpsWizardContext { embedded:true, serverId, serverIds, onAfterPreview, draftJob }",
+        "wizard_map_file_section": "WIZARD_BY_PATH + MODULE_TO_WIZARD in ServerConsolePage.tsx",
+        "preview_apply": "preview dumps to xterm console; Apply via job WebSocket progress",
+        "terminal_op": "special-case path /app/terminal"
+      },
+      "depends_on": ["auth_bridge", "server_identity_mapping", "jobs_api"]
+    },
+    {
+      "id": "jobs",
+      "route": "/app/jobs",
+      "component": "frontend/src/pages/JobsPage.tsx",
+      "kind": "ops_admin",
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/jobs"]
+    },
+    {
+      "id": "job_detail",
+      "route": "/app/jobs/:id",
+      "component": "frontend/src/pages/JobDetailPage.tsx",
+      "kind": "ops_admin",
+      "host_merge": "keep_under_dropt_submenu",
+      "details": {
+        "shows": ["preview_summary", "apply", "after_state.checklist / checklist_en by locale", "artifact download"]
+      }
+    },
+    {
+      "id": "audit",
+      "route": "/app/audit",
+      "component": "frontend/src/pages/AuditPage.tsx",
+      "kind": "ops_admin",
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/audit"]
+    },
+    {
+      "id": "portal_users",
+      "route": "/app/users",
+      "component": "frontend/src/pages/PortalUsersPage.tsx",
+      "kind": "admin",
+      "host_merge": "omit_if_host_manages_users",
+      "api": ["/api/portal-users", "/api/identity"],
+      "notes": "capabilities id portal_users route is /app/users (not portal-users)."
+    },
+    {
+      "id": "admin_system",
+      "route": "/app/system",
+      "component": "frontend/src/pages/AdminSystemPage.tsx",
+      "kind": "admin",
+      "host_merge": "omit_or_dropt_admin_only",
+      "api": ["/api/admin"]
+    },
+    {
+      "id": "settings",
+      "route": "/app/settings",
+      "component": "frontend/src/pages/SettingsPage.tsx",
+      "kind": "settings_host",
+      "host_merge": "split_see_settings_panels",
+      "notes": "Do not mount whole page as-is. Mount selected panels under Dropt submenu; relocate MFA/sessions only if host lacks them."
+    },
+    {
+      "id": "terminal_page",
+      "route": "/app/terminal",
+      "component": "frontend/src/pages/TerminalPage.tsx",
+      "kind": "ops",
+      "host_merge": "keep_prefer_console_entry",
+      "api": ["/api/terminal"],
+      "notes": "WebSocket terminal; escape hatch. Prefer opening from console ops menu."
+    }
+  ],
+
+  "ops_wizards": [
+    {
+      "id": "ops_terminal",
+      "menu_key": "ops_terminal",
+      "title_tr": "Terminal aç",
+      "path": "/app/terminal",
+      "component": "frontend/src/pages/TerminalPage.tsx",
+      "job_module": null,
+      "capability_id": "terminal",
+      "multi_server": false,
+      "host_merge": "keep",
+      "embedded_in_console": true
+    },
+    {
+      "id": "ops_local_users",
+      "menu_key": "ops_local_users",
+      "title_tr": "Yerel kullanıcılar",
+      "path": "/app/local-users",
+      "component": "frontend/src/pages/LocalUsersPage.tsx",
+      "job_module": "local_user",
+      "capability_id": "local_users",
+      "api_extra": ["/api/local-users"],
+      "multi_server": true,
+      "host_merge": "keep",
+      "embedded_in_console": true
+    },
+    {
+      "id": "ops_hostname",
+      "menu_key": "ops_hostname",
+      "title_tr": "Hostname değiştir",
+      "path": "/app/hostname",
+      "component": "frontend/src/pages/HostnamePage.tsx",
+      "job_module": "hostname",
+      "capability_id": "hostname",
+      "api_extra": ["/api/hostname"],
+      "backend_module": "backend/app/modules/hostname.py",
+      "multi_server": false,
+      "host_merge": "keep",
+      "side_effects": [
+        "Centrify adleave/adjoin if joined (Settings Centrify creds)",
+        "HPSA bs_software + bs_hardware best-effort",
+        "success checklist + checklist_en (DNS + monitoring mail)",
+        "FQDN domain = text after first dot"
+      ],
+      "postcheck_rule": ".cursor/rules/dropt-ops-postchecks.mdc",
+      "i18n_checklist_lib": "frontend/src/lib/opsPostchecks.ts"
+    },
+    {
+      "id": "ops_reboot",
+      "menu_key": "ops_reboot",
+      "title_tr": "Yeniden başlat",
+      "path": "/app/reboot",
+      "component": "frontend/src/pages/RebootPage.tsx",
+      "job_module": "reboot",
+      "capability_id": "reboot",
+      "multi_server": false,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_services",
+      "menu_key": "ops_services",
+      "title_tr": "Servis yönetimi",
+      "path": "/app/services",
+      "component": "frontend/src/pages/ServicesPage.tsx",
+      "job_module": "services",
+      "capability_id": "services",
+      "ops_api": ["/api/ops/servers/{id}/services"],
+      "multi_server": false,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_sudo",
+      "menu_key": "ops_sudo",
+      "title_tr": "Sudo yetkisi",
+      "path": "/app/sudoers",
+      "component": "frontend/src/pages/SudoersPage.tsx",
+      "job_module": "sudoers",
+      "capability_id": "sudoers",
+      "ops_api": [
+        "/api/ops/sudo-templates",
+        "/api/ops/servers/{id}/sudo-rules",
+        "/api/ops/sudo-lookup",
+        "/api/ops/servers/{id}/sudo-which"
+      ],
+      "multi_server": false,
+      "host_merge": "keep",
+      "supports_embedded": true
+    },
+    {
+      "id": "ops_filesystem",
+      "menu_key": "ops_filesystem",
+      "title_tr": "FileSystem Management",
+      "path": "/app/filesystem",
+      "component": "frontend/src/pages/FilesystemPage.tsx",
+      "job_module": "filesystem",
+      "capability_id": "filesystem",
+      "children": [
+        {
+          "id": "fs_extend",
+          "menu_key": "fs_extend",
+          "path": "/app/filesystem?mode=extend",
+          "action": "extend",
+          "capability_id": "filesystem_extend"
+        },
+        {
+          "id": "fs_create",
+          "menu_key": "fs_create",
+          "path": "/app/filesystem?mode=create",
+          "action": "create",
+          "capability_id": "filesystem_create"
+        },
+        {
+          "id": "fs_organize",
+          "menu_key": "fs_organize",
+          "path": "/app/filesystem?mode=organize",
+          "action": "organize",
+          "capability_id": "filesystem_organize"
+        }
+      ],
+      "ops_api": [
+        "/api/ops/servers/{id}/filesystems",
+        "/api/ops/servers/{id}/volume-groups",
+        "/api/ops/servers/{id}/filesystem-inventory"
+      ],
+      "multi_server": false,
+      "host_merge": "keep",
+      "embedded_note": "Uses embeddedGate when OpsWizardContext.embedded; URL mode ignored in console."
+    },
+    {
+      "id": "ops_packages",
+      "menu_key": "ops_packages",
+      "title_tr": "Paket kur",
+      "path": "/app/packages",
+      "aliases": ["/app/docker → /app/packages"],
+      "component": "frontend/src/pages/PackagesPage.tsx",
+      "job_module": "packages",
+      "capability_id": "packages",
+      "ops_api": [
+        "/api/ops/servers/{id}/package-context",
+        "/api/ops/servers/{id}/dnf-search",
+        "/api/ops/servers/{id}/package-versions"
+      ],
+      "depends_settings": ["settings_repos"],
+      "multi_server": true,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_path_perms",
+      "menu_key": "ops_path_perms",
+      "title_tr": "Path izinleri",
+      "path": "/app/path-perms",
+      "component": "frontend/src/pages/PathPermsPage.tsx",
+      "job_module": "path_perms",
+      "capability_id": "path_perms",
+      "ops_api": ["/api/ops/path-whitelist", "/api/ops/path-modes"],
+      "multi_server": false,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_logs",
+      "menu_key": "ops_logs",
+      "title_tr": "Log paketi",
+      "path": "/app/logs",
+      "component": "frontend/src/pages/LogCollectPage.tsx",
+      "job_module": "log_collect",
+      "capability_id": "log_collect",
+      "multi_server": true,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_limits",
+      "menu_key": "ops_limits",
+      "title_tr": "Security Limits",
+      "path": "/app/limits",
+      "component": "frontend/src/pages/LimitsPage.tsx",
+      "job_module": "limits",
+      "capability_id": "limits",
+      "ops_api": [
+        "/api/ops/limits-items",
+        "/api/ops/limits-types",
+        "/api/ops/servers/{id}/limits"
+      ],
+      "multi_server": true,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_sysctl",
+      "menu_key": "ops_sysctl",
+      "title_tr": "HugePages / sysctl",
+      "path": "/app/sysctl",
+      "component": "frontend/src/pages/SysctlPage.tsx",
+      "job_module": "sysctl",
+      "capability_id": "sysctl",
+      "ops_api": [
+        "/api/ops/sysctl-templates",
+        "/api/ops/sysctl-allowed",
+        "/api/ops/servers/{id}/sysctl"
+      ],
+      "multi_server": false,
+      "host_merge": "keep"
+    },
+    {
+      "id": "ops_network",
+      "menu_key": "ops_network",
+      "title_tr": "Network Management",
+      "path": "/app/network",
+      "component": "frontend/src/pages/NetworkPage.tsx",
+      "job_module": "network",
+      "capability_id": "network_mgmt",
+      "children": [
+        {
+          "id": "network_add_network",
+          "menu_key": "network_add_network",
+          "path": "/app/network?tab=network",
+          "action": "add_network",
+          "capability_id": "network_add"
+        },
+        {
+          "id": "network_add_vlan",
+          "menu_key": "network_add_vlan",
+          "path": "/app/network?tab=vlan",
+          "job_module": "vlan",
+          "action": "add",
+          "capability_id": "vlan_add",
+          "legacy_route": "/app/vlan → redirect tab=vlan",
+          "component_vlan": "frontend/src/pages/VlanPage.tsx"
+        },
+        {
+          "id": "network_ip_change",
+          "menu_key": "network_ip_change",
+          "path": "/app/network?tab=ipchange",
+          "action": "change_ip",
+          "capability_id": "network_ip_change",
+          "side_effects": [
+            "Primary IP via default-route + nslookup",
+            "HPSA at end of same SSH script || true",
+            "DNS query result UI above checklist",
+            "DNS ticket only for primary IP",
+            "checklist + checklist_en"
+          ]
+        }
+      ],
+      "ops_api": [
+        "/api/ops/vlan-pools",
+        "/api/ops/servers/{id}/interfaces",
+        "/api/ops/servers/{id}/network-interfaces",
+        "/api/ops/servers/{id}/ip-change"
+      ],
+      "backend_module": "backend/app/modules/network.py",
+      "multi_server": false,
+      "host_merge": "keep",
+      "postcheck_rule": ".cursor/rules/dropt-ops-postchecks.mdc"
+    },
+    {
+      "id": "ops_asm",
+      "menu_key": "ops_asm",
+      "title_tr": "ASM disk ekle",
+      "path": "/app/asm",
+      "component": "frontend/src/pages/AsmPage.tsx",
+      "job_module": "asm",
+      "capability_id": "asm_add_disk",
+      "ops_api": [
+        "/api/ops/servers/{id}/asm-disks",
+        "/api/ops/asm-seq-next"
+      ],
+      "backend_module": "backend/app/modules/asm.py",
+      "multi_server": "max_2_cluster",
+      "host_merge": "keep",
+      "partition_rules": {
+        "threshold": "2 TiB (2 * 1024^4)",
+        "below": "fdisk MBR single primary",
+        "at_or_above": "parted GPT mkpart primary 0% 100%",
+        "success_criterion": "partition block device node exists after partprobe/kpartx/multipath refresh — not fdisk exit code alone"
+      },
+      "ui_notes": [
+        "Mevcut ASM grupları chips from oracleasm listdisks; click fills alias prefix"
+      ],
+      "asm_rule": ".cursor/rules/dropt-ops-asm.mdc"
+    },
+    {
+      "id": "ops_mail_config",
+      "menu_key": "ops_mail_config",
+      "title_tr": "Mail Config",
+      "path": "/app/mail-config",
+      "component": "frontend/src/pages/MailConfigPage.tsx",
+      "job_module": "mail_config",
+      "capability_id": "mail_config",
+      "multi_server": true,
+      "host_merge": "keep",
+      "notes": "Target server mail config — distinct from portal SMTP settings tab."
+    }
+  ],
+
+  "ops_menu_source": {
+    "file": "frontend/src/components/ServerOpsMenu.tsx",
+    "helpers": ["opsForTarget", "buildOpsUrl", "findOpsByPath"],
+    "multi_forbidden": [
+      "ops_terminal",
+      "ops_hostname",
+      "ops_reboot",
+      "ops_services",
+      "ops_sudo",
+      "ops_filesystem",
+      "ops_path_perms",
+      "ops_sysctl",
+      "ops_network"
+    ],
+    "asm_max_nodes": 2,
+    "deep_link_query": {
+      "single": "?serverId=<id>",
+      "multi": "?serverId=<primary>&serverIds=id1,id2",
+      "fs_mode": "?mode=extend|create|organize",
+      "network_tab": "?tab=network|vlan|ipchange"
+    }
+  },
+
+  "settings_panels": [
+    {
+      "id": "general",
+      "tab": "general",
+      "admin_only": true,
+      "host_merge": "omit",
+      "reason": "User stated host does not need Dropt general settings."
+    },
+    {
+      "id": "automation",
+      "tab": "automation",
+      "admin_only": true,
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/settings"],
+      "notes": "SSH automation user / credential related portal settings."
+    },
+    {
+      "id": "mail",
+      "tab": "mail",
+      "admin_only": true,
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/settings"],
+      "notes": "Portal SMTP — not target Mail Config op."
+    },
+    {
+      "id": "assistant",
+      "tab": "assistant",
+      "admin_only": true,
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/settings", "/api/assistant/*"],
+      "notes": "Enable assistant, Ollama gateway/direct, model. FAB depends on assistant_enabled event."
+    },
+    {
+      "id": "repos",
+      "tab": "repos",
+      "admin_only": true,
+      "component": "PackageReposSettings",
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/package-repos"],
+      "capability_id": "package_repos"
+    },
+    {
+      "id": "centrify",
+      "tab": "centrify",
+      "admin_only": true,
+      "component": "frontend/src/components/CentrifySettings.tsx",
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["/api/settings/centrify"],
+      "required_for": ["hostname Centrify leave/join"]
+    },
+    {
+      "id": "security",
+      "tab": "security",
+      "admin_only": true,
+      "host_merge": "split_subtabs",
+      "subtabs": [
+        {
+          "id": "auth",
+          "component": "frontend/src/components/SecurityAuthSettings.tsx",
+          "host_merge": "omit_if_host_has_ad_sso",
+          "api": ["/api/identity"]
+        },
+        {
+          "id": "sessions",
+          "component": "SecuritySessionsPanel in SecurityControlPanels.tsx",
+          "host_merge": "relocate_to_host_top_settings_if_missing",
+          "api": [
+            "/api/security/sessions",
+            "/api/security/sessions/mine",
+            "/api/security/sessions/{id}",
+            "/api/security/sessions/revoke-others"
+          ],
+          "notes": "Tied to Dropt portal sessions. If host has its own session UI, omit; else relocate UI but keep API if Dropt tokens still used."
+        },
+        {
+          "id": "mfa",
+          "component": "SecurityMfaPanel in SecurityControlPanels.tsx",
+          "host_merge": "relocate_to_host_top_settings_if_missing",
+          "api": [
+            "/api/security/mfa/users",
+            "/api/security/mfa/users/{user_id}/reset"
+          ]
+        },
+        {
+          "id": "tls",
+          "component": "SecurityTlsPanel",
+          "host_merge": "omit_if_host_terminates_tls",
+          "api": ["/api/security/tls", "/api/security/tls/upload", "/api/security/tls/self-signed"]
+        },
+        {
+          "id": "policy",
+          "component": "SecurityPolicyPanel",
+          "host_merge": "omit_if_host_has_password_policy",
+          "api": ["/api/security/policy"]
+        }
+      ]
+    },
+    {
+      "id": "account",
+      "tab": "account",
+      "admin_only": false,
+      "host_merge": "omit",
+      "reason": "User stated account section not needed."
+    },
+    {
+      "id": "backup",
+      "tab": "backup",
+      "admin_only": true,
+      "host_merge": "keep_under_dropt_submenu",
+      "api": ["settings backup download/import endpoints"],
+      "notes": "Dropt DB backup/restore — keep for ops data safety."
+    }
+  ],
+
+  "backend_api_routers": [
+    { "module": "backend/app/api/health.py", "prefix": "/", "host_merge": "keep" },
+    { "module": "backend/app/api/auth.py", "prefix": "/api", "host_merge": "adapt_or_bridge" },
+    { "module": "backend/app/api/settings.py", "prefix": "/api", "host_merge": "keep_for_dropt_panels" },
+    { "module": "backend/app/api/assistant.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/package_repos.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/centrify.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/portal_users.py", "prefix": "/api", "host_merge": "omit_if_host_users" },
+    { "module": "backend/app/api/identity.py", "prefix": "/api", "host_merge": "omit_if_host_ad_sso" },
+    { "module": "backend/app/api/security.py", "prefix": "/api/security", "host_merge": "keep_mfa_sessions_if_used" },
+    { "module": "backend/app/api/servers.py", "prefix": "/api", "host_merge": "keep_as_inventory_api_for_ops" },
+    { "module": "backend/app/api/local_users.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/hostname_api.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/ops.py", "prefix": "/api/ops", "host_merge": "keep_critical" },
+    { "module": "backend/app/api/jobs.py", "prefix": "/api", "host_merge": "keep_critical" },
+    { "module": "backend/app/api/audit.py", "prefix": "/api", "host_merge": "keep" },
+    { "module": "backend/app/api/admin_system.py", "prefix": "/api", "host_merge": "optional" },
+    { "module": "backend/app/api/terminal.py", "prefix": "/api", "host_merge": "keep" }
+  ],
+
+  "job_modules": {
+    "registry": "backend/app/modules/registry.py",
+    "modules": [
+      "local_user",
+      "log_collect",
+      "hostname",
+      "reboot",
+      "sudoers",
+      "filesystem",
+      "path_perms",
+      "limits",
+      "sysctl",
+      "vlan",
+      "network",
+      "asm",
+      "packages",
+      "services",
+      "mail_config"
+    ],
+    "contract_per_module": [
+      "ACTION_TITLES",
+      "job_summary",
+      "build_plans",
+      "apply_plan"
+    ],
+    "flow": "createJob → previewJob → applyJob (SSE/WS progress on console)"
+  },
+
+  "assistant": {
+    "role": "operations_router_only_no_writes_on_targets",
+    "catalog": "backend/app/assistant/capabilities.json",
+    "catalog_docs_copy": "docs/assistant/capabilities.json",
+    "router": "backend/app/assistant/router.py",
+    "analyze_readonly": "backend/app/assistant/analyze.py",
+    "rules": [
+      ".cursor/rules/dropt-assistant.mdc",
+      ".cursor/rules/dropt-ops-modules.mdc",
+      ".cursor/rules/dropt-ops-postchecks.mdc",
+      ".cursor/rules/dropt-ops-asm.mdc"
+    ],
+    "host_merge": {
+      "update_routes": "After embedding, rewrite capability route fields to host paths and keep titles matching menu labels.",
+      "keep_behavior": "Never auto job apply; deep link with serverId."
+    }
+  },
+
+  "cursor_rules_source": [
+    {
+      "path": ".cursor/rules/dropt-assistant.mdc",
+      "alwaysApply": true,
+      "topic": "assistant red line, catalog, routing"
+    },
+    {
+      "path": ".cursor/rules/dropt-ops-modules.mdc",
+      "topic": "new ops checklist"
+    },
+    {
+      "path": ".cursor/rules/dropt-ops-postchecks.mdc",
+      "topic": "hostname/IP Centrify HPSA DNS checklists"
+    },
+    {
+      "path": ".cursor/rules/dropt-ops-asm.mdc",
+      "topic": "ASM fdisk/parted 2TiB groups UI"
+    }
+  ],
+
+  "i18n": {
+    "file": "frontend/src/i18n/messages.ts",
+    "locales": ["tr", "en"],
+    "ops_labels_must_match_capabilities_titles": true,
+    "postcheck_builders": "frontend/src/lib/opsPostchecks.ts"
+  },
+
+  "host_merge_playbook": [
+    {
+      "step": 1,
+      "title": "Auth bridge",
+      "actions": [
+        "Skip Dropt LoginPage",
+        "Ensure Dropt API accepts host identity (token exchange or shared JWT)",
+        "Set dtt_access_token or refactor api.ts auth header source"
+      ]
+    },
+    {
+      "step": 2,
+      "title": "Server identity",
+      "actions": [
+        "Keep host vCenter server list UI",
+        "On select/double-click: upsert/find Dropt TargetServer by IP/hostname/UUID",
+        "Open console/ops with dropt numeric server id"
+      ]
+    },
+    {
+      "step": 3,
+      "title": "Embed ops console",
+      "actions": [
+        "Port ServerConsolePage + ServerOpsMenu + OpsWizardContext",
+        "Preserve embedded preview/apply behavior",
+        "Mount under host menu e.g. Ops / Unix Ops"
+      ]
+    },
+    {
+      "step": 4,
+      "title": "Jobs and audit",
+      "actions": [
+        "Expose Jobs + JobDetail + Audit under Dropt submenu",
+        "Fix deep links from console to host job routes"
+      ]
+    },
+    {
+      "step": 5,
+      "title": "Settings split",
+      "actions": [
+        "Omit general + account",
+        "Keep automation, mail, assistant, repos, centrify, backup under Dropt submenu",
+        "Inventory host security: if MFA/sessions missing, relocate those panels to host top Settings; omit AD/SSO/TLS if host already provides"
+      ]
+    },
+    {
+      "step": 6,
+      "title": "Assistant + capabilities",
+      "actions": [
+        "Update capabilities.json routes to host paths",
+        "Sync docs copy",
+        "Point FAB to host router base"
+      ]
+    },
+    {
+      "step": 7,
+      "title": "Verify",
+      "actions": [
+        "Double-click server → ops menu → each wizard preview",
+        "Hostname Centrify path with settings creds",
+        "IP change primary DNS checklist",
+        "ASM disk <2TiB and ≥2TiB partition tools",
+        "Terminal websocket",
+        "Job apply from console"
+      ]
+    }
+  ],
+
+  "do_not": [
+    "Auto-apply jobs from assistant or host",
+    "Drop Dropt TargetServer requirement without a mapping layer",
+    "Mount full AppShell+Login into host",
+    "Assume host MFA UI replaces Dropt MFA API without checking token model",
+    "Forget Centrify settings when embedding hostname",
+    "Break OpsWizardContext.embedded preview flow"
+  ],
+
+  "files_to_copy_first": [
+    "frontend/src/pages/ServerConsolePage.tsx",
+    "frontend/src/components/ServerOpsMenu.tsx",
+    "frontend/src/hooks/useOpsWizard.ts",
+    "frontend/src/pages/*Page.tsx (ops wizards)",
+    "frontend/src/lib/opsPostchecks.ts",
+    "frontend/src/api.ts (or split ops client)",
+    "backend/app/modules/**",
+    "backend/app/api/ops.py",
+    "backend/app/api/jobs.py",
+    "backend/app/assistant/**",
+    "docs/host-merge/dropt-host-merge-manifest.json",
+    ".cursor/rules/dropt-*.mdc"
+  ],
+
+  "placeholders_for_host_team": {
+    "host_menu_path": "FILL_ME e.g. /ops/unix",
+    "host_settings_dropt_submenu": "FILL_ME e.g. Settings → Dropt Ops",
+    "host_top_settings_for_mfa_sessions": "FILL_ME if relocating",
+    "host_server_id_field": "FILL_ME vCenter moId / uuid",
+    "host_auth_bridge_endpoint": "FILL_ME"
+  }
+}

@@ -36,6 +36,19 @@ class KubeVirtClient:
         self.api_url = (api_url or "").strip().rstrip("/")
         if self.api_url and not self.api_url.startswith("http"):
             self.api_url = f"https://{self.api_url}"
+        try:
+            from app.services.host_resolve import rewrite_url_host
+            rewritten, note, orig = rewrite_url_host(self.api_url)
+            if rewritten and rewritten != self.api_url:
+                logger.info("KubeVirt API host resolve: %s", note)
+                self.api_url = rewritten
+                self._tls_server_hostname = orig
+            else:
+                self._tls_server_hostname = None
+        except Exception as e:
+            logger.debug("KubeVirt host resolve skip: %s", e)
+            self._tls_server_hostname = None
+
         self.username = username or ""
         self.password = password or ""
         self.verify_ssl = verify_ssl
@@ -53,6 +66,8 @@ class KubeVirtClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         })
+        if getattr(self, "_tls_server_hostname", None):
+            self.session.headers["Host"] = self._tls_server_hostname
 
     def _login_with_credentials(self) -> Tuple[str, str]:
         from app.services.openshift.oauth_helper import obtain_oauth_token
@@ -101,7 +116,10 @@ class KubeVirtClient:
 
     @staticmethod
     def _parse_quantity(val) -> float:
-        """Kubernetes resource quantity string'ini (ör. '4', '8Gi', '500m') sayıya çevirir."""
+        """Kubernetes resource quantity → GiB (bellek/disk) veya core (cpu m/n).
+
+        Suffix'siz büyük sayılar (ör. PVC capacity `34144990004`) byte kabul edilir.
+        """
         if val is None:
             return 0.0
         s = str(val).strip()
@@ -118,9 +136,41 @@ class KubeVirtClient:
                 return float(s[:-2]) * 1024
             if s.endswith("m"):  # milli-cores
                 return float(s[:-1]) / 1000
-            return float(s)
+            n = float(s)
+            # Suffix yok: CPU core (<1000) veya storage byte (>= 1Mi ham)
+            if n >= 1024 * 1024:
+                return n / (1024 ** 3)
+            return n
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _vmi_primary_ip(vmi_status: dict) -> str:
+        """VMI status.interfaces → tercih edilen IPv4 (ipAddress veya ipAddresses[])."""
+        def _ok(addr: str) -> bool:
+            a = (addr or "").strip()
+            if not a or ":" in a:  # IPv6 atla (liste sade kalsın)
+                return False
+            if a.startswith("127.") or a.startswith("169.254."):
+                return False
+            return True
+
+        candidates: list[str] = []
+        for iface in (vmi_status or {}).get("interfaces") or []:
+            if not isinstance(iface, dict):
+                continue
+            one = iface.get("ipAddress") or ""
+            if _ok(one):
+                candidates.append(one.strip())
+            for raw in iface.get("ipAddresses") or []:
+                if isinstance(raw, str) and _ok(raw):
+                    candidates.append(raw.strip())
+                elif isinstance(raw, dict):
+                    ip = raw.get("ip") or raw.get("address") or ""
+                    if _ok(ip):
+                        candidates.append(ip.strip())
+        # Pod network genelde 10.x; ilk geçerli yeterli
+        return candidates[0] if candidates else ""
 
     def list_vms(self) -> List[Dict]:
         """Tüm namespace'lerdeki VirtualMachine + VirtualMachineInstance kaynaklarını
@@ -159,17 +209,14 @@ class KubeVirtClient:
                 resources = (domain.get("resources") or {}).get("requests", {}) or {}
                 cpu_val = domain.get("cpu", {}).get("cores") if isinstance(domain.get("cpu"), dict) else None
                 cpu_cores = int(cpu_val) if cpu_val else max(1, round(self._parse_quantity(resources.get("cpu", "1"))))
-                memory_gb = round(self._parse_quantity(resources.get("memory", "0")), 1)
+                mem_raw = resources.get("memory") or (domain.get("memory") or {}).get("guest")
+                memory_gb = round(self._parse_quantity(mem_raw), 1) if mem_raw else 0.0
 
                 vmi_status = vmi.get("status", {}) or {}
                 phase = (vmi_status.get("phase") or vm.get("status", {}).get("printableStatus") or "Unknown")
                 node_name = vmi_status.get("nodeName", "")
 
-                ip_address = ""
-                for iface in vmi_status.get("interfaces", []) or []:
-                    if iface.get("ipAddress"):
-                        ip_address = iface["ipAddress"]
-                        break
+                ip_address = self._vmi_primary_ip(vmi_status)
 
                 guest_os = ""
                 guest_info = vmi_status.get("guestOSInfo") or {}
@@ -190,6 +237,7 @@ class KubeVirtClient:
                     "namespace": namespace,
                     "node_name": node_name,
                     "phase": phase,
+                    "printable_status": (vm.get("status") or {}).get("printableStatus") or phase,
                 })
 
             logger.info(f"OpenShift Virtualization {self.api_url}: {len(inventory)} VM senkronize edildi")
@@ -198,8 +246,60 @@ class KubeVirtClient:
             logger.error(f"KubeVirt list_vms error: {e}", exc_info=True)
             return []
 
+    def _lookup_pvc(self, namespace: str, claim_name: str) -> Optional[Dict]:
+        """PVC özeti + bağlı PV adı."""
+        if not namespace or not claim_name:
+            return None
+        try:
+            r = self._get(f"/api/v1/namespaces/{namespace}/persistentvolumeclaims/{claim_name}", timeout=10)
+            if r.status_code != 200:
+                return {"name": claim_name, "namespace": namespace, "error": f"HTTP {r.status_code}"}
+            pvc = r.json() or {}
+            meta = pvc.get("metadata") or {}
+            spec = pvc.get("spec") or {}
+            status = pvc.get("status") or {}
+            cap = (status.get("capacity") or {}).get("storage") or (spec.get("resources") or {}).get("requests", {}).get("storage")
+            return {
+                "name": meta.get("name") or claim_name,
+                "namespace": meta.get("namespace") or namespace,
+                "phase": status.get("phase") or "",
+                "storage_class": spec.get("storageClassName") or "",
+                "access_modes": spec.get("accessModes") or [],
+                "capacity_gb": round(self._parse_quantity(cap), 2) if cap else None,
+                "volume_name": spec.get("volumeName") or status.get("volumeName") or "",
+            }
+        except Exception as exc:
+            logger.debug("PVC lookup %s/%s: %s", namespace, claim_name, exc)
+            return {"name": claim_name, "namespace": namespace, "error": str(exc)[:120]}
+
+    def _lookup_pv(self, pv_name: str) -> Optional[Dict]:
+        if not pv_name:
+            return None
+        try:
+            r = self._get(f"/api/v1/persistentvolumes/{pv_name}", timeout=10)
+            if r.status_code != 200:
+                return {"name": pv_name, "error": f"HTTP {r.status_code}"}
+            pv = r.json() or {}
+            meta = pv.get("metadata") or {}
+            spec = pv.get("spec") or {}
+            status = pv.get("status") or {}
+            claim_ref = spec.get("claimRef") or {}
+            cap = (spec.get("capacity") or {}).get("storage")
+            return {
+                "name": meta.get("name") or pv_name,
+                "phase": status.get("phase") or "",
+                "storage_class": spec.get("storageClassName") or "",
+                "reclaim": spec.get("persistentVolumeReclaimPolicy") or "",
+                "access_modes": spec.get("accessModes") or [],
+                "capacity_gb": round(self._parse_quantity(cap), 2) if cap else None,
+                "claim": f"{claim_ref.get('namespace', '')}/{claim_ref.get('name', '')}".strip("/") or None,
+            }
+        except Exception as exc:
+            logger.debug("PV lookup %s: %s", pv_name, exc)
+            return {"name": pv_name, "error": str(exc)[:120]}
+
     def get_vm_full_details(self, vm_id: str, name: str = "") -> Optional[Dict]:
-        """VM'in tüm detaylarını döner — vm_id burada '{namespace}/{name}' anahtarı olarak kullanılır."""
+        """VM detayı — proje, worker node, disk→PVC→PV, NIC, guest OS, launcher pod."""
         try:
             namespace, vm_name = (vm_id.split("/", 1) + [""])[:2] if "/" in vm_id else ("", vm_id)
             vm_name = vm_name or name
@@ -221,42 +321,166 @@ class KubeVirtClient:
             template_spec = ((spec.get("template") or {}).get("spec") or {})
             domain = template_spec.get("domain", {}) or {}
             resources = (domain.get("resources") or {}).get("requests", {}) or {}
+            cpu_val = domain.get("cpu", {}).get("cores") if isinstance(domain.get("cpu"), dict) else None
+            cpu_cores = int(cpu_val) if cpu_val else max(1, round(self._parse_quantity(resources.get("cpu", "1"))))
+            mem_raw = resources.get("memory") or (domain.get("memory") or {}).get("guest")
+            memory_gb = round(self._parse_quantity(mem_raw), 2) if mem_raw else 0.0
+            memory_mb = int(memory_gb * 1024)
 
-            disks = template_spec.get("volumes", []) or []
-            disk_names = [d.get("name", "") for d in disks if d.get("name")]
+            # domain.devices.disks → bus; volumes → PVC / DataVolume / containerDisk
+            disk_meta = {}
+            for d in ((domain.get("devices") or {}).get("disks") or []):
+                if d.get("name"):
+                    disk_meta[d["name"]] = {
+                        "bus": ((d.get("disk") or d.get("cdrom") or d.get("lun") or {}).get("bus")) or "",
+                        "boot_order": d.get("bootOrder"),
+                    }
 
+            disks_out: List[Dict] = []
+            disk_names: List[str] = []
+            total_disk_gb = 0.0
+            for vol in (template_spec.get("volumes") or []):
+                vname = vol.get("name") or ""
+                if not vname:
+                    continue
+                disk_names.append(vname)
+                entry: Dict = {
+                    "name": vname,
+                    "bus": (disk_meta.get(vname) or {}).get("bus") or "",
+                    "boot_order": (disk_meta.get(vname) or {}).get("boot_order"),
+                    "source": None,
+                    "claim": None,
+                    "pvc": None,
+                    "pv": None,
+                    "size_gb": None,
+                }
+                if vol.get("persistentVolumeClaim"):
+                    claim = (vol["persistentVolumeClaim"] or {}).get("claimName") or ""
+                    entry["source"] = "persistentVolumeClaim"
+                    entry["claim"] = claim
+                    pvc = self._lookup_pvc(namespace, claim)
+                    entry["pvc"] = pvc
+                    if pvc and pvc.get("volume_name"):
+                        entry["pv"] = self._lookup_pv(pvc["volume_name"])
+                    if pvc and pvc.get("capacity_gb") is not None:
+                        entry["size_gb"] = pvc["capacity_gb"]
+                        total_disk_gb += float(pvc["capacity_gb"] or 0)
+                elif vol.get("dataVolume"):
+                    dv_name = (vol["dataVolume"] or {}).get("name") or ""
+                    entry["source"] = "dataVolume"
+                    entry["claim"] = dv_name
+                    # CDI DataVolume genelde aynı adlı PVC oluşturur
+                    pvc = self._lookup_pvc(namespace, dv_name)
+                    entry["pvc"] = pvc
+                    if pvc and pvc.get("volume_name"):
+                        entry["pv"] = self._lookup_pv(pvc["volume_name"])
+                    if pvc and pvc.get("capacity_gb") is not None:
+                        entry["size_gb"] = pvc["capacity_gb"]
+                        total_disk_gb += float(pvc["capacity_gb"] or 0)
+                elif vol.get("containerDisk"):
+                    entry["source"] = "containerDisk"
+                    entry["image"] = (vol["containerDisk"] or {}).get("image") or ""
+                elif vol.get("cloudInitNoCloud") or vol.get("cloudInitConfigDrive"):
+                    entry["source"] = "cloudInit"
+                else:
+                    entry["source"] = next(iter(k for k in vol.keys() if k != "name"), "unknown")
+                disks_out.append(entry)
+
+            # NIC: template networks + canlı VMI interfaces
+            net_spec = {n.get("name"): n for n in (template_spec.get("networks") or []) if n.get("name")}
             networks: list = []
-            guest_ip = ""
-            for iface in vmi_status.get("interfaces", []) or []:
-                addr = iface.get("ipAddress", "")
-                if addr and not guest_ip:
-                    guest_ip = addr
+            guest_ip = self._vmi_primary_ip(vmi_status)
+            for iface in vmi_status.get("interfaces") or []:
+                addrs = []
+                if iface.get("ipAddress"):
+                    addrs.append(iface["ipAddress"])
+                for raw in iface.get("ipAddresses") or []:
+                    if isinstance(raw, str):
+                        addrs.append(raw)
+                    elif isinstance(raw, dict):
+                        addrs.append(raw.get("ip") or raw.get("address") or "")
+                addrs = [a for a in addrs if a]
+                addr = next((a for a in addrs if ":" not in a), addrs[0] if addrs else "")
+                nname = iface.get("name", "")
+                nspec = net_spec.get(nname) or {}
+                binding = "pod" if nspec.get("pod") is not None else ("multus" if nspec.get("multus") else "")
                 networks.append({
-                    "name": iface.get("name", ""),
+                    "name": nname,
                     "mac": iface.get("mac", ""),
-                    "ips": [{"address": addr, "version": "v4"}] if addr else [],
+                    "ip_address": addr,
+                    "binding": binding,
+                    "model": iface.get("interfaceName") or "",
+                    "ips": [{"address": a, "version": "v6" if ":" in a else "v4"} for a in addrs],
                 })
+            if not networks:
+                for nname, nspec in net_spec.items():
+                    binding = "pod" if nspec.get("pod") is not None else ("multus" if nspec.get("multus") else "")
+                    networks.append({
+                        "name": nname, "mac": "", "ip_address": "", "binding": binding,
+                        "model": "", "ips": [],
+                    })
 
             guest_info = vmi_status.get("guestOSInfo") or {}
+            phase = vmi_status.get("phase") or (vm.get("status") or {}).get("printableStatus") or ""
+            machine_type = (domain.get("machine") or {}).get("type") or ""
+
+            launcher = ""
+            try:
+                pods_r = self._get(
+                    f"/api/v1/namespaces/{namespace}/pods",
+                    params={"labelSelector": f"kubevirt.io/domain={vm_name}"},
+                    timeout=10,
+                )
+                if pods_r.status_code == 200:
+                    for p in (pods_r.json() or {}).get("items") or []:
+                        pname = (p.get("metadata") or {}).get("name") or ""
+                        if "virt-launcher" in pname:
+                            launcher = pname
+                            break
+            except Exception:
+                pass
+
+            runnable = bool(spec.get("running")) if "running" in spec else None
+            if runnable is None:
+                runnable = str((vm.get("status") or {}).get("printableStatus") or "").lower() in (
+                    "running", "starting", "migrating",
+                )
 
             return {
-                "vm_id": vm_id,
+                # Virt inventory uyumu
+                "vm_id": f"{namespace}/{vm_name}",
                 "vm_name": vm_name,
-                "vm_guest_hostname": vmi_status.get("guestOSInfo", {}).get("hostname") or vm_name,
+                "vm_guest_hostname": guest_info.get("hostname") or vm_name,
                 "vm_guest_ip": guest_ip,
-                "vm_cpu_count": max(1, round(self._parse_quantity(resources.get("cpu", "1")))),
-                "vm_memory_mb": int(self._parse_quantity(resources.get("memory", "0")) * 1024),
-                "vm_disk_gb": 0,
-                "vm_power_state": vmi_status.get("phase", "") or "",
+                "vm_cpu_count": cpu_cores,
+                "vm_memory_mb": memory_mb,
+                "vm_disk_gb": round(total_disk_gb, 2),
+                "vm_power_state": phase,
                 "vm_tools_status": guest_info.get("version", ""),
                 "vm_network_info": networks,
                 "vm_cluster": "OpenShift Virtualization",
                 "vm_datastore": "",
-                "vm_hardware_version": "",
+                "vm_hardware_version": machine_type,
                 "os_type": guest_info.get("prettyName") or guest_info.get("name") or "",
                 "disk_names": disk_names,
                 "namespace": namespace,
                 "node_name": vmi_status.get("nodeName", ""),
+                # OpenShift AIOPS zengin alanlar
+                "name": vm_name,
+                "phase": phase,
+                "runnable": runnable,
+                "cpu_cores": cpu_cores,
+                "memory_gb": memory_gb,
+                "memory_mb": memory_mb,
+                "ip_address": guest_ip,
+                "guest_os": guest_info.get("prettyName") or guest_info.get("name") or "",
+                "hostname": guest_info.get("hostname") or vm_name,
+                "machine_type": machine_type,
+                "launcher_pod": launcher,
+                "disks": disks_out,
+                "nics": networks,
+                "created": (vm.get("metadata") or {}).get("creationTimestamp"),
+                "labels": (vm.get("metadata") or {}).get("labels") or {},
             }
         except Exception as e:
             logger.error(f"KubeVirt get_vm_full_details error: {e}", exc_info=True)

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.auth import client_ip, require_module
+from app.core.auth import client_ip, require_module, require_role
 from app.core.database import get_db
 from app.models.learned_fact import LearnedFact
 from app.models.server import Server
@@ -24,6 +24,41 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _require_knowledge = require_module("knowledge")
+_require_admin = require_role("admin")
+
+_MAX_KEY_LEN = 200
+_MAX_VALUE_LEN = 2000
+
+
+def _validate_pin_payload(key: str, value: str) -> tuple[str, str]:
+    k = (key or "").strip()
+    v = (value or "").strip()
+    if not k or not v:
+        raise HTTPException(status_code=400, detail="Anahtar ve değer zorunlu")
+    if len(k) > _MAX_KEY_LEN:
+        raise HTTPException(status_code=400, detail=f"Anahtar en fazla {_MAX_KEY_LEN} karakter")
+    if len(v) > _MAX_VALUE_LEN:
+        raise HTTPException(status_code=400, detail=f"Değer en fazla {_MAX_VALUE_LEN} karakter")
+    if "\n" in k or "\r" in k:
+        raise HTTPException(status_code=400, detail="Anahtarda satır sonu olamaz")
+    lowered = (k + " " + v).lower()
+    for bad in ("ignore previous", "system prompt", "<script", "```system"):
+        if bad in lowered:
+            raise HTTPException(status_code=400, detail="Geçersiz içerik")
+    return k, v
+
+
+def _validate_fact_value(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(status_code=400, detail="Değer zorunlu")
+    if len(v) > _MAX_VALUE_LEN:
+        raise HTTPException(status_code=400, detail=f"Değer en fazla {_MAX_VALUE_LEN} karakter")
+    lowered = v.lower()
+    for bad in ("ignore previous", "system prompt", "<script", "```system"):
+        if bad in lowered:
+            raise HTTPException(status_code=400, detail="Geçersiz içerik")
+    return v
 
 
 def _schedule_knowledge_rag_reindex() -> None:
@@ -70,28 +105,62 @@ def correct_fact(
     body: FactCorrection,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(_require_knowledge),
+    user: User = Depends(_require_admin),
 ):
-    """Admin feedback: yanlış fact'i düzeltilmiş değerle kaydet (source=manual)."""
+    """Yalnızca admin: yanlış/eksik fact'i manuel sabitle (source=manual).
+
+    Bilgi zehirleme riski nedeniyle operator/viewer ve knowledge-modüllü
+    non-admin kullanıcılar bu uç noktayı kullanamaz.
+    """
     from app.services.fact_learning import upsert_manual_fact_correction
 
+    key, value = _validate_pin_payload(body.key, body.value)
     server = db.query(Server).filter(Server.id == body.server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Sunucu bulunamadı")
     result = upsert_manual_fact_correction(
-        db, body.server_id, body.key, body.value, category=body.category or "correction",
+        db, body.server_id, key, value, category=body.category or "correction",
     )
     if not result:
         raise HTTPException(status_code=400, detail="Düzeltme kaydedilemedi")
     record_audit(
         db, category="knowledge", action="knowledge.correct", status="success",
         actor=user,
-        summary=f"Bilgi düzeltildi: {body.key}" + (f" ({body.note})" if body.note else ""),
+        summary=f"Bilgi sabitlendi (admin): {key}" + (f" ({body.note})" if body.note else ""),
         target_type="learned_fact", target_id=result.get("id"), server_id=body.server_id,
         ip_address=client_ip(request),
     )
     _schedule_knowledge_rag_reindex()
     return result
+
+
+@router.put("/{fact_id}")
+def update_fact(
+    fact_id: int,
+    body: FactUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_admin),
+):
+    """Yalnızca admin: fact değerini manuel güncelle (source=manual)."""
+    value = _validate_fact_value(body.value)
+    fact = db.query(LearnedFact).filter(LearnedFact.id == fact_id).first()
+    if not fact:
+        raise HTTPException(status_code=404, detail="Kayit bulunamadi")
+    fact.value = value
+    fact.source = "manual"
+    from datetime import datetime, timezone
+    fact.last_confirmed_at = datetime.now(timezone.utc)
+    fact.confidence = 1.0
+    db.commit()
+    record_audit(
+        db, category="knowledge", action="knowledge.update", status="success",
+        actor=user, summary=f"Bilgi güncellendi (admin): {fact.key}",
+        target_type="learned_fact", target_id=fact_id, server_id=fact.server_id,
+        ip_address=client_ip(request),
+    )
+    _schedule_knowledge_rag_reindex()
+    return fact.to_dict()
 
 
 @router.post("/{fact_id}/confirm")
@@ -195,32 +264,6 @@ def facts_summary(
         ],
         "categories": [{"category": c, "count": n} for c, n in sorted(per_category, key=lambda x: -x[1])],
     }
-
-
-@router.put("/{fact_id}")
-def update_fact(
-    fact_id: int,
-    body: FactUpdate,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(_require_knowledge),
-):
-    fact = db.query(LearnedFact).filter(LearnedFact.id == fact_id).first()
-    if not fact:
-        raise HTTPException(status_code=404, detail="Kayit bulunamadi")
-    fact.value = body.value
-    fact.source = "manual"
-    from datetime import datetime, timezone
-    fact.last_confirmed_at = datetime.now(timezone.utc)
-    db.commit()
-    record_audit(
-        db, category="knowledge", action="knowledge.update", status="success",
-        actor=user, summary=f"Bilgi güncellendi: {fact.key}",
-        target_type="learned_fact", target_id=fact_id, server_id=fact.server_id,
-        ip_address=client_ip(request),
-    )
-    _schedule_knowledge_rag_reindex()
-    return fact.to_dict()
 
 
 @router.delete("/{fact_id}")
