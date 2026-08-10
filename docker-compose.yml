@@ -164,6 +164,7 @@ services:
         condition: service_started
 
   # Frontend — HTTPS (80→443 redirect). Sertifikalar: ${DATA_DIR}/certs/{server.crt,server.key}
+  # Mount yazılabilir: entrypoint eksikse self-signed üretir (ro olsaydı üretemezdi).
   frontend:
     build:
       context: ./frontend
@@ -172,6 +173,8 @@ services:
     logging: *default-logging
     environment:
       TZ: ${TZ:-Europe/Istanbul}
+      TLS_CN: ${PRIMARY_IP:-localhost}
+      TLS_IP: ${PRIMARY_IP:-}
     ports:
       - "80:80"
       - "443:443"
@@ -179,7 +182,7 @@ services:
       - "3000:80"
     volumes:
       - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:Z,ro
-      - ${DATA_DIR:-/data/data}/certs:/etc/nginx/certs:Z,ro
+      - ${DATA_DIR:-/data/data}/certs:/etc/nginx/certs:Z
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

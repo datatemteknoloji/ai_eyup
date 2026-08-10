@@ -361,6 +361,33 @@ c_green "Paket dosyaları güncellendi ( .env ve data/ korundu )."
 COMPOSE_FILE="$(resolve_compose_file "$INSTALL_DIR")"
 c_green "Compose dosyası: $COMPOSE_FILE"
 
+# TLS — eksikse host'ta üret (frontend entrypoint de üretir; host dosyası kalıcı olsun)
+step "TLS sertifikası kontrol ediliyor"
+mkdir -p "$DATA_DIR/certs"
+_CERT="$DATA_DIR/certs/server.crt"
+_KEY="$DATA_DIR/certs/server.key"
+if [[ -f "$_CERT" && -f "$_KEY" ]]; then
+  c_green "Mevcut sertifika: $_CERT"
+else
+  _CN="$(grep '^PRIMARY_IP=' "$INSTALL_DIR/$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  [[ -z "$_CN" ]] && _CN="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ -z "$_CN" ]] && _CN="localhost"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout "$_KEY" -out "$_CERT" \
+      -subj "/C=TR/O=ainew/CN=${_CN}" \
+      -addext "subjectAltName=IP:${_CN},DNS:localhost" 2>/dev/null \
+      || openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+           -keyout "$_KEY" -out "$_CERT" \
+           -subj "/C=TR/O=ainew/CN=${_CN}"
+    chmod 600 "$_KEY" 2>/dev/null || true
+    chmod 644 "$_CERT" 2>/dev/null || true
+    c_green "Self-signed sertifika üretildi: $_CERT"
+  else
+    c_yellow "openssl yok — frontend entrypoint ilk start'ta sertifika üretecek (certs mount yazılabilir olmalı)."
+  fi
+fi
+
 # ── 3. İmaj etiketlerini .env'de güncelle ───────────────────────────────────
 step ".env imaj etiketleri güncelleniyor"
 set_env() {

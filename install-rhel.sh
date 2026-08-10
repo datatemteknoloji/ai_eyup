@@ -336,9 +336,15 @@ c_green "$ENV_FILE hazır (mevcut değerler korunur, sadece boş/varsayılanlar 
 step "TLS sertifikası kontrol ediliyor"
 CERT="$DATA_DIR/certs/server.crt"
 KEY="$DATA_DIR/certs/server.key"
+mkdir -p "$DATA_DIR/certs"
 if [[ -f "$CERT" && -f "$KEY" ]]; then
   c_green "Mevcut sertifika kullanılacak: $CERT"
 else
+  if ! command -v openssl >/dev/null 2>&1; then
+    c_red "openssl yok — TLS sertifikası üretilemedi."
+    c_yellow "Kurun: dnf install -y openssl  (frontend entrypoint de üretebilir; yine de host'ta openssl önerilir)"
+    exit 1
+  fi
   openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
     -keyout "$KEY" -out "$CERT" \
     -subj "/C=TR/O=ServerManagement/CN=${PRIMARY_IP}" \
@@ -351,6 +357,10 @@ else
   c_green "Self-signed sertifika üretildi (10 yıl geçerli). Kendi CA-imzalı sertifikanız varsa"
   c_yellow "  $CERT / $KEY dosyalarının üzerine yazıp servisi yeniden başlatabilirsiniz."
   c_yellow "  veya Ayarlar → Güvenlik → TLS / HTTPS üzerinden yükleyebilirsiniz."
+fi
+if [[ ! -f "$CERT" || ! -f "$KEY" ]]; then
+  c_red "TLS sertifikası eksik: $CERT / $KEY"
+  exit 1
 fi
 
 # ── 5. firewalld ─────────────────────────────────────────────────────────────
