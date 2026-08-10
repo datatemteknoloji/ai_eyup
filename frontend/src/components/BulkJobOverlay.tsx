@@ -35,11 +35,13 @@ const kindLabel = (kind?: string) =>
       ? 'Windows WinRM AI Ready'
       : kind === 'health_check'
         ? 'Sunucu durum kontrolü'
-        : kind === 'os_refresh'
-          ? 'OS bilgisi yenileme'
-          : kind?.startsWith('events_scan_')
-            ? 'Log / event taraması'
-            : kind || 'bulk'
+        : kind === 'dropt_sync_all'
+          ? 'Level 1 envanter senkronu'
+          : kind === 'os_refresh'
+            ? 'OS bilgisi yenileme'
+            : kind?.startsWith('events_scan_')
+              ? 'Log / event taraması'
+              : kind || 'bulk'
 
 /** Sayfa yenileme / navigasyonda — yalnızca bu sekmede kullanıcı başlatmış işi geri yükle.
  *  Credential apply / auto-onboarding gibi arka plan turları modal açmaz. */

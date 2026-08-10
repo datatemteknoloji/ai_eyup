@@ -14,6 +14,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CloudDownload,
   FileSpreadsheet,
   MoreHorizontal,
   Pencil,
@@ -97,9 +98,16 @@ function SortableHeader({
 type ServersPageProps = {
   /** Level 1 embed: hide Dropt CRUD/import; navigate to /level1/console */
   level1Mode?: boolean;
+  /** Ainew Linux → Dropt envanter senkronu (Operasyon Merkezi) */
+  onSyncAinewInventory?: () => void;
+  syncingAinewInventory?: boolean;
 };
 
-export function ServersPage({ level1Mode = false }: ServersPageProps = {}) {
+export function ServersPage({
+  level1Mode = false,
+  onSyncAinewInventory,
+  syncingAinewInventory = false,
+}: ServersPageProps = {}) {
   const outletCtx = useOutletContext<OutletCtx | undefined>();
   const storedRaw = getStoredUser();
   let storedUser: UserPublic | null = null;
@@ -749,7 +757,7 @@ export function ServersPage({ level1Mode = false }: ServersPageProps = {}) {
     }
     const el = document.getElementById("level1-ops-header-slot");
     setHeaderSlot(el);
-  }, [level1Mode, automationUsername]);
+  }, [level1Mode, automationUsername, onSyncAinewInventory, syncingAinewInventory]);
 
   return (
     <div className="flex h-full flex-col">
@@ -782,7 +790,16 @@ export function ServersPage({ level1Mode = false }: ServersPageProps = {}) {
                   {automationUsername}
                 </span>
               </span>
-              <div className="ml-auto shrink-0">
+              <div className="ml-auto shrink-0 flex items-center gap-1">
+                {onSyncAinewInventory ? (
+                  <IconButton
+                    icon={CloudDownload}
+                    label="Envanteri senkronize et"
+                    onClick={() => onSyncAinewInventory()}
+                    disabled={syncingAinewInventory}
+                    iconClassName={syncingAinewInventory ? "animate-spin" : undefined}
+                  />
+                ) : null}
                 <IconButton icon={RefreshCw} label={t("refresh")} onClick={() => void load()} />
               </div>
             </>,
