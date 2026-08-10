@@ -116,6 +116,20 @@ else
   DATA_DIR="$INSTALL_DIR/data"
 fi
 
+# Tarball/build kullanıcısı (ör. datatem) sahipliği müşteri host'ta kalmasın.
+# data/ hariç — Postgres/Redis/appuser UID'leri bozulmasın.
+normalize_package_ownership() {
+  local root="$1"
+  [[ -d "$root" ]] || return 0
+  step "Paket sahipliği root:root yapılıyor"
+  find "$root" \
+    \( -path "$root/data" -o -path "$root/data/*" \) -prune -o \
+    -print0 2>/dev/null \
+    | xargs -0 -r chown root:root 2>/dev/null || true
+  c_green "Paket dosyaları: root:root (data/ hariç)."
+}
+normalize_package_ownership "$INSTALL_DIR"
+
 # ── 1. Docker kurulumu ─────────────────────────────────────────────────────
 step "Docker kontrol ediliyor"
 DOCKER_JUST_INSTALLED=0

@@ -350,6 +350,11 @@ else
 fi
 chmod +x "$INSTALL_DIR"/install-rhel.sh "$INSTALL_DIR"/update-rhel.sh "$INSTALL_DIR"/rollback-rhel.sh \
   "$INSTALL_DIR"/ainew-apply-update.sh 2>/dev/null || true
+# Paket ağacı root:root (build kullanıcısı datatem kalmasın); data/ dokunulmaz
+find "$INSTALL_DIR" \
+  \( -path "$INSTALL_DIR/data" -o -path "$INSTALL_DIR/data/*" \) -prune -o \
+  -print0 2>/dev/null \
+  | xargs -0 -r chown root:root 2>/dev/null || true
 # GUI wrapper'ı DATA_DIR/updates/bin altına senkronla
 mkdir -p "$DATA_DIR/updates"/{incoming,prepared,bin}
 mkdir -p "$DATA_DIR/dropt"/{postgres,redis,ssh-keys,artifacts,keytabs,certs,rpms}

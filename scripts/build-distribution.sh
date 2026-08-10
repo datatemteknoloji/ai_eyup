@@ -339,8 +339,9 @@ if ! grep -q 'docker-compose.dropt.yml' "$STAGE/docker-compose.yml" 2>/dev/null;
 fi
 
 # ── 4. Arşivle ───────────────────────────────────────────────────────────────
-echo "▶ Arşivleniyor..."
-tar -C dist -czf "${STAGE}.tar.gz" "$(basename "$STAGE")"
+echo "▶ Arşivleniyor (owner/group 0 — müşteride datatem UID görünmesin)..."
+chown -R root:root "$STAGE" 2>/dev/null || true
+tar -C dist --owner=0 --group=0 --numeric-owner -czf "${STAGE}.tar.gz" "$(basename "$STAGE")"
 sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
 du -sh "${STAGE}.tar.gz"
 
