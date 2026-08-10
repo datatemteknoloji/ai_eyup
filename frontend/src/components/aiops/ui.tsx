@@ -30,7 +30,7 @@ export function PageHeader({ title, subtitle, actions }: {
     <div className="flex items-end justify-between flex-wrap gap-3">
       <div>
         <h1 className="text-lg font-bold text-white">{title}</h1>
-        {subtitle && <p className="text-sm mt-0.5" style={{ color: 'rgba(148,163,184,0.6)' }}>{subtitle}</p>}
+        {subtitle && <p className="text-sm mt-0.5 text-slate-400">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
@@ -74,7 +74,7 @@ export function Kpi({ label, value, accent = NEON.cyan, active, onClick }: {
         background: active ? `rgba(${rgb(accent)},0.08)` : 'var(--bg-card)',
         cursor: onClick ? 'pointer' : 'default',
       }}>
-      <div className="text-[11px] uppercase tracking-wider" style={{ color: 'rgba(148,163,184,0.6)' }}>{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-slate-400">{label}</div>
       <div className="text-2xl font-bold mt-0.5" style={{ color: accent }}>{value}</div>
     </button>
   )

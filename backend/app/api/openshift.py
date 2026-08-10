@@ -852,16 +852,17 @@ def kubevirt_vm_set_network(
 
 
 @router.websocket("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/console")
-async def kubevirt_serial_console(
+async def kubevirt_vnc_console(
     websocket: WebSocket,
     cluster_id: int,
     namespace: str,
     name: str,
     token: str = "",
 ):
-    """KubeVirt serial console — tarayıcı ↔ ainew ↔ cluster API (VMI /console).
+    """KubeVirt VNC — tarayıcı (noVNC) ↔ ainew ↔ cluster /vnc subresource.
 
-    SSH credential gerektirmez; VM Running olmalı. JWT: ?token=
+    Atlas ile aynı jump modeli. SSH/guest parola yok; auth = OCP Bearer (proxy).
+    JWT: ?token=  · noVNC subprotocol: binary · upstream: plain.kubevirt.io
     """
     import asyncio
     import ssl
@@ -877,14 +878,12 @@ async def kubevirt_serial_console(
     payload = decode_access_token(token) if token else None
     if not payload:
         await websocket.accept()
-        await websocket.send_text("\r\n\033[31mYetkilendirme hatası: geçerli bir token gerekli.\033[0m\r\n")
         await websocket.close(code=4401)
         return
 
     db = SessionLocal()
     upstream = None
     try:
-        # JWT: sub=username, uid=numeric id (terminal ile aynı)
         uid = payload.get("uid")
         user = (
             db.query(User).filter(User.id == uid, User.is_active == True).first()
@@ -893,30 +892,186 @@ async def kubevirt_serial_console(
         )
         if not user:
             await websocket.accept()
-            await websocket.send_text("\r\n\033[31mYetkilendirme hatası: kullanıcı bulunamadı.\033[0m\r\n")
             await websocket.close(code=4401)
             return
 
         cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
         if not cluster:
             await websocket.accept()
-            await websocket.send_text("\r\n\033[31mCluster bulunamadı.\033[0m\r\n")
-            await websocket.close()
+            await websocket.close(code=1011, reason="Cluster bulunamadı")
             return
 
         cc = cluster.connection_config or {}
         ocp_token = plain(cc.get("token") or "")
         if not ocp_token and cc.get("username") and cc.get("password"):
-            # credentials path — ensure client has token
             kv = cluster_ops.kubevirt_client_from_cluster(cluster)
             ocp_token = kv.token or ""
             kv.logout()
         if not ocp_token:
             await websocket.accept()
-            await websocket.send_text("\r\n\033[31mCluster token yok — Entegrasyonlar’dan token ile kaydedin.\033[0m\r\n")
-            await websocket.close()
+            await websocket.close(code=1011, reason="Cluster token yok")
             return
 
+        api_url = (cc.get("api_url") or cluster.api_url or "").rstrip("/")
+        from app.services.host_resolve import rewrite_url_host
+        resolved_api, _note, orig_host = rewrite_url_host(
+            api_url if "://" in api_url else f"https://{api_url}"
+        )
+        parsed = urlparse(resolved_api)
+        host = parsed.netloc or parsed.path
+        vnc_url = (
+            f"wss://{host}/apis/subresources.kubevirt.io/v1"
+            f"/namespaces/{namespace}/virtualmachineinstances/{name}/vnc"
+        )
+        verify_ssl = bool(cc.get("verify_ssl", False))
+        ssl_ctx = ssl.create_default_context()
+        if not verify_ssl:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        # noVNC binary subprotocol
+        await websocket.accept(subprotocol="binary")
+
+        try:
+            ws_headers = {"Authorization": f"Bearer {ocp_token}"}
+            if orig_host:
+                ws_headers["Host"] = orig_host
+            connect_kwargs = dict(
+                ssl=ssl_ctx,
+                open_timeout=20,
+                ping_interval=None,
+                max_size=16 * 1024 * 1024,
+                subprotocols=["plain.kubevirt.io"],
+            )
+            try:
+                upstream = await websockets.connect(
+                    vnc_url, additional_headers=ws_headers, **connect_kwargs
+                )
+            except TypeError:
+                upstream = await websockets.connect(
+                    vnc_url, extra_headers=ws_headers, **connect_kwargs
+                )
+        except Exception as e:
+            logger.warning("kubevirt VNC connect failed: %s", e)
+            err = str(e)
+            reason = (
+                "VNC yetkisi yok (403) — virtualmachineinstances/vnc get verin"
+                if "403" in err
+                else ("VM instance yok (404) — Running mi?" if "404" in err else err[:120])
+            )
+            try:
+                await websocket.close(code=1011, reason=reason[:120])
+            except Exception:
+                pass
+            return
+
+        async def pump_up():
+            try:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+            except Exception:
+                pass
+
+        async def pump_down():
+            try:
+                while True:
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    data = msg.get("bytes")
+                    text = msg.get("text")
+                    if data is not None:
+                        await upstream.send(data)
+                    elif text is not None:
+                        await upstream.send(text.encode("utf-8", errors="replace"))
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+
+        t1 = asyncio.create_task(pump_up())
+        t2 = asyncio.create_task(pump_down())
+        _done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.exception("kubevirt VNC console error")
+        try:
+            await websocket.close(code=1011, reason=str(e)[:100])
+        except Exception:
+            pass
+    finally:
+        db.close()
+        if upstream is not None:
+            try:
+                await upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.websocket("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/console/serial")
+async def kubevirt_serial_console(
+    websocket: WebSocket,
+    cluster_id: int,
+    namespace: str,
+    name: str,
+    token: str = "",
+):
+    """Eski serial console (TTY login) — gerekirse yedek."""
+    import asyncio
+    import ssl
+    from urllib.parse import urlparse
+
+    import websockets
+    from app.core.database import ThreadSessionLocal as SessionLocal
+    from app.core.security import decode_access_token
+    from app.models.user import User
+    from app.services.hypervisor_credentials import plain
+    from app.services.openshift import cluster_ops
+
+    payload = decode_access_token(token) if token else None
+    if not payload:
+        await websocket.accept()
+        await websocket.send_text("\r\n\033[31mYetkilendirme hatası.\033[0m\r\n")
+        await websocket.close(code=4401)
+        return
+
+    db = SessionLocal()
+    upstream = None
+    try:
+        uid = payload.get("uid")
+        user = (
+            db.query(User).filter(User.id == uid, User.is_active == True).first()
+            if uid is not None else None
+        )
+        if not user:
+            await websocket.accept()
+            await websocket.close(code=4401)
+            return
+        cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
+        if not cluster:
+            await websocket.accept()
+            await websocket.close()
+            return
+        cc = cluster.connection_config or {}
+        ocp_token = plain(cc.get("token") or "")
+        if not ocp_token and cc.get("username") and cc.get("password"):
+            kv = cluster_ops.kubevirt_client_from_cluster(cluster)
+            ocp_token = kv.token or ""
+            kv.logout()
+        if not ocp_token:
+            await websocket.accept()
+            await websocket.close()
+            return
         api_url = (cc.get("api_url") or cluster.api_url or "").rstrip("/")
         from app.services.host_resolve import rewrite_url_host
         resolved_api, _note, orig_host = rewrite_url_host(
@@ -928,49 +1083,32 @@ async def kubevirt_serial_console(
             f"wss://{host}/apis/subresources.kubevirt.io/v1"
             f"/namespaces/{namespace}/virtualmachineinstances/{name}/console"
         )
-        verify_ssl = bool(cc.get("verify_ssl", False))
         ssl_ctx = ssl.create_default_context()
-        if not verify_ssl:
+        if not bool(cc.get("verify_ssl", False)):
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
-
         await websocket.accept()
         await websocket.send_text(
-            f"\r\n\033[36mKubeVirt serial console · {namespace}/{name}\033[0m\r\n"
-            "\033[90m(serial binary; login için Enter)\033[0m\r\n\r\n"
+            f"\r\n\033[36mSerial · {namespace}/{name}\033[0m\r\n"
         )
-
+        ws_headers = {"Authorization": f"Bearer {ocp_token}"}
+        if orig_host:
+            ws_headers["Host"] = orig_host
         try:
-            ws_headers = {"Authorization": f"Bearer {ocp_token}"}
-            if orig_host:
-                ws_headers["Host"] = orig_host
-            upstream = await websockets.connect(
-                console_url,
-                additional_headers=ws_headers,
-                ssl=ssl_ctx,
-                open_timeout=20,
-                # KubeVirt serial ping'leri bozabiliyor; kapalı tut
-                ping_interval=None,
-                max_size=8 * 1024 * 1024,
-            )
+            try:
+                upstream = await websockets.connect(
+                    console_url, additional_headers=ws_headers, ssl=ssl_ctx,
+                    open_timeout=20, ping_interval=None, max_size=8 * 1024 * 1024,
+                )
+            except TypeError:
+                upstream = await websockets.connect(
+                    console_url, extra_headers=ws_headers, ssl=ssl_ctx,
+                    open_timeout=20, ping_interval=None, max_size=8 * 1024 * 1024,
+                )
         except Exception as e:
-            logger.warning("kubevirt console connect failed: %s", e)
-            err = str(e)
-            hint = (
-                "OpenShift SA (örn. ainew-viewer) için virtualmachineinstances/console "
-                "yetkisi yok (403). cluster-reader yeterli değil — ClusterRole ile "
-                "get console/vnc subresource verin."
-                if "403" in err
-                else "VM Running mi? Ağ/API erişimi var mı?"
-            )
-            await websocket.send_text(
-                f"\r\n\033[31mKonsol açılamadı: {err}\033[0m\r\n"
-                f"\033[90m{hint}\033[0m\r\n"
-            )
+            await websocket.send_text(f"\r\n\033[31m{e}\033[0m\r\n")
             await websocket.close()
             return
-
-        # getty çoğu zaman Enter bekler — bir CR gönder
         try:
             await upstream.send(b"\r")
         except Exception:
@@ -994,7 +1132,6 @@ async def kubevirt_serial_console(
                         break
                     data = msg.get("bytes")
                     text = msg.get("text")
-                    # KubeVirt /console yalnızca binary frame kabul eder
                     if data is not None:
                         await upstream.send(data)
                     elif text is not None:
@@ -1006,17 +1143,13 @@ async def kubevirt_serial_console(
 
         t1 = asyncio.create_task(pump_up())
         t2 = asyncio.create_task(pump_down())
-        done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+        _d, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
             t.cancel()
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        logger.exception("kubevirt console error")
-        try:
-            await websocket.send_text(f"\r\n\033[31mHata: {e}\033[0m\r\n")
-        except Exception:
-            pass
+    except Exception:
+        logger.exception("kubevirt serial console error")
     finally:
         db.close()
         if upstream is not None:

@@ -988,7 +988,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   </button>
                 </div>
                 {analyzeText ? (
-                  <div className="prose prose-invert prose-sm max-w-none text-slate-200 text-xs">
+                  <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200 text-xs">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{analyzeText}</ReactMarkdown>
                     {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 rounded-sm" />}
                   </div>

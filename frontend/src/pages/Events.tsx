@@ -776,7 +776,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                 </div>
               )}
               {analysisText && (
-                <div className="prose prose-invert prose-sm max-w-none" style={{ color: 'rgba(226,232,240,0.9)' }}>
+                <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
                   {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
                 </div>

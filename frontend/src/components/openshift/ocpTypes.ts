@@ -28,7 +28,7 @@ export const SECTION_HELP: Partial<Record<OcpSection, string>> = {
   topoloji:
     'Seçili projedeki uygulamaların görsel haritası. Düğüme tıklayınca ilişkiler sağda açılır.',
   depolama: 'StorageClass, PVC, PV ve Multus ağ tanımları.',
-  vms: 'OpenShift Virtualization (KubeVirt) sanal makineleri — console ve (admin) güç/klon/snapshot/disk.',
+  vms: 'OpenShift Virtualization (KubeVirt) — VNC konsol, güç, snapshot/klon (admin) ve canlı CPU/bellek.',
   tasima: 'VMware → OpenShift taşıma (MTV) hazırlığı ve operatör durumu.',
   kaynaklar: 'Kubernetes nesnelerini listeleyip YAML görüntüleyin; Deployment’larda ölçek ±.',
   projeler: 'Proje seçin; iş yükü / pod / route listeleri bu bağlamda çalışır.',

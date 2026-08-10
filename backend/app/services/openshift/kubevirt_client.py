@@ -224,21 +224,84 @@ class KubeVirtClient:
                     guest_os = guest_info.get("prettyName") or guest_info.get("name") or ""
 
                 status = "ONLINE" if str(phase).lower() in ("running",) else "OFFLINE"
+                printable = (vm.get("status") or {}).get("printableStatus") or phase
+                # Atlas uyumlu alanlar (power_state / cpu_count / memory_mb)
+                power_state = "poweredOn" if str(phase).lower() == "running" else "poweredOff"
+                memory_mb = int(round(memory_gb * 1024)) if memory_gb else 0
 
                 inventory.append({
                     "name": name,
                     "ip_address": ip_address,
-                    "hostname": name,
+                    "hostname": (guest_info.get("hostname") if guest_info else None) or name,
                     "os_type": guest_os,
+                    "guest_os": guest_os,
                     "cpu_cores": cpu_cores,
+                    "cpu_count": cpu_cores,
                     "memory_gb": memory_gb,
+                    "memory_mb": memory_mb,
                     "status": status,
+                    "power_state": power_state,
                     "vm_id": uid or key,
+                    "moref": key,
                     "namespace": namespace,
                     "node_name": node_name,
+                    "node": node_name,
+                    "host": node_name,
                     "phase": phase,
-                    "printable_status": (vm.get("status") or {}).get("printableStatus") or phase,
+                    "printable_status": printable,
+                    "usage": None,
                 })
+
+            # Canlı kullanım — tek toplu metrics çağrısı (virt-launcher pod'ları)
+            usage_by_vm: Dict[str, dict] = {}
+            try:
+                m_r = self._get("/apis/metrics.k8s.io/v1beta1/pods", params={"limit": "5000"}, timeout=20)
+                if m_r.status_code == 200:
+                    for m in (m_r.json() or {}).get("items") or []:
+                        md = m.get("metadata") or {}
+                        pod_name = md.get("name") or ""
+                        pod_ns = md.get("namespace") or ""
+                        if not pod_name.startswith("virt-launcher-"):
+                            continue
+                        # virt-launcher-<vm>-<hash>
+                        vm_name = pod_name[len("virt-launcher-"):].rsplit("-", 1)[0]
+                        conts = m.get("containers") or []
+                        cpu_m = 0
+                        mem_mb = 0
+                        for x in conts:
+                            u = (x.get("usage") or {})
+                            cpu_raw = u.get("cpu") or "0"
+                            # "123n" / "45m" / "1"
+                            try:
+                                s = str(cpu_raw)
+                                if s.endswith("n"):
+                                    cpu_m += max(0, int(int(s[:-1]) / 1_000_000))
+                                elif s.endswith("u"):
+                                    cpu_m += max(0, int(int(s[:-1]) / 1000))
+                                elif s.endswith("m"):
+                                    cpu_m += int(s[:-1] or 0)
+                                else:
+                                    cpu_m += int(float(s) * 1000)
+                            except Exception:
+                                pass
+                            mem_raw = u.get("memory")
+                            if mem_raw:
+                                # bytes-ish → MiB via existing helper (GiB scale) * 1024
+                                try:
+                                    mem_mb += int(round(self._parse_quantity(mem_raw) * 1024))
+                                except Exception:
+                                    pass
+                        usage_by_vm[f"{pod_ns}/{vm_name}"] = {
+                            "cpu_millicores": cpu_m,
+                            "memory_mb": mem_mb,
+                        }
+            except Exception as exc:
+                logger.debug("KubeVirt metrics skip: %s", exc)
+
+            for row in inventory:
+                u = usage_by_vm.get(row["moref"])
+                if u:
+                    row["usage"] = u
 
             logger.info(f"OpenShift Virtualization {self.api_url}: {len(inventory)} VM senkronize edildi")
             return inventory

@@ -1,21 +1,21 @@
 /**
  * Ortak markdown tablo/kod stilleri — geniş rapor tablolarını balon içinde
- * yatay kaydırma ile tutar (taşmayı engeller).
+ * yatay kaydırma ile tutar (taşmayı engeller). Tema değişkenleriyle light/dark okunur.
  */
 import type { Components } from 'react-markdown'
 
 export const chatMarkdownComponents: Components = {
   table: ({ children }) => (
-    <div className="my-3 max-w-full overflow-x-auto rounded-lg border border-slate-500/80 shadow-sm">
+    <div className="chat-md-table-wrap my-3 max-w-full overflow-x-auto rounded-lg border border-slate-500/80 shadow-sm">
       <table className="min-w-full w-max text-left text-sm border-collapse">{children}</table>
     </div>
   ),
   thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
   th: ({ children }) => (
-    <th className="px-3 py-2 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>
+    <th className="chat-md-th px-3 py-2 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>
   ),
   td: ({ children }) => (
-    <td className="px-3 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>
+    <td className="chat-md-td px-3 py-2 text-slate-200 border-b border-white/[0.06] whitespace-nowrap">{children}</td>
   ),
   tr: ({ children, ...props }) => (
     <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>
@@ -23,9 +23,15 @@ export const chatMarkdownComponents: Components = {
   code: ({ className, children }) =>
     className
       ? <code className={className}>{children}</code>
-      : <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-xs">{children}</code>,
+      : (
+        <code className="chat-md-inline-code bg-white/[0.08] px-1.5 py-0.5 rounded text-xs text-amber-200">
+          {children}
+        </code>
+      ),
   pre: ({ children }) => (
-    <pre className="bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2 max-h-[min(50vh,28rem)]">{children}</pre>
+    <pre className="chat-md-pre bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2 max-h-[min(50vh,28rem)] text-slate-200">
+      {children}
+    </pre>
   ),
 }
 

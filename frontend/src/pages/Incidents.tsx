@@ -381,7 +381,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, false)}
                       </p>
-                      <div className="prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words" style={{ color: 'rgba(226,232,240,0.9)' }}>
+                      <div className="chat-response-content prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words text-slate-200">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
                       </div>
                     </div>

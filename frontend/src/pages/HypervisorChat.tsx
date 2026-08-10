@@ -231,7 +231,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
           {isUser ? (
             <p>{msg.content}</p>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none min-w-0
+            <div className="chat-response-content prose prose-invert prose-sm max-w-none min-w-0
               prose-headings:text-blue-300 prose-headings:font-semibold
               prose-strong:text-white prose-code:text-amber-300
               prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded

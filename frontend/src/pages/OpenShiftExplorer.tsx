@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Boxes, LayoutGrid, FolderOpen, Network, Database, Layers, Stethoscope,
   Share2, Globe, HardDrive, Server, Settings2, FileCode, MonitorPlay,
-  HeartPulse, AlertTriangle, RefreshCw, Info, Terminal, ChevronRight, ArrowRightLeft,
+  HeartPulse, AlertTriangle, RefreshCw, Info, ChevronRight, ArrowRightLeft,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import OcpProjectsPanel from '../components/openshift/OcpProjectsPanel'
@@ -19,7 +19,7 @@ import OcpTopologyPanel from '../components/openshift/OcpTopologyPanel'
 import OcpPodsPanel from '../components/openshift/OcpPodsPanel'
 import OcpMtvPanel from '../components/openshift/OcpMtvPanel'
 import OcpClusterManageMenu from '../components/openshift/OcpClusterManageMenu'
-import OcpVmAdminActions from '../components/openshift/OcpVmAdminActions'
+import OcpVmsPanel from '../components/openshift/OcpVmsPanel'
 import {
   NEEDS_PROJECT, SECTION_HELP, SECTION_KIND, type OcpCluster, type OcpSection,
 } from '../components/openshift/ocpTypes'
@@ -33,13 +33,6 @@ const VALID: OcpSection[] = [
 function parseSection(raw: string | null): OcpSection | null {
   if (raw && VALID.includes(raw as OcpSection)) return raw as OcpSection
   return null
-}
-
-function openVmConsole(clusterId: number, namespace: string, name: string) {
-  const title = encodeURIComponent(`${namespace}/${name}`)
-  const url =
-    `/openshift/vms/${clusterId}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/console?title=${title}`
-  window.open(url, `ocp-console-${namespace}-${name}`, 'width=1100,height=720')
 }
 
 export default function OpenShiftExplorer({ initialSection = 'genel' }: { initialSection?: OcpSection }) {
@@ -135,17 +128,6 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
       return r.json()
     },
     enabled: !!clusterId && (section === 'saglik' || section === 'genel'),
-  })
-
-  const { data: kubevirtVms } = useQuery({
-    queryKey: ['openshift-kubevirt-vms', clusterId],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/kubevirt/vms`)
-      if (!r.ok) return { vms: [] }
-      return r.json()
-    },
-    enabled: !!clusterId && section === 'vms',
-    refetchInterval: 30_000,
   })
 
   const { data: risksData } = useQuery({
@@ -512,62 +494,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                 />
               )}
 
-              {active === 'vms' && (
-                <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-white font-medium flex items-center gap-2">
-                      <MonitorPlay size={16} className="text-rose-400" /> Sanal Makineler
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/[0.06]">
-                    <table className="w-full text-xs">
-                      <thead className="bg-cyber-deep/80 text-slate-500 text-left">
-                        <tr>
-                          <th className="px-3 py-2">Ad</th>
-                          <th className="px-3 py-2">Namespace</th>
-                          <th className="px-3 py-2">Durum</th>
-                          <th className="px-3 py-2">IP</th>
-                          <th className="px-3 py-2">Node</th>
-                          <th className="px-3 py-2 text-right">İşlemler</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(kubevirtVms?.vms || []).map((vm: any) => {
-                          const running = (vm.phase || vm.printable_status || '').toLowerCase() === 'running'
-                          return (
-                            <tr key={`${vm.namespace}/${vm.name}`} className="border-t border-white/[0.04]">
-                              <td className="px-3 py-2 text-slate-200 font-medium">{vm.name}</td>
-                              <td className="px-3 py-2 text-slate-500">{vm.namespace}</td>
-                              <td className="px-3 py-2 text-slate-400">{vm.phase || vm.printable_status || '—'}</td>
-                              <td className="px-3 py-2 text-cyan-300/90 font-mono tabular-nums" title={vm.ip_address || ''}>
-                                {vm.ip_address || '—'}
-                              </td>
-                              <td className="px-3 py-2 text-slate-500">{vm.node_name || '—'}</td>
-                              <td className="px-3 py-2">
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={!running}
-                                    title={running ? 'Serial console' : 'VM Running olmalı'}
-                                    onClick={() => openVmConsole(clusterId, vm.namespace, vm.name)}
-                                    className="inline-flex items-center gap-1 text-cyan-300 disabled:opacity-40"
-                                  >
-                                    <Terminal size={12} /> Console
-                                  </button>
-                                  <OcpVmAdminActions clusterId={clusterId} vm={vm} />
-                                </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                    {(kubevirtVms?.vms || []).length === 0 && (
-                      <div className="text-sm text-slate-500 py-8 text-center">VM yok</div>
-                    )}
-                  </div>
-                </div>
-              )}
+              {active === 'vms' && clusterId && <OcpVmsPanel clusterId={clusterId} />}
 
               {/* AIOps kısayolları */}
               <div className="flex flex-wrap gap-2 pt-2 text-[11px] text-slate-500">

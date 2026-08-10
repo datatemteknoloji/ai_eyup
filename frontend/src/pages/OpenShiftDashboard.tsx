@@ -401,11 +401,11 @@ function VmDetailDrawer({
             <button
               type="button"
               disabled={!canConsole && !!detail}
-              title={canConsole ? 'Serial console' : 'VM Running olmalı'}
-              className="text-xs text-cyan-300 px-2 py-1 rounded border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+              title={canConsole ? 'Konsol (noVNC)' : 'VM Running olmalı'}
+              className="text-xs text-violet-300 px-2 py-1 rounded border border-violet-500/30 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
               onClick={() => openVmConsole(clusterId, namespace, name)}
             >
-              <Terminal size={12} /> Console
+              <Monitor size={12} /> Console
             </button>
             <button
               type="button"
@@ -1613,14 +1613,14 @@ export default function OpenShiftDashboard({
                           <button
                             type="button"
                             disabled={(vm.phase || '').toLowerCase() !== 'running'}
-                            title={(vm.phase || '').toLowerCase() === 'running' ? 'Serial console' : 'VM Running olmalı'}
-                            className="text-xs text-cyan-300 disabled:opacity-30 inline-flex items-center gap-1"
+                            title={(vm.phase || '').toLowerCase() === 'running' ? 'Konsol (noVNC)' : 'VM Running olmalı'}
+                            className="text-xs text-violet-300 disabled:opacity-30 inline-flex items-center gap-1"
                             onClick={(e) => {
                               e.stopPropagation()
                               if (primaryClusterId) openVmConsole(primaryClusterId, vm.namespace, vm.name)
                             }}
                           >
-                            <Terminal size={12} /> Console
+                            <Monitor size={12} /> Console
                           </button>
                         </td>
                       </tr>

@@ -1,16 +1,13 @@
 /**
- * KubeVirt serial console — tam ekran xterm (SSH terminal ile aynı UX).
- * Bağlantı: ainew WS proxy → cluster /console subresource.
- * KubeVirt yalnızca binary WebSocket frame kabul eder.
+ * KubeVirt VNC konsol — Atlas ile aynı model (noVNC).
+ * Tarayıcı → ainew WS proxy → cluster /vnc (plain.kubevirt.io). Guest parola yok.
  */
-import React, { useEffect, useRef, useCallback } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import '@xterm/xterm/css/xterm.css'
+import { AlertTriangle, Loader2, Monitor, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import RFB from '@novnc/novnc'
 
-const encoder = new TextEncoder()
+type Status = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 const OpenShiftVmConsolePage: React.FC = () => {
   const { clusterId, namespace, name } = useParams<{
@@ -21,143 +18,141 @@ const OpenShiftVmConsolePage: React.FC = () => {
   const [searchParams] = useSearchParams()
   const title = searchParams.get('title') || `${namespace}/${name}`
 
+  const screenRef = useRef<HTMLDivElement | null>(null)
+  const rfbRef = useRef<{ disconnect: () => void; sendCtrlAltDel?: () => void } | null>(null)
+  const [status, setStatus] = useState<Status>('connecting')
+  const [error, setError] = useState('')
+
   useEffect(() => {
-    document.title = `Console — ${title}`
+    document.title = `Konsol — ${title}`
   }, [title])
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-  const statusRef = useRef<HTMLSpanElement | null>(null)
-
-  const setStatus = (msg: string, color: string) => {
-    if (statusRef.current) {
-      statusRef.current.textContent = msg
-      statusRef.current.style.color = color
-    }
-  }
-
   const connect = useCallback(() => {
-    if (!containerRef.current || !clusterId || !namespace || !name) return
-
-    if (wsRef.current) wsRef.current.close()
-    if (termRef.current) termRef.current.dispose()
-
-    const term = new Terminal({
-      cursorBlink: true,
-      theme: {
-        background: '#0d1117',
-        foreground: '#c9d1d9',
-        cursor: '#58a6ff',
-        selectionBackground: '#264f78',
-        black: '#0d1117', red: '#ff7b72',
-        green: '#3fb950', yellow: '#d29922',
-        blue: '#58a6ff', magenta: '#bc8cff',
-        cyan: '#39c5cf', white: '#b1bac4',
-        brightBlack: '#6e7681', brightWhite: '#f0f6fc',
-      },
-      fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
-      fontSize: 14,
-      lineHeight: 1.2,
-      scrollback: 10000,
-    })
-
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-    term.loadAddon(new WebLinksAddon())
-    term.open(containerRef.current)
-    setTimeout(() => fitAddon.fit(), 50)
-
-    termRef.current = term
-    fitRef.current = fitAddon
-
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const jwt = localStorage.getItem('auth_token') || ''
-    const path =
-      `/api/v1/openshift/clusters/${clusterId}/kubevirt/vms/` +
-      `${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/console`
-    const wsUrl = `${proto}://${window.location.host}${path}?token=${encodeURIComponent(jwt)}`
-    const ws = new WebSocket(wsUrl)
-    ws.binaryType = 'arraybuffer'
-    wsRef.current = ws
-
-    setStatus('Bağlanılıyor…', '#58a6ff')
-
-    ws.onopen = () => {
-      setStatus('Bağlandı (serial console)', '#3fb950')
-      document.title = `Console — ${title}`
-      // getty uyandır — proxy de CR gönderir; istemci yedek
+    if (!screenRef.current || !clusterId || !namespace || !name) return
+    setStatus('connecting')
+    setError('')
+    if (rfbRef.current) {
       try {
-        ws.send(encoder.encode('\r'))
+        rfbRef.current.disconnect()
       } catch {
         /* ignore */
       }
+      rfbRef.current = null
     }
-
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(ev.data))
-      } else if (typeof ev.data === 'string') {
-        term.write(ev.data)
-      }
+    try {
+      const jwt = localStorage.getItem('auth_token') || ''
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      const path =
+        `/api/v1/openshift/clusters/${clusterId}/kubevirt/vms/` +
+        `${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/console`
+      const url = `${proto}://${window.location.host}${path}?token=${encodeURIComponent(jwt)}`
+      const rfb = new RFB(screenRef.current, url, { wsProtocols: ['binary'] })
+      rfb.scaleViewport = true
+      rfb.background = '#0a0f1a'
+      rfb.addEventListener('connect', () => setStatus('connected'))
+      rfb.addEventListener('disconnect', (e: Event) => {
+        setStatus('disconnected')
+        const detail = (e as CustomEvent)?.detail
+        if (detail && !detail.clean) {
+          setError('Bağlantı kapandı — VM Running mi? VNC yetkisi (subresource) var mı?')
+        }
+      })
+      rfb.addEventListener('securityfailure', () => {
+        setStatus('error')
+        setError('Kimlik doğrulama başarısız — küme token / VNC RBAC kontrol edin')
+      })
+      rfbRef.current = rfb
+    } catch {
+      setStatus('error')
+      setError('Konsol başlatılamadı')
     }
-
-    ws.onclose = (ev) => {
-      const detail = ev.code && ev.code !== 1000 ? ` (kod ${ev.code})` : ''
-      setStatus(`Bağlantı kapatıldı${detail}`, '#d29922')
-      term.write('\r\n\x1b[33m--- Bağlantı kapatıldı ---\x1b[0m\r\n')
-    }
-
-    ws.onerror = () => setStatus('Bağlantı hatası', '#ff7b72')
-
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(encoder.encode(data))
-      }
-    })
-
-    const onResize = () => {
-      fitAddon.fit()
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [clusterId, namespace, name, title])
+  }, [clusterId, namespace, name])
 
   useEffect(() => {
-    const cleanup = connect()
+    connect()
     return () => {
-      cleanup?.()
-      wsRef.current?.close()
-      termRef.current?.dispose()
+      if (rfbRef.current) {
+        try {
+          rfbRef.current.disconnect()
+        } catch {
+          /* ignore */
+        }
+      }
     }
   }, [connect])
 
+  const statusMeta = {
+    connecting: { icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, label: 'Bağlanıyor', cls: 'text-amber-400' },
+    connected: { icon: <Wifi className="w-3.5 h-3.5" />, label: 'Bağlı (VNC)', cls: 'text-emerald-400' },
+    disconnected: { icon: <WifiOff className="w-3.5 h-3.5" />, label: 'Kesildi', cls: 'text-slate-400' },
+    error: { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: 'Hata', cls: 'text-red-400' },
+  }[status]
+
   return (
-    <div className="fixed inset-0 bg-[#0d1117] flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-[#161b22]">
-        <div className="text-sm text-slate-200 truncate">
-          Serial console · <span className="text-white font-medium">{title}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span ref={statusRef} className="text-xs text-slate-400">…</span>
+    <div className="fixed inset-0 bg-[#0a0f1a] flex flex-col">
+      <div className="h-12 flex items-center gap-3 px-4 border-b border-white/10 bg-[#161b22] flex-shrink-0">
+        <Monitor className="w-4 h-4 text-violet-400" />
+        <span className="text-sm font-semibold text-slate-200">KubeVirt Konsol</span>
+        <span className="text-xs text-slate-500 font-mono truncate">{title}</span>
+        <span className={`flex items-center gap-1.5 text-xs ${statusMeta.cls}`}>
+          {statusMeta.icon} {statusMeta.label}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          {status === 'connected' && (
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  rfbRef.current?.sendCtrlAltDel?.()
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
+            >
+              Ctrl+Alt+Del
+            </button>
+          )}
           <button
             type="button"
             onClick={() => connect()}
-            className="text-xs px-2 py-1 rounded border border-white/15 text-slate-300 hover:bg-white/5"
+            className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5 inline-flex items-center gap-1.5"
           >
-            Yeniden bağlan
+            <RefreshCw className="w-3.5 h-3.5" /> Yeniden bağlan
           </button>
           <button
             type="button"
             onClick={() => window.close()}
-            className="text-xs px-2 py-1 rounded border border-white/15 text-slate-300 hover:bg-white/5"
+            className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
           >
             Kapat
           </button>
         </div>
       </div>
-      <div ref={containerRef} className="flex-1 min-h-0 p-2" />
+
+      <div className="flex-1 relative overflow-hidden">
+        <div ref={screenRef} className="absolute inset-0" />
+        {(status === 'error' || (status === 'disconnected' && error)) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0a0f1a]/80">
+            <div className="rounded-xl border border-white/10 bg-[#161b22] p-6 max-w-md text-center shadow-xl">
+              <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-red-400" />
+              <p className="text-sm text-slate-300">{error || 'Konsol bağlantısı kapandı'}</p>
+              <button
+                type="button"
+                onClick={() => connect()}
+                className="mt-4 text-xs px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white"
+              >
+                Yeniden dene
+              </button>
+            </div>
+          </div>
+        )}
+        {status === 'connecting' && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -346,7 +346,7 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
           {tab === 'visual' && <ReportSummaryView type={type} data={data} />}
           {tab === 'markdown' && (
             markdown
-              ? <div className="prose prose-invert prose-sm max-w-none min-w-0
+              ? <div className="chat-response-content prose prose-invert prose-sm max-w-none min-w-0
                   prose-headings:text-blue-300 prose-headings:font-semibold
                   prose-h1:text-xl prose-h2:text-base prose-h2:border-b prose-h2:border-slate-700 prose-h2:pb-1
                   prose-strong:text-white prose-code:text-pink-300 prose-code:bg-slate-800
