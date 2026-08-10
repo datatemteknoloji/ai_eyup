@@ -22,13 +22,42 @@
 set -euo pipefail
 
 NEW_PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "docker-compose.prod.yml" ]]; then
-  COMPOSE_FILE="docker-compose.prod.yml"
-else
-  COMPOSE_FILE="docker-compose.yml"
-fi
 ENV_FILE=".env"
 DEFAULT_INSTALL_DIR="/data"
+COMPOSE_FILE="docker-compose.yml"
+
+# Müşteri paketinde offline stack adı docker-compose.yml'dir (Dropt include).
+# Eski kurulumlarda kalan docker-compose.prod.yml Dropt'suz / eski olabilir —
+# include içeren yml tercih edilir; prod varsa yml ile senkronlanır.
+resolve_compose_file() {
+  local dir="$1"
+  local yml="$dir/docker-compose.yml"
+  local prod="$dir/docker-compose.prod.yml"
+  if [[ -f "$yml" ]] && grep -q 'docker-compose.dropt.yml' "$yml" 2>/dev/null; then
+    if [[ -f "$prod" ]] && ! grep -q 'docker-compose.dropt.yml' "$prod" 2>/dev/null; then
+      cp -a "$yml" "$prod"
+      c_yellow "Eski docker-compose.prod.yml Dropt include'suzdu — docker-compose.yml ile güncellendi."
+    elif [[ -f "$prod" ]]; then
+      # İkisi de Dropt'lu: yml kanonik; prod'u hizala (karışıklığı önle)
+      cp -a "$yml" "$prod"
+    fi
+    printf '%s' "docker-compose.yml"
+    return 0
+  fi
+  if [[ -f "$prod" ]] && grep -q 'docker-compose.dropt.yml' "$prod" 2>/dev/null; then
+    printf '%s' "docker-compose.prod.yml"
+    return 0
+  fi
+  if [[ -f "$yml" ]]; then
+    printf '%s' "docker-compose.yml"
+    return 0
+  fi
+  if [[ -f "$prod" ]]; then
+    printf '%s' "docker-compose.prod.yml"
+    return 0
+  fi
+  printf '%s' "docker-compose.yml"
+}
 
 c_green()  { printf '\033[0;32m%s\033[0m\n' "$1"; }
 c_yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
@@ -251,10 +280,11 @@ OLD_VERSION="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")"
 NEW_VERSION="$(cat "$NEW_PKG_DIR/VERSION" 2>/dev/null || echo "unknown")"
 OLD_BACKEND="$(grep '^BACKEND_IMAGE=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2- || true)"
 OLD_FRONTEND="$(grep '^FRONTEND_IMAGE=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2- || true)"
-NEW_BACKEND="$(grep '^BACKEND_IMAGE=' "$NEW_PKG_DIR/.env.example" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-NEW_FRONTEND="$(grep '^FRONTEND_IMAGE=' "$NEW_PKG_DIR/.env.example" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-[[ -z "$NEW_BACKEND" ]]  && NEW_BACKEND="ainew-backend:${NEW_VERSION}"
-[[ -z "$NEW_FRONTEND" ]] && NEW_FRONTEND="ainew-frontend:${NEW_VERSION}"
+# VERSION dosyası kanonik — .env.example eski etiket taşıyabilir (1.0.9.21 vs 1.0.9.22).
+NEW_BACKEND="ainew-backend:${NEW_VERSION}"
+NEW_FRONTEND="ainew-frontend:${NEW_VERSION}"
+# Dump için mevcut kurulum compose'u (henüz paket kopyalanmadı)
+COMPOSE_FILE="$(resolve_compose_file "$INSTALL_DIR")"
 
 TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$DATA_DIR/backups/pre-update-${OLD_VERSION}-to-${NEW_VERSION}-${TS}"
@@ -328,6 +358,8 @@ if [[ -f "$INSTALL_DIR/ainew-apply-update.sh" ]]; then
   chmod +x "$DATA_DIR/updates/bin/ainew-apply-update.sh" 2>/dev/null || true
 fi
 c_green "Paket dosyaları güncellendi ( .env ve data/ korundu )."
+COMPOSE_FILE="$(resolve_compose_file "$INSTALL_DIR")"
+c_green "Compose dosyası: $COMPOSE_FILE"
 
 # ── 3. İmaj etiketlerini .env'de güncelle ───────────────────────────────────
 step ".env imaj etiketleri güncelleniyor"
@@ -388,7 +420,7 @@ c_green "BACKEND_IMAGE=$NEW_BACKEND"
 c_green "FRONTEND_IMAGE=$NEW_FRONTEND"
 c_green "APP_VERSION=$NEW_VERSION"
 
-# ── 4. Yeni imajları yükle ──────────────────────────────────────────────────
+# ── 4. Yeni imajları yükle (install ile aynı: tüm images/*.tar.gz) ──────────
 step "Yeni Docker imajları yükleniyor"
 IMAGES_DIR="$INSTALL_DIR/images"
 if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
@@ -412,8 +444,22 @@ if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
 fi
 
 if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
-  for f in "$IMAGES_DIR"/ainew-backend.tar.gz "$IMAGES_DIR"/ainew-frontend.tar.gz; do
+  # Önce uygulama imajları, sonra kalan tüm arşivler (postgres16, dropt-api, …)
+  declare -A _seen_img=()
+  _load_queue=()
+  for f in \
+      "$IMAGES_DIR/ainew-backend.tar.gz" \
+      "$IMAGES_DIR/ainew-frontend.tar.gz" \
+      "$IMAGES_DIR"/*.tar.gz; do
     [[ -e "$f" ]] || continue
+    case "$(basename "$f")" in
+      ollama-models-*.tar.gz) continue ;;
+    esac
+    [[ -n "${_seen_img[$f]:-}" ]] && continue
+    _seen_img[$f]=1
+    _load_queue+=("$f")
+  done
+  for f in "${_load_queue[@]}"; do
     c_yellow "Yükleniyor: $(basename "$f")"
     if ! gunzip -c "$f" | docker load; then
       c_red "docker load başarısız: $f"
@@ -423,15 +469,35 @@ if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
       exit 1
     fi
   done
-  # Eski üçüncü parti imajlar genelde aynı kalır; varsa yükle (zararsız)
-  for f in "$IMAGES_DIR"/timescaledb.tar.gz "$IMAGES_DIR"/redis.tar.gz \
-           "$IMAGES_DIR"/prometheus.tar.gz "$IMAGES_DIR"/pushgateway.tar.gz \
-           "$IMAGES_DIR"/ollama.tar.gz; do
+  for f in "$IMAGES_DIR"/*.tar; do
     [[ -e "$f" ]] || continue
+    case "$(basename "$f")" in
+      ollama-models-*.tar) continue ;;
+    esac
     c_yellow "Yükleniyor: $(basename "$f")"
-    gunzip -c "$f" | docker load >/dev/null || true
+    if ! docker load -i "$f"; then
+      c_red "docker load başarısız: $f"
+      exit 1
+    fi
   done
   c_green "İmajlar yüklendi."
+
+  # Dropt compose varsa zorunlu imajları doğrula
+  if grep -q 'docker-compose.dropt.yml' "$INSTALL_DIR/$COMPOSE_FILE" 2>/dev/null; then
+    _missing=0
+    for img in "postgres:16-alpine" "dropt-api:local"; do
+      if ! docker image inspect "$img" >/dev/null 2>&1; then
+        c_red "  eksik imaj (Dropt): $img"
+        _missing=1
+      else
+        c_green "  ✓ $img"
+      fi
+    done
+    if [[ "$_missing" -ne 0 ]]; then
+      c_red "Dropt imajları eksik — images/postgres16.tar.gz ve dropt-api.tar.gz paketini kontrol edin."
+      exit 1
+    fi
+  fi
 
   # with-ollama: embedding modeli volume'e
   if [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]] || compgen -G "${IMAGES_DIR}/ollama-models-*.tar.gz" > /dev/null 2>&1; then
