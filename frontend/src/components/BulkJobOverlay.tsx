@@ -166,14 +166,17 @@ export const BulkJobOverlay: React.FC<{
       ? Math.max(0, Math.round((elapsedSec / pct) * (100 - pct)))
       : null
 
-  const requestCancel = async () => {
-    if (cancelling || job.status !== 'running') return
+  const requestForceCancel = async () => {
+    if (cancelling) return
     setCancelling(true)
     try {
-      await fetch(`${API_BASE_URL}/servers/bulk-jobs/${jobId}/cancel`, { method: 'POST' })
+      await fetch(`${API_BASE_URL}/servers/bulk-jobs/${jobId}/cancel?force=true`, { method: 'POST' })
     } catch {
-      /* poll will refresh */
+      /* yine de UI'yi kapat */
     } finally {
+      sessionStorage.removeItem(STORAGE_MIN)
+      sessionStorage.removeItem(STORAGE_JOB)
+      onDismiss()
       setCancelling(false)
     }
   }
@@ -226,8 +229,18 @@ export const BulkJobOverlay: React.FC<{
             </div>
           )}
         </button>
-        {done ? (
-          <div className="flex justify-end mt-1.5">
+        <div className="flex justify-end gap-1.5 mt-1.5">
+          {!done && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void requestForceCancel() }}
+              disabled={cancelling}
+              className="text-[11px] px-2.5 py-1 rounded-lg text-red-200 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50"
+            >
+              {cancelling ? 'İptal…' : 'Zorla iptal'}
+            </button>
+          )}
+          {done ? (
             <button
               type="button"
               onClick={closeFully}
@@ -235,12 +248,16 @@ export const BulkJobOverlay: React.FC<{
             >
               Kapat
             </button>
-          </div>
-        ) : (
-          <p className="text-[10px] text-slate-500 mt-1.5 pl-1">
-            Tıklayarak ilerleme ekranını tekrar açın
-          </p>
-        )}
+          ) : (
+            <button
+              type="button"
+              onClick={reopen}
+              className="text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700"
+            >
+              Detay
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -330,7 +347,7 @@ export const BulkJobOverlay: React.FC<{
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
             Bu kontrol SSH değil, TCP port taramasıdır. Büyük ortamlarda birkaç dakika sürebilir.
-            “Arka planda devam et” ile küçültebilir; “İptal” ile durdurabilirsiniz.
+            “Arka planda devam et” ile küçültebilir; “Zorla iptal” işi hemen kapatır (takılı %0 işler dahil).
           </p>
         )}
         {job.status === 'error' && job.error && (
@@ -348,11 +365,11 @@ export const BulkJobOverlay: React.FC<{
           {!done && (
             <button
               type="button"
-              onClick={() => { void requestCancel() }}
+              onClick={() => { void requestForceCancel() }}
               disabled={cancelling}
               className="px-4 py-2 rounded-lg text-sm text-red-200 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50"
             >
-              {cancelling ? 'İptal…' : 'İptal'}
+              {cancelling ? 'İptal…' : 'Zorla iptal'}
             </button>
           )}
           <button

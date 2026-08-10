@@ -221,7 +221,7 @@ def _recompute_percent(j: Dict[str, Any]) -> None:
 
 
 def request_cancel(job_id: str) -> bool:
-    """Kullanıcı iptali — çalışan job'a cancel_requested işaretler."""
+    """Kullanıcı iptali — çalışan job'a cancel_requested işaretler (worker kooperatif)."""
     j = get_job(job_id)
     if not j or j.get("status") != "running":
         return False
@@ -232,6 +232,26 @@ def request_cancel(job_id: str) -> bool:
             if job_id in _jobs:
                 _jobs[job_id] = j
     return True
+
+
+def force_cancel(job_id: str, *, message: str = "Kullanıcı tarafından zorla iptal edildi") -> Optional[Dict[str, Any]]:
+    """İptali hemen bitir — worker/Celery cevap vermese bile UI kapanır.
+
+    cancel_requested da set edilir; devam eden thread/Celery işi bir sonraki
+    cancel_check'te durur (best-effort).
+    """
+    j = get_job(job_id)
+    if not j:
+        return None
+    if j.get("status") in ("done", "error", "cancelled"):
+        return j
+    j["cancel_requested"] = True
+    if not _save_redis(j):
+        with _lock:
+            if job_id in _jobs:
+                _jobs[job_id] = j
+    finish(job_id, status="cancelled", message=message)
+    return get_job(job_id)
 
 
 def is_cancelled(job_id: str) -> bool:

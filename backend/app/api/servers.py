@@ -940,17 +940,30 @@ def get_bulk_job(job_id: str):
 
 
 @router.post("/bulk-jobs/{job_id}/cancel")
-def cancel_bulk_job(job_id: str):
-    """Çalışan toplu işi iptal et (best-effort; devam eden TCP probe'lar bitebilir)."""
+def cancel_bulk_job(
+    job_id: str,
+    force: bool = Query(True, description="True: job'u hemen cancelled yap (UI kapanır)"),
+):
+    """Toplu işi iptal et.
+
+    force=true (varsayılan): Redis'te hemen cancelled — Celery/thread takılı kalsa bile
+    UI kapanır; worker cancel_requested görünce durur.
+    force=false: sadece cancel_requested (eski kooperatif davranış).
+    """
     from app.services import bulk_job_tracker as jobs
     job = jobs.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="İş bulunamadı")
     if job.get("status") != "running":
-        return {"success": True, "already_finished": True, "job": job}
+        return {"success": True, "already_finished": True, "forced": force, "job": job}
+    if force:
+        updated = jobs.force_cancel(job_id)
+        if not updated:
+            raise HTTPException(status_code=409, detail="İş zorla iptal edilemedi")
+        return {"success": True, "forced": True, "job": updated}
     if not jobs.request_cancel(job_id):
         raise HTTPException(status_code=409, detail="İş iptal edilemedi")
-    return {"success": True, "job": jobs.get_job(job_id)}
+    return {"success": True, "forced": False, "job": jobs.get_job(job_id)}
 
 
 @router.post("/check-health")
