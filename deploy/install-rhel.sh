@@ -269,9 +269,12 @@ fill_env_var "POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
 # İlk kurulum admin parolası sabit — müşteri/operasyon bilinen değerle giriş yapsın
 fill_env_var "ADMIN_DEFAULT_PASSWORD" "Kim13Sun"
 fill_env_var "CORS_ORIGINS" "https://${PRIMARY_IP},http://${PRIMARY_IP}"
-fill_env_var "DATA_DIR" "$DATA_DIR"
-fill_env_var "AINEW_INSTALL_DIR" "$INSTALL_DIR"
-fill_env_var "AINEW_DATA_DIR" "$DATA_DIR"
+# .env.example DATA_DIR=/data/data sabittir; --install-dir /testdizin/app iken
+# fill_env_var ezmez → certs $INSTALL_DIR/data'ya yazılır, compose /data/data mount eder.
+# Bu yüzden DATA_DIR/AINEW_* her zaman shell'deki kanonik değere ZORLA yazılır.
+set_env_var "DATA_DIR" "$DATA_DIR"
+set_env_var "AINEW_INSTALL_DIR" "$INSTALL_DIR"
+set_env_var "AINEW_DATA_DIR" "$DATA_DIR"
 fill_env_var "RAG_CHROMA_PATH" "/app/chroma"
 fill_env_var "PLATFORM_UPDATE_ENABLED" "true"
 
@@ -304,15 +307,46 @@ _dropt_fill() {
     echo "${key}=${value}" >> "$f"
   fi
 }
+# Kritik bağlantı bilgileri — her zaman ana .env / compose host adlarıyla hizala
+_dropt_set() {
+  local key="$1" value="$2" f="dropt/.env"
+  if grep -q "^${key}=" "$f" 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$f"
+  else
+    echo "${key}=${value}" >> "$f"
+  fi
+}
+_gen_fernet_key() {
+  # Fernet: url-safe base64(32 byte). openssl rand -base64 32 tek başına GEÇERSİZ olabilir.
+  python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' 2>/dev/null && return 0
+  python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null && return 0
+  openssl rand 32 2>/dev/null | python3 -c 'import sys,base64; print(base64.urlsafe_b64encode(sys.stdin.buffer.read()).decode())' 2>/dev/null && return 0
+  # Son çare: +/ → -_ (padding korunur)
+  openssl rand -base64 32 2>/dev/null | tr '+/' '-_' | tr -d '\n'
+  echo
+}
+_fernet_ok() {
+  local k="$1"
+  [[ -n "$k" && "$k" != replace-* && "$k" != change-me* ]] || return 1
+  python3 -c "from cryptography.fernet import Fernet; Fernet('''${k}'''.encode())" 2>/dev/null && return 0
+  # cryptography yoksa uzunluk/charset kontrolü (44 char url-safe)
+  [[ ${#k} -eq 44 && "$k" =~ ^[A-Za-z0-9_-]+=*$ ]]
+}
 _DROPT_PG="$(grep '^DROPT_POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 _BRIDGE="$(grep '^AINEW_BRIDGE_SECRET=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
-_dropt_fill "POSTGRES_USER" "dtt"
-_dropt_fill "POSTGRES_PASSWORD" "${_DROPT_PG}"
-_dropt_fill "POSTGRES_DB" "dttportal"
-_dropt_fill "FERNET_KEY" "$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' 2>/dev/null || openssl rand -base64 32)"
+_dropt_set "POSTGRES_USER" "dtt"
+_dropt_set "POSTGRES_PASSWORD" "${_DROPT_PG}"
+_dropt_set "POSTGRES_DB" "dttportal"
+# Compose servis adları (env_file'daki db/redis host'u yanlış kalmasın)
+_dropt_set "DATABASE_URL" "postgresql+psycopg://dtt:${_DROPT_PG}@dropt-db:5432/dttportal"
+_dropt_set "REDIS_URL" "redis://dropt-redis:6379/0"
+_CUR_FERNET="$(grep '^FERNET_KEY=' dropt/.env 2>/dev/null | head -1 | cut -d= -f2- || true)"
+if ! _fernet_ok "$_CUR_FERNET"; then
+  _dropt_set "FERNET_KEY" "$(_gen_fernet_key)"
+fi
 _dropt_fill "JWT_SECRET" "$(openssl rand -hex 32)"
-_dropt_fill "AINEW_BRIDGE_SECRET" "${_BRIDGE}"
-_dropt_fill "CORS_ORIGINS" "https://${PRIMARY_IP},http://${PRIMARY_IP}"
+_dropt_set "AINEW_BRIDGE_SECRET" "${_BRIDGE}"
+_dropt_set "CORS_ORIGINS" "https://${PRIMARY_IP},http://${PRIMARY_IP}"
 _dropt_fill "ADMIN_PASSWORD" "$(openssl rand -base64 12 | tr -d '=+/')"
 _dropt_fill "RESET_ADMIN_PASSWORD" "false"
 chmod 600 dropt/.env 2>/dev/null || true
@@ -779,6 +813,46 @@ else
   docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
 fi
 
+# Dropt Postgres volume önceki kurulumdan kalmışsa .env şifresi ile uyuşmayabilir
+# (init yalnızca ilk seferde POSTGRES_PASSWORD uygular). Local trust ile ALTER USER.
+sync_postgres_password() {
+  local container="$1" user="$2" password="$3" label="$4"
+  [[ -n "$password" ]] || return 0
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+    return 0
+  fi
+  local i
+  for i in $(seq 1 30); do
+    if docker exec "$container" pg_isready -U "$user" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
+      -c "ALTER USER ${user} WITH PASSWORD '${password}';" >/dev/null 2>&1; then
+    c_green "${label} kullanıcı şifresi .env ile senkronlandı."
+  else
+    c_yellow "${label} şifre senkronu atlandı (${container} hazır değil veya psql hata)."
+  fi
+}
+sync_dropt_db_password() {
+  local mp
+  mp="$(grep '^DROPT_POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+  sync_postgres_password "dropt_db" "dtt" "$mp" "Dropt DB"
+}
+step "DB şifreleri senkronize ediliyor (kalıcı volume + yeni .env)"
+_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+sync_postgres_password "server_management_db" "postgres" "$_MAIN_PG" "ainew Postgres"
+if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docker-compose.dropt.yml ]]; then
+  sync_dropt_db_password
+  # API'yi yeni şifre / düzeltilmiş dropt/.env ile yeniden bağla
+  docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate backend dropt-api dropt-worker 2>/dev/null \
+    || docker compose -f "$COMPOSE_FILE" up -d --no-build backend dropt-api dropt-worker 2>/dev/null || true
+else
+  docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate backend 2>/dev/null \
+    || docker compose -f "$COMPOSE_FILE" up -d --no-build backend 2>/dev/null || true
+fi
+
 if [[ ${#COMPOSE_PROFILES[@]} -gt 0 ]]; then
   step "Ollama embedding sağlık kontrolü"
   EMBED_MODEL="$(grep '^OLLAMA_EMBED_MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
@@ -820,6 +894,44 @@ if [[ "$READY" -eq 1 ]]; then
   c_green "✔ Backend hazır."
 else
   c_yellow "⚠ Backend henüz yanıt vermiyor. 'docker compose -f $COMPOSE_FILE logs -f backend' ile kontrol edin."
+fi
+
+# Frontend TLS + Dropt Level1 — sessizce "tamam" demeyelim
+if [[ ! -f "$DATA_DIR/certs/server.crt" || ! -f "$DATA_DIR/certs/server.key" ]]; then
+  c_red "TLS sertifikası eksik: $DATA_DIR/certs/server.crt"
+  c_yellow "  docker compose -f $COMPOSE_FILE logs --tail=40 frontend"
+  exit 1
+fi
+FE_STATE="$(docker inspect server_management_frontend --format '{{.State.Status}}' 2>/dev/null || echo missing)"
+if [[ "$FE_STATE" != "running" ]]; then
+  c_red "Frontend ayakta değil (status=$FE_STATE)."
+  c_yellow "  docker compose -f $COMPOSE_FILE logs --tail=40 frontend"
+  exit 1
+fi
+c_green "✔ Frontend çalışıyor."
+
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'dropt_api'; then
+  step "Dropt API sağlık kontrolü"
+  DROPT_OK=0
+  for i in $(seq 1 36); do
+    st="$(docker inspect dropt_api --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || echo missing)"
+    if [[ "$st" == "healthy" ]] || curl -sf --max-time 3 "http://127.0.0.1:8001/health" >/dev/null 2>&1; then
+      DROPT_OK=1
+      break
+    fi
+    if [[ "$st" == "exited" || "$st" == "dead" ]]; then
+      break
+    fi
+    sleep 5
+  done
+  if [[ "$DROPT_OK" -eq 1 ]]; then
+    c_green "✔ Dropt API hazır (Level 1)."
+  else
+    c_red "Dropt API healthy değil — Level 1 çalışmaz."
+    c_yellow "  docker compose -f $COMPOSE_FILE logs --tail=60 dropt-api"
+    c_yellow "  dropt/.env DATABASE_URL / DROPT_POSTGRES_PASSWORD ve $DATA_DIR/dropt/postgres kontrol edin."
+    exit 1
+  fi
 fi
 
 ADMIN_PW="$(grep '^ADMIN_DEFAULT_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"

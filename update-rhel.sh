@@ -442,6 +442,28 @@ fill_if_empty "DATA_DIR" "$DATA_DIR" "$INSTALL_DIR/$ENV_FILE"
 if [[ -f "$INSTALL_DIR/dropt/.env.example" && ! -f "$INSTALL_DIR/dropt/.env" ]]; then
   cp "$INSTALL_DIR/dropt/.env.example" "$INSTALL_DIR/dropt/.env"
 fi
+# Dropt bağlantı bilgilerini ana .env ile hizala (placeholder DATABASE_URL kalmasın)
+if [[ -f "$INSTALL_DIR/dropt/.env" ]]; then
+  _DPG="$(grep '^DROPT_POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
+  _BR="$(grep '^AINEW_BRIDGE_SECRET=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
+  _dropt_set_u() {
+    local key="$1" value="$2" f="$INSTALL_DIR/dropt/.env"
+    if grep -q "^${key}=" "$f" 2>/dev/null; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$f"
+    else
+      echo "${key}=${value}" >> "$f"
+    fi
+  }
+  _dropt_set_u "POSTGRES_PASSWORD" "${_DPG}"
+  _dropt_set_u "DATABASE_URL" "postgresql+psycopg://dtt:${_DPG}@dropt-db:5432/dttportal"
+  _dropt_set_u "REDIS_URL" "redis://dropt-redis:6379/0"
+  _dropt_set_u "AINEW_BRIDGE_SECRET" "${_BR}"
+  _fk="$(grep '^FERNET_KEY=' "$INSTALL_DIR/dropt/.env" | head -1 | cut -d= -f2- || true)"
+  if [[ -z "$_fk" || "$_fk" == replace-* || "$_fk" == change-me* ]]; then
+    _nk="$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null || true)"
+    [[ -n "$_nk" ]] && _dropt_set_u "FERNET_KEY" "$_nk"
+  fi
+fi
 chmod 600 "$INSTALL_DIR/$ENV_FILE" "$INSTALL_DIR/dropt/.env" 2>/dev/null || true
 c_green "BACKEND_IMAGE=$NEW_BACKEND"
 c_green "FRONTEND_IMAGE=$NEW_FRONTEND"
@@ -590,6 +612,31 @@ if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; th
 else
   docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
 fi
+
+# Mevcut Postgres volume + .env şifresi: ALTER USER ile senkron
+_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
+if [[ -n "$_MAIN_PG" ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'server_management_db'; then
+  for _i in $(seq 1 20); do
+    docker exec server_management_db pg_isready -U postgres >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec server_management_db psql -U postgres -d postgres \
+    -c "ALTER USER postgres WITH PASSWORD '${_MAIN_PG}';" >/dev/null 2>&1 \
+    && c_green "ainew Postgres şifresi .env ile senkron." || true
+fi
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'dropt_db'; then
+  _MP="$(grep '^DROPT_POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
+  if [[ -n "$_MP" ]]; then
+    for _i in $(seq 1 20); do
+      docker exec dropt_db pg_isready -U dtt >/dev/null 2>&1 && break
+      sleep 1
+    done
+    docker exec dropt_db psql -U dtt -d postgres -c "ALTER USER dtt WITH PASSWORD '${_MP}';" >/dev/null 2>&1 \
+      && c_green "Dropt DB şifresi .env ile senkron." || true
+  fi
+fi
+docker compose -f "$COMPOSE_FILE" --project-directory "$INSTALL_DIR" \
+  up -d --no-build backend dropt-api dropt-worker 2>/dev/null || true
 
 step "Sağlık kontrolü"
 READY=0
