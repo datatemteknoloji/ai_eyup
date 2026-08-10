@@ -54,6 +54,7 @@ class ServerPublic(BaseModel):
     virtualization: str = ""
     last_connection_message: str
     connection_ok: Optional[bool] = None
+    ainew_ai_ready: Optional[bool] = None
     created_at: datetime
     updated_at: datetime
 

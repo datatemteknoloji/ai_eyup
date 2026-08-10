@@ -27,6 +27,7 @@ def _apply_lightweight_migrations() -> None:
         "ALTER TABLE target_servers ADD COLUMN IF NOT EXISTS os_pretty VARCHAR(255) DEFAULT ''",
         "ALTER TABLE target_servers ADD COLUMN IF NOT EXISTS machine_type VARCHAR(32) DEFAULT ''",
         "ALTER TABLE target_servers ADD COLUMN IF NOT EXISTS virtualization VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE target_servers ADD COLUMN IF NOT EXISTS ainew_ai_ready BOOLEAN",
         "ALTER TABLE pkg_local_repos ADD COLUMN IF NOT EXISTS source_type VARCHAR(32) DEFAULT 'nfs'",
         "ALTER TABLE pkg_local_repos ADD COLUMN IF NOT EXISTS portal_path VARCHAR(512) DEFAULT ''",
         "ALTER TABLE pkg_local_repos ADD COLUMN IF NOT EXISTS file_glob VARCHAR(128) DEFAULT '*.rpm'",

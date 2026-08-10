@@ -104,6 +104,7 @@ def list_linux_servers_for_level1(
             "os_version": s.os_version,
             "os_type": s.os_type,
             "tier": s.tier,
+            "ai_ready": bool(s.ai_ready),
         })
     return out
 
@@ -158,6 +159,7 @@ def ensure_dropt_server(
                     "port": 22,
                     "description": f"ainew:{s.id}",
                     "skip_connection_test": True,
+                    "ainew_ai_ready": bool(s.ai_ready),
                 },
             )
             if cr.status_code >= 400:
@@ -210,6 +212,7 @@ def sync_all_linux_servers_to_dropt(
             "port": 22,
             "description": f"ainew:{row.get('id')}",
             "skip_connection_test": True,
+            "ainew_ai_ready": bool(row.get("ai_ready")),
         })
 
     if not hosts_payload:

@@ -320,7 +320,11 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
             bg = SessionLocal()
             try:
                 from datetime import datetime, timezone
+                from app.services.ai_ready_guard import clear_auth_fail_backoff, set_auth_fail_backoff
+                from app.services.runtime_settings import get_int
+
                 checked_at = datetime.now(timezone.utc)
+                backoff_sec = get_int("ai_ready_auth_fail_backoff_sec")
                 ok_n = fail_n = 0
                 for sid, ok in results.items():
                     row = bg.query(Server).filter(Server.id == sid).first()
@@ -329,13 +333,15 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
                     row.ai_ready = ok
                     row.ai_ready_last_check = checked_at
                     if ok:
+                        clear_auth_fail_backoff(row)
                         ok_n += 1
                     else:
+                        set_auth_fail_backoff(row, backoff_sec=backoff_sec, now=checked_at)
                         fail_n += 1
                 bg.commit()
                 logger.info(
-                    "Credential '%s' AI Ready tamamlandı: ok=%s fail=%s",
-                    cred_name, ok_n, fail_n,
+                    "Credential '%s' AI Ready tamamlandı: ok=%s fail=%s (auth_backoff=%ss)",
+                    cred_name, ok_n, fail_n, backoff_sec,
                 )
             except Exception:
                 logger.exception("Credential apply AI Ready arka plan DB hatası")

@@ -2869,11 +2869,18 @@ const Settings: React.FC = () => {
               </div>
             )}
 
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-2">
               <input type="checkbox" checked={setAiReady} onChange={e => setSetAiReady(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
               <span className="text-sm text-slate-300">Linux sunucuları <strong className="text-blue-400">AI Ready</strong> olarak işaretle (SSH test)</span>
             </div>
+            {setAiReady && (
+              <p className="text-xs text-amber-400/90 mb-4 leading-relaxed">
+                Uyarı: Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa toplu SSH denemesi
+                AD/PAM hesap kilitlemesine yol açabilir. User hazır olduktan sonra işaretleyin.
+              </p>
+            )}
+            {!setAiReady && <div className="mb-4" />}
 
             <div className="flex justify-end gap-3 pt-3 border-t border-white/[0.06]">
               <button onClick={() => setApplyModal({ open: false, credId: 0, credName: '' })}

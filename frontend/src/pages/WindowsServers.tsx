@@ -706,7 +706,9 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <p className="text-sm text-slate-200">
-              Tüm Windows sunucularında WinRM bağlantısı test edilecek. Sunucuya özel kimlik bilgisi yoksa global WinRM kimlik bilgisi denenecek. Bağlanabilenler → AI Ready = Evet, bağlanamayanlar → Hayır. Devam?
+              Tüm Windows sunucularında WinRM kimlik doğrulaması denenecek (sunucu veya global credential).
+              Kullanıcı/şifre yanlışsa domain hesabı kilitlemesine yol açabilir.
+              Bağlanabilenler → AI Ready = Evet. User hazır olan hostlarda çalıştırın. Devam?
             </p>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>

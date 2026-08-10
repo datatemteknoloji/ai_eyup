@@ -9,7 +9,15 @@ function apiUrl(path: string): string {
 async function readError(res: Response): Promise<string> {
   const data = await res.json().catch(() => null);
   if (typeof data?.detail === "string") return data.detail;
+  if (data?.detail && typeof data.detail === "object" && typeof data.detail.message === "string") {
+    return data.detail.message;
+  }
   return "İstek başarısız";
+}
+
+async function readErrorDetail(res: Response): Promise<unknown> {
+  const data = await res.json().catch(() => null);
+  return data?.detail ?? data;
 }
 
 export type UserPublic = {
@@ -603,6 +611,7 @@ export type ServerPublic = {
   virtualization?: string;
   last_connection_message: string;
   connection_ok?: boolean | null;
+  ainew_ai_ready?: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -957,14 +966,42 @@ export async function createJob(
     payload: Record<string, unknown>;
   },
 ): Promise<JobPublic> {
+  const payload = { ...(body.payload || {}) };
   const res = await fetch(apiUrl("/api/jobs"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ module: body.module ?? "local_user", ...body }),
+    body: JSON.stringify({ module: body.module ?? "local_user", ...body, payload }),
   });
+  if (res.status === 409) {
+    const detail = (await readErrorDetail(res)) as {
+      code?: string;
+      message?: string;
+      hosts?: Array<{ hostname?: string; ip?: string }>;
+    } | null;
+    if (detail && typeof detail === "object" && detail.code === "not_ai_ready" && !payload.force_not_ai_ready) {
+      const msg =
+        detail.message ||
+        "AI Ready olmayan sunucular seçili. SSH denemesi hesap kilitlemesine yol açabilir.";
+      const ok = window.confirm(
+        `${msg}\n\nOtomasyon kullanıcısı hazırsa «Tamam» ile yine de deneyin. Değilse İptal.`,
+      );
+      if (!ok) throw new Error("İşlem iptal edildi (AI Ready soft-guard)");
+      return createJob(token, {
+        ...body,
+        payload: { ...payload, force_not_ai_ready: true },
+      });
+    }
+    const msg =
+      detail && typeof detail === "object" && typeof detail.message === "string"
+        ? detail.message
+        : typeof detail === "string"
+          ? detail
+          : "İstek çakışması (409)";
+    throw new Error(msg);
+  }
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }

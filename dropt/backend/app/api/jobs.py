@@ -182,6 +182,36 @@ def create_job_endpoint(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> JobPublic:
+    force = bool((body.payload or {}).get("force_not_ai_ready"))
+    if not force and body.server_ids:
+        from sqlmodel import col, select
+        from app.models.server import TargetServer
+
+        blocked = session.exec(
+            select(TargetServer).where(
+                col(TargetServer.id).in_(body.server_ids),
+                TargetServer.ainew_ai_ready.is_(False),  # type: ignore[attr-defined]
+            )
+        ).all()
+        if blocked:
+            hosts = [
+                {"id": int(s.id), "hostname": s.hostname, "ip": s.ip}  # type: ignore[arg-type]
+                for s in blocked
+            ]
+            names = ", ".join(h["hostname"] or h["ip"] for h in hosts[:8])
+            more = f" (+{len(hosts) - 8})" if len(hosts) > 8 else ""
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "not_ai_ready",
+                    "hosts": hosts,
+                    "message": (
+                        f"AI Ready olmayan sunucu(lar): {names}{more}. "
+                        "Otomasyon kullanıcısı hazır değilken SSH denemesi hesap kilitlemesine yol açabilir. "
+                        "Hazırsanız onaylayıp tekrar deneyin (force)."
+                    ),
+                },
+            )
     try:
         job = create_job(
             session,

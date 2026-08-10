@@ -73,7 +73,9 @@ const AiReadyUpdateButton: React.FC<{
 
   const handleClick = async () => {
     if (!await showConfirm(
-      'Yalnızca Linux sunucularda SSH testi arka planda çalışacak. Bağlanabilenler AI Ready=Evet olarak işaretlenir. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
+      'Tüm Linux sunucularda SSH kimlik doğrulaması arka planda denenecek (global/server credential). ' +
+      'Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa AD/PAM hesap kilitlemesine yol açabilir. ' +
+      'User hazır olan hostlarda çalıştırın. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
     )) return
 
     setLoading(true); setResult(null)

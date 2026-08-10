@@ -278,6 +278,12 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "AI Ready olmayan (SSH/WinRM başarısız) sunucular varsayılan 1 günde bir denenir — sürekli SSH gürültüsünü keser.",
         "env": "AI_READY_NOT_READY_RECHECK_SEC",
     },
+    "ai_ready_auth_fail_backoff_sec": {
+        "default": 259200, "type": "int", "min": 3600, "max": 604800,
+        "group": "ai_ready", "label": "AI Ready auth fail backoff (sn)",
+        "help": "SSH/WinRM AI Ready başarısız olunca arka plan (throttle) bu süre boyunca o host'a tekrar denemez. Manuel ‘AI Ready Güncelle’ backoff'u yok sayar. Varsayılan 72 saat — hesap kilitleme riskini azaltır.",
+        "env": "AI_READY_AUTH_FAIL_BACKOFF_SEC",
+    },
     "app_discovery_rescan_hours": {
         "default": 12, "type": "int", "min": 1, "max": 168,
         "group": "background", "label": "Uygulama keşif yeniden tarama (saat)",

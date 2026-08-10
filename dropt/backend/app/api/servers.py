@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
@@ -55,6 +56,7 @@ def _public(
         virtualization=server.virtualization or "",
         last_connection_message=server.last_connection_message or "",
         connection_ok=connection_ok,
+        ainew_ai_ready=server.ainew_ai_ready,
         created_at=server.created_at,
         updated_at=server.updated_at,
     )
@@ -225,6 +227,7 @@ class HostEnsureIn(BaseModel):
     port: int = Field(default=22, ge=1, le=65535)
     description: str = Field(default="", max_length=512)
     skip_connection_test: bool = True
+    ainew_ai_ready: Optional[bool] = None
 
 
 @router.post("/ensure-host", response_model=ServerPublic)
@@ -248,6 +251,8 @@ def ensure_host_from_ainew(
         existing.port = body.port
         if body.description:
             existing.description = body.description[:512]
+        if body.ainew_ai_ready is not None:
+            existing.ainew_ai_ready = bool(body.ainew_ai_ready)
         existing.updated_at = datetime.now(UTC)
         # Refresh automation creds so Level 1 Settings password changes apply
         cred = session.get(Credential, existing.credentials_id) if existing.credentials_id else None
@@ -297,6 +302,7 @@ def ensure_host_from_ainew(
         tags="ainew-level1",
         description=(body.description or f"ainew-map")[:512],
         credentials_id=cred.id,
+        ainew_ai_ready=bool(body.ainew_ai_ready) if body.ainew_ai_ready is not None else None,
         created_at=now,
         updated_at=now,
     )
@@ -374,6 +380,8 @@ def ensure_hosts_bulk_from_ainew(
                 existing.port = host.port
                 if host.description:
                     existing.description = host.description[:512]
+                if host.ainew_ai_ready is not None:
+                    existing.ainew_ai_ready = bool(host.ainew_ai_ready)
                 existing.updated_at = datetime.now(UTC)
                 cred = session.get(Credential, existing.credentials_id) if existing.credentials_id else None
                 if cred is None:
@@ -411,6 +419,7 @@ def ensure_hosts_bulk_from_ainew(
                     tags="ainew-level1",
                     description=(host.description or "ainew-map")[:512],
                     credentials_id=cred.id,
+                    ainew_ai_ready=bool(host.ainew_ai_ready) if host.ainew_ai_ready is not None else None,
                     created_at=now,
                     updated_at=now,
                 )

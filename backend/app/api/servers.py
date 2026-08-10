@@ -166,12 +166,14 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     from app.services import bulk_job_tracker as jobs
     from app.services.runtime_settings import get_int
     from app.services.scan_throttle import should_recheck_ai_ready
+    from app.services.ai_ready_guard import get_auth_fail_until
 
     body = body or {}
     server_ids = body.get("server_ids")
     throttled = bool(body.get("throttled"))
     ready_sec = get_int("ai_ready_ready_recheck_sec")
     not_ready_sec = get_int("ai_ready_not_ready_recheck_sec")
+    auth_backoff_sec = get_int("ai_ready_auth_fail_backoff_sec")
     now = datetime.now(timezone.utc)
 
     q = db.query(Server)
@@ -194,11 +196,12 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
                 ready_recheck_sec=ready_sec,
                 not_ready_recheck_sec=not_ready_sec,
                 now=now,
+                auth_fail_until=get_auth_fail_until(s.connection_config),
             )
         ]
         logger.info(
-            "update-ai-ready throttle: %s/%s sunucu teste alındı (ready=%ss not_ready=%ss)",
-            len(server_list), before, ready_sec, not_ready_sec,
+            "update-ai-ready throttle: %s/%s sunucu teste alındı (ready=%ss not_ready=%ss auth_backoff=%ss)",
+            len(server_list), before, ready_sec, not_ready_sec, auth_backoff_sec,
         )
 
     global_cred = db.query(GlobalCredential).filter_by(is_default=True).first() \
@@ -232,6 +235,7 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     def _bg() -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from app.services.ssh_manager import SSHManager
+        from app.services.ai_ready_guard import clear_auth_fail_backoff, set_auth_fail_backoff
 
         if not server_snapshots:
             jobs.finish(job_id, status="done", message="Test edilecek Linux sunucu bulunamadı.", result={"tested": 0})
@@ -277,18 +281,21 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
             ready_count = not_ready_count = 0
             checked_at = datetime.now(timezone.utc)
             for srv_id, ok in results.items():
-                thread_db.query(Server).filter_by(id=srv_id).update({
-                    "ai_ready": ok,
-                    "ai_ready_last_check": checked_at,
-                })
+                row = thread_db.query(Server).filter_by(id=srv_id).first()
+                if not row:
+                    continue
+                row.ai_ready = ok
+                row.ai_ready_last_check = checked_at
                 if ok:
+                    clear_auth_fail_backoff(row)
                     ready_count += 1
                 else:
+                    set_auth_fail_backoff(row, backoff_sec=auth_backoff_sec, now=checked_at)
                     not_ready_count += 1
             thread_db.commit()
             logger.info(
-                "AI Ready tamamlandı: %s hazır, %s bağlanamadı",
-                ready_count, not_ready_count,
+                "AI Ready tamamlandı: %s hazır, %s bağlanamadı (auth_backoff=%ss)",
+                ready_count, not_ready_count, auth_backoff_sec,
             )
             jobs.finish(
                 job_id,

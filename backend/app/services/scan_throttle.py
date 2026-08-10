@@ -24,9 +24,16 @@ def should_recheck_ai_ready(
     ready_recheck_sec: int,
     not_ready_recheck_sec: int,
     now: Optional[datetime] = None,
+    auth_fail_until: Optional[datetime] = None,
 ) -> bool:
-    """True → bu sunucu SSH/WinRM AI Ready testine alınmalı."""
+    """True → bu sunucu SSH/WinRM AI Ready testine alınmalı.
+
+    auth_fail_until: AI Ready fail sonrası ekstra backoff (manuel test throttle'suz geçer).
+    """
     now = now or _utc_now()
+    fail_until = _as_aware(auth_fail_until)
+    if fail_until is not None and fail_until > now:
+        return False
     last = _as_aware(last_check)
     if last is None:
         return True

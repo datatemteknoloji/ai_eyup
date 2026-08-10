@@ -304,12 +304,14 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     from app.services import bulk_job_tracker as jobs
     from app.services.runtime_settings import get_int
     from app.services.scan_throttle import should_recheck_ai_ready
+    from app.services.ai_ready_guard import get_auth_fail_until
 
     body = body or {}
     server_ids = body.get("server_ids")
     throttled = bool(body.get("throttled"))
     ready_sec = get_int("ai_ready_ready_recheck_sec")
     not_ready_sec = get_int("ai_ready_not_ready_recheck_sec")
+    auth_backoff_sec = get_int("ai_ready_auth_fail_backoff_sec")
     now = datetime.now(timezone.utc)
 
     q = db.query(Server).filter(Server.ip_address != None, Server.ip_address != "")  # noqa: E711
@@ -326,11 +328,12 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
                 ready_recheck_sec=ready_sec,
                 not_ready_recheck_sec=not_ready_sec,
                 now=now,
+                auth_fail_until=get_auth_fail_until(s.connection_config),
             )
         ]
         logger.info(
-            "windows update-ai-ready throttle: %s/%s (ready=%ss not_ready=%ss)",
-            len(candidates), before, ready_sec, not_ready_sec,
+            "windows update-ai-ready throttle: %s/%s (ready=%ss not_ready=%ss auth_backoff=%ss)",
+            len(candidates), before, ready_sec, not_ready_sec, auth_backoff_sec,
         )
 
     if not candidates:
@@ -443,6 +446,8 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
 
         thread_db = SessionLocal()
         try:
+            from app.services.ai_ready_guard import clear_auth_fail_backoff, set_auth_fail_backoff
+
             checked_at = datetime.now(timezone.utc)
             for r in results:
                 row = thread_db.query(Server).filter_by(id=r["id"]).first()
@@ -451,6 +456,7 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
                 row.ai_ready = r["connected"]
                 row.ai_ready_last_check = checked_at
                 if r["connected"]:
+                    clear_auth_fail_backoff(row)
                     row.status = "ONLINE"
                     if not (row.os_type or "").strip():
                         row.os_type = "windows"
@@ -464,8 +470,12 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
                             "winrm_https": gcred_copy.get("use_https", False),
                             "_from_global": True,
                         })
+                        # preserve/clear handled by clear above; re-apply without fail key
+                        new_cfg.pop("ai_ready_auth_fail_until", None)
                         row.connection_config = new_cfg
                         flag_modified(row, "connection_config")
+                else:
+                    set_auth_fail_backoff(row, backoff_sec=auth_backoff_sec, now=checked_at)
             thread_db.commit()
             ready_count = sum(1 for r in results if r["connected"])
             logger.info("Windows AI Ready güncellendi: %s hazır, %s bağlanamadı", ready_count, len(results) - ready_count)
@@ -477,6 +487,7 @@ def update_windows_ai_ready(body: dict = None, db: Session = Depends(get_db)):
                     "tested": len(results),
                     "ai_ready_count": ready_count,
                     "not_ready_count": len(results) - ready_count,
+
                 },
             )
         except Exception as e:

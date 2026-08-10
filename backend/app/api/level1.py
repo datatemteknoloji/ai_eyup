@@ -669,6 +669,7 @@ class RunOperationRequest(BaseModel):
     server_id: int
     operation_id: str
     params: Dict[str, str] = {}
+    force: bool = False
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -697,6 +698,20 @@ def run_operation(req: RunOperationRequest, db: Session = Depends(get_db)):
     if not op:
         raise HTTPException(status_code=404, detail=f"Operasyon bulunamadı: {req.operation_id}")
 
+    if not bool(server.ai_ready) and not req.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_ai_ready",
+                "message": (
+                    f"{server.name}: AI Ready değil. Otomasyon kullanıcısı hazır değilken SSH "
+                    "denemesi hesap kilitlemesine yol açabilir. force=true ile yine de deneyebilirsiniz."
+                ),
+                "server_id": server.id,
+                "server_name": server.name,
+            },
+        )
+
     # Validate required params
     for p in op.get("params", []):
         if p.get("required") and not req.params.get(p["id"]):
@@ -713,7 +728,7 @@ def run_operation(req: RunOperationRequest, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    logger.info("Level1 op=%s server=%s(%s)", req.operation_id, server.name, creds["host"])
+    logger.info("Level1 op=%s server=%s(%s) force=%s", req.operation_id, server.name, creds["host"], req.force)
     result = _run_ssh(creds, commands)
 
     return {
@@ -741,5 +756,6 @@ def list_eligible_servers(db: Session = Depends(get_db)):
             "ip_address": s.ip_address,
             "os_type": s.os_type,
             "has_creds": has_creds,
+            "ai_ready": bool(s.ai_ready),
         })
     return {"servers": result}

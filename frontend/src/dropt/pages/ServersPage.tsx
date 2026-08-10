@@ -376,7 +376,20 @@ export function ServersPage({ level1Mode = false }: ServersPageProps = {}) {
         accessorKey: "status",
         header: t("status"),
         enableSorting: false,
-        cell: ({ row }) => statusBadge(row.original.status),
+        cell: ({ row }) => (
+          <div className="flex flex-wrap items-center gap-1">
+            {statusBadge(row.original.status)}
+            {row.original.ainew_ai_ready === false ? (
+              <Badge variant="danger" title="ainew AI Ready değil — SSH/op riski">
+                not AI Ready
+              </Badge>
+            ) : row.original.ainew_ai_ready === true ? (
+              <Badge variant="success" title="ainew AI Ready">
+                AI Ready
+              </Badge>
+            ) : null}
+          </div>
+        ),
       },
       {
         id: "row_ops",
@@ -740,6 +753,20 @@ export function ServersPage({ level1Mode = false }: ServersPageProps = {}) {
 
   return (
     <div className="flex h-full flex-col">
+      {level1Mode && items.some((s) => s.ainew_ai_ready === false) ? (
+        <div
+          className="border-b px-4 py-2 text-xs sm:text-sm"
+          style={{
+            borderColor: "var(--color-border)",
+            background: "rgba(234, 179, 8, 0.08)",
+            color: "var(--text-secondary)",
+          }}
+        >
+          Bazı sunucular ainew’de <strong>AI Ready değil</strong>. Operasyon SSH denemesi hesap
+          kilitlemesine yol açabilir — önce otomasyon kullanıcısını hazırlayıp Linux → AI Ready
+          Güncelle çalıştırın. Zorunluysa iş oluştururken onay isteği çıkar.
+        </div>
+      ) : null}
       {level1Mode && headerSlot
         ? createPortal(
             <>

@@ -39,5 +39,7 @@ class TargetServer(SQLModel, table=True):
     machine_type: str = Field(default="", max_length=32)  # physical | virtual
     virtualization: str = Field(default="", max_length=64)
     credentials_id: Optional[int] = Field(default=None, foreign_key="credentials.id", index=True)
+    # ainew Server.ai_ready senkronu — False ise Level 1 işleri force olmadan engellenir
+    ainew_ai_ready: Optional[bool] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
