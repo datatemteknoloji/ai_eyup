@@ -156,6 +156,40 @@ services:
       redis:
         condition: service_healthy
 
+  # Celery worker — toplu health check vb. (aynı backend imajı; ekstra tar gerekmez)
+  worker:
+    image: ${BACKEND_IMAGE:-ainew-backend:latest}
+    pull_policy: never
+    container_name: server_management_worker
+    restart: unless-stopped
+    logging: *default-logging
+    network_mode: "host"
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ:-Europe/Istanbul}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/server_management
+      - REDIS_URL=redis://localhost:6379/0
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY .env dosyasinda tanimli olmali}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD .env dosyasinda tanimli olmali}
+      - APP_VERSION=${APP_VERSION:-}
+      - DATA_DIR=${DATA_DIR:-/data/data}
+      - HOST_ETC_HOSTS=/host-etc-hosts
+    volumes:
+      - ./VERSION:/app/VERSION:ro
+      - ${DATA_DIR:-/data/data}/chroma:/app/chroma:Z
+      - ${DATA_DIR:-/data/data}/repos:/app/repos:Z
+      - ${DATA_DIR:-/data/data}/uploads:/app/uploads:Z
+      - /etc/hosts:/host-etc-hosts:ro
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
   frontend:
     image: ${FRONTEND_IMAGE:-ainew-frontend:latest}
     pull_policy: never

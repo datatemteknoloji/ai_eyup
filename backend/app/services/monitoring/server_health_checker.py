@@ -191,10 +191,15 @@ class ServerHealthChecker:
         return False
 
     @staticmethod
-    def update_server_statuses(db: Session, on_progress=None) -> Dict[str, int]:
+    def update_server_statuses(
+        db: Session,
+        on_progress=None,
+        cancel_check=None,
+    ) -> Dict[str, int]:
         """Tüm sunucuların durumlarını paralel kontrol et ve güncelle.
 
         on_progress(done, total) — opsiyonel UI ilerleme callback'i.
+        cancel_check() — True dönerse kalan işler iptal edilir (partial stats döner).
         """
         try:
             servers = db.query(Server).all()
@@ -206,6 +211,8 @@ class ServerHealthChecker:
                 "warning": 0,
                 "ai_ready_cleared": 0,
                 "workers": 0,
+                "cancelled": False,
+                "total": 0,
             }
             if not servers:
                 return stats
@@ -256,6 +263,7 @@ class ServerHealthChecker:
 
             workers = bulk_tcp_workers()
             stats["workers"] = workers
+            stats["total"] = len(snapshots)
             if skipped_win_no_cred:
                 logger.info(
                     "Health check: %s Windows atlandı (WinRM credential yok)",
@@ -277,18 +285,39 @@ class ServerHealthChecker:
 
             results: List[Tuple[int, str, str, str, bool]] = []
             done = 0
+            cancelled = False
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="health-check") as pool:
                 futures = [pool.submit(_one, snap) for snap in snapshots]
+                pending = set(futures)
                 for fut in as_completed(futures):
-                    results.append(fut.result())
+                    pending.discard(fut)
+                    try:
+                        results.append(fut.result())
+                    except Exception as exc:
+                        logger.debug("Health check future error: %s", exc)
+                        continue
                     done += 1
-                    if on_progress and (done % 10 == 0 or done == len(snapshots)):
+                    # Erken ve sık tick — UI 0/N'de uzun süre kalmasın
+                    if on_progress and (
+                        done <= 3 or done % 5 == 0 or done == len(snapshots)
+                    ):
                         try:
                             on_progress(done, len(snapshots))
                         except Exception:
                             pass
                     if done % 200 == 0 or done == len(snapshots):
                         logger.info("Health check ilerlemesi %s/%s", done, len(snapshots))
+                    if cancel_check and cancel_check():
+                        cancelled = True
+                        stats["cancelled"] = True
+                        for p in pending:
+                            p.cancel()
+                        logger.info(
+                            "Health check iptal edildi (%s/%s tamamlandı)",
+                            done,
+                            len(snapshots),
+                        )
+                        break
 
             by_id = {s.id: s for s in servers}
             for srv_id, old_status, new_status, reason, _prev_ai in results:

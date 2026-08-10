@@ -50,7 +50,7 @@ export async function restoreActiveBulkJobId(): Promise<string | null> {
     const r = await fetch(`${API_BASE_URL}/servers/bulk-jobs/${saved}`)
     if (r.ok) {
       const j: BulkJob = await r.json()
-      if (j.status === 'running' || j.status === 'done' || j.status === 'error') {
+      if (j.status === 'running' || j.status === 'done' || j.status === 'error' || j.status === 'cancelled') {
         return saved
       }
     }
@@ -89,6 +89,7 @@ export const BulkJobOverlay: React.FC<{
     message: 'İşlem başlıyor...',
   })
   const [elapsedSec, setElapsedSec] = useState(0)
+  const [cancelling, setCancelling] = useState(false)
   const [minimized, setMinimized] = useState(
     () => sessionStorage.getItem(STORAGE_MIN) === jobId
   )
@@ -120,7 +121,7 @@ export const BulkJobOverlay: React.FC<{
         if (!r.ok || cancelled) return
         const j: BulkJob = await r.json()
         setJob(j)
-        if (j.status === 'done' || j.status === 'error') {
+        if (j.status === 'done' || j.status === 'error' || j.status === 'cancelled') {
           finished = true
           onDoneRef.current?.(j)
           return
@@ -157,11 +158,23 @@ export const BulkJobOverlay: React.FC<{
   }
 
   const pct = Math.max(0, Math.min(100, Number(job.percent) || 0))
-  const done = job.status === 'done' || job.status === 'error'
+  const done = job.status === 'done' || job.status === 'error' || job.status === 'cancelled'
   const etaSec =
-    !done && pct >= 8 && elapsedSec >= 10
+    !done && pct >= 5 && elapsedSec >= 5
       ? Math.max(0, Math.round((elapsedSec / pct) * (100 - pct)))
       : null
+
+  const requestCancel = async () => {
+    if (cancelling || job.status !== 'running') return
+    setCancelling(true)
+    try {
+      await fetch(`${API_BASE_URL}/servers/bulk-jobs/${jobId}/cancel`, { method: 'POST' })
+    } catch {
+      /* poll will refresh */
+    } finally {
+      setCancelling(false)
+    }
+  }
 
   if (minimized) {
     return (
@@ -194,7 +207,9 @@ export const BulkJobOverlay: React.FC<{
                 {done
                   ? job.status === 'error'
                     ? 'İşlem hatası'
-                    : 'İşlem tamamlandı'
+                    : job.status === 'cancelled'
+                      ? 'İşlem iptal edildi'
+                      : 'İşlem tamamlandı'
                   : job.title || 'Toplu işlem sürüyor'}
               </div>
               <div className="text-[11px] text-slate-400 truncate mt-0.5">
@@ -255,7 +270,9 @@ export const BulkJobOverlay: React.FC<{
                 ? 'İşlem tamamlandı'
                 : job.status === 'error'
                   ? 'İşlem hatası'
-                  : job.title || 'Toplu işlem sürüyor'}
+                  : job.status === 'cancelled'
+                    ? 'İşlem iptal edildi'
+                    : job.title || 'Toplu işlem sürüyor'}
             </h2>
             <p className="text-sm text-slate-400 mt-0.5 truncate">{kindLabel(job.kind)}</p>
           </div>
@@ -310,8 +327,8 @@ export const BulkJobOverlay: React.FC<{
 
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            Büyük ortamlarda bu işlem birkaç dakika sürebilir. “Arka planda devam et” ile küçültebilirsiniz;
-            sağ alttaki karttan veya tekrar tıklayarak ilerleme ekranını açabilirsiniz.
+            Bu kontrol SSH değil, TCP port taramasıdır. Büyük ortamlarda birkaç dakika sürebilir.
+            “Arka planda devam et” ile küçültebilir; “İptal” ile durdurabilirsiniz.
           </p>
         )}
         {job.status === 'error' && job.error && (
@@ -319,8 +336,23 @@ export const BulkJobOverlay: React.FC<{
             {job.error}
           </p>
         )}
+        {job.status === 'cancelled' && (
+          <p className="text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-4">
+            {job.message || 'İşlem kullanıcı tarafından iptal edildi.'}
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
+          {!done && (
+            <button
+              type="button"
+              onClick={() => { void requestCancel() }}
+              disabled={cancelling}
+              className="px-4 py-2 rounded-lg text-sm text-red-200 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50"
+            >
+              {cancelling ? 'İptal…' : 'İptal'}
+            </button>
+          )}
           <button
             type="button"
             onClick={done ? closeFully : goBackground}

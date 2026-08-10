@@ -932,6 +932,20 @@ def get_bulk_job(job_id: str):
     return job
 
 
+@router.post("/bulk-jobs/{job_id}/cancel")
+def cancel_bulk_job(job_id: str):
+    """Çalışan toplu işi iptal et (best-effort; devam eden TCP probe'lar bitebilir)."""
+    from app.services import bulk_job_tracker as jobs
+    job = jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="İş bulunamadı")
+    if job.get("status") != "running":
+        return {"success": True, "already_finished": True, "job": job}
+    if not jobs.request_cancel(job_id):
+        raise HTTPException(status_code=409, detail="İş iptal edilemedi")
+    return {"success": True, "job": jobs.get_job(job_id)}
+
+
 @router.post("/check-health")
 async def check_all_servers_health(
     background: bool = True,
@@ -941,6 +955,7 @@ async def check_all_servers_health(
 
     Varsayılan: arka planda çalışır, hemen job_id döner (UI ilerleme ekranı).
     background=false ile senkron (eski davranış) çalıştırılabilir.
+    Celery worker yoksa otomatik thread fallback (kuyrukta takılmaz).
     """
     import threading
     from app.core.database import ThreadSessionLocal as SessionLocal
@@ -968,7 +983,11 @@ async def check_all_servers_health(
     def _bg() -> None:
         bg = SessionLocal()
         try:
+            jobs.update_job(job_id, message="Durum kontrolü çalışıyor (thread)…", queued_via="thread")
+
             def _prog(done, total):
+                if jobs.is_cancelled(job_id):
+                    return
                 jobs.tick(
                     job_id,
                     done=done,
@@ -976,7 +995,19 @@ async def check_all_servers_health(
                     message=f"Kontrol: {done}/{total}",
                 )
 
-            stats = ServerHealthChecker.update_server_statuses(bg, on_progress=_prog)
+            stats = ServerHealthChecker.update_server_statuses(
+                bg, on_progress=_prog, cancel_check=lambda: jobs.is_cancelled(job_id)
+            )
+            if jobs.is_cancelled(job_id):
+                jobs.finish(
+                    job_id,
+                    status="cancelled",
+                    message=(
+                        f"İptal edildi ({stats.get('checked', 0)} kontrol tamamlandı)"
+                    ),
+                    result=stats,
+                )
+                return
             if stats.get("error"):
                 jobs.finish(job_id, status="error", message="Durum kontrolü başarısız", error=str(stats["error"]))
                 return
@@ -1006,6 +1037,7 @@ async def check_all_servers_health(
         from app.worker import enqueue_check_health
         if enqueue_check_health(job_id):
             queued_via = "celery"
+            jobs.update_job(job_id, message="Kuyruğa alındı — worker işliyor…", queued_via="celery")
         else:
             threading.Thread(target=_bg, daemon=True, name="check-health").start()
     except Exception:

@@ -76,7 +76,7 @@ def _prune_redis(r) -> None:
             if not j:
                 r.zrem(_INDEX, jid)
                 continue
-            if j.get("status") in ("done", "error"):
+            if j.get("status") in ("done", "error", "cancelled"):
                 finished.append((float(j.get("finished_at") or j.get("started_at") or 0), jid))
         finished.sort()
         while len(ids) > _MAX_JOBS and finished:
@@ -124,7 +124,7 @@ def _prune_mem_locked() -> None:
     if len(_jobs) <= _MAX_JOBS:
         return
     finished = sorted(
-        (j for j in _jobs.values() if j["status"] in ("done", "error")),
+        (j for j in _jobs.values() if j["status"] in ("done", "error", "cancelled")),
         key=lambda j: j.get("finished_at") or 0,
     )
     while len(_jobs) > _MAX_JOBS and finished:
@@ -220,6 +220,25 @@ def _recompute_percent(j: Dict[str, Any]) -> None:
         j["percent"] = max(3, int(j.get("percent") or 3))
 
 
+def request_cancel(job_id: str) -> bool:
+    """Kullanıcı iptali — çalışan job'a cancel_requested işaretler."""
+    j = get_job(job_id)
+    if not j or j.get("status") != "running":
+        return False
+    j["cancel_requested"] = True
+    j["message"] = "İptal isteniyor…"
+    if not _save_redis(j):
+        with _lock:
+            if job_id in _jobs:
+                _jobs[job_id] = j
+    return True
+
+
+def is_cancelled(job_id: str) -> bool:
+    j = get_job(job_id)
+    return bool(j and (j.get("cancel_requested") or j.get("status") == "cancelled"))
+
+
 def finish(
     job_id: str,
     *,
@@ -231,9 +250,14 @@ def finish(
     j = get_job(job_id)
     if not j:
         return
-    j["status"] = status if status in ("done", "error") else "done"
+    if j.get("status") in ("done", "error", "cancelled"):
+        # İptal sonrası "done" ile ezme; error/cancelled üzerine yazılabilir
+        if status == "done":
+            return
+    allowed = ("done", "error", "cancelled")
+    j["status"] = status if status in allowed else "done"
     j["finished_at"] = time.time()
-    j["percent"] = 100 if j["status"] == "done" else int(j.get("percent") or 0)
+    j["percent"] = 100 if j["status"] in ("done", "cancelled") else int(j.get("percent") or 0)
     if message is not None:
         j["message"] = message
     if error is not None:

@@ -35,9 +35,27 @@ def make_celery():
 celery_app = make_celery() if Celery is not None else None
 
 
-def enqueue_check_health(job_id: str) -> bool:
-    """Celery'ye health check gönder. Başarısızsa False (caller thread'e düşer)."""
+def celery_workers_available(*, timeout: float = 0.8) -> bool:
+    """En az bir Celery worker ping'e cevap veriyor mu?"""
     if celery_app is None:
+        return False
+    try:
+        insp = celery_app.control.inspect(timeout=timeout)
+        if insp is None:
+            return False
+        ping = insp.ping() or {}
+        return bool(ping)
+    except Exception as exc:
+        logger.debug("Celery inspect/ping başarısız: %s", exc)
+        return False
+
+
+def enqueue_check_health(job_id: str) -> bool:
+    """Celery'ye health check gönder. Worker yoksa / hata varsa False (caller thread'e düşer)."""
+    if celery_app is None:
+        return False
+    if not celery_workers_available():
+        logger.info("Celery worker yok — health check thread fallback kullanılacak")
         return False
     try:
         celery_app.send_task("servers.check_health", args=[job_id])
@@ -54,7 +72,11 @@ def _run_check_health(job_id: str) -> dict:
 
     bg = SessionLocal()
     try:
+        jobs.update_job(job_id, message="Durum kontrolü çalışıyor…", queued_via="celery")
+
         def _prog(done, total):
+            if jobs.is_cancelled(job_id):
+                return
             jobs.tick(
                 job_id,
                 done=done,
@@ -62,7 +84,19 @@ def _run_check_health(job_id: str) -> dict:
                 message=f"Kontrol: {done}/{total}",
             )
 
-        stats = ServerHealthChecker.update_server_statuses(bg, on_progress=_prog)
+        stats = ServerHealthChecker.update_server_statuses(
+            bg, on_progress=_prog, cancel_check=lambda: jobs.is_cancelled(job_id)
+        )
+        if jobs.is_cancelled(job_id):
+            jobs.finish(
+                job_id,
+                status="cancelled",
+                message=(
+                    f"İptal edildi ({stats.get('checked', 0)}/{stats.get('total') or stats.get('checked', 0)} tamamlandı)"
+                ),
+                result=stats,
+            )
+            return {"ok": False, "cancelled": True, "stats": stats}
         if stats.get("error"):
             jobs.finish(job_id, status="error", message="Durum kontrolü başarısız", error=str(stats["error"]))
             return {"ok": False, "error": stats["error"]}
