@@ -261,15 +261,23 @@ OLLAMA_EMBED_MODEL=${EMBED_MODEL}
 EOF
   fi
 
-  # install-rhel.sh .env'e bu etiketleri yazar; :latest da tar içinde (yukarıda).
-  cat >> "$STAGE/.env.example" <<EOF
-
-# build-distribution.sh tarafından üretildi — bu paketteki imaj etiketleri
-BACKEND_IMAGE=ainew-backend:${VERSION}
-FRONTEND_IMAGE=ainew-frontend:${VERSION}
-DROPT_API_IMAGE=dropt-api:local
-DROPT_PULL_POLICY=never
-EOF
+  # install-rhel.sh VERSION kanonik kullanır; .env.example'da tek satır yeterli (çift ekleme yok).
+  _set_ex() {
+    local key="$1" value="$2" f="$STAGE/.env.example"
+    if grep -q "^${key}=" "$f" 2>/dev/null; then
+      # İlk satırı güncelle, aynı key tekrarlarını sil
+      awk -v k="$key" -v v="$value" '
+        index($0, k "=") == 1 { if (!seen++) print k "=" v; next }
+        { print }
+      ' "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+    else
+      echo "${key}=${value}" >> "$f"
+    fi
+  }
+  _set_ex "BACKEND_IMAGE" "ainew-backend:${VERSION}"
+  _set_ex "FRONTEND_IMAGE" "ainew-frontend:${VERSION}"
+  _set_ex "DROPT_API_IMAGE" "dropt-api:local"
+  _set_ex "DROPT_PULL_POLICY" "never"
 
   # GitHub'ın LFS'siz push'larda uyguladığı 100MB/dosya sert sınırı nedeniyle,
   # bu paket git'e commit edilecekse (ör. tamamen air-gapped hedeflere "git clone /
