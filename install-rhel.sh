@@ -251,7 +251,14 @@ fill_env_var() {
 set_env_var() {
   local key="$1" value="$2"
   if grep -q "^${key}=" "$ENV_FILE"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    # İlk satırı güncelle; aynı key'in tekrarlarını sil (çift BACKEND_IMAGE vb.)
+    awk -v k="$key" -v v="$value" '
+      index($0, k "=") == 1 {
+        if (!seen++) { print k "=" v }
+        next
+      }
+      { print }
+    ' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
   else
     echo "${key}=${value}" >> "$ENV_FILE"
   fi
@@ -311,20 +318,12 @@ _dropt_fill "RESET_ADMIN_PASSWORD" "false"
 chmod 600 dropt/.env 2>/dev/null || true
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 
-# Paket VERSION dosyasından imaj etiketlerini ZORLA sabitle.
-# Eski .env'de kalan 1.0.9.11 gibi etiketler korunursa load 1.0.9.12 yapsa bile
-# "eksik imaj: ainew-backend:1.0.9.11" hatası çıkar (ovrinfraaitst1 senaryosu).
+# VERSION dosyası kanonik — .env.example eski etiket taşıyabilir (update-rhel ile aynı).
+# Eski .env'de kalan etiketler korunursa load yeni tag yapsa bile "eksik imaj" hatası çıkar.
 APP_VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
 [[ -z "$APP_VERSION" ]] && APP_VERSION="latest"
-if grep -q '^BACKEND_IMAGE=' .env.example 2>/dev/null; then
-  BE_FROM_EX="$(grep '^BACKEND_IMAGE=' .env.example | head -1 | cut -d= -f2-)"
-  FE_FROM_EX="$(grep '^FRONTEND_IMAGE=' .env.example | head -1 | cut -d= -f2-)"
-  set_env_var "BACKEND_IMAGE" "${BE_FROM_EX:-ainew-backend:${APP_VERSION}}"
-  set_env_var "FRONTEND_IMAGE" "${FE_FROM_EX:-ainew-frontend:${APP_VERSION}}"
-else
-  set_env_var "BACKEND_IMAGE" "ainew-backend:${APP_VERSION}"
-  set_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
-fi
+set_env_var "BACKEND_IMAGE" "ainew-backend:${APP_VERSION}"
+set_env_var "FRONTEND_IMAGE" "ainew-frontend:${APP_VERSION}"
 set_env_var "APP_VERSION" "$APP_VERSION"
 c_green "İmaj etiketleri paket sürümüne sabitlendi: ainew-backend:${APP_VERSION} / ainew-frontend:${APP_VERSION}"
 fill_env_var "OLLAMA_URL" "http://127.0.0.1:11434"
