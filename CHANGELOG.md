@@ -13,6 +13,13 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [1.0.9.23] - 2026-08-11
 
+### Eklendi / iyileştirildi — Linux Yönetimi
+- OS sütunu: kısa etiket + ikon; hover’da tam PRETTY_NAME.
+- SSH `/etc/os-release` `VERSION_ID` ile minor sürüm (ör. RHEL 9.7 / 9.8); vCenter yalnızca major (`RHEL_9_64`) verir.
+- Çoklu seçim, çift tık detay, gelişmiş sağ tık menü; çevrimdışıları üste sıralama.
+- AI Ready / OS yenileme: SSH kimlik bilgisi yoksa engellenir; TCP sağlık kontrolü kimlik olmadan çalışır.
+- Level1 Dropt: otomasyon şifresi zorunluluğu; erişilemeyen host senkron/konsol davranışı.
+
 ### Düzeltildi — Dark tema ana menü okunabilirliği
 - Dark `--text-secondary` / `--text-muted` token'ları `#c5d0e8` / `#9aabcb` (sidebar yüzeyinde yüksek kontrast).
 - Ana menü (Layout) inactive öğeler `--text-secondary`; `aside.app-sidebar` için zorunlu nav renk kuralları eklendi.
