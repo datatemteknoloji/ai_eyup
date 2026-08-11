@@ -144,8 +144,23 @@ def ensure_and_detect(
             dropt_base=dropt_base,
             dropt_token=dropt_token,
             server=server,
+            skip_connection_test=False,
         )
         dropt_id = int(result["id"]) if result.get("id") is not None else None
+        if (result.get("status") or "").lower() == "unreachable" and dropt_id:
+            try:
+                with httpx.Client(timeout=20.0) as client:
+                    client.delete(
+                        f"{dropt_base.rstrip('/')}/api/servers/{dropt_id}",
+                        headers={"Authorization": f"Bearer {dropt_token}"},
+                    )
+            except Exception as del_exc:  # noqa: BLE001
+                logger.warning("Dropt unreachable silinemedi id=%s: %s", dropt_id, del_exc)
+            detect = probe_and_apply(db, server, prefer_dropt=False)
+            return None, {
+                "ensure_error": "otomasyon SSH unreachable — Level 1'e eklenmedi",
+                **detect,
+            }
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure failed: %s", exc)
         detect = probe_and_apply(db, server, prefer_dropt=False)
@@ -167,13 +182,18 @@ def ensure_dropt_for_server(
     dropt_base: str,
     dropt_token: str,
     server: Server,
+    skip_connection_test: bool = False,
 ) -> dict[str, Any]:
-    """Dropt ensure-host — otomasyon credential kullanır; ainew SSH'ı değiştirmez."""
+    """Dropt ensure-host — otomasyon credential; ainew SSH'ı değiştirmez.
+
+    skip_connection_test=False: otomasyon user ile dener (ready/unreachable).
+    Unreachable yeni kayıtlar çağıran tarafta silinebilir.
+    """
     hostname = (server.hostname or server.vm_guest_hostname or server.name or server.ip_address or "").strip()
     ip = (server.ip_address or "").strip()
     if not ip:
         raise ValueError("IP yok")
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=60.0) as client:
         cr = client.post(
             f"{dropt_base.rstrip('/')}/api/servers/ensure-host",
             headers={
@@ -185,7 +205,7 @@ def ensure_dropt_for_server(
                 "ip": ip,
                 "port": 22,
                 "description": f"ainew:{server.id}",
-                "skip_connection_test": True,
+                "skip_connection_test": skip_connection_test,
             },
         )
     if cr.status_code >= 400:
@@ -235,8 +255,17 @@ def best_effort_ensure_after_ainew_create(server: Server, *, actor_username: str
                     bridge_secret=secret,
                     username=f"sync-{actor_username}"[:64],
                 )
-                result = ensure_dropt_for_server(dropt_base=base, dropt_token=token, server=row)
+                result = ensure_dropt_for_server(
+                    dropt_base=base, dropt_token=token, server=row, skip_connection_test=False,
+                )
                 dropt_id = int(result["id"]) if result.get("id") is not None else None
+                if (result.get("status") or "").lower() == "unreachable" and dropt_id:
+                    with httpx.Client(timeout=20.0) as client:
+                        client.delete(
+                            f"{base}/api/servers/{dropt_id}",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                    dropt_id = None
             except Exception as exc:  # noqa: BLE001
                 logger.warning("best_effort Dropt ensure failed for server %s: %s", server.id, exc)
         # Tip: önce Dropt facts (otomasyon), yoksa ainew SSH

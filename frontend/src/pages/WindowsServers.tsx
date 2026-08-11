@@ -6,6 +6,8 @@ import { Wifi, WifiOff, RefreshCw, Settings, Activity,
   Search, X, CheckCircle, XCircle, Globe, CheckCircle2, BrainCircuit } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
+import { OsIcon } from '../components/OsIcon'
+import { fullOsLabel, shortenOsLabel, serverTypeLabel } from '../lib/osLabel'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -28,6 +30,10 @@ interface WindowsServer {
   winrm_port: number | null
   confirmed_windows: boolean
   ai_ready: boolean
+  server_type?: string
+  os_version?: string
+  os_release_id?: string
+  os_version_id?: string
   windows_exporter_installed: boolean
   windows_exporter_running: boolean
 }
@@ -1093,26 +1099,26 @@ const WindowsServers: React.FC = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/80">
-                {['Sunucu', 'Durum', 'OS', 'CPU / RAM', 'WinRM', ''].map(h => (
+                {['Sunucu', 'Tip', 'Durum', 'OS', 'CPU / RAM', 'WinRM', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
-              {filtered.map(srv => (
+              {filtered.map(srv => {
+                const osLabelInput = {
+                  os_type: srv.os_type,
+                  os_version: srv.os_version || srv.os_type,
+                  os_release_id: srv.os_release_id,
+                  os_version_id: srv.os_version_id,
+                  os_pretty: srv.os_version || srv.os_type,
+                }
+                return (
                 <tr key={srv.id} className="hover:bg-slate-700/30 transition-colors cursor-pointer"
                   onClick={() => setSelected(srv)}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                        srv.confirmed_windows
-                          ? srv.status === 'ONLINE' ? 'bg-blue-500/20' : 'bg-slate-700'
-                          : 'bg-amber-500/10'
-                      }`}>
-                        <span className={`text-[9px] font-bold ${srv.confirmed_windows ? 'text-blue-400' : 'text-amber-500'}`}>
-                          {srv.confirmed_windows ? 'WIN' : '?'}
-                        </span>
-                      </div>
+                      <OsIcon os={osLabelInput} size={28} />
                       <div>
                         <div className="text-sm font-semibold text-white">{srv.name}</div>
                         <div className="text-xs text-slate-500 font-mono">
@@ -1122,10 +1128,17 @@ const WindowsServers: React.FC = () => {
                       </div>
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
+                    {serverTypeLabel(srv.server_type)}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">{statusBadge(srv.status)}</td>
                   <td className="px-4 py-3 text-sm">
                     {srv.confirmed_windows
-                      ? <span className="text-slate-300">{srv.os_type}</span>
+                      ? (
+                        <span className="text-slate-300" title={fullOsLabel(osLabelInput) || undefined}>
+                          {shortenOsLabel(osLabelInput)}
+                        </span>
+                      )
                       : <span className="text-amber-500/70 text-xs italic">Belirsiz ({srv.os_type || 'boş'})</span>
                     }
                   </td>
@@ -1195,7 +1208,7 @@ const WindowsServers: React.FC = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

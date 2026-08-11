@@ -1148,7 +1148,11 @@ class VCenterClient:
                 or details.get("resource_pool")
                 or ""
             )
-            guest_os_full = (details.get("guest_OS") or guest.get("full_name") or "") or ""
+            # Tools full_name çoğu zaman daha okunaklıdır ("Red Hat Enterprise Linux 9 (64-bit)");
+            # guest_OS yalnızca major id verir (RHEL_9_64). Minor sürüm SSH /etc/os-release'ten gelir.
+            _full = (guest.get("full_name") or "").strip()
+            _gid = (details.get("guest_OS") or "").strip()
+            guest_os_full = _full or _gid
 
             return {
                 "vm_id":               vm_id,

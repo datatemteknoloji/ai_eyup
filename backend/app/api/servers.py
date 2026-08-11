@@ -25,6 +25,23 @@ _CREATE_SSH_CONNECT_TIMEOUT = 6.0
 _CREATE_SSH_CMD_TIMEOUT = 12
 
 
+def _conn_has_ssh_secret(conn_config: dict | None) -> bool:
+    cfg = conn_config or {}
+    return bool(cfg.get("password") or cfg.get("private_key"))
+
+
+def _global_cred_has_ssh_secret(global_cred) -> bool:
+    if not global_cred:
+        return False
+    return bool(getattr(global_cred, "password", None) or getattr(global_cred, "private_key", None))
+
+
+_SSH_CRED_REQUIRED_MSG = (
+    "SSH credential tanımlı değil. Ayarlar → Global Credential veya sunucu SSH bilgisi ekleyin "
+    "(vCenter / hypervisor kaydı yeterli değildir)."
+)
+
+
 def _server_list_item(
     s: Server,
     *,
@@ -43,11 +60,13 @@ def _server_list_item(
         "os_version": s.os_version or "",
         "os_release_id": s.os_release_id or "",
         "os_version_id": s.os_version_id or "",
+        "vm_guest_os_full": getattr(s, "vm_guest_os_full", None) or "",
         "kernel_version": s.kernel_version or "",
         "server_type": s.server_type or "VIRTUAL",
         "cpu_cores": s.cpu_cores or 0,
         "memory_gb": s.memory_gb or 0,
         "ai_ready": bool(s.ai_ready),
+        "has_ssh_secret": _conn_has_ssh_secret(conn_config),
         "hypervisor_id": s.hypervisor_id,
         "hypervisor_name": hv_name,
         "created_at": s.created_at.isoformat() if s.created_at else None,
@@ -226,6 +245,13 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
             "port": creds["port"],
         })
 
+    # Manuel çağrı: credential yoksa sessiz "0 kuyruk" yerine net hata
+    if not server_snapshots and not throttled:
+        if server_list or server_ids:
+            raise HTTPException(status_code=400, detail=_SSH_CRED_REQUIRED_MSG)
+        if not _global_cred_has_ssh_secret(global_cred):
+            raise HTTPException(status_code=400, detail=_SSH_CRED_REQUIRED_MSG)
+
     workers = bulk_ssh_workers()
     queued = len(server_snapshots)
     job_id = jobs.create_job(
@@ -374,6 +400,12 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
             "port": creds["port"],
         })
 
+    if not snapshots:
+        if servers or server_ids:
+            raise HTTPException(status_code=400, detail=_SSH_CRED_REQUIRED_MSG)
+        if not _global_cred_has_ssh_secret(global_cred):
+            raise HTTPException(status_code=400, detail=_SSH_CRED_REQUIRED_MSG)
+
     workers = bulk_ssh_workers()
     queued = len(snapshots)
     job_id = jobs.create_job(
@@ -405,14 +437,33 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
                 _, raw, _ = ssh.execute_command("cat /etc/os-release 2>/dev/null")
                 info = _parse_os_release(raw)
                 _, k_out, _ = ssh.execute_command("uname -r")
+                _, cpu_out, _ = ssh.execute_command("nproc 2>/dev/null")
+                _, mem_out, _ = ssh.execute_command(
+                    "free -g 2>/dev/null | awk '/^Mem:/{print $2}'"
+                )
+                # free -g 0 olabilir (<1GB) — MB'dan yuvarla
+                mem_gb = None
+                if mem_out.strip().isdigit():
+                    mem_gb = int(mem_out.strip())
+                    if mem_gb == 0:
+                        _, mem_m, _ = ssh.execute_command(
+                            "free -m 2>/dev/null | awk '/^Mem:/{print $2}'"
+                        )
+                        if mem_m.strip().isdigit():
+                            mem_gb = max(1, int(mem_m.strip()) // 1024)
                 ssh.close()
-                return snap["id"], {
+                payload = {
                     "os_version": info.get("PRETTY_NAME"),
                     "os_release_id": info.get("ID"),
                     "os_version_id": info.get("VERSION_ID"),
                     "os_type": info.get("ID") or snap["os_type"],
                     "kernel_version": k_out.strip() or None,
-                }, None
+                }
+                if cpu_out.strip().isdigit():
+                    payload["cpu_cores"] = int(cpu_out.strip())
+                if mem_gb is not None and mem_gb >= 0:
+                    payload["memory_gb"] = mem_gb
+                return snap["id"], payload, None
             except Exception as e:
                 return snap["id"], None, str(e)
 
@@ -444,7 +495,7 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
                     srv = bg.query(Server).filter_by(id=srv_id).first()
                     if srv:
                         for k, v in info.items():
-                            if v:
+                            if v is not None and v != "":
                                 setattr(srv, k, v)
                         updated += 1
                 else:
@@ -1008,6 +1059,7 @@ def cancel_bulk_job(
 @router.post("/check-health")
 async def check_all_servers_health(
     background: bool = True,
+    body: dict = None,
     db: Session = Depends(get_db),
 ):
     """Tüm sunucuların durumlarını kontrol et (TCP).
@@ -1015,10 +1067,15 @@ async def check_all_servers_health(
     Varsayılan: arka planda çalışır, hemen job_id döner (UI ilerleme ekranı).
     background=false ile senkron (eski davranış) çalıştırılabilir.
     Celery worker yoksa otomatik thread fallback (kuyrukta takılmaz).
+    body.server_ids — verilirse yalnızca seçili sunucular.
     """
     import threading
     from app.core.database import ThreadSessionLocal as SessionLocal
     from app.services import bulk_job_tracker as jobs
+
+    server_ids = (body or {}).get("server_ids") if isinstance(body, dict) else None
+    if server_ids is not None:
+        server_ids = [int(x) for x in server_ids]
 
     if not background:
         try:
@@ -1031,13 +1088,17 @@ async def check_all_servers_health(
             logger.error(f"Health check failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Health check error: {str(e)}")
 
-    total_hint = db.query(Server).count()
+    q = db.query(Server)
+    if server_ids:
+        q = q.filter(Server.id.in_(server_ids))
+    total_hint = q.count()
     job_id = jobs.create_job(
         "health_check",
         "Durum kontrolü (TCP)",
         total=total_hint,
         message=f"{total_hint} sunucu kontrol edilecek...",
     )
+    ids_snapshot = list(server_ids) if server_ids else None
 
     def _bg() -> None:
         bg = SessionLocal()
@@ -1055,7 +1116,10 @@ async def check_all_servers_health(
                 )
 
             stats = ServerHealthChecker.update_server_statuses(
-                bg, on_progress=_prog, cancel_check=lambda: jobs.is_cancelled(job_id)
+                bg,
+                on_progress=_prog,
+                cancel_check=lambda: jobs.is_cancelled(job_id),
+                server_ids=ids_snapshot,
             )
             if jobs.is_cancelled(job_id):
                 jobs.finish(

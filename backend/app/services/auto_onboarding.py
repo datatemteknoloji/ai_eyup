@@ -42,21 +42,32 @@ _RECHECK_INTERVAL = timedelta(hours=6)
 def _parse_os_release(text: str) -> Dict[str, str]:
     pretty_name = ""
     version_id = ""
+    release_id = ""
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("PRETTY_NAME="):
             pretty_name = line.split("=", 1)[1].strip().strip('"')
         elif line.startswith("VERSION_ID="):
             version_id = line.split("=", 1)[1].strip().strip('"')
-    return {"pretty_name": pretty_name, "version_id": version_id}
+        elif line.startswith("ID=") and not line.startswith("ID_LIKE="):
+            release_id = line.split("=", 1)[1].strip().strip('"')
+    return {
+        "pretty_name": pretty_name,
+        "version_id": version_id,
+        "release_id": release_id,
+    }
 
 
 def collect_os_release_info(db: Session) -> Dict:
-    """AI Ready olup os_version veya kernel_version bilgisi eksik olan Linux
+    """AI Ready olup os_version / os_version_id / kernel eksik olan Linux
     sunuculara SSH ile bağlanıp /etc/os-release ve `uname -r` bilgisini toplar.
-    Böylece vCenter/OLVM'den senkronize edilen VM'ler için de yama/envanter
-    raporlarında OS ve kernel bilgisi görünür (önceden yalnızca Entegrasyonlar'dan
-    elle eklenen fiziksel hostlarda toplanıyordu)."""
+
+    vCenter guest_OS yalnızca major verir (RHEL_9_64 → RHEL 9); minor (9.7 / 9.8)
+    yalnızca guest içinden VERSION_ID ile gelir.
+    """
+    from app.models.credential import GlobalCredential
+    from app.services.ssh_credentials import resolve_ssh_creds
+
     servers = (
         db.query(Server)
         .filter(
@@ -67,6 +78,7 @@ def collect_os_release_info(db: Session) -> Dict:
         .filter(
             or_(
                 Server.os_version.is_(None), Server.os_version == "",
+                Server.os_version_id.is_(None), Server.os_version_id == "",
                 Server.kernel_version.is_(None), Server.kernel_version == "",
             )
         )
@@ -77,17 +89,33 @@ def collect_os_release_info(db: Session) -> Dict:
     if not servers:
         return {"checked": 0, "updated": 0}
 
-    def _collect_one(srv: Server) -> Optional[Dict[str, str]]:
-        # Thread pool içinde çalışır — SQLAlchemy session'a burada dokunulmaz.
-        cfg = srv.connection_config or {}
-        if not cfg.get("username"):
-            return None
+    global_cred = (
+        db.query(GlobalCredential).filter_by(is_default=True).first()
+        or db.query(GlobalCredential).first()
+    )
+
+    # Thread pool'a ORM nesnesi değil, çözülmüş snapshot ver.
+    snapshots = []
+    for srv in servers:
+        creds = resolve_ssh_creds(srv, global_cred=global_cred)
+        if not creds.get("has_secret"):
+            continue
+        snapshots.append({
+            "id": srv.id,
+            "host": creds["host"],
+            "username": creds["username"] or "root",
+            "password": creds["password"],
+            "private_key": creds["private_key"],
+            "port": creds["port"],
+        })
+
+    def _collect_one(snap: Dict) -> Optional[Dict[str, str]]:
         ssh = SSHManager(
-            host=srv.ip_address,
-            username=cfg.get("username"),
-            password=cfg.get("password"),
-            private_key=cfg.get("private_key"),
-            port=cfg.get("port", 22),
+            host=snap["host"],
+            username=snap["username"],
+            password=snap["password"],
+            private_key=snap["private_key"],
+            port=snap["port"],
         )
         try:
             if not ssh.connect():
@@ -98,17 +126,17 @@ def collect_os_release_info(db: Session) -> Dict:
             parsed["kernel"] = kernel_out.strip()
             return parsed
         except Exception as e:
-            logger.debug("OS release toplama hatası (%s): %s", srv.name, e)
+            logger.debug("OS release toplama hatası (id=%s): %s", snap["id"], e)
             return None
         finally:
             ssh.close()
 
     results: Dict[int, Optional[Dict[str, str]]] = {}
     with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-osinfo") as pool:
-        futures = {pool.submit(_collect_one, s): s for s in servers}
+        futures = {pool.submit(_collect_one, snap): snap["id"] for snap in snapshots}
         for fut in as_completed(futures):
-            srv = futures[fut]
-            results[srv.id] = fut.result()
+            sid = futures[fut]
+            results[sid] = fut.result()
 
     updated = 0
     for srv in servers:
@@ -116,16 +144,29 @@ def collect_os_release_info(db: Session) -> Dict:
         if not info:
             continue
         changed = False
-        if info.get("pretty_name") and not srv.os_version:
+        if info.get("pretty_name") and (
+            not srv.os_version or len(info["pretty_name"]) > len(srv.os_version or "")
+        ):
             srv.os_version = info["pretty_name"]
             changed = True
-        if info.get("version_id") and not srv.os_version_id:
-            srv.os_version_id = info["version_id"]
+        if info.get("version_id"):
+            # Hypervisor major (9) yerine SSH minor (9.8) her zaman yazılsın
+            if not srv.os_version_id or len(info["version_id"]) >= len(srv.os_version_id or ""):
+                if info["version_id"] != (srv.os_version_id or ""):
+                    srv.os_version_id = info["version_id"]
+                    changed = True
+        if info.get("release_id") and not srv.os_release_id:
+            srv.os_release_id = info["release_id"]
             changed = True
         if info.get("kernel") and not srv.kernel_version:
             srv.kernel_version = info["kernel"]
             changed = True
-        if not srv.os_type:
+        if info.get("release_id") and (
+            not srv.os_type or str(srv.os_type).lower() in ("linux", "linuxguest", "")
+        ):
+            srv.os_type = info["release_id"]
+            changed = True
+        elif not srv.os_type:
             srv.os_type = "linux"
             changed = True
         if changed:
@@ -135,7 +176,7 @@ def collect_os_release_info(db: Session) -> Dict:
     if updated:
         logger.info("Auto-onboarding: %s Linux sunucunun OS/kernel bilgisi güncellendi", updated)
 
-    return {"checked": len(servers), "updated": updated}
+    return {"checked": len(snapshots), "updated": updated}
 
 
 def auto_install_node_exporter(db: Session) -> Dict:

@@ -245,7 +245,14 @@ def ensure_host_from_ainew(
             select(TargetServer).where(func.lower(TargetServer.hostname) == hostname.lower())
         ).first()
     username = get_automation_username(session)
-    password = get_automation_password(session) or "ainew-pending"
+    password = get_automation_password(session)
+    if not body.skip_connection_test and not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Önce Level 1 → Ayarlar’da otomasyon kullanıcı şifresini kaydedin "
+            "(vCenter / Linux envanter kaydı yeterli değildir).",
+        )
+    password = password or "ainew-pending"
     if existing is not None:
         existing.hostname = hostname
         existing.port = body.port
@@ -278,6 +285,18 @@ def ensure_host_from_ainew(
         session.add(existing)
         session.commit()
         session.refresh(existing)
+        if not body.skip_connection_test and password != "ainew-pending":
+            _bootstrap_connection(
+                session,
+                existing,
+                host=ip,
+                port=body.port,
+                username=username,
+                password=password,
+            )
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
         cred = session.get(Credential, existing.credentials_id) if existing.credentials_id else None
         return _public(session, existing, cred)
 
@@ -345,7 +364,15 @@ def ensure_hosts_bulk_from_ainew(
 ) -> HostEnsureBulkOut:
     """Batch upsert TargetServer by IP for ainew Level 1 sync-all."""
     username = get_automation_username(session)
-    password = get_automation_password(session) or "ainew-pending"
+    password = get_automation_password(session)
+    needs_test = any(not h.skip_connection_test for h in body.hosts)
+    if needs_test and not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Önce Level 1 → Ayarlar’da otomasyon kullanıcı şifresini kaydedin "
+            "(vCenter / Linux envanter kaydı yeterli değildir).",
+        )
+    password = password or "ainew-pending"
     crypto = CredentialManager()
 
     ensured = created = 0
@@ -400,6 +427,17 @@ def ensure_hosts_bulk_from_ainew(
                     session.add(cred)
                 session.add(existing)
                 session.flush()
+                if not host.skip_connection_test and password != "ainew-pending":
+                    _bootstrap_connection(
+                        session,
+                        existing,
+                        host=ip,
+                        port=host.port,
+                        username=username,
+                        password=password,
+                    )
+                    session.add(existing)
+                    session.flush()
                 existing_by_ip[ip] = existing
                 dropt_id = int(existing.id)  # type: ignore[arg-type]
             else:
@@ -423,11 +461,40 @@ def ensure_hosts_bulk_from_ainew(
                     created_at=now,
                     updated_at=now,
                 )
+                if not host.skip_connection_test and password != "ainew-pending":
+                    _bootstrap_connection(
+                        session, server, host=ip, port=host.port, username=username, password=password
+                    )
                 session.add(server)
                 session.flush()
                 existing_by_ip[ip] = server
                 dropt_id = int(server.id)  # type: ignore[arg-type]
                 created += 1
+
+            # Unreachable → sil (Level 1'de görünmesin); sync yalnızca otomasyon-ready hostları tutar
+            target = existing_by_ip.get(ip)
+            if (
+                target is not None
+                and not host.skip_connection_test
+                and target.status == ServerStatus.unreachable
+            ):
+                session.delete(target)
+                session.flush()
+                existing_by_ip.pop(ip, None)
+                if was_create and created > 0:
+                    created -= 1
+                errors.append(f"{hostname}: unreachable — silindi")
+                items_out.append(
+                    HostEnsureBulkItemOut(
+                        hostname=hostname,
+                        ip=ip,
+                        dropt_server_id=None,
+                        created=False,
+                        error="unreachable",
+                    )
+                )
+                continue
+
             ensured += 1
             items_out.append(
                 HostEnsureBulkItemOut(
@@ -802,15 +869,44 @@ def test_connection(
     _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> ServerPublic:
+    from app.services.bootstrap import automation_password_is_set
+
+    if not automation_password_is_set(session):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Önce Level 1 → Ayarlar’da otomasyon kullanıcı şifresini kaydedin "
+            "(vCenter / Linux envanter kaydı yeterli değildir).",
+        )
     server = _get_server_or_404(session, server_id)
     username = get_automation_username(session)
+    password = get_automation_password(session)
     cred = session.get(Credential, server.credentials_id) if server.credentials_id else None
-    if cred is None or not cred.encrypted_ssh_password:
+    if password:
+        # Ayarlardaki güncel otomasyon şifresini kullan
+        try:
+            crypto = CredentialManager()
+            if cred is None:
+                cred = Credential(
+                    label=f"{server.hostname}-ainew",
+                    ssh_username=username,
+                    encrypted_ssh_password=crypto.encrypt(password),
+                )
+                session.add(cred)
+                session.flush()
+                server.credentials_id = cred.id
+            else:
+                cred.ssh_username = username
+                cred.encrypted_ssh_password = crypto.encrypt(password)
+                session.add(cred)
+        except CredentialCryptoError as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    elif cred is None or not cred.encrypted_ssh_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kayıtlı şifre yok")
-    try:
-        password = CredentialManager().decrypt(cred.encrypted_ssh_password)
-    except CredentialCryptoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    else:
+        try:
+            password = CredentialManager().decrypt(cred.encrypted_ssh_password)
+        except CredentialCryptoError as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     cred.ssh_username = username
     ok = _test_connection(

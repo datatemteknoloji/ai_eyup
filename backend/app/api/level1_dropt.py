@@ -158,16 +158,29 @@ def ensure_dropt_server(
                     "ip": ip,
                     "port": 22,
                     "description": f"ainew:{s.id}",
-                    "skip_connection_test": True,
+                    "skip_connection_test": False,
                     "ainew_ai_ready": bool(s.ai_ready),
                 },
             )
             if cr.status_code >= 400:
                 raise HTTPException(cr.status_code, detail=f"Dropt ensure-host: {cr.text[:400]}")
             result = cr.json()
+            dropt_id = int(result["id"])
+            if (result.get("status") or "").lower() == "unreachable":
+                try:
+                    client.delete(
+                        f"{_dropt_base()}/api/servers/{dropt_id}",
+                        headers=_dropt_headers(token),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                raise HTTPException(
+                    422,
+                    detail="Otomasyon SSH unreachable — Level 1'e eklenmedi",
+                )
             return EnsureServerOut(
                 ainew_server_id=s.id,
-                dropt_server_id=int(result["id"]),
+                dropt_server_id=dropt_id,
                 hostname=str(result.get("hostname") or hostname),
                 ip=str(result.get("ip") or ip),
                 created=existed_id is None,
@@ -211,7 +224,7 @@ def sync_all_linux_servers_to_dropt(
             "ip": ip,
             "port": 22,
             "description": f"ainew:{row.get('id')}",
-            "skip_connection_test": True,
+            "skip_connection_test": False,
             "ainew_ai_ready": bool(row.get("ai_ready")),
         })
 

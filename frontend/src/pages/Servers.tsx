@@ -3,6 +3,7 @@ import {
   ChevronDown, Settings2, Activity, Wifi,
   RefreshCw, CheckCircle2, AlertCircle, AlertTriangle,
   Cloud, Camera, Tag, Radio,
+  Terminal, Info, Trash2, ShieldCheck, HardDrive,
 } from 'lucide-react'
 const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
@@ -12,6 +13,8 @@ import { fetchServersPage } from '../api/servers'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isPoweredOn } from '../utils/powerState'
+import { OsIcon } from '../components/OsIcon'
+import { shortenOsLabel, fullOsLabel, serverTypeLabel } from '../lib/osLabel'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -46,11 +49,13 @@ interface Server {
   os_version: string
   os_release_id: string
   os_version_id: string
+  vm_guest_os_full?: string
   kernel_version: string
   server_type: string
   cpu_cores: number
   memory_gb: number
   ai_ready: boolean
+  has_ssh_secret?: boolean
   hypervisor_id: number | null
   hypervisor_name: string | null
   connection_config: any
@@ -60,27 +65,42 @@ interface Server {
   }
 }
 
+const SSH_CRED_HINT =
+  'SSH credential yok. Ayarlar → Global Credential veya sunucu SSH bilgisi ekleyin (vCenter kaydı yeterli değil).'
+
 // ─── AI Ready Güncelle Butonu ─────────────────────────────────────────────────
 const AiReadyUpdateButton: React.FC<{
   onDone: () => void
   onJobStart?: (jobId: string) => void
   asMenuItem?: boolean
-}> = ({ onDone, onJobStart, asMenuItem }) => {
+  selectedIds?: number[]
+  sshOpsEnabled?: boolean
+}> = ({ onDone, onJobStart, asMenuItem, selectedIds = [], sshOpsEnabled = true }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
+    if (!sshOpsEnabled) {
+      alert(SSH_CRED_HINT)
+      return
+    }
+    const count = selectedIds.length
+    const scope = count > 0 ? `${count} seçili Linux sunucuda` : 'Tüm Linux sunucularda'
     if (!await showConfirm(
-      'Tüm Linux sunucularda SSH kimlik doğrulaması arka planda denenecek (global/server credential). ' +
+      `${scope} SSH kimlik doğrulaması arka planda denenecek (global/server credential). ` +
       'Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa AD/PAM hesap kilitlemesine yol açabilir. ' +
       'User hazır olan hostlarda çalıştırın. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
     )) return
 
     setLoading(true); setResult(null)
     try {
-      const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, { method: 'POST' })
+      const body = count > 0 ? JSON.stringify({ server_ids: selectedIds }) : undefined
+      const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, {
+        method: 'POST',
+        ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+      })
       const text = await r.text()
       let d: any = null
       try { d = text ? JSON.parse(text) : null } catch {
@@ -106,11 +126,11 @@ const AiReadyUpdateButton: React.FC<{
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
       <button
         onClick={handleClick}
-        disabled={loading}
+        disabled={loading || !sshOpsEnabled}
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title="Linux SSH ile AI Ready durumunu arka planda güncelle"
+        title={sshOpsEnabled ? "Linux SSH ile AI Ready durumunu arka planda güncelle" : SSH_CRED_HINT}
       >
         {loading ? (
           <>
@@ -135,36 +155,28 @@ const AiReadyUpdateButton: React.FC<{
 
 // ─── OS Bilgisi Yenile Butonu ──────────────────────────────────────────────────
 const OsRefreshButton: React.FC<{
-  servers: Server[]
   onDone: () => void
   onJobStart?: (jobId: string) => void
   asMenuItem?: boolean
-}> = ({ servers, onDone, onJobStart, asMenuItem }) => {
+  selectedIds?: number[]
+  sshOpsEnabled?: boolean
+}> = ({ onDone, onJobStart, asMenuItem, selectedIds = [], sshOpsEnabled = true }) => {
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
 
   const handleClick = async () => {
-    const isWin = (s: Server) => {
-      const os = (s.os_type || '').toLowerCase()
-      if (os.includes('windows')) return true
-      const cfg = s.connection_config || {}
-      return !!(cfg.winrm || cfg.protocol === 'winrm')
-    }
-    const linux = servers.filter(s => !isWin(s))
-    const aiReadyIds = linux.filter(s => s.ai_ready).map(s => s.id)
-    const ids = aiReadyIds.length > 0 ? aiReadyIds : linux.map(s => s.id)
-
-    if (ids.length === 0) {
-      alert('Yenilenecek Linux sunucu yok')
+    if (!sshOpsEnabled) {
+      alert(SSH_CRED_HINT)
       return
     }
+    const ids = selectedIds.length > 0 ? selectedIds : undefined
 
     const confirmed = await showConfirm(
-      aiReadyIds.length > 0
-        ? `${aiReadyIds.length} AI-Ready Linux sunucuda OS/Kernel bilgisi arka planda güncellenecek. Devam?`
-        : `${ids.length} Linux sunucuda OS bilgisi arka planda güncellenecek. Devam?`
+      ids
+        ? `${ids.length} Linux sunucuda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?`
+        : 'Tüm Linux sunucularda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?'
     )
     if (!confirmed) return
 
@@ -173,7 +185,7 @@ const OsRefreshButton: React.FC<{
       const r = await fetch('/api/v1/servers/refresh-os-info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server_ids: ids }),
+        body: ids ? JSON.stringify({ server_ids: ids }) : '{}',
       })
       const text = await r.text()
       let d: any = null
@@ -202,11 +214,11 @@ const OsRefreshButton: React.FC<{
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
       <button
         onClick={handleClick}
-        disabled={loading}
+        disabled={loading || !sshOpsEnabled}
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title="Linux sunucuların OS/Kernel bilgisini SSH ile arka planda güncelle"
+        title={sshOpsEnabled ? "Linux sunucuların OS/Kernel/CPU/RAM bilgisini SSH ile arka planda güncelle" : SSH_CRED_HINT}
       >
         {loading ? (
           <>
@@ -230,24 +242,17 @@ const OsRefreshButton: React.FC<{
 }
 
 // ─── İşlemler Dropdown ────────────────────────────────────────────────────────
-const ActionsDropdown: React.FC<{ servers: Server[]; refetch: () => void }> = ({ servers, refetch }) => {
+const ActionsDropdown: React.FC<{
+  refetch: () => void
+  selectedIds: number[]
+  bulkJobId: string | null
+  setBulkJobId: (id: string | null) => void
+  sshOpsEnabled: boolean
+}> = ({ refetch, selectedIds, bulkJobId, setBulkJobId, sshOpsEnabled }) => {
   const [open, setOpen] = useState(false)
   const [checkLoading, setCheckLoading] = useState(false)
   const [checkResult, setCheckResult] = useState<string | null>(null)
-  const [bulkJobId, setBulkJobId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    restoreActiveBulkJobId().then(id => {
-      if (!cancelled && id) setBulkJobId(id)
-    })
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
-    persistBulkJobId(bulkJobId)
-  }, [bulkJobId])
 
   useEffect(() => {
     if (!open) return
@@ -267,7 +272,11 @@ const ActionsDropdown: React.FC<{ servers: Server[]; refetch: () => void }> = ({
   const handleCheckHealth = async () => {
     setCheckLoading(true); setCheckResult(null)
     try {
-      const r = await fetch(`${API_BASE_URL}/servers/check-health`, { method: 'POST' })
+      const body = selectedIds.length > 0 ? JSON.stringify({ server_ids: selectedIds }) : undefined
+      const r = await fetch(`${API_BASE_URL}/servers/check-health`, {
+        method: 'POST',
+        ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+      })
       const d = await r.json()
       if (r.ok) {
         if (d.job_id) {
@@ -329,11 +338,11 @@ const ActionsDropdown: React.FC<{ servers: Server[]; refetch: () => void }> = ({
             <span className="truncate">{checkResult ?? (checkLoading ? 'Başlatılıyor...' : 'Durumları Kontrol Et')}</span>
           </button>
 
-          <AiReadyUpdateButton onDone={refetch} onJobStart={startJob} asMenuItem />
+          <AiReadyUpdateButton onDone={refetch} onJobStart={startJob} asMenuItem selectedIds={selectedIds} sshOpsEnabled={sshOpsEnabled} />
 
           <div className="h-px bg-slate-700/60 mx-2 my-0.5" />
 
-          <OsRefreshButton servers={servers} onDone={refetch} onJobStart={startJob} asMenuItem />
+          <OsRefreshButton onDone={refetch} onJobStart={startJob} asMenuItem selectedIds={selectedIds} sshOpsEnabled={sshOpsEnabled} />
         </div>
       )}
     </div>
@@ -1135,10 +1144,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
 const Servers: React.FC = () => {
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
-  const [ipFilter, setIpFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showOffline, setShowOffline] = useState(false)
   const [aiReadyFilter, setAiReadyFilter] = useState<string>('all') // Tümü — Linux + Windows + diğer
@@ -1147,13 +1156,17 @@ const Servers: React.FC = () => {
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
   const [page, setPage] = useState(1)
   const pageSize = 50
+  const [bulkJobId, setBulkJobId] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; server: Server } | null>(null)
 
   const [sortKey, setSortKey] = useState<string>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [sshTarget, setSshTarget] = useState<{id: number; name: string; ip: string} | null>(null)
+  const rowClickTimer = useRef<number | null>(null)
+  const selectAllRef = useRef<HTMLInputElement>(null)
 
-  // Kolon genişlikleri (px)
-  const [colWidths, setColWidths] = useState<number[]>([260, 120, 240, 140, 180, 120])
+  // Kolon genişlikleri (px): checkbox, sunucu, tip, durum, os, cpu, izleme, işlem
+  const [colWidths, setColWidths] = useState<number[]>([40, 260, 90, 120, 240, 140, 180, 120])
 
   // Resize handler
   const resizingCol = React.useRef<{col: number; startX: number; startW: number} | null>(null)
@@ -1173,20 +1186,140 @@ const Servers: React.FC = () => {
   }
   const queryClient = useQueryClient()
 
+  useEffect(() => {
+    let cancelled = false
+    restoreActiveBulkJobId().then(id => {
+      if (!cancelled && id) setBulkJobId(id)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    persistBulkJobId(bulkJobId)
+  }, [bulkJobId])
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null) }
+    const onClick = () => setContextMenu(null)
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onClick)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onClick)
+    }
+  }, [contextMenu])
+
+  const selectedIdList = [...selectedIds]
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllPage = () => {
+    const pageIds = servers.map(s => s.id)
+    const allSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) pageIds.forEach(id => next.delete(id))
+      else pageIds.forEach(id => next.add(id))
+      return next
+    })
+  }
+
+  const getContextOpIds = (server: Server): number[] => {
+    if (selectedIds.has(server.id) && selectedIds.size > 0) return selectedIdList
+    return [server.id]
+  }
+
+  const startBulkJob = (jobId: string) => {
+    beginBulkJobModal(jobId)
+    setBulkJobId(jobId)
+    setContextMenu(null)
+  }
+
+  const runCheckHealth = async (ids?: number[]) => {
+    const body = ids && ids.length > 0 ? JSON.stringify({ server_ids: ids }) : undefined
+    const r = await fetch(`${API_BASE_URL}/servers/check-health`, {
+      method: 'POST',
+      ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+    })
+    const d = await r.json()
+    if (r.ok && d.job_id) startBulkJob(d.job_id)
+    else if (r.ok) refetch()
+    else alert(typeof d?.detail === 'string' ? d.detail : 'Durum kontrolü başarısız')
+  }
+
+  const runAiReadyUpdate = async (ids?: number[]) => {
+    if (!sshOpsEnabled) {
+      alert(SSH_CRED_HINT)
+      return
+    }
+    const count = ids?.length ?? 0
+    const scope = count > 0 ? `${count} seçili Linux sunucuda` : 'Tüm Linux sunucularda'
+    if (!await showConfirm(
+      `${scope} SSH kimlik doğrulaması arka planda denenecek (global/server credential). ` +
+      'Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa AD/PAM hesap kilitlemesine yol açabilir. Devam?'
+    )) return
+    const body = count > 0 ? JSON.stringify({ server_ids: ids }) : undefined
+    const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, {
+      method: 'POST',
+      ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+    })
+    const d = await r.json().catch(() => ({}))
+    if (r.ok && d.job_id) startBulkJob(d.job_id)
+    else if (r.ok) refetch()
+    else alert(typeof d?.detail === 'string' ? d.detail : 'AI Ready güncelleme başarısız')
+  }
+
+  const runOsRefresh = async (ids?: number[]) => {
+    if (!sshOpsEnabled) {
+      alert(SSH_CRED_HINT)
+      return
+    }
+    const msg = ids && ids.length > 0
+      ? `${ids.length} Linux sunucuda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?`
+      : 'Tüm Linux sunucularda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?'
+    if (!await showConfirm(msg)) return
+    const r = await fetch('/api/v1/servers/refresh-os-info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: ids && ids.length > 0 ? JSON.stringify({ server_ids: ids }) : '{}',
+    })
+    const d = await r.json().catch(() => ({}))
+    if (r.ok && d.job_id) startBulkJob(d.job_id)
+    else if (r.ok) refetch()
+    else alert(typeof d?.detail === 'string' ? d.detail : 'OS yenileme başarısız')
+  }
+
+  const openSsh = (server: Server) => {
+    if (server.status !== 'ONLINE' || !server.ip_address) return
+    const w = window.open(
+      `/terminal/${server.id}?name=${encodeURIComponent(server.name)}&ip=${encodeURIComponent(server.ip_address)}`,
+      `ssh-${server.id}`,
+      'width=1200,height=700,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
+    )
+    if (!w) setSshTarget({ id: server.id, name: server.name, ip: server.ip_address })
+  }
+
   // Filtre değişince ilk sayfaya dön
   React.useEffect(() => {
     setPage(1)
-  }, [searchTerm, ipFilter, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter])
+  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter])
 
   const { data: serversPage, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['servers', 'linux', page, pageSize, searchTerm, ipFilter, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter],
+    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter],
     queryFn: () =>
       fetchServersPage<Server>({
         platform: 'linux',
         page,
         page_size: pageSize,
         q: searchTerm || undefined,
-        ip: ipFilter || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         hide_offline: !showOffline,
         ai_ready: aiReadyFilter === 'all' ? null : aiReadyFilter === 'true',
@@ -1198,9 +1331,31 @@ const Servers: React.FC = () => {
     placeholderData: (prev) => prev,
   })
 
+  const { data: globalCreds } = useQuery({
+    queryKey: ['settings', 'credentials'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/credentials/`)
+      if (!r.ok) return [] as Array<{ has_password?: boolean; has_private_key?: boolean }>
+      return r.json()
+    },
+    staleTime: 60_000,
+  })
+
   const servers = serversPage?.items ?? []
   const totalServers = serversPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
+  const globalSshReady = (globalCreds || []).some(c => c.has_password || c.has_private_key)
+  const selectedHaveSecret = selectedIdList.some(id => servers.find(s => s.id === id)?.has_ssh_secret)
+  const pageHaveSecret = servers.some(s => s.has_ssh_secret)
+  const sshOpsEnabled = globalSshReady || (selectedIdList.length > 0 ? selectedHaveSecret : pageHaveSecret)
+  const pageAllSelected = servers.length > 0 && servers.every(s => selectedIds.has(s.id))
+  const pageSomeSelected = servers.some(s => selectedIds.has(s.id))
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = pageSomeSelected && !pageAllSelected
+    }
+  }, [pageSomeSelected, pageAllSelected])
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -1241,7 +1396,14 @@ const Servers: React.FC = () => {
   const parseIp = (ip: string) => ip.split('.').map(part => Number(part) || 0)
 
   // Filtreler sunucu tarafında; burada yalnızca mevcut sayfayı sırala. NE = DB cache.
+  // Çevrimdışıları Göster açıkken OFFLINE kayıtlar listenin üstüne çıkar.
   const sortedServers = [...servers].sort((a, b) => {
+    if (showOffline) {
+      const aOff = a.status === 'OFFLINE' ? 0 : 1
+      const bOff = b.status === 'OFFLINE' ? 0 : 1
+      if (aOff !== bOff) return aOff - bOff
+    }
+
     let aValue: number | string = ''
     let bValue: number | string = ''
 
@@ -1262,6 +1424,20 @@ const Servers: React.FC = () => {
         aValue = a.server_type || ''
         bValue = b.server_type || ''
         break
+      case 'os': {
+        const osOf = (s: Server) =>
+          shortenOsLabel({
+            os_type: s.os_type,
+            os_version: s.os_version,
+            os_release_id: s.os_release_id,
+            os_version_id: s.os_version_id,
+            os_pretty: s.os_version || s.vm_guest_os_full,
+            vm_guest_os_full: s.vm_guest_os_full,
+          }).toLowerCase()
+        aValue = osOf(a)
+        bValue = osOf(b)
+        break
+      }
       case 'cpu':
         aValue = a.cpu_cores || 0
         bValue = b.cpu_cores || 0
@@ -1387,22 +1563,12 @@ const Servers: React.FC = () => {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Sunucu ara..."
+                placeholder="Hostname veya IP..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-64 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
-            </div>
-            {/* IP Filter */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="IP filtre..."
-                value={ipFilter}
-                onChange={(e) => setIpFilter(e.target.value)}
-                className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
             </div>
             {/* Show Offline Toggle */}
             <label className="flex items-center space-x-2 cursor-pointer">
@@ -1472,10 +1638,27 @@ const Servers: React.FC = () => {
 
           </div>
           <div className="flex items-center gap-2">
-            <ActionsDropdown servers={servers} refetch={() => { refetch() }} />
+            {selectedIds.size > 0 && (
+              <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/25 px-2.5 py-1 rounded-lg">
+                {selectedIds.size} seçili
+              </span>
+            )}
+            <ActionsDropdown
+              refetch={() => { refetch() }}
+              selectedIds={selectedIdList}
+              bulkJobId={bulkJobId}
+              setBulkJobId={setBulkJobId}
+              sshOpsEnabled={sshOpsEnabled}
+            />
           </div>
         </div>
       </div>
+
+      {!sshOpsEnabled && (
+        <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
+          {SSH_CRED_HINT} Durum kontrolü (TCP) credential gerektirmez.
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-cyber-card rounded-xl border border-white/[0.06] overflow-hidden">
@@ -1487,10 +1670,27 @@ const Servers: React.FC = () => {
             </colgroup>
             <thead>
               <tr className="bg-cyber-card/80 border-b border-white/[0.06] select-none">
+                <th className="relative px-2 py-3 text-left overflow-hidden">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={pageAllSelected}
+                    onChange={toggleSelectAllPage}
+                    className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
+                    title="Sayfadaki tümünü seç"
+                  />
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-col-resize group/rz hover:bg-blue-500/10"
+                    onMouseDown={e => onResizeMouseDown(0, e)}
+                  >
+                    <div className="w-0.5 h-4 bg-slate-600 group-hover/rz:bg-blue-400 transition-colors rounded-full" />
+                  </div>
+                </th>
                 {([
                   { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'name'   },
+                  { key: 'tip',    label: 'Tip',         sortable: true,  sortKey: 'type'   },
                   { key: 'status', label: 'Durum',       sortable: true,  sortKey: 'status' },
-                  { key: 'os',     label: 'OS / Kernel', sortable: false, sortKey: ''       },
+                  { key: 'os',     label: 'OS',          sortable: true,  sortKey: 'os'     },
                   { key: 'cpu',    label: 'CPU / RAM',   sortable: true,  sortKey: 'cpu'    },
                   { key: 'izleme', label: 'İzleme',      sortable: true,  sortKey: 'ai'     },
                   { key: 'action', label: '',           sortable: false, sortKey: '' },
@@ -1514,10 +1714,10 @@ const Servers: React.FC = () => {
                       )}
                     </div>
                     {/* Resize handle */}
-                    {ci < colWidths.length - 1 && (
+                    {ci + 1 < colWidths.length - 1 && (
                       <div
                         className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-col-resize group/rz hover:bg-blue-500/10"
-                        onMouseDown={e => onResizeMouseDown(ci, e)}
+                        onMouseDown={e => onResizeMouseDown(ci + 1, e)}
                       >
                         <div className="w-0.5 h-4 bg-slate-600 group-hover/rz:bg-blue-400 transition-colors rounded-full" />
                       </div>
@@ -1529,28 +1729,61 @@ const Servers: React.FC = () => {
             <tbody className="divide-y divide-slate-700">
               {sortedServers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
                     <p className="font-medium">Henüz sunucu yok</p>
                     <p className="text-sm mt-1">Sunucu eklemek için Entegrasyonlar modülünü kullanın (UCMDB import, hypervisor sync veya manuel host ekleme).</p>
                     <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
                   </td>
                 </tr>
-              ) : sortedServers.map((server) => (
+              ) : sortedServers.map((server) => {
+                const osLabelInput = {
+                  os_type: server.os_type,
+                  os_version: server.os_version,
+                  os_release_id: server.os_release_id,
+                  os_version_id: server.os_version_id,
+                  os_pretty: server.os_version || server.vm_guest_os_full,
+                  vm_guest_os_full: server.vm_guest_os_full,
+                }
+                const isSelected = selectedIds.has(server.id)
+                return (
                 <React.Fragment key={server.id}>
-                <tr className="hover:bg-white/[0.02] transition-colors cursor-pointer border-b border-white/[0.06]/50 group" onClick={() => setSelectedServer(server)}>
+                <tr
+                  className={`hover:bg-white/[0.02] transition-colors cursor-pointer border-b border-white/[0.06]/50 group ${isSelected ? 'bg-blue-500/10' : ''}`}
+                  onClick={(e) => {
+                    const el = e.target as HTMLElement
+                    if (el.closest('button, a, input, label')) return
+                    if (rowClickTimer.current) clearTimeout(rowClickTimer.current)
+                    rowClickTimer.current = window.setTimeout(() => {
+                      toggleSelect(server.id)
+                      rowClickTimer.current = null
+                    }, 200)
+                  }}
+                  onDoubleClick={(e) => {
+                    e.preventDefault()
+                    if (rowClickTimer.current) {
+                      clearTimeout(rowClickTimer.current)
+                      rowClickTimer.current = null
+                    }
+                    setSelectedServer(server)
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setContextMenu({ x: e.clientX, y: e.clientY, server })
+                  }}
+                >
+                  <td className="px-2 py-3" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(server.id)}
+                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
+                    />
+                  </td>
 
                   {/* ── Sunucu Adı + IP + Hostname ── */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-lg ${
-                        server.status === 'ONLINE'
-                          ? 'bg-green-500/20 ring-1 ring-green-500/40'
-                          : server.status === 'OFFLINE'
-                          ? 'bg-white/[0.07]/50 ring-1 ring-slate-600/40'
-                          : 'bg-yellow-500/20 ring-1 ring-yellow-500/40'
-                      }`}>
-                        <span className="text-[10px] font-bold text-slate-400">{server.server_type === 'PHYSICAL' ? 'PHY' : 'VM'}</span>
-                      </div>
+                      <OsIcon os={osLabelInput} size={26} className="mt-0.5" />
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors truncate max-w-[180px]">
                           {server.name}
@@ -1567,6 +1800,11 @@ const Servers: React.FC = () => {
                         </div>
                       </div>
                     </div>
+                  </td>
+
+                  {/* ── Tip ── */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="text-sm text-slate-300">{serverTypeLabel(server.server_type)}</span>
                   </td>
 
                   {/* ── Durum ── */}
@@ -1589,52 +1827,24 @@ const Servers: React.FC = () => {
                     )}
                   </td>
 
-                  {/* ── OS / Kernel ── */}
+                  {/* ── OS (Level 1 ile aynı: kısa etiket + hover tam ad) ── */}
                   <td className="px-4 py-3">
-                    {(() => {
-                      const osTypeLower = (server.os_type || '').toLowerCase()
-                      const osReleaseLower = (server.os_release_id || '').toLowerCase()
-                      const osVersionLower = (server.os_version || '').toLowerCase()
-                      const isWindows = osTypeLower.includes('windows') || osReleaseLower.includes('windows') || osVersionLower.includes('windows')
-                      const icon = isWindows ? 'WIN' :
-                                   server.os_release_id === 'rhel'   ? 'RH' :
-                                   server.os_release_id === 'ol'     ? 'OE' :
-                                   server.os_release_id === 'rocky'  ? 'RK' :
-                                   server.os_release_id === 'ubuntu' ? 'UB' :
-                                   server.os_release_id === 'debian' ? 'DEB' :
-                                   osVersionLower.includes('red hat') ? 'RH' :
-                                   osVersionLower.includes('oracle')  ? 'OE' :
-                                   osVersionLower.includes('rocky')   ? 'RK' :
-                                   osVersionLower.includes('ubuntu')  ? 'UB' :
-                                   osVersionLower.includes('suse') || osTypeLower.includes('sles') ? 'SUSE' :
-                                   osTypeLower.includes('linux') || osReleaseLower ? 'LNX' : '?'
-                      const iconColor = isWindows ? 'text-blue-400' : icon === '?' ? 'text-slate-600' : 'text-green-400'
-                      const osName = isWindows
-                        ? (server.os_type || server.os_version || 'Windows')
-                        : server.os_release_id
-                          ? `${server.os_release_id.toUpperCase()} ${server.os_version_id || ''}`
-                          : server.os_version?.replace('(Plow)','').replace('(Ootpa)','').trim() || server.os_type || null
-                      return (
-                        <div className="flex items-start gap-2">
-                          <span className={`text-[10px] font-bold mt-0.5 flex-shrink-0 bg-slate-700/60 px-1.5 py-0.5 rounded ${iconColor}`}>{icon}</span>
-                          <div className="min-w-0">
-                            {osName ? (
-                              <div className="text-sm font-medium text-white truncate max-w-[180px]" title={osName}>
-                                {osName}
-                              </div>
-                            ) : (
-                              <div className="text-xs text-slate-600 italic">Bilinmiyor</div>
-                            )}
-                            {server.kernel_version && (
-                              <div className="text-[11px] text-slate-500 font-mono truncate max-w-[200px] mt-0.5"
-                                   title={server.kernel_version}>
-                                {server.kernel_version}
-                              </div>
-                            )}
-                          </div>
+                    <div className="min-w-0">
+                      <div
+                        className="text-sm text-slate-200 truncate max-w-[200px]"
+                        title={fullOsLabel(osLabelInput) || undefined}
+                      >
+                        {shortenOsLabel(osLabelInput)}
+                      </div>
+                      {server.kernel_version && (
+                        <div
+                          className="text-[11px] text-slate-500 font-mono truncate max-w-[200px] mt-0.5"
+                          title={server.kernel_version}
+                        >
+                          {server.kernel_version}
                         </div>
-                      )
-                    })()}
+                      )}
+                    </div>
                   </td>
 
                   {/* ── CPU / RAM ── */}
@@ -1659,22 +1869,25 @@ const Servers: React.FC = () => {
                     </div>
                   </td>
 
-                  {/* ── İzleme (AI + Metrik) ── */}
+                  {/* ── İzleme (AI Ready + Metrik) ── */}
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                    <div className="flex flex-wrap gap-1.5">
-                      {server.ai_ready && server.status === 'ONLINE' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/25">
-                          AI
+                    <div className="flex flex-col gap-1">
+                      {server.ai_ready ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 w-fit">
+                          <ShieldCheck size={11} />
+                          AI Ready
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-slate-500/10 text-slate-400 border border-slate-600/40 w-fit">
+                          AI Ready değil
                         </span>
                       )}
                       {server.node_exporter?.running || server.node_exporter?.installed ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/25">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/25 w-fit">
                           <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
                           Metrik
                         </span>
-                      ) : (
-                        <span className="text-xs text-slate-600 italic">—</span>
-                      )}
+                      ) : null}
                     </div>
                   </td>
 
@@ -1683,18 +1896,7 @@ const Servers: React.FC = () => {
                     <div className="flex items-center justify-end gap-1">
                       {server.status === 'ONLINE' && server.ip_address && (
                         <button
-                          onClick={() => {
-                            // Yeni popup pencerede aç
-                            const w = window.open(
-                              `/terminal/${server.id}?name=${encodeURIComponent(server.name)}&ip=${encodeURIComponent(server.ip_address)}`,
-                              `ssh-${server.id}`,
-                              'width=1200,height=700,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
-                            )
-                            if (!w) {
-                              // Popup engellenirse modal aç
-                              setSshTarget({id: server.id, name: server.name, ip: server.ip_address})
-                            }
-                          }}
+                          onClick={() => openSsh(server)}
                           className="px-2.5 py-1.5 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono"
                           title="SSH Terminal Aç (Yeni Pencere)"
                         >
@@ -1723,13 +1925,13 @@ const Servers: React.FC = () => {
                   </td>
                 </tr>
                 </React.Fragment>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
         {sortedServers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
-            {searchTerm || ipFilter || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
+            {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
               ? 'Filtreye uygun sunucu bulunamadı' 
               : 'Henüz sunucu yok — envanter Entegrasyonlar üzerinden eklenir'}
           </div>
@@ -1765,6 +1967,146 @@ const Servers: React.FC = () => {
       </div>
 
     </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-[60] w-64 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900/95 shadow-2xl shadow-black/50 backdrop-blur-md"
+          style={{
+            left: Math.min(contextMenu.x, typeof window !== 'undefined' ? window.innerWidth - 280 : contextMenu.x),
+            top: Math.min(contextMenu.y, typeof window !== 'undefined' ? window.innerHeight - 360 : contextMenu.y),
+          }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <div className="border-b border-slate-700/80 bg-slate-800/60 px-3 py-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <OsIcon
+                os={{
+                  os_type: contextMenu.server.os_type,
+                  os_version: contextMenu.server.os_version,
+                  os_release_id: contextMenu.server.os_release_id,
+                  os_version_id: contextMenu.server.os_version_id,
+                  os_pretty: contextMenu.server.os_version || contextMenu.server.vm_guest_os_full,
+                  vm_guest_os_full: contextMenu.server.vm_guest_os_full,
+                }}
+                size={22}
+              />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">{contextMenu.server.name}</div>
+                <div className="truncate font-mono text-[11px] text-slate-400">
+                  {contextMenu.server.ip_address || '—'}
+                  {getContextOpIds(contextMenu.server).length > 1
+                    ? ` · ${getContextOpIds(contextMenu.server).length} seçili`
+                    : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="py-1.5">
+            <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              İşlemler
+            </div>
+            {([
+              {
+                label: 'Durum kontrolü',
+                hint: 'TCP erişilebilirlik',
+                icon: Activity,
+                action: () => { setContextMenu(null); runCheckHealth(getContextOpIds(contextMenu.server)) },
+              },
+              {
+                label: 'AI Ready Güncelle',
+                hint: 'SSH kimlik doğrulama',
+                icon: ShieldCheck,
+                disabled: !sshOpsEnabled,
+                action: () => { setContextMenu(null); runAiReadyUpdate(getContextOpIds(contextMenu.server)) },
+              },
+              {
+                label: 'OS Bilgisini Yenile',
+                hint: 'OS / Kernel / CPU / RAM',
+                icon: HardDrive,
+                disabled: !sshOpsEnabled,
+                action: () => { setContextMenu(null); runOsRefresh(getContextOpIds(contextMenu.server)) },
+              },
+            ] as Array<{ label: string; hint: string; icon: typeof Activity; action: () => void; disabled?: boolean }>).map(item => (
+              <button
+                key={item.label}
+                type="button"
+                disabled={item.disabled}
+                title={item.disabled ? SSH_CRED_HINT : item.hint}
+                onClick={item.action}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-300 ring-1 ring-slate-700/80">
+                  <item.icon size={14} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm text-slate-100">{item.label}</span>
+                  <span className="block text-[11px] text-slate-500">{item.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mx-2 border-t border-slate-700/70" />
+
+          <div className="py-1.5">
+            {contextMenu.server.status === 'ONLINE' && contextMenu.server.ip_address && (
+              <button
+                type="button"
+                onClick={() => { setContextMenu(null); openSsh(contextMenu.server) }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-emerald-500/10"
+              >
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30">
+                  <Terminal size={14} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm text-slate-100">SSH Terminal</span>
+                  <span className="block text-[11px] text-slate-500">Yeni pencerede aç</span>
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => { setContextMenu(null); setSelectedServer(contextMenu.server) }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-blue-500/10"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-300 ring-1 ring-slate-700/80">
+                <Info size={14} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm text-slate-100">Detay</span>
+                <span className="block text-[11px] text-slate-500">Sunucu paneli</span>
+              </span>
+            </button>
+          </div>
+
+          <div className="mx-2 border-t border-slate-700/70" />
+
+          <div className="py-1.5 pb-2">
+            <button
+              type="button"
+              onClick={async () => {
+                const ids = getContextOpIds(contextMenu.server)
+                setContextMenu(null)
+                const msg = ids.length > 1
+                  ? `${ids.length} sunucuyu silmek istediğinize emin misiniz?`
+                  : 'Bu sunucuyu silmek istediğinize emin misiniz?'
+                if (!await showConfirm(msg)) return
+                for (const id of ids) await deleteMutation.mutateAsync(id)
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-red-500/10"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-500/15 text-red-300 ring-1 ring-red-500/30">
+                <Trash2 size={14} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm text-red-300">Sil</span>
+                <span className="block text-[11px] text-red-400/70">Kalıcı olarak kaldır</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {selectedServer && (
         <ServerDetailDrawer server={selectedServer} onClose={() => setSelectedServer(null)} />

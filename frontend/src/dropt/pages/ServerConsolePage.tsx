@@ -179,9 +179,17 @@ export function ServerConsolePage() {
     if (!Number.isFinite(serverId)) return;
     setFactsLoading(true);
     setFactsError(null);
+    setError(null);
     try {
-      const [s, f] = await Promise.all([getServer(token, serverId), getServerFacts(token, serverId)]);
+      const s = await getServer(token, serverId);
       setServer(s);
+      if (s.status === "unreachable") {
+        setError(
+          "Sunucu unreachable — otomasyon SSH bağlantısı yok. Konsol açılamaz. Level 1 envanterinden «Bağlantıyı test et» kullanın.",
+        );
+        return;
+      }
+      const f = await getServerFacts(token, serverId);
       setFacts(f);
       if ((!f.ok && !f.reachable) || f.error) {
         const detail = (f.error || "").trim() || "SSH bağlantısı kurulamadı";

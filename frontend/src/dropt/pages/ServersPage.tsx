@@ -28,6 +28,7 @@ import {
 import {
   createServer,
   deleteServer,
+  getAdminSettings,
   getServerDefaults,
   importServerRow,
   listServers,
@@ -41,6 +42,8 @@ import {
 } from "@dropt/api";
 import { getToken as getAinewToken } from "../../auth/authStore";
 import { API_BASE_URL } from "../../config/api";
+import { fullOsLabel, shortenOsLabel } from "../../lib/osLabel";
+import { OsIcon } from "../../components/OsIcon";
 import { IconButton } from "@dropt/components/IconButton";
 import { PaginationBar } from "@dropt/components/PaginationBar";
 import { buildOpsUrl, SERVER_OPS, ServerOpsMenu, type OpsTarget } from "@dropt/components/ServerOpsMenu";
@@ -142,6 +145,10 @@ export function ServersPage({
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [sorting, setSorting] = useState<SortingState>([{ id: "hostname", desc: false }]);
   const [automationUsername, setAutomationUsername] = useState("root");
+  const [automationPasswordSet, setAutomationPasswordSet] = useState(true);
+  const automationOpsEnabled = automationPasswordSet;
+  const AUTOMATION_CRED_HINT =
+    "Önce Level 1 → Ayarlar’da otomasyon kullanıcı şifresini kaydedin (vCenter / Linux envanter kaydı yeterli değildir).";
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ServerPublic | null>(null);
@@ -204,6 +211,9 @@ export function ServersPage({
 
   useEffect(() => {
     void getServerDefaults(token).then((d) => setAutomationUsername(d.username));
+    void getAdminSettings(token)
+      .then((s) => setAutomationPasswordSet(Boolean(s.automation_password_set)))
+      .catch(() => setAutomationPasswordSet(false));
   }, [token]);
 
   useEffect(() => {
@@ -260,6 +270,10 @@ export function ServersPage({
     async (server: ServerPublic) => {
       setInfo(null);
       setError(null);
+      if (!automationOpsEnabled) {
+        setError(AUTOMATION_CRED_HINT);
+        return;
+      }
       try {
         const result = await testServerConnection(token, server.id);
         setInfo(`${result.hostname}: ${result.last_connection_message}`);
@@ -268,7 +282,7 @@ export function ServersPage({
         setError(err instanceof Error ? err.message : "Test failed");
       }
     },
-    [token, load],
+    [token, load, automationOpsEnabled],
   );
 
   const onDelete = useCallback(
@@ -298,13 +312,17 @@ export function ServersPage({
 
   const openOpsFor = useCallback((servers: ServerPublic[], x: number, y: number) => {
     if (servers.length === 0) return;
+    if (!automationOpsEnabled) {
+      setError(AUTOMATION_CRED_HINT);
+      return;
+    }
     setCtxMenu({
       open: true,
       x,
       y,
       target: { ids: servers.map((s) => s.id), hostnames: servers.map((s) => s.hostname) },
     });
-  }, []);
+  }, [automationOpsEnabled]);
 
   const columns = useMemo<ColumnDef<ServerPublic>[]>(() => {
     const cols: ColumnDef<ServerPublic>[] = [
@@ -348,11 +366,19 @@ export function ServersPage({
         header: ({ column }) => (
           <SortableHeader label={t("col_os")} sorted={column.getIsSorted()} />
         ),
-        cell: ({ row }) => (
-          <span className="block max-w-[200px] truncate text-xs" title={row.original.os_pretty || ""}>
-            {row.original.os_pretty || "—"}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const pretty = row.original.os_pretty || "";
+          const short = shortenOsLabel({ os_pretty: pretty, os_version: pretty });
+          const full = fullOsLabel({ os_pretty: pretty, os_version: pretty }) || pretty;
+          return (
+            <div className="flex max-w-[220px] items-center gap-2">
+              <OsIcon os={pretty || "linux"} size={18} />
+              <span className="truncate text-xs" title={full || undefined}>
+                {short !== "—" ? short : "—"}
+              </span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "machine_type",
@@ -387,15 +413,6 @@ export function ServersPage({
         cell: ({ row }) => (
           <div className="flex flex-wrap items-center gap-1">
             {statusBadge(row.original.status)}
-            {row.original.ainew_ai_ready === false ? (
-              <Badge variant="danger" title="ainew AI Ready değil — SSH/op riski">
-                not AI Ready
-              </Badge>
-            ) : row.original.ainew_ai_ready === true ? (
-              <Badge variant="success" title="ainew AI Ready">
-                AI Ready
-              </Badge>
-            ) : null}
           </div>
         ),
       },
@@ -475,7 +492,12 @@ export function ServersPage({
           return (
             <div className="flex justify-end gap-1">
               {canTestConnection ? (
-                <IconButton icon={Wifi} label={t("test_connection")} onClick={() => void onTest(s)} />
+                <IconButton
+                  icon={Wifi}
+                  label={t("test_connection")}
+                  disabled={!automationOpsEnabled}
+                  onClick={() => void onTest(s)}
+                />
               ) : null}
               {showInventoryCrud ? (
                 <>
@@ -494,7 +516,7 @@ export function ServersPage({
       });
     }
     return cols;
-  }, [canTestConnection, showInventoryCrud, onTest, openEdit, onDelete, t, navigate]);
+  }, [canTestConnection, showInventoryCrud, onTest, openEdit, onDelete, t, navigate, automationOpsEnabled]);
 
   const table = useReactTable({
     data: items,
@@ -533,6 +555,10 @@ export function ServersPage({
 
   async function onBulkTest() {
     if (selected.length === 0 || bulkTesting) return;
+    if (!automationOpsEnabled) {
+      setError(AUTOMATION_CRED_HINT);
+      return;
+    }
     const targets = [...selected];
     setInfo(null);
     setError(null);
@@ -761,7 +787,7 @@ export function ServersPage({
 
   return (
     <div className="flex h-full flex-col">
-      {level1Mode && items.some((s) => s.ainew_ai_ready === false) ? (
+      {level1Mode && !automationOpsEnabled ? (
         <div
           className="border-b px-4 py-2 text-xs sm:text-sm"
           style={{
@@ -770,9 +796,7 @@ export function ServersPage({
             color: "var(--text-secondary)",
           }}
         >
-          Bazı sunucular ainew’de <strong>AI Ready değil</strong>. Operasyon SSH denemesi hesap
-          kilitlemesine yol açabilir — önce otomasyon kullanıcısını hazırlayıp Linux → AI Ready
-          Güncelle çalıştırın. Zorunluysa iş oluştururken onay isteği çıkar.
+          {AUTOMATION_CRED_HINT}
         </div>
       ) : null}
       {level1Mode && headerSlot
@@ -795,8 +819,14 @@ export function ServersPage({
                   <IconButton
                     icon={CloudDownload}
                     label="Envanteri senkronize et"
-                    onClick={() => onSyncAinewInventory()}
-                    disabled={syncingAinewInventory}
+                    onClick={() => {
+                      if (!automationOpsEnabled) {
+                        setError(AUTOMATION_CRED_HINT);
+                        return;
+                      }
+                      onSyncAinewInventory();
+                    }}
+                    disabled={syncingAinewInventory || !automationOpsEnabled}
                     iconClassName={syncingAinewInventory ? "animate-spin" : undefined}
                   />
                 ) : null}
@@ -890,7 +920,7 @@ export function ServersPage({
                   <IconButton
                     icon={Wifi}
                     label={t("bulk_test")}
-                    disabled={bulkTesting}
+                    disabled={bulkTesting || !automationOpsEnabled}
                     onClick={() => void onBulkTest()}
                   />
                 ) : null}
@@ -898,6 +928,7 @@ export function ServersPage({
                   size="sm"
                   variant="secondary"
                   className="h-8 gap-2"
+                  disabled={!automationOpsEnabled}
                   onClick={(e) => {
                     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                     openOpsFor(selected, rect.left, rect.bottom + 4);
@@ -992,7 +1023,15 @@ export function ServersPage({
                           row.toggleSelected(true);
                         }
                       }}
-                      onDoubleClick={() => navigate(`${consoleBase}/${row.original.id}`)}
+                      onDoubleClick={() => {
+                        if (row.original.status === "unreachable") {
+                          window.alert(
+                            "Sunucu unreachable — otomasyon SSH bağlantısı yok. Önce «Bağlantıyı test et» ile doğrulayın.",
+                          );
+                          return;
+                        }
+                        navigate(`${consoleBase}/${row.original.id}`);
+                      }}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         const inMulti =

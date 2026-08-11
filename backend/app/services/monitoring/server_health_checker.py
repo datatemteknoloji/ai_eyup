@@ -195,14 +195,19 @@ class ServerHealthChecker:
         db: Session,
         on_progress=None,
         cancel_check=None,
+        server_ids=None,
     ) -> Dict[str, int]:
         """Tüm sunucuların durumlarını paralel kontrol et ve güncelle.
 
         on_progress(done, total) — opsiyonel UI ilerleme callback'i.
         cancel_check() — True dönerse kalan işler iptal edilir (partial stats döner).
+        server_ids — verilirse yalnızca bu ID'ler kontrol edilir.
         """
         try:
-            servers = db.query(Server).all()
+            q = db.query(Server)
+            if server_ids:
+                q = q.filter(Server.id.in_(list(server_ids)))
+            servers = q.all()
             stats = {
                 "checked": 0,
                 "updated": 0,

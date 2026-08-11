@@ -981,19 +981,6 @@ export async function createJob(
       message?: string;
       hosts?: Array<{ hostname?: string; ip?: string }>;
     } | null;
-    if (detail && typeof detail === "object" && detail.code === "not_ai_ready" && !payload.force_not_ai_ready) {
-      const msg =
-        detail.message ||
-        "AI Ready olmayan sunucular seçili. SSH denemesi hesap kilitlemesine yol açabilir.";
-      const ok = window.confirm(
-        `${msg}\n\nOtomasyon kullanıcısı hazırsa «Tamam» ile yine de deneyin. Değilse İptal.`,
-      );
-      if (!ok) throw new Error("İşlem iptal edildi (AI Ready soft-guard)");
-      return createJob(token, {
-        ...body,
-        payload: { ...payload, force_not_ai_ready: true },
-      });
-    }
     const msg =
       detail && typeof detail === "object" && typeof detail.message === "string"
         ? detail.message
