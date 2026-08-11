@@ -25,10 +25,10 @@
   --bg-hover:     #131c2f;
   --bg-overlay:   #1a2540;
 
-  /* Text */
+  /* Text — secondary/muted must stay readable on --bg-surface (#0d1422) */
   --text-primary:   #e8edf5;
-  --text-secondary: #8a9bbf;
-  --text-muted:     #3d4f6e;
+  --text-secondary: #c5d0e8;
+  --text-muted:     #9aabcb;
 
   /* Borders */
   --border-dim:   rgba(255,255,255,0.06);
@@ -809,6 +809,34 @@ body {
 .nav-active {
   background: var(--accent-muted);
   color: #fff;
+}
+
+/* Main app sidebar — inactive labels/icons must stay high-contrast on dark */
+aside.app-sidebar nav a:not(.bg-gradient-to-r),
+aside.app-sidebar nav button:not(.bg-gradient-to-r) {
+  color: var(--text-secondary);
+}
+aside.app-sidebar nav a:not(.bg-gradient-to-r):hover,
+aside.app-sidebar nav button:not(.bg-gradient-to-r):hover {
+  color: var(--text-primary);
+}
+aside.app-sidebar nav a.bg-gradient-to-r,
+aside.app-sidebar nav a.bg-gradient-to-r:hover {
+  color: #ffffff;
+}
+aside.app-sidebar nav .app-sidebar-section {
+  color: var(--text-muted);
+}
+aside.app-sidebar nav svg.text-slate-500,
+aside.app-sidebar nav .text-slate-500 {
+  color: var(--text-muted);
+}
+html[data-theme="light"] aside.app-sidebar nav a:not(.bg-gradient-to-r),
+html[data-theme="light"] aside.app-sidebar nav button:not(.bg-gradient-to-r) {
+  color: var(--text-secondary);
+}
+html[data-theme="light"] aside.app-sidebar nav a.bg-gradient-to-r {
+  color: #ffffff !important;
 }
 
 /* ── Progress Bar Glow ───────────────────────────────────────────────────── */

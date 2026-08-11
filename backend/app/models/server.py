@@ -46,6 +46,14 @@ class Server(Base):
     vm_datastore      = Column(String(255), nullable=True)        # Birincil datastore / storage domain adı
     vm_hardware_version = Column(String(50), nullable=True)       # vmx-19 / v4 vb.
     vm_last_sync      = Column(DateTime(timezone=True), nullable=True)  # Son hypervisor sync zamanı
+    # P0/P1 virt enrichment — ESXi yerleşim, OS tam adı, disk listesi, QuickStats özeti
+    vm_host_name      = Column(String(255), nullable=True, index=True)
+    vm_host_ref       = Column(String(64),  nullable=True, index=True)
+    vm_guest_os_full  = Column(String(255), nullable=True)
+    vm_disks          = Column(JSON,        nullable=True)  # [{label, capacity_gb, thin, datastore}]
+    vm_cpu_usage_mhz  = Column(Integer,     nullable=True)
+    vm_mem_active_mb  = Column(Integer,     nullable=True)
+    vm_stats_as_of    = Column(DateTime(timezone=True), nullable=True)
 
     # Node Exporter durum cache (background task 5dk'da bir gunceller)
     node_exporter_installed = Column(Boolean, default=False)

@@ -959,8 +959,13 @@ CHAT_SSH_FLEET_CAP = 64
 
 
 def _effective_fleet_cap(cap: Optional[int] = None) -> int:
+    try:
+        from app.services.chat_full_scan_policy import is_full_scan_request
+        hi = 20000 if is_full_scan_request() else 512
+    except Exception:
+        hi = 512
     if cap is not None:
-        return max(1, min(int(cap), 512))
+        return max(1, min(int(cap), hi))
     try:
         from app.services.chat_fleet_policy import get_chat_ssh_fleet_cap
         return get_chat_ssh_fleet_cap(CHAT_SSH_FLEET_CAP)

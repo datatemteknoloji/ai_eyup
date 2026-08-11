@@ -2,11 +2,11 @@
 Servers API endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.core.inventory_guard import require_integrations_inventory
 from app.services.inventory_dedup import tag_inventory_source
 from app.models.server import Server
@@ -19,6 +19,10 @@ router = APIRouter()
 
 _LIST_PAGE_SIZE_DEFAULT = 50
 _LIST_PAGE_SIZE_MAX = 200
+
+# Create sonrası SSH/OS probe — UI'yi bloklamamak için kısa timeout
+_CREATE_SSH_CONNECT_TIMEOUT = 6.0
+_CREATE_SSH_CMD_TIMEOUT = 12
 
 
 def _server_list_item(
@@ -651,32 +655,34 @@ def list_ai_ready_servers(
         raise HTTPException(status_code=500, detail=f"Error listing AI ready servers: {str(e)}")
 
 @router.post("/", response_model=ServerResponse, status_code=201)
-async def create_server(server: ServerCreate, request: Request, db: Session = Depends(get_db)):
-    """Yeni sunucu ekle (yalnızca Entegrasyonlar)"""
+def create_server(
+    server: ServerCreate,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Yeni sunucu ekle (yalnızca Entegrasyonlar).
+
+    DB kaydı hemen döner; SSH OS probe + Dropt projeksiyonu arka planda yapılır.
+    (Eski davranış create isteğini 20–60s+ bekletip UI'de 'Ekleniyor...' donmasına yol açıyordu.)
+    """
     require_integrations_inventory(request)
     try:
-        # Aynı isimde sunucu var mı kontrol et
         existing = db.query(Server).filter(Server.name == server.name).first()
         if existing:
             raise HTTPException(status_code=400, detail=f"Server with name '{server.name}' already exists")
-        
-        # Yeni sunucu oluştur
-        # Status için geçerli değerler: ONLINE, OFFLINE, WARNING, CRITICAL
+
         status = server.status or "OFFLINE"
         if status.upper() not in ["ONLINE", "OFFLINE", "WARNING", "CRITICAL"]:
             status = "OFFLINE"
-        
-        # IP adresi zorunlu
+
         if not server.ip_address or not server.ip_address.strip():
             raise HTTPException(status_code=400, detail="IP adresi zorunludur")
-        
-        # hostname ve ip_address NOT NULL olduğu için default değerler ekle
+
         hostname = server.hostname or server.name
         ip_address = server.ip_address.strip()
-        
-        # server_type NOT NULL olduğu için default değer ekle
         server_type = server.server_type or "VIRTUAL"
-        
+
         db_server = Server(
             name=server.name,
             hostname=hostname,
@@ -688,9 +694,9 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
             cpu_cores=server.cpu_cores or 0,
             memory_gb=server.memory_gb or 0,
             ai_ready=server.ai_ready or False,
-            connection_config=server.connection_config or {}
+            connection_config=server.connection_config or {},
         )
-        
+
         db.add(db_server)
         db.commit()
         db.refresh(db_server)
@@ -712,67 +718,6 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
                 flag_modified(db_server, "connection_config")
                 db.commit()
                 db.refresh(db_server)
-        
-        # SSH ile baglantı test et ve sunucu bilgilerini guncelle
-        if db_server.connection_config.get("username") and db_server.ip_address:
-            try:
-                from app.services.ssh_manager import SSHManager
-                ssh = SSHManager(
-                    host=db_server.ip_address,
-                    username=db_server.connection_config.get("username"),
-                    password=db_server.connection_config.get("password"),
-                    private_key=db_server.connection_config.get("private_key"),
-                    port=db_server.connection_config.get("port", 22),
-                )
-                if ssh.connect():
-                    db_server.ai_ready = True
-                    db_server.status = "ONLINE"
-                    # OS bilgisini al
-                    _, os_out, _ = ssh.execute_command(
-                        "cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d \'\""
-                    )
-                    if os_out.strip():
-                        db_server.os_version = os_out.strip()
-                    # Kernel
-                    _, kernel_out, _ = ssh.execute_command("uname -r")
-                    if kernel_out.strip():
-                        db_server.kernel_version = kernel_out.strip()
-                        db_server.os_type = db_server.os_type or "linux"
-                    # CPU & RAM
-                    _, cpu_out, _ = ssh.execute_command("nproc")
-                    if cpu_out.strip().isdigit():
-                        db_server.cpu_cores = int(cpu_out.strip())
-                    _, mem_out, _ = ssh.execute_command(
-                        "free -g 2>/dev/null | awk '/^Mem:/{print $2}'"
-                    )
-                    if mem_out.strip().isdigit():
-                        db_server.memory_gb = int(mem_out.strip())
-                    # Fiziksel / sanal otomatik tespit (datatem / connection user)
-                    try:
-                        from app.services.virt_detect import DETECT_SCRIPT, apply_detected_type, parse_detect_stdout
-                        dok, dout, _ = ssh.execute_command(DETECT_SCRIPT, cmd_timeout=25)
-                        if dok or dout:
-                            det = parse_detect_stdout(dout)
-                            apply_detected_type(
-                                db_server,
-                                server_type=det["server_type"],
-                                virtualization=str(det.get("virtualization") or ""),
-                            )
-                    except Exception as virt_err:  # noqa: BLE001
-                        logger.debug("virt detect on create: %s", virt_err)
-                    ssh.close()
-                else:
-                    db_server.ai_ready = False
-                    db_server.status = "OFFLINE"
-                    if not db_server.hypervisor_id and (db_server.server_type or "").upper() not in ("PHYSICAL", "VIRTUAL"):
-                        db_server.server_type = "UNKNOWN"
-                db.commit()
-                db.refresh(db_server)
-            except Exception as ssh_err:
-                db_server.ai_ready = False
-                logger.warning(f"SSH connect failed for new server {db_server.name}: {ssh_err}")
-                db.commit()
-                db.refresh(db_server)
 
         tag_inventory_source(db_server, "manual", {"server_type": server_type})
         from sqlalchemy.orm.attributes import flag_modified
@@ -780,12 +725,8 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
         db.commit()
         db.refresh(db_server)
 
-        # Level 1 Ops uyumu: ainew SoT → Dropt projeksiyon (best-effort)
-        try:
-            from app.services.level1_inventory import best_effort_ensure_after_ainew_create
-            best_effort_ensure_after_ainew_create(db_server, actor_username="integrations")
-        except Exception as ens_err:  # noqa: BLE001
-            logger.warning("Dropt ensure after create skipped: %s", ens_err)
+        server_id = db_server.id
+        background_tasks.add_task(_enrich_server_after_create, server_id)
 
         return {
             "id": db_server.id,
@@ -801,13 +742,111 @@ async def create_server(server: ServerCreate, request: Request, db: Session = De
             "ai_ready": db_server.ai_ready,
             "connection_config": _mask_conn_config(db_server.connection_config),
             "created_at": db_server.created_at,
-            "updated_at": db_server.updated_at
+            "updated_at": db_server.updated_at,
         }
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error creating server: {str(e)}")
+
+
+def _enrich_server_after_create(server_id: int) -> None:
+    """Create sonrası SSH probe + Dropt — ayrı session, UI'yi bloklamaz."""
+    db = SessionLocal()
+    try:
+        db_server = db.query(Server).filter(Server.id == server_id).first()
+        if not db_server:
+            return
+
+        if db_server.connection_config.get("username") and db_server.ip_address:
+            try:
+                from app.services.ssh_manager import SSHManager
+                ssh = SSHManager(
+                    host=db_server.ip_address,
+                    username=db_server.connection_config.get("username"),
+                    password=db_server.connection_config.get("password"),
+                    private_key=db_server.connection_config.get("private_key"),
+                    port=db_server.connection_config.get("port", 22),
+                )
+                if ssh.connect(
+                    retries=1,
+                    timeout=_CREATE_SSH_CONNECT_TIMEOUT,
+                    banner_timeout=_CREATE_SSH_CONNECT_TIMEOUT,
+                    auth_timeout=_CREATE_SSH_CONNECT_TIMEOUT,
+                ):
+                    db_server.ai_ready = True
+                    db_server.status = "ONLINE"
+                    _, os_out, _ = ssh.execute_command(
+                        "cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'",
+                        cmd_timeout=_CREATE_SSH_CMD_TIMEOUT,
+                    )
+                    if os_out.strip():
+                        db_server.os_version = os_out.strip()
+                    _, kernel_out, _ = ssh.execute_command(
+                        "uname -r", cmd_timeout=_CREATE_SSH_CMD_TIMEOUT,
+                    )
+                    if kernel_out.strip():
+                        db_server.kernel_version = kernel_out.strip()
+                        db_server.os_type = db_server.os_type or "linux"
+                    _, cpu_out, _ = ssh.execute_command(
+                        "nproc", cmd_timeout=_CREATE_SSH_CMD_TIMEOUT,
+                    )
+                    if cpu_out.strip().isdigit():
+                        db_server.cpu_cores = int(cpu_out.strip())
+                    _, mem_out, _ = ssh.execute_command(
+                        "free -g 2>/dev/null | awk '/^Mem:/{print $2}'",
+                        cmd_timeout=_CREATE_SSH_CMD_TIMEOUT,
+                    )
+                    if mem_out.strip().isdigit():
+                        db_server.memory_gb = int(mem_out.strip())
+                    try:
+                        from app.services.virt_detect import DETECT_SCRIPT, apply_detected_type, parse_detect_stdout
+                        dok, dout, _ = ssh.execute_command(
+                            DETECT_SCRIPT, cmd_timeout=_CREATE_SSH_CMD_TIMEOUT,
+                        )
+                        if dok or dout:
+                            det = parse_detect_stdout(dout)
+                            apply_detected_type(
+                                db_server,
+                                server_type=det["server_type"],
+                                virtualization=str(det.get("virtualization") or ""),
+                            )
+                    except Exception as virt_err:  # noqa: BLE001
+                        logger.debug("virt detect on create (bg): %s", virt_err)
+                    ssh.close()
+                else:
+                    db_server.ai_ready = False
+                    db_server.status = "OFFLINE"
+                    if not db_server.hypervisor_id and (db_server.server_type or "").upper() not in ("PHYSICAL", "VIRTUAL"):
+                        db_server.server_type = "UNKNOWN"
+                db.commit()
+            except Exception as ssh_err:
+                db.rollback()
+                try:
+                    db_server = db.query(Server).filter(Server.id == server_id).first()
+                    if db_server:
+                        db_server.ai_ready = False
+                        db.commit()
+                except Exception:
+                    db.rollback()
+                logger.warning("SSH enrich failed for new server id=%s: %s", server_id, ssh_err)
+
+        try:
+            from app.services.level1_inventory import best_effort_ensure_after_ainew_create
+            row = db.query(Server).filter(Server.id == server_id).first()
+            if row:
+                best_effort_ensure_after_ainew_create(row, actor_username="integrations")
+        except Exception as ens_err:  # noqa: BLE001
+            logger.warning("Dropt ensure after create (bg) skipped: %s", ens_err)
+    except Exception as e:
+        logger.warning("enrich_server_after_create failed id=%s: %s", server_id, e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 @router.put("/{server_id}", response_model=ServerResponse)
 async def update_server(server_id: int, server: ServerUpdate, db: Session = Depends(get_db)):

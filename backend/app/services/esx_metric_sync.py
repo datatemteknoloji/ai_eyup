@@ -95,6 +95,48 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                 f"ESX metric sync: {hv.name} → {len(host_stats)} host kaydedildi"
             )
 
+            # ── Datastore envanteri (isim bazlı kapasite) ────────────────────
+            try:
+                from app.models.virt_datastore import VirtDatastore
+                ds_list = client.list_datastores_status() or []
+                seen_names = set()
+                for d in ds_list:
+                    name = (d.get("name") or "").strip()
+                    if not name:
+                        continue
+                    seen_names.add(name.lower())
+                    row = (
+                        db.query(VirtDatastore)
+                        .filter(
+                            VirtDatastore.hypervisor_id == hv.id,
+                            VirtDatastore.name == name,
+                        )
+                        .first()
+                    )
+                    if row is None:
+                        row = VirtDatastore(hypervisor_id=hv.id, name=name)
+                        db.add(row)
+                    row.ds_ref = d.get("ref")
+                    row.ds_type = d.get("type")
+                    row.capacity_gb = d.get("capacity_gb")
+                    row.free_gb = d.get("free_gb")
+                    row.used_gb = d.get("used_gb")
+                    row.usage_pct = d.get("usage_pct")
+                    row.accessible = bool(d.get("accessible", True))
+                    row.host_count = d.get("host_count")
+                    row.as_of = now
+                # Artık vCenter'da olmayan datastore'ları silme — tarihçe kalsın;
+                # erişilemeyenler accessible=false ile gelir.
+                db.commit()
+                if ds_list:
+                    logger.info(
+                        "Virt datastore sync: %s → %s datastore", hv.name, len(ds_list)
+                    )
+            except Exception as ds_e:
+                db.rollback()
+                errors.append(f"{hv.name} (datastore): {ds_e}")
+                logger.warning("Datastore sync hatası (%s): %s", hv.name, ds_e)
+
         except Exception as e:
             db.rollback()
             errors.append(f"{hv.name}: {e}")

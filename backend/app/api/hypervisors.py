@@ -1066,70 +1066,220 @@ def ask_hypervisor_question(
         )
         from app.services import runtime_settings as _rts
         from app.services.admin_intent_router import route_admin_question
+        from app.services import virt_inventory_policy as vip
+        from app.services.chat_full_scan_policy import (
+            resolve_full_scan_turn,
+            set_request_fleet_cap,
+            reset_request_fleet_cap,
+            get_hard_max_fleet_cap,
+            get_full_scan_pending,
+        )
 
-        # 1) Deterministik katman — HAM soru (agentic dump QA_RULES'a ASLA girmez)
-        route = route_admin_question(question, platform="virt")
-        det_answer = try_deterministic_answer(db, question)
-        if det_answer:
-            from app.services import qa_cache as _qa_cache
+        # ── Tek-soruluk tam VM/filo — chitchat'ten ÖNCE (ok/tamam çakışmasın) ──
+        _fs = resolve_full_scan_turn(
+            db, session_id=session_id, message=question, platform="virt",
+        )
+        full_scan_this_turn = bool(_fs.get("full_scan"))
+        ask_user_q = _fs.get("work_message") or question
+
+        if _fs.get("action") == "decline":
+            decline = _fs.get("decline_text") or "İptal edildi."
             result = {
-                "answer": det_answer,
-                "intents": ["deterministic", route.intent],
+                "answer": decline,
+                "intents": ["full_scan_declined"],
                 "context_lines": 0,
                 "model": None,
                 "latency_ms": 0,
                 "error": None,
-                "normalized_q": route.normalized_q,
             }
-            try:
-                _qa_cache.set_cached_answer(question, result, req.model)
-            except Exception:
-                pass
-        else:
-            # 2) Agentic tool çıktısı yalnız LLM dalına eklenir
-            live_hint = True
-            agentic_extra = ""
-            if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
-                try:
-                    from app.services.unified_tool_chat import run_read_only_tool_loop
-                    from app.services.agent.tools import domains_for_platform
-                    from app.core.config import get_active_model
-                    model_name = req.model or get_active_model(db)
-                    hv_summary = "\n".join(
-                        f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
-                        for h in db.query(Hypervisor).all()
-                    )
-                    gen = run_read_only_tool_loop(
-                        db, model_name, question, "", hv_summary,
-                        max_steps=_rts.get_int("virt_chat_max_tool_steps"),
-                        domains=domains_for_platform("virt"),
-                        platform="virt",
-                    )
-                    for item in gen:
-                        if item.get("type") == "final":
-                            agentic_extra = item.get("tool_text") or ""
-                            break
-                        if item.get("type") in ("skipped", "error"):
-                            break
-                except Exception as e:
-                    logger.warning(f"[HypervisorAsk] agentic live tools: {e}")
+            db.add(ChatMessage(
+                session_id=session_id, role="assistant", content=decline,
+                meta={"intents": ["full_scan_declined"]},
+            ))
+            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session:
+                session.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            return {**result, "session_id": session_id}
 
-            ask_question = question
-            if agentic_extra:
-                ask_question = (
-                    question
-                    + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
-                    + agentic_extra[:20000]
-                )
+        if _fs.get("action") == "clarify":
+            clarify = _fs.get("clarification") or ""
+            result = {
+                "answer": clarify,
+                "intents": ["full_scan_clarify"],
+                "context_lines": 0,
+                "model": None,
+                "latency_ms": 0,
+                "error": None,
+                "needs_confirmation": True,
+            }
+            db.add(ChatMessage(
+                session_id=session_id, role="assistant", content=clarify,
+                meta={"intents": ["full_scan_clarify"], "item_count": _fs.get("item_count")},
+            ))
+            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session:
+                from app.services.chat_history import maybe_set_session_title
+                maybe_set_session_title(session, question)
+                session.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            return {**result, "session_id": session_id}
 
-            result = answer_hypervisor_question(
-                db=db,
-                question=ask_question,
-                model=req.model,
-                conversation_history=history,
-                skip_deterministic=True,  # ham soruda zaten denendi
-                user_question=question,
+        from app.services.chat_chitchat_policy import canned_chitchat_answer
+        _pending_fs = get_full_scan_pending(session_id, platform="virt")
+        _cc = None if (full_scan_this_turn or _pending_fs) else canned_chitchat_answer(
+            question, platform="virt",
+        )
+        if _cc:
+            db.add(ChatMessage(
+                session_id=session_id, role="assistant", content=_cc,
+                meta={"intents": ["chitchat"]},
+            ))
+            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session:
+                session.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            return {
+                "answer": _cc,
+                "intents": ["chitchat"],
+                "context_lines": 0,
+                "model": None,
+                "latency_ms": 0,
+                "error": None,
+                "session_id": session_id,
+            }
+
+        if full_scan_this_turn:
+            logger.info(
+                "[HypervisorAsk] full_scan CONFIRMED session=%s items≈%s",
+                session_id, _fs.get("item_count"),
             )
+
+        limit_token = None
+        fleet_token = None
+        if full_scan_this_turn:
+            hard = max(vip.get_hard_max_vm_list_limit(), get_hard_max_fleet_cap())
+            limit_token = vip.set_request_vm_list_limit(hard, full_scan=True)
+            fleet_token = set_request_fleet_cap(hard, full_scan=True)
+
+        try:
+            # 1) Deterministik katman — HAM soru (agentic dump QA_RULES'a ASLA girmez)
+            # Tam tarama onayında şablon kesmesin diye deterministic atlanır.
+            route = route_admin_question(ask_user_q, platform="virt")
+            det_answer = None if full_scan_this_turn else try_deterministic_answer(db, ask_user_q)
+            if det_answer:
+                from app.services import qa_cache as _qa_cache
+                result = {
+                    "answer": det_answer,
+                    "intents": ["deterministic", route.intent],
+                    "context_lines": 0,
+                    "model": None,
+                    "latency_ms": 0,
+                    "error": None,
+                    "normalized_q": route.normalized_q,
+                }
+                try:
+                    _qa_cache.set_cached_answer(ask_user_q, result, req.model)
+                except Exception:
+                    pass
+            else:
+                # 2) Agentic tool çıktısı yalnız LLM dalına eklenir
+                live_hint = True
+                agentic_extra = ""
+                if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
+                    try:
+                        from app.services.agent.tools import domains_for_platform
+                        from app.core.config import get_active_model
+                        from app.services.chat_source_graph import run_chat_source_graph
+                        model_name = req.model or get_active_model(db)
+                        hv_summary = "\n".join(
+                            f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
+                            for h in db.query(Hypervisor).all()
+                        )
+                        final = run_chat_source_graph(
+                            db,
+                            model=model_name,
+                            user_message=ask_user_q,
+                            context_str="",
+                            server_summary=hv_summary,
+                            max_steps=_rts.get_int("virt_chat_max_tool_steps"),
+                            domains=domains_for_platform("virt"),
+                            platform="virt",
+                            actor_name="virt_chat",
+                        )
+                        if final.get("status") in ("skipped", "error") and not final.get("used_tools"):
+                            agentic_extra = ""
+                        else:
+                            agentic_extra = final.get("tool_text") or ""
+                        logger.info(
+                            "[HypervisorAsk] chat_source tools=%s db_first=%s live=%s status=%s full=%s",
+                            final.get("tools_used"),
+                            final.get("db_first"),
+                            final.get("live_escalated"),
+                            final.get("status"),
+                            full_scan_this_turn,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[HypervisorAsk] chat_source/agentic tools: {e}")
+                        try:
+                            from app.services.unified_tool_chat import run_read_only_tool_loop
+                            from app.services.agent.tools import domains_for_platform
+                            from app.core.config import get_active_model
+                            model_name = req.model or get_active_model(db)
+                            hv_summary = "\n".join(
+                                f"- {h.name} ({getattr(h.hypervisor_type, 'value', h.type) or '-'})"
+                                for h in db.query(Hypervisor).all()
+                            )
+                            gen = run_read_only_tool_loop(
+                                db, model_name, ask_user_q, "", hv_summary,
+                                max_steps=_rts.get_int("virt_chat_max_tool_steps"),
+                                domains=domains_for_platform("virt"),
+                                platform="virt",
+                            )
+                            for item in gen:
+                                if item.get("type") == "final":
+                                    agentic_extra = item.get("tool_text") or ""
+                                    break
+                                if item.get("type") in ("skipped", "error"):
+                                    break
+                        except Exception as e2:
+                            logger.warning(f"[HypervisorAsk] agentic fallback: {e2}")
+
+                ask_question = ask_user_q
+                tool_cap = 200000 if full_scan_this_turn else 20000
+                if agentic_extra:
+                    ask_question = (
+                        ask_user_q
+                        + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
+                        + agentic_extra[:tool_cap]
+                    )
+
+                result = answer_hypervisor_question(
+                    db=db,
+                    question=ask_question,
+                    model=req.model,
+                    conversation_history=history,
+                    skip_deterministic=True,  # ham soruda zaten denendi / full_scan
+                    user_question=ask_user_q,
+                )
+                if full_scan_this_turn:
+                    intents = list(result.get("intents") or [])
+                    if "full_scan" not in intents:
+                        intents.append("full_scan")
+                    result["intents"] = intents
+                    note = (
+                        f"\n\n_Not: Bu cevap **tek seferlik tam liste** "
+                        f"(tavan {vip.get_hard_max_vm_list_limit()} VM) ile üretildi; "
+                        f"sonraki sorularda varsayılan limit "
+                        f"({vip.get_default_vm_list_limit()}) yeniden geçerli._"
+                    )
+                    if result.get("answer") and note.strip() not in (result.get("answer") or ""):
+                        result["answer"] = (result.get("answer") or "") + note
+        finally:
+            if limit_token is not None:
+                vip.reset_request_vm_list_limit(limit_token)
+            if fleet_token is not None:
+                reset_request_fleet_cap(fleet_token)
 
         assistant_meta = {
             "intents": result.get("intents") or [],
@@ -1147,7 +1297,7 @@ def ask_hypervisor_question(
         session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if session:
             from app.services.chat_history import maybe_set_session_title
-            maybe_set_session_title(session, question)
+            maybe_set_session_title(session, ask_user_q if full_scan_this_turn else question)
             session.updated_at = datetime.now(timezone.utc)
         db.commit()
 

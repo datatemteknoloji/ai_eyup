@@ -295,9 +295,10 @@ def has_planning_clarification_pending(session_id: Optional[int], *, platform: s
 
 PLANNING_SYSTEM_ADDENDUM = (
     "\n\nMOD — KAPASİTE / MİGRASYON PLANI (hızlı yol):\n"
-    "- Amaç: vCenter/OpenShift canlı özetleriyle TAŞINABİLİRLİK ve KAYNAK PLANI taslağı.\n"
-    "- En fazla 1–2 READ_ONLY araç çağır: tercihen infra_overview, vcenter_ask veya "
-    "openshift_ask (kapasite/cluster özeti). Pod listesi / event dump / SSH komutları YAPMA.\n"
+    "- Amaç: TAŞINABİLİRLİK ve KAYNAK PLANI taslağı.\n"
+    "- En fazla 1–2 READ_ONLY araç: ÖNCE infra_overview / db_list_datastores / "
+    "db_list_vms / db_list_esx_hosts; stale veya boşsa vcenter_ask veya openshift_ask.\n"
+    "- Pod listesi / event dump / SSH komutları YAPMA.\n"
     "- Yeterli özet gelince HEMEN tool_call üretmeden bırak; nihai planı sohbet cevabı "
     "üretecek. Aynı soruyu tekrar tekrar araçlarla derinleştirme.\n"
     "- Linux/Windows SSH get_* araçlarını bu soruda KULLANMA.\n"
@@ -305,7 +306,8 @@ PLANNING_SYSTEM_ADDENDUM = (
 
 PLANNING_DEPTH_ADDENDUM = (
     "\n\nMOD — DERİN KAPSAM (kullanıcı daha kapsamlı istedi):\n"
-    "- Önceki özeti genişlet: vcenter_ask + openshift_ask (ve gerekirse infra_overview).\n"
+    "- Önceki özeti genişlet: db_* yetersizse vcenter_ask + openshift_ask "
+    "(ve gerekirse infra_overview).\n"
     "- Hâlâ pod dump / SSH get_* YAPMA; kapasite ve taşınabilirlik kanıtına odaklan.\n"
     "- 2–3 tool yeterli; sonra tool_call üretmeden bırak.\n"
 )

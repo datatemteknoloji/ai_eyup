@@ -354,6 +354,77 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             from app.services.chat_obs import ChatTiming
             _timing = ChatTiming(platform="unified")
 
+            # Tam filo onayı — chitchat'ten ÖNCE (ok/tamam çakışmasın)
+            from app.services.chat_full_scan_policy import (
+                resolve_full_scan_turn,
+                set_request_fleet_cap,
+                reset_request_fleet_cap,
+                get_hard_max_fleet_cap,
+                get_full_scan_pending,
+            )
+            _fs = resolve_full_scan_turn(
+                db, session_id=session_id, message=message, platform="unified",
+            )
+            if _fs.get("action") == "clarify":
+                clarify = _fs.get("clarification") or ""
+                yield _sse({"phase": "answering"})
+                yield _sse({"needs_confirmation": True, "intent": "full_scan_clarify"})
+                for i in range(0, len(clarify), 8):
+                    yield _sse({"token": clarify[i:i + 8]})
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(
+                    session_id=session_id, role="assistant", content=clarify,
+                    meta={"intents": ["full_scan_clarify"]},
+                ))
+                db.commit()
+                yield _sse({"done": True, "session_id": session_id, "needs_confirmation": True})
+                return
+            if _fs.get("action") == "decline":
+                decline = _fs.get("decline_text") or "İptal edildi."
+                yield _sse({"phase": "answering"})
+                for i in range(0, len(decline), 8):
+                    yield _sse({"token": decline[i:i + 8]})
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(
+                    session_id=session_id, role="assistant", content=decline,
+                    meta={"intents": ["full_scan_declined"]},
+                ))
+                db.commit()
+                yield _sse({"done": True, "session_id": session_id})
+                return
+
+            from app.services.chat_chitchat_policy import canned_chitchat_answer
+            _pending_fs = get_full_scan_pending(session_id, platform="unified")
+            _cc = None if (_fs.get("full_scan") or _pending_fs) else canned_chitchat_answer(
+                message, platform="unified",
+            )
+            if _cc:
+                yield _sse({"phase": "answering"})
+                yield _sse({"intent": "chitchat"})
+                _timing.note_ttft()
+                for i in range(0, len(_cc), 8):
+                    yield _sse({"token": _cc[i:i + 8]})
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(
+                    session_id=session_id, role="assistant", content=_cc,
+                    meta={"intents": ["chitchat"]},
+                ))
+                db.commit()
+                _timing.finish(cache_hit=False, extra={"path": "chitchat"})
+                yield _sse({"done": True, "session_id": session_id})
+                return
+
+            message = _fs.get("work_message") or message
+            _fleet_scan_token = None
+            if _fs.get("full_scan"):
+                _fleet_scan_token = set_request_fleet_cap(
+                    get_hard_max_fleet_cap(), full_scan=True,
+                )
+                logger.info(
+                    "[UnifiedChat] full_scan CONFIRMED session=%s items≈%s",
+                    session_id, _fs.get("item_count"),
+                )
+
             # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
             from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
             _is_followup = has_prior_messages(db, session_id)
@@ -989,6 +1060,14 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
         except Exception as e:
             logger.error(f"Unified chat stream error: {e}", exc_info=True)
             yield _sse({"error": str(e)})
+        finally:
+            try:
+                _tok = locals().get("_fleet_scan_token")
+                if _tok is not None:
+                    from app.services.chat_full_scan_policy import reset_request_fleet_cap
+                    reset_request_fleet_cap(_tok)
+            except Exception:
+                pass
 
     return StreamingResponse(
         event_generator(),

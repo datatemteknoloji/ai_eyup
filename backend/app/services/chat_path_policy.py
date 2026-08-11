@@ -72,14 +72,24 @@ def is_deep_live_query(message: Optional[str]) -> bool:
     return any(k in m for k in DEEP_LIVE_KEYWORDS)
 
 
+def is_chitchat(message: Optional[str]) -> bool:
+    try:
+        from app.services.chat_chitchat_policy import is_chitchat as _ic
+        return bool(_ic(message))
+    except Exception:
+        return False
+
+
 def is_knowledge_only(message: Optional[str]) -> bool:
-    """Saf bilgi/howto sorusu mu? (canlı collect/agentic gerekmez)
+    """Saf bilgi/howto veya selamlaşma mı? (canlı collect/agentic gerekmez)
 
     Planlama/migrasyon, derin teşhis ve filo/canlı niyetleri hariç.
     """
     m = (message or "").lower().strip()
     if not m or len(m) > 400:
         return False
+    if is_chitchat(message):
+        return True
     try:
         from app.services.chat_planning_intent import (
             is_cross_platform_planning,
@@ -148,13 +158,13 @@ def resolve_live_path(
     has_live_targets: Dalga 1 sonrası canlı hedef listesi dolu mu
     allow_agentic_without_collect: OpenShift gibi collect'siz agentic platformlar
     """
-    # Saf bilgi/howto: collect + agentic kapalı (RAG + LLM yeterli)
+    # Saf bilgi/howto veya chitchat: collect + agentic kapalı
     if is_knowledge_only(message):
         return LivePathDecision(
             run_fixed_collect=False,
             run_agentic=False,
             is_deep=False,
-            reason="knowledge_only",
+            reason="chitchat" if is_chitchat(message) else "knowledge_only",
         )
 
     deep = is_deep_live_query(message)

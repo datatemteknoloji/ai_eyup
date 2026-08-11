@@ -30,7 +30,7 @@ Preferred path (build already done, or after `build-distribution.sh`):
 Or bump `VERSION` + `CHANGELOG.md`, build, and publish in one go:
 
 ```bash
-./scripts/release.sh 1.0.9.22 "Kısa özet"   # optional: --with-ollama / --bundle-ollama
+./scripts/release.sh 1.0.9.23 "Kısa özet"   # optional: --with-ollama / --bundle-ollama
 ```
 
 Customer download is the **Release asset** `ainew-<version>-linux-amd64.tar.gz`

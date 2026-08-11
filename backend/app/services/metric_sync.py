@@ -628,6 +628,34 @@ class MetricSyncService:
                         if rows:
                             pending_rows.extend(rows)
                             synced_servers += 1
+                        # P1: VM satırına QuickStats özeti (chat L1) —
+                        # metric_data satırı olmasa bile as_of yazılır (ayrı commit).
+                        try:
+                            mhz = stats.get("cpu_mhz") or stats.get("cpu_usage_mhz")
+                            if mhz is not None:
+                                srv.vm_cpu_usage_mhz = int(float(mhz))
+                            if mu is not None:
+                                srv.vm_mem_active_mb = int(float(mu))
+                            active = stats.get("guest_mem_usage_mb") or stats.get("host_mem_usage_mb")
+                            if active is not None and srv.vm_mem_active_mb is None:
+                                srv.vm_mem_active_mb = int(float(active))
+                            href = stats.get("host_ref")
+                            if href and not srv.vm_host_ref:
+                                srv.vm_host_ref = str(href)
+                            from datetime import timezone as _tz
+                            srv.vm_stats_as_of = (
+                                now.replace(tzinfo=_tz.utc) if now.tzinfo is None else now
+                            )
+                            db.add(srv)
+                        except Exception:
+                            pass
+
+                    # QuickStats Server alanları — metric bulk'tan bağımsız commit
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        db.rollback()
+                        logger.warning("VMware QuickStats server commit failed hyp=%s: %s", hyp_id, e)
 
                     if pending_rows:
                         try:

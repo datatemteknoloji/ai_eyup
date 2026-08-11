@@ -288,6 +288,71 @@ def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
         return {"ok": False, "error": str(e)}
 
 
+def _db_list_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import list_vms_db
+        from app.services.virt_inventory_policy import (
+            effective_vm_list_limit,
+            is_full_scan_request,
+        )
+        default_lim = effective_vm_list_limit()
+        lim = int(args.get("limit") or default_lim)
+        if is_full_scan_request():
+            lim = max(lim, default_lim)
+        return list_vms_db(
+            db,
+            hypervisor=args.get("hypervisor"),
+            power_state=args.get("power_state"),
+            host_name=args.get("host_name"),
+            cluster=args.get("cluster"),
+            limit=lim,
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_vms hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_vm_detail_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import vm_detail_db
+        return vm_detail_db(db, name=args.get("name"), server_id=args.get("server_id"))
+    except Exception as e:
+        logger.error("[Tool] db_vm_detail hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_datastores_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import list_datastores_db
+        return list_datastores_db(db, hypervisor=args.get("hypervisor"))
+    except Exception as e:
+        logger.error("[Tool] db_list_datastores hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_esx_hosts_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import list_esx_hosts_db
+        return list_esx_hosts_db(db, hypervisor=args.get("hypervisor"))
+    except Exception as e:
+        logger.error("[Tool] db_list_esx_hosts hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_virt_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import list_virt_alarms_db
+        return list_virt_alarms_db(
+            db,
+            hours=int(args.get("hours") or 48),
+            unresolved_only=bool(args.get("unresolved_only", True)),
+            limit=int(args.get("limit") or 50),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_virt_alarms hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _vcenter_live_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     hv = resolve_hypervisor(db, args, type_filter=HypervisorType.VMWARE)
     if not hv:
@@ -730,6 +795,111 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_infra_overview_handler,
         direct_label="Platform envanter özeti",
+    ),
+    "db_list_vms": Tool(
+        name="db_list_vms",
+        description=(
+            "VMware/hypervisor VM envanterini DATABASE'den listeler (canlı API yok). "
+            "Kaç VM, poweredOn/Off, host/cluster/datastore, vCPU/RAM. "
+            "Önce bunu kullan; stale=true veya eksik alan varsa vcenter_ask / canlı tool'a düş."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter adı filtresi (opsiyonel)"},
+                "power_state": {"type": "string", "description": "örn. poweredOn / poweredOff"},
+                "host_name": {"type": "string", "description": "ESXi host adı"},
+                "cluster": {"type": "string", "description": "Cluster adı"},
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "Max satır. Varsayılan: Gelişmiş Ayarlar virt_chat_vm_list_limit "
+                        "(onaylı tam taramada hard_max)."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_vms_handler,
+        direct_label="DB VM listesi",
+    ),
+    "db_vm_detail": Tool(
+        name="db_vm_detail",
+        description=(
+            "Tek VM detayını DATABASE'den getirir (disk listesi, NIC/portgroup, host, guest OS, "
+            "QuickStats özeti). Canlı API yok — önce bunu dene."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "VM adı / guest hostname"},
+                "server_id": {"type": "integer", "description": "servers.id"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_vm_detail_handler,
+        direct_label="DB VM detay",
+    ),
+    "db_list_datastores": Tool(
+        name="db_list_datastores",
+        description=(
+            "Datastore kapasite/free/accessible bilgisini DATABASE'den (virt_datastores) getirir. "
+            "'Yer var mı', 'datastore doluluk' sorularında ÖNCE bunu kullan. "
+            "stale=true veya boşsa canlı vcenter_ask / datastore sync gerekir."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_datastores_handler,
+        direct_label="DB datastore listesi",
+    ),
+    "db_list_esx_hosts": Tool(
+        name="db_list_esx_hosts",
+        description=(
+            "ESXi host CPU/RAM/datastore aggregate ve VM sayılarını DATABASE'den "
+            "(hypervisor_host_metrics son örnek) listeler. Canlı API yok."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_esx_hosts_handler,
+        direct_label="DB ESXi host metrikleri",
+    ),
+    "db_virt_alarms": Tool(
+        name="db_virt_alarms",
+        description=(
+            "vCenter alarmlarını DATABASE'den (system_events, sync edilmiş) listeler. "
+            "Önce bunu kullan; boş/stale ise vcenter_live_alarms."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "integer", "description": "Kaç saat (varsayılan 48)"},
+                "unresolved_only": {"type": "boolean", "description": "Sadece çözülmemiş (varsayılan true)"},
+                "limit": {"type": "integer"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_virt_alarms_handler,
+        direct_label="DB virt alarmları",
     ),
     "vcenter_ask": Tool(
         name="vcenter_ask",
@@ -1337,6 +1507,11 @@ TOOLS: Dict[str, Tool] = {
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
+    "db_list_vms": frozenset({"vcenter", "infra"}),
+    "db_vm_detail": frozenset({"vcenter", "infra"}),
+    "db_list_datastores": frozenset({"vcenter", "infra"}),
+    "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
+    "db_virt_alarms": frozenset({"vcenter", "infra"}),
     "vcenter_ask": frozenset({"vcenter"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),

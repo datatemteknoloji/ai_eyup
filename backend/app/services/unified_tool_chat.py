@@ -32,7 +32,9 @@ SYSTEM_PROMPT = (
     "- OpenShift/OCP/Kubernetes soruları (pod, namespace, proje, CrashLoopBackOff, "
     "Deployment, Route, node NotReady, oc/kubectl) → openshift_ask / list_ocp_pods / "
     "list_ocp_events. Linux SSH/systemd araçlarını KULLANMA.\n"
-    "- vCenter/ESXi/VM soruları → vcenter_* araçları.\n"
+    "- vCenter/ESXi/VM soruları → ÖNCE db_list_vms / db_vm_detail / db_list_datastores / "
+    "db_list_esx_hosts / db_virt_alarms (DATABASE). stale=true veya veri yoksa "
+    "vcenter_ask / vcenter_live_alarms / vcenter_live_tasks.\n"
     "- OpenShift Virtualization / KubeVirt VM soruları → list_kubevirt_vms / openshift_ask "
     "(OV bir sanallaştırma ortamıdır; yalnız VMware listesine bakıp 'OV yok' deme).\n"
     "- Belirsiz 'servis/durum' ifadesinde: kullanıcı OpenShift/pod demediyse Linux; "
@@ -98,6 +100,8 @@ _PLATFORM_HINTS = {
         "Virtualization/KubeVirt VM). Linux OS yönetimi veya OCP pod envanterini karıştırma.\n"
         "OV, VMware yanında ikinci bir sanallaştırma yoludur; hypervisor kaydı yoksa "
         "bile OCP KubeVirt VM'leri sanallaştırma sayılır.\n"
+        "VMware sorularında önce db_* (DATABASE); canlı vcenter_* yalnızca stale/boş "
+        "sonrası. SSH get_* yok.\n"
         "infra_overview hypervisor/VM özeti döner; OV için OpenShift/KubeVirt araçlarını kullan."
     ),
     "exadata": (
@@ -164,10 +168,32 @@ def run_read_only_tool_loop(
         yield {"type": "skipped", "reason": "kullanılabilir araç yok"}
         return
 
+    from app.services import chat_tool_policy as tool_policy
+
     sys_content = SYSTEM_PROMPT
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
+
+    db_first = tool_policy.should_use_db_first(platform=plat, domains=domains)
+    escalate_live = False
+    if db_first:
+        # Şemada hiç db_* yoksa politikayı uygulama
+        _spec_names = {
+            ((s.get("function") or {}).get("name") or "")
+            for s in specs
+            if isinstance(s, dict)
+        }
+        if not (_spec_names & set(tool_policy.DB_FIRST_TOOLS)):
+            db_first = False
+        else:
+            sys_content += tool_policy.DB_FIRST_SYSTEM_ADDENDUM
+            logger.info(
+                "[UnifiedToolChat] db-first aktif platform=%s domains=%s",
+                plat or "unified",
+                sorted(domains) if domains else None,
+            )
+
     if planning_mode:
         try:
             from app.services.chat_planning_intent import (
@@ -194,6 +220,35 @@ def run_read_only_tool_loop(
     exec_ctx: Dict[str, Any] = {"platform": plat or "unified"}
     _stop_n = int(stop_after_tools) if stop_after_tools and stop_after_tools > 0 else None
 
+    def _active_specs(step: int) -> List[Dict[str, Any]]:
+        """DB-first: ilk adımlarda canlı vCenter şemasını gizle."""
+        if not db_first or escalate_live:
+            return specs
+        if step >= tool_policy.DB_FIRST_MAX_STEPS:
+            return specs
+        filtered = [
+            s for s in specs
+            if isinstance(s, dict)
+            and ((s.get("function") or {}).get("name") or "")
+            not in tool_policy.LIVE_VCENTER_TOOLS
+        ]
+        return filtered or specs
+
+    def _unlock_live(reason: str) -> None:
+        nonlocal escalate_live
+        if escalate_live or not db_first:
+            return
+        escalate_live = True
+        logger.info("[UnifiedToolChat] db-first → canlı araçlar açıldı: %s", reason)
+        messages.append({
+            "role": "system",
+            "content": (
+                "Canlı vCenter araçları artık AÇIK (vcenter_ask, vcenter_live_alarms, "
+                f"vcenter_live_tasks). Gerekçe: {reason}. "
+                "DB yetersizse bunları kullan; yeterliyse ek çağrı yapma."
+            ),
+        })
+
     def _finalize(max_steps_reached: bool = False, early_stop: bool = False) -> Dict[str, Any]:
         if used_tools and tools_used:
             try:
@@ -212,6 +267,8 @@ def run_read_only_tool_loop(
             "used_tools": used_tools,
             "tool_text": "\n\n".join(tool_texts),
             "tools_used": list(tools_used),
+            "db_first": db_first,
+            "live_escalated": escalate_live if db_first else False,
         }
         if max_steps_reached:
             out["max_steps_reached"] = True
@@ -220,7 +277,11 @@ def run_read_only_tool_loop(
         return out
 
     for _step in range(max(1, max_steps)):
-        llm = chat_with_tools(model, messages, specs, timeout=90)
+        if db_first and not escalate_live and _step >= tool_policy.DB_FIRST_MAX_STEPS:
+            _unlock_live(f"faz adımı doldu ({tool_policy.DB_FIRST_MAX_STEPS})")
+
+        step_specs = _active_specs(_step)
+        llm = chat_with_tools(model, messages, step_specs, timeout=90)
         if llm.get("error"):
             if used_tools:
                 yield {"type": "error", "detail": llm["error"]}
@@ -251,6 +312,16 @@ def run_read_only_tool_loop(
                              "mevcut bilgiyle veya diğer READ_ONLY araçlarla devam et"
                 }, ensure_ascii=False)})
                 continue
+
+            # DB-first: canlı vCenter çağrısını faz-1'de reddet (şema sızıntısına karşı)
+            if db_first and not escalate_live:
+                block_msg = tool_policy.tool_blocked_in_db_first_phase(name)
+                if block_msg and name in tool_policy.LIVE_VCENTER_TOOLS:
+                    messages.append({"role": "tool", "name": name, "content": json.dumps({
+                        "error": block_msg,
+                        "ok": False,
+                    }, ensure_ascii=False)})
+                    continue
 
             try:
                 if name.startswith("win_"):
@@ -300,6 +371,9 @@ def run_read_only_tool_loop(
                 tool_texts.append(f"[{label}]\n{result_text[:_MAX_TOOL_TEXT_CHARS]}")
                 yield {"type": "tool_result", "tool": name}
 
+                if db_first and not escalate_live and tool_policy.result_needs_live_escalation(name, result):
+                    _unlock_live(f"{name} sonucu yetersiz/stale/boş")
+
                 try:
                     from app.services.fact_learning import extract_facts_from_tool_output
                     server = tool_mod.resolve_server(db, args, exec_ctx)
@@ -311,6 +385,8 @@ def run_read_only_tool_loop(
                 logger.warning(f"[UnifiedToolChat] '{name}' çalıştırma hatası: {e}")
                 messages.append({"role": "tool", "name": name,
                                  "content": json.dumps({"error": str(e)}, ensure_ascii=False)})
+                if db_first and not escalate_live and name in tool_policy.DB_FIRST_TOOLS:
+                    _unlock_live(f"{name} çalıştırma hatası")
 
         # Migrasyon/planlama: yeterli tool sonrası ek LLM turlarını kes (TTFT)
         if _stop_n is not None and successful_tool_runs >= _stop_n:

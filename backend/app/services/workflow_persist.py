@@ -32,6 +32,9 @@ def _summarize_state(state: Dict[str, Any]) -> Dict[str, Any]:
         if k in ("messages", "pending_tool_calls", "anomalies"):
             # Hacimli ham veriyi saklamak yerine sayısını tut.
             out[k + "_count"] = len(v) if isinstance(v, (list, tuple)) else None
+        elif k in ("tool_text", "user_message", "context_str", "server_summary"):
+            s = str(v) if v is not None else ""
+            out[k] = (s[:800] + "…") if len(s) > 800 else s
         elif k == "result" and isinstance(v, dict):
             out["result"] = {kk: v.get(kk) for kk in ("status", "tool", "action_id", "answer")
                              if kk in v}

@@ -391,9 +391,17 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "default": 64, "type": "int", "min": 1, "max": 512,
         "group": "linux_chat", "label": "Chat filo canlı tarama üst sınırı",
         "help": "Linux/Windows/Unified sohbette eşzamanlı SSH/WinRM hedef üst sınırı. "
-                "Seçim yokken varsayılan olarak filo taranmaz; 'filo/karşılaştır/tüm sunucular' "
-                "denirse bu cap kadar örneklem alınır.",
+                "Seçim yokken varsayılan olarak filo taranmaz; 'tüm sunucular / filo / bütün liste' "
+                "denirse bu cap kadar örneklem alınır. Cap aşılırsa onay istenir; onayda "
+                "yalnızca o soru için chat_fleet_hard_max uygulanır.",
         "env": "CHAT_SSH_FLEET_CAP",
+    },
+    "chat_fleet_hard_max": {
+        "default": 5000, "type": "int", "min": 50, "max": 20000,
+        "group": "linux_chat", "label": "Chat onaylı tam filo tavanı",
+        "help": "Kullanıcı “tüm filo / tüm sunucular / bütün liste” için onay verdiğinde "
+                "yalnızca o soruya uygulanan üst sınır. Cevap bitince varsayılan cap’e dönülür.",
+        "env": "CHAT_FLEET_HARD_MAX",
     },
     "chat_force_collect_and_agentic": {
         "default": False, "type": "bool", "min": 0, "max": 1,
@@ -431,6 +439,20 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Agentic sanallaştırma sohbetinde bir yanıt üretilmeden önce art arda "
                 "çağrılabilecek en fazla vCenter READ_ONLY araç sayısı.",
         "env": "VIRT_CHAT_MAX_TOOL_STEPS",
+    },
+    "virt_chat_vm_list_limit": {
+        "default": 50, "type": "int", "min": 10, "max": 2000,
+        "group": "virt_chat", "label": "Virt chat varsayılan VM liste limiti",
+        "help": "Sohbet bağlamında ve özet listelerde gösterilecek varsayılan VM sayısı. "
+                "“Tüm VM’ler” + onay ile yalnızca o soruda hard max’e çıkılır.",
+        "env": "VIRT_CHAT_VM_LIST_LIMIT",
+    },
+    "virt_chat_vm_list_hard_max": {
+        "default": 5000, "type": "int", "min": 50, "max": 20000,
+        "group": "virt_chat", "label": "Virt chat onaylı tam liste tavanı",
+        "help": "Kullanıcı “tüm VM’ler” için onay verdiğinde tek soruya uygulanacak üst sınır. "
+                "Cevap bitince varsayılan limite dönülür.",
+        "env": "VIRT_CHAT_VM_LIST_HARD_MAX",
     },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
     "rag_reranker_enabled": {
@@ -499,6 +521,7 @@ GROUP_LABELS = {
     "logs": "Log toplama (SSH / Syslog)",
     "unified_chat": "Unified Chat (agentic)",
     "linux_chat": "Linux Chat (agentic)",
+    "virt_chat": "Sanallaştırma Chat",
     "rag_reranker": "RAG Reranker (HuggingFace)",
     "proxy": "Proxy / Nginx",
     "api_cache": "API önbellek (Redis)",

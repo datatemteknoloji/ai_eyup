@@ -189,16 +189,18 @@ def route_unified(
             windows_specific=ws,
         )
 
-    # 3) Saf bilgi
+    # Saf bilgi / selamlaşma
     if is_knowledge_only(msg):
+        from app.services.chat_path_policy import is_chitchat
+        reason = "chitchat" if is_chitchat(msg) else "knowledge_only"
         return UnifiedRoute(
             mode="knowledge",
             domains=frozenset({"infra"}),
-            need_rag=True,
+            need_rag=reason != "chitchat",
             need_live=False,
             complexity="simple",
-            confidence=0.8,
-            reason="knowledge_only",
+            confidence=0.95 if reason == "chitchat" else 0.8,
+            reason=reason,
         )
 
     # 4) Canlı / genel

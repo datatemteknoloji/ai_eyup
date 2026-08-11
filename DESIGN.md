@@ -28,8 +28,8 @@
 
   /* Text */
   --text-primary:   #e8edf5;  /* Body copy */
-  --text-secondary: #8a9bbf;  /* Labels, metadata */
-  --text-muted:     #3d4f6e;  /* Placeholder, disabled */
+  --text-secondary: #c5d0e8;  /* Labels, metadata, inactive nav — high contrast on dark */
+  --text-muted:     #9aabcb;  /* De-emphasized; still WCAG-readable on --bg-surface */
 
   /* Single accent — blue, not purple */
   --accent:        #3b82f6;

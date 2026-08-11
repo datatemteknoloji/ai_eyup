@@ -372,10 +372,17 @@ def _get_vms(db: Session, hypervisor_id: Optional[int] = None) -> List[Dict[str,
             "tools_status": vm.vm_tools_status or "unknown",
             "cluster": vm.vm_cluster or "",
             "datastore": vm.vm_datastore or "",
+            "host": vm.vm_host_name or "",
+            "host_ref": vm.vm_host_ref or "",
+            "guest_os": vm.vm_guest_os_full or "",
+            "disks": vm.vm_disks or [],
+            "cpu_mhz": vm.vm_cpu_usage_mhz,
+            "mem_active_mb": vm.vm_mem_active_mb,
             "hw_version": vm.vm_hardware_version or "",
             "network": net_summary,
             "tier": getattr(vm, "tier", "unknown") or "unknown",
             "last_sync": vm.vm_last_sync.strftime("%Y-%m-%d %H:%M") if vm.vm_last_sync else None,
+            "stats_as_of": vm.vm_stats_as_of.strftime("%Y-%m-%d %H:%M") if vm.vm_stats_as_of else None,
         })
     return result
 
@@ -694,20 +701,38 @@ def _datastore_vm_disk_summary(
         lines.append(f"  Toplam Tahsis Disk: {round(allocated_gb, 1)} GB (vm_disk_gb toplamı)")
         if group_vms:
             lines.append("  VM Disk Detayı   :")
-            for v in sorted(group_vms, key=lambda x: -(x.get("disk_gb") or 0))[:20]:
+            try:
+                from app.services.virt_inventory_policy import (
+                    effective_vm_list_limit,
+                    is_full_scan_request,
+                )
+                per_ds = effective_vm_list_limit() if is_full_scan_request() else 20
+            except Exception:
+                per_ds = 20
+            for v in sorted(group_vms, key=lambda x: -(x.get("disk_gb") or 0))[:per_ds]:
                 lines.append(
                     f"    - {v['name']} | Disk:{v.get('disk_gb') or 0} GB | "
                     f"vCPU:{v.get('cpu_count') or 0} RAM:{v.get('memory_gb') or 0}GB | "
                     f"Güç:{v['power_state']}"
                 )
-            if len(group_vms) > 20:
-                lines.append(f"    ... ve {len(group_vms) - 20} VM daha")
+            if len(group_vms) > per_ds:
+                lines.append(f"    ... ve {len(group_vms) - per_ds} VM daha")
 
     return "\n".join(lines)
 
 
 def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
     lines = []
+    try:
+        from app.services.virt_inventory_policy import (
+            effective_vm_list_limit,
+            is_full_scan_request,
+        )
+        effective_limit = max(1, int(effective_vm_list_limit()))
+        is_full = is_full_scan_request()
+    except Exception:
+        effective_limit = 50
+        is_full = False
 
     # Filtreler
     filtered = vms
@@ -741,7 +766,7 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
             filtered = [v for v in filtered if _matches(v)]
             break
 
-    for vm in filtered[:50]:  # token limiti için max 50 VM
+    for vm in filtered[: effective_limit]:
         hv_name = hv_map.get(vm["hypervisor_id"], {}).get("name", "?")
         net_ips = ", ".join(
             ip for n in vm["network"] for ip in n["ips"]
@@ -756,10 +781,12 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
         )
 
     total = len(filtered)
-    shown = min(50, total)
+    shown = min(effective_limit, total)
     header = f"## VM ENVANTERİ ({total} toplam"
     if shown < total:
-        header += f", ilk {shown} gösteriliyor"
+        header += f", ilk {shown} gösteriliyor (limit={effective_limit})"
+    elif is_full:
+        header += f", tam liste — bu soruya özel limit={effective_limit}"
     header += ")"
     return header + "\n" + "\n".join(lines)
 
@@ -901,13 +928,35 @@ def h_count_hosts(db: Session, question: str = "") -> str:
     )
 
 
+def _vm_host_breakdown_table(vms: List[Dict[str, Any]]) -> str:
+    """VM kayıtlarındaki vm_host_name ile host kırılımı (DB-first)."""
+    groups: Dict[str, Dict[str, int]] = defaultdict(lambda: {"on": 0, "off": 0, "total": 0})
+    for v in vms:
+        key = (v.get("host") or "").strip() or "(host bilgisi yok)"
+        groups[key]["total"] += 1
+        if _is_on(v):
+            groups[key]["on"] += 1
+        elif _is_off(v):
+            groups[key]["off"] += 1
+    rows = [
+        [k, g["on"], g["off"], g["total"]]
+        for k, g in sorted(groups.items(), key=lambda x: -x[1]["total"])
+    ]
+    return _md_table(["Host", "Çalışan", "Kapalı", "Toplam"], rows, "VM yok.")
+
+
 def h_count_vms(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
     on = sum(1 for v in vms if _is_on(v))
     off = sum(1 for v in vms if _is_off(v))
     sus = sum(1 for v in vms if _is_suspended(v))
     other = len(vms) - on - off - sus
-    return (
+    qn = (question or "").lower()
+    want_hosts = bool(re.search(
+        r"hangi\s+host|host.?ta|host\s*dağılım|hangi\s+esx|nerede|hangi\s+sunucu",
+        qn, re.I,
+    ))
+    body = (
         "### VM Envanter Özeti\n\n"
         f"**Toplam VM:** {len(vms)}\n"
         f"- Çalışan (powered on): **{on}**\n"
@@ -915,6 +964,14 @@ def h_count_vms(db: Session, question: str = "") -> str:
         f"- Suspended: **{sus}**\n"
         + (f"- Diğer/bilinmeyen power state: **{other}**\n" if other else "")
     )
+    # Her zaman kısa host kırılımı; soru host istiyorsa başlığı belirginleştir
+    body += (
+        "\n#### Host bazında dağılım\n\n"
+        if want_hosts else
+        "\n#### Host özeti\n\n"
+    )
+    body += _vm_host_breakdown_table(vms)
+    return body
 
 
 def h_count_powered_on(db: Session, question: str = "") -> str:
@@ -925,9 +982,39 @@ def h_count_powered_on(db: Session, question: str = "") -> str:
         f"**{len(on)}** VM çalışıyor (toplam {len(vms)} VM içinde).\n\n"
         + _md_table(
             ["VM", "Host/Cluster", "vCPU", "RAM (GB)"],
-            [[v["name"], v.get("cluster") or "-", v.get("cpu_count"), v.get("memory_gb")] for v in on[:40]],
+            [[v["name"], v.get("host") or v.get("cluster") or "-", v.get("cpu_count"), v.get("memory_gb")] for v in on[:40]],
             "Çalışan VM yok.",
         )
+    )
+
+
+def h_named_vm_stats(db: Session, question: str = "") -> str:
+    """Tek VM QuickStats (DB) — ad soruda geçiyorsa."""
+    vms = _get_vms(db)
+    ql = (question or "").lower()
+    matches = sorted(
+        [
+            v for v in vms
+            if (v.get("name") or "") and len(v["name"]) >= 3 and v["name"].lower() in ql
+        ],
+        key=lambda v: -len(v.get("name") or ""),
+    )
+    if not matches:
+        return ""
+    v = matches[0]
+    host = v.get("host") or v.get("cluster") or "—"
+    mhz = v.get("cpu_mhz")
+    mem = v.get("mem_active_mb")
+    as_of = v.get("stats_as_of") or v.get("last_sync") or "—"
+    return (
+        f"### VM QuickStats (DATABASE)\n\n"
+        f"**{v.get('name')}** — power: `{v.get('power_state') or '—'}` · host: `{host}`\n\n"
+        f"| Metrik | Değer |\n|---|---|\n"
+        f"| CPU (MHz) | {mhz if mhz is not None else '—'} |\n"
+        f"| Aktif RAM (MB) | {mem if mem is not None else '—'} |\n"
+        f"| vCPU / RAM (GB) | {v.get('cpu_count') or '—'} / {v.get('memory_gb') or '—'} |\n"
+        f"| Datastore | {v.get('datastore') or '—'} |\n"
+        f"| stats_as_of | {as_of} |\n"
     )
 
 
@@ -939,10 +1026,13 @@ def h_vm_per_host(db: Session, question: str = "") -> str:
         return "### Host Bazında VM Dağılımı\n\n" + _md_table(
             ["Host", "Çalışan", "Toplam", "CPU %", "RAM %"], rows, "Host metriği yok."
         )
-    # Fallback: VM kayıtlarındaki cluster alanı
+    # Fallback: VM kayıtlarındaki host (vm_host_name), yoksa cluster
+    vms = _get_vms(db)
+    if any((v.get("host") or "").strip() for v in vms):
+        return "### Host Bazında VM Dağılımı (DB)\n\n" + _vm_host_breakdown_table(vms)
     groups: Dict[str, Dict[str, int]] = defaultdict(lambda: {"on": 0, "total": 0})
-    for v in _get_vms(db):
-        key = v.get("cluster") or "(cluster alanı boş)"
+    for v in vms:
+        key = v.get("cluster") or "(cluster/host alanı boş)"
         groups[key]["total"] += 1
         if _is_on(v):
             groups[key]["on"] += 1
@@ -1776,14 +1866,55 @@ def h_unused_datastore(db: Session, question: str = "") -> str:
 
 def _get_live_datastores(db: Session) -> List[Dict[str, Any]]:
     """
-    vCenter'dan datastore nesnesi bazında capacity/free/used çeker.
-    Host metriklerindeki ds_* alanları aggregate'tir; isim bazlı boş kapasite
-    yalnızca bu canlı sorgudan gelir.
+    Önce DB (virt_datastores, taze ise); stale/boşsa vCenter canlı sorgu.
+    Freshness: as_of < 45 dk → DB yeterli.
     """
+    from datetime import datetime, timezone, timedelta
+
+    try:
+        from app.models.virt_datastore import VirtDatastore
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
+        rows = (
+            db.query(VirtDatastore)
+            .filter(VirtDatastore.as_of >= cutoff)
+            .all()
+        )
+        if rows:
+            from app.models.hypervisor import Hypervisor
+            hv_names = {
+                h.id: h.name
+                for h in db.query(Hypervisor).filter(
+                    Hypervisor.id.in_({r.hypervisor_id for r in rows})
+                ).all()
+            }
+            return [
+                {
+                    "ref": r.ds_ref,
+                    "name": r.name,
+                    "type": r.ds_type,
+                    "capacity_gb": r.capacity_gb,
+                    "free_gb": r.free_gb,
+                    "used_gb": r.used_gb,
+                    "usage_pct": r.usage_pct,
+                    "accessible": r.accessible,
+                    "host_count": r.host_count,
+                    "hypervisor": hv_names.get(r.hypervisor_id),
+                    "hypervisor_id": r.hypervisor_id,
+                    "as_of": r.as_of.isoformat() if r.as_of else None,
+                    "source": "db",
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.debug("[HVIntelligence] DB datastore read failed: %s", e)
+
     try:
         from app.services import vcenter_vm_performance as perf
         r = perf.fetch_datastore_status(db)
-        return list(r.get("datastores") or [])
+        live = list(r.get("datastores") or [])
+        for d in live:
+            d["source"] = "live"
+        return live
     except Exception as e:
         logger.warning(f"[HVIntelligence] live datastore fetch failed: {e}")
         return []
@@ -1895,7 +2026,7 @@ def h_largest_datastore(db: Session, question: str = "") -> str:
 
 
 def h_free_resources(db: Session, question: str = "") -> str:
-    """Host CPU/RAM + datastore nesne bazlı boş kapasite (canlı)."""
+    """Host CPU/RAM + datastore nesne bazlı boş kapasite (DB-first / canlı)."""
     hosts = _get_esx_hosts(db)
     host_rows = []
     for h in hosts:
@@ -1906,12 +2037,16 @@ def h_free_resources(db: Session, question: str = "") -> str:
             f"%{h.get('ds_pct')} (boş {h.get('ds_free_gb')} GB / {h.get('ds_total_gb')} GB — tüm DS toplamı)",
         ])
 
+    ds_sample = _get_live_datastores(db)
+    ds_src = (ds_sample[0].get("source") if ds_sample else None) or "live"
+    ds_label = "DATABASE (taze)" if ds_src == "db" else "vCenter canlı"
+
     parts = [
         "### Boş Kaynak Özeti\n",
-        "_Host Disk satırı tüm datastore'ların toplamıdır. Ayrı datastore boşlukları aşağıdaki canlı tablodadır._\n",
+        f"_Host Disk satırı tüm datastore'ların toplamıdır. Ayrı datastore boşlukları aşağıdaki {ds_label} tablodadır._\n",
         "#### Host\n",
         _md_table(["Host", "CPU", "RAM", "Disk (aggregate)"], host_rows, "Host metrik bulunamadı."),
-        "\n#### Datastore (vCenter canlı)\n",
+        f"\n#### Datastore ({ds_label})\n",
     ]
     # Reuse capacity table body from h_datastore_by_disk (strip heading)
     ds_block = h_datastore_by_disk(db, question)
@@ -2337,10 +2472,14 @@ QA_RULES: List[Tuple[str, Any]] = [
     # ── Envanter / sayım (önce — LLM'e düşmesin; spesifik kurallar genelden önce) ──
     (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*restart|son.*hafta.*restart\s*edil", h_restart_week),
     (r"kaç\s*(adet\s*)?(esx|esxi|hypervisor)?\s*host|host\s*sayıs|esx\s*sayıs|how\s*many\s*(esx|host)|toplam\s*host|host\s*adedi|kaç\s*esx", h_count_hosts),
+    # Tek VM QuickStats — genel "kaç VM" kuralından ÖNCE
+    (r"(?:vm.?inin|sanal\s*makine.?nin).{0,30}(?:cpu|ram|bellek|hafıza|kullanım|durum|as_of)"
+     r"|(?:cpu|ram|bellek).{0,40}(?:kullanım|usage|nedir|ne\s*kadar).{0,40}(?:vm|as_of)"
+     r"|as_of\s*(?:bilgisini|değeri|nedir)", h_named_vm_stats),
     (r"kaç\s*(adet\s*)?(çalışan|açık|aktif)\s*vm|powered\s*on\s*(vm\s*)?say|çalışan\s*\(?powered\s*on\)?\s*vm|powered\s*on.*kaç|kaç.*powered\s*on", h_count_powered_on),
     (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
     (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
-    (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm", h_vm_per_host),
+    (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm|hangi\s*host.?talar", h_vm_per_host),
     # Datastore → VM eşlemesi ("hangi datastore'da hangi VM var") — status kuralından ÖNCE,
     # yoksa geniş "hangi datastore" kalıbı bunu yutup kapasite/doluluk cevabı döner.
     (r"hangi\s*datastore.*\bvm\b|hangi\s*datastore.*sanal\s*makine|datastore.*hangi\s*vm|datastore.*hangi\s*sanal\s*makine"

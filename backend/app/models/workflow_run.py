@@ -17,7 +17,7 @@ class WorkflowRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    graph_name = Column(String(40), nullable=False, index=True)   # agent | aiops
+    graph_name = Column(String(40), nullable=False, index=True)   # agent | aiops | chat_source
     thread_id = Column(String(64), nullable=False, index=True)    # invoke başına benzersiz
 
     status = Column(String(20), default="running", index=True)    # running|completed|error

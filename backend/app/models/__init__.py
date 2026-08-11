@@ -11,6 +11,7 @@ from app.models.event import SystemEvent, Alert, Incident, BaselineMetric, Runbo
 from app.models.metric import MetricData, MetricAggregation, MetricThreshold
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.hypervisor_inventory import HypervisorHostInventory
+from app.models.virt_datastore import VirtDatastore
 from app.models.exadata import ExadataRack, ExadataNode
 from app.models.openshift import OpenShiftCluster, OpenShiftNode, OpenShiftProject, OpenShiftWorkload
 from app.models.package_job import PackageFile, PackageJob
@@ -39,6 +40,8 @@ __all__ = [
     "SystemEvent", "Alert", "Incident", "BaselineMetric", "RunbookExecution",
     "MetricData", "MetricAggregation", "MetricThreshold",
     "HypervisorHostMetric",
+    "HypervisorHostInventory",
+    "VirtDatastore",
     "ExadataRack", "ExadataNode",
     "OpenShiftCluster", "OpenShiftNode", "OpenShiftProject", "OpenShiftWorkload",
     "PackageFile", "PackageJob",

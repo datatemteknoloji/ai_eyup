@@ -8,54 +8,48 @@ from __future__ import annotations
 from typing import Any, List, Optional, Sequence, Tuple
 
 # Kullanıcı açıkça filo taraması istediğinde cap'li örneklem açılır
-_FLEET_SCAN_KEYWORDS = (
-    "filo",
-    "tüm sunucu",
-    "tum sunucu",
-    "bütün sunucu",
-    "butun sunucu",
-    "tüm linux",
-    "tum linux",
-    "tüm windows",
-    "tum windows",
-    "hepsi",
-    "hepsinde",
-    "hepsini",
-    "karşılaştır",
-    "karsilastir",
-    "compare",
-    "side by side",
-    "yan yana",
-    "tümünde",
-    "tumunde",
-    "fleet",
-    "all servers",
-    "every host",
-)
+# (geniş keyword seti: chat_full_scan_policy.wants_full_fleet)
 
 UNSELECTED_LIVE_HINT = (
     "NOT: Canlı SSH/WinRM taraması için hedef seçilmedi. "
     "Filo genelinde anlık kullanım için Hedef menüsünden sunucu seçin, "
-    "soruya sunucu adını/IP yazın, veya 'tüm sunucular / karşılaştır / filo' deyin "
-    "(cap'li örneklem). Envanter (CPU çekirdek/RAM GB) aşağıda DB'den gelir; "
-    "Prometheus metrikleri varsa onlar kullanılabilir."
+    "soruya sunucu adını/IP yazın, veya 'tüm sunucular / bütün liste / filo' deyin "
+    "(varsayılan cap; 'tüm filo' + onay ile tek soruda hard max). Envanter "
+    "(CPU çekirdek/RAM GB) aşağıda DB'den gelir; Prometheus metrikleri varsa onlar kullanılabilir."
 )
 
 FLEET_SAMPLE_HINT = (
     "NOT: Filo taraması istendi — canlı bağlantı üst sınır ile sınırlandı. "
-    "Belirli sunucu için Hedef menüsünden seçin veya adını yazın."
+    "Belirli sunucu için Hedef menüsünden seçin veya adını yazın. "
+    "Tüm filo için 'tüm sunucular' deyip onaylayın."
 )
 
 
 def message_wants_fleet_scan(message: Optional[str]) -> bool:
+    try:
+        from app.services.chat_full_scan_policy import wants_full_fleet
+        if wants_full_fleet(message):
+            return True
+    except Exception:
+        pass
     m = (message or "").lower()
     if not m:
         return False
-    return any(k in m for k in _FLEET_SCAN_KEYWORDS)
+    extras = (
+        "karşılaştır", "karsilastir", "compare", "side by side", "yan yana",
+        "filo", "fleet",
+    )
+    return any(k in m for k in extras)
 
 
 def get_chat_ssh_fleet_cap(default: int = 64) -> int:
     try:
+        from app.services.chat_full_scan_policy import (
+            effective_fleet_cap,
+            is_full_scan_request,
+        )
+        if is_full_scan_request():
+            return effective_fleet_cap(default)
         from app.services import runtime_settings
         n = int(runtime_settings.get_int("chat_ssh_fleet_cap"))
         return max(1, min(n, 512))
@@ -108,6 +102,12 @@ def inventory_lines_for_prompt(servers: Sequence[Any], *, limit: int = 40) -> st
     """DB envanter özeti (canlı collect olmadan prompt'a)."""
     if not servers:
         return ""
+    try:
+        from app.services.chat_full_scan_policy import effective_fleet_cap, is_full_scan_request
+        if is_full_scan_request():
+            limit = max(limit, effective_fleet_cap())
+    except Exception:
+        pass
     lines = []
     for s in list(servers)[:limit]:
         name = getattr(s, "name", None) or "?"

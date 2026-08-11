@@ -763,6 +763,171 @@ class VCenterClient:
             logger.debug(f"_vm_datastore_soap error: {e}")
             return ""
 
+    def _vm_placement_soap(self, vm_id: str) -> Dict[str, str]:
+        """
+        SOAP ile VM'in runtime.host + parent (cluster/host) bilgisini çözer.
+        Döner: {host_ref, host_name, cluster_name}
+        """
+        import xml.etree.ElementTree as ET
+        out = {"host_ref": "", "host_name": "", "cluster_name": ""}
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return out
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>runtime.host</vim25:pathSet>
+          <vim25:pathSet>name</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(
+                soap_url, data=body,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=15,
+            )
+            if resp.status_code != 200:
+                return out
+            root = ET.fromstring(resp.text)
+
+            def _tag(el):
+                return el.tag.split("}")[-1]
+
+            host_ref = ""
+            for rv in root.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    if (n_el.text or "") == "runtime.host":
+                        host_ref = (v_el.text or "").strip()
+                        # type attr may be on val
+                        if not host_ref and len(list(v_el)) == 0:
+                            host_ref = (v_el.attrib.get("type") and "") or ""
+                        # ManagedObjectReference often has text = host-12
+                        if not host_ref:
+                            host_ref = "".join(v_el.itertext()).strip()
+            if not host_ref:
+                return out
+            out["host_ref"] = host_ref
+
+            # Host name + parent (cluster)
+            hbody = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>HostSystem</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>parent</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="HostSystem">{host_ref}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            hresp = soap_session.post(
+                soap_url, data=hbody,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=15,
+            )
+            if hresp.status_code != 200:
+                return out
+            hroot = ET.fromstring(hresp.text)
+            parent_ref = ""
+            parent_type = ""
+            for rv in hroot.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    pname = n_el.text or ""
+                    if pname == "name":
+                        out["host_name"] = (v_el.text or "").strip()
+                    elif pname == "parent":
+                        parent_ref = "".join(v_el.itertext()).strip()
+                        parent_type = v_el.attrib.get("type") or ""
+                        for child in v_el:
+                            if _tag(child) in ("ManagedObjectReference",) or child.attrib.get("type"):
+                                parent_type = child.attrib.get("type") or parent_type
+                                parent_ref = (child.text or parent_ref or "").strip()
+
+            if parent_ref and "Cluster" in (parent_type or "Cluster"):
+                cbody = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>ClusterComputeResource</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>name</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="ClusterComputeResource">{parent_ref}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                cresp = soap_session.post(
+                    soap_url, data=cbody,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=15,
+                )
+                if cresp.status_code == 200:
+                    croot = ET.fromstring(cresp.text)
+                    for el in croot.iter():
+                        if _tag(el) == "val" and el.text and el.text.strip():
+                            # first name val
+                            pass
+                    for rv in croot.iter():
+                        if _tag(rv) != "returnval":
+                            continue
+                        for ps in rv:
+                            if _tag(ps) != "propSet":
+                                continue
+                            n_el = next((c for c in ps if _tag(c) == "name"), None)
+                            v_el = next((c for c in ps if _tag(c) == "val"), None)
+                            if n_el is not None and (n_el.text or "") == "name" and v_el is not None:
+                                out["cluster_name"] = (v_el.text or "").strip()
+            return out
+        except Exception as e:
+            logger.debug("_vm_placement_soap error: %s", e)
+            return out
+
     def _vm_nics_soap(self, vm_id: str, guest_ip: str = "") -> list:
         """
         SOAP ile VM ağ adaptörlerini (MAC + label) okur.
@@ -888,6 +1053,7 @@ class VCenterClient:
             # ── Disk kapasitesi & Datastore ──────────────────────────────────
             disk_gb = 0
             datastore_name = ""
+            disks_detail: list = []
 
             # 1) REST disk list endpoint (yeni vCenter)
             disks_resp = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk")
@@ -895,21 +1061,34 @@ class VCenterClient:
                 disk_list = disks_resp if isinstance(disks_resp, list) else (disks_resp.get("value") or [])
                 for disk in disk_list:
                     cap_bytes = disk.get("capacity") or disk.get("value", {}).get("capacity") or 0
-                    if not cap_bytes or not datastore_name:
-                        disk_key = disk.get("disk") or disk.get("key", "")
-                        if disk_key:
-                            dd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk/{disk_key}") or {}
-                            val = dd.get("value") or dd
-                            cap_bytes = cap_bytes or val.get("capacity", 0)
-                            # Datastore adını backing'den çıkar: "[DatastoreName] vm/vm.vmdk"
-                            if not datastore_name:
-                                backing = val.get("backing") or {}
-                                vmdk = backing.get("vmdk_file", "")
-                                if vmdk and vmdk.startswith("["):
-                                    end = vmdk.find("]")
-                                    if end > 1:
-                                        datastore_name = vmdk[1:end].strip()
-                    disk_gb += int(cap_bytes) // (1024 ** 3) if cap_bytes else 0
+                    disk_key = disk.get("disk") or disk.get("key", "")
+                    label = disk.get("label") or (f"disk-{disk_key}" if disk_key else "disk")
+                    thin = None
+                    ds_for_disk = ""
+                    if disk_key:
+                        dd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/disk/{disk_key}") or {}
+                        val = dd.get("value") or dd
+                        cap_bytes = cap_bytes or val.get("capacity", 0)
+                        label = val.get("label") or label
+                        backing = val.get("backing") or {}
+                        thin = backing.get("type") == "VMDK_FILE" and backing.get("thin") is True
+                        if thin is None and "thin" in backing:
+                            thin = bool(backing.get("thin"))
+                        vmdk = backing.get("vmdk_file", "")
+                        if vmdk and vmdk.startswith("["):
+                            end = vmdk.find("]")
+                            if end > 1:
+                                ds_for_disk = vmdk[1:end].strip()
+                                if not datastore_name:
+                                    datastore_name = ds_for_disk
+                    gb = int(cap_bytes) // (1024 ** 3) if cap_bytes else 0
+                    disk_gb += gb
+                    disks_detail.append({
+                        "label": label,
+                        "capacity_gb": gb,
+                        "thin": thin,
+                        "datastore": ds_for_disk or None,
+                    })
 
             # 2) Fallback: SOAP config.hardware.device
             if disk_gb == 0:
@@ -929,16 +1108,28 @@ class VCenterClient:
                     nic_key = nic.get("nic") or nic.get("key", "")
                     mac = nic.get("mac_address", "")
                     label = nic.get("label", f"NIC {idx+1}")
-                    if nic_key and not mac:
+                    portgroup = ""
+                    if nic_key:
                         nd = self._safe_api(f"/vcenter/vm/{vm_id}/hardware/ethernet/{nic_key}") or {}
                         val = nd.get("value") or nd
-                        mac   = val.get("mac_address", mac)
-                        label = val.get("label", label)
-                    networks.append({
+                        mac   = val.get("mac_address", mac) or mac
+                        label = val.get("label", label) or label
+                        backing = val.get("backing") or {}
+                        portgroup = (
+                            backing.get("network_name")
+                            or backing.get("network")
+                            or ""
+                        )
+                        if isinstance(portgroup, dict):
+                            portgroup = portgroup.get("name") or ""
+                    entry = {
                         "name": label,
                         "mac": mac,
                         "ips": [{"address": guest_ip, "version": "v4"}] if guest_ip and idx == 0 else [],
-                    })
+                    }
+                    if portgroup:
+                        entry["portgroup"] = str(portgroup)
+                    networks.append(entry)
 
             # 2) Fallback: SOAP guest.net + config.hardware.device
             if not networks:
@@ -948,8 +1139,16 @@ class VCenterClient:
             if not networks and guest_ip:
                 networks = [{"name": "eth0", "mac": "", "ips": [{"address": guest_ip, "version": "v4"}]}]
 
-            # ── Cluster ─────────────────────────────────────────────────────
-            cluster_name = (details.get("resource_pool") or details.get("host") or "")
+            # ── Cluster / Host yerleşimi ─────────────────────────────────────
+            placement = self._vm_placement_soap(vm_id) or {}
+            host_ref = placement.get("host_ref") or ""
+            host_name = placement.get("host_name") or ""
+            cluster_name = (
+                placement.get("cluster_name")
+                or details.get("resource_pool")
+                or ""
+            )
+            guest_os_full = (details.get("guest_OS") or guest.get("full_name") or "") or ""
 
             return {
                 "vm_id":               vm_id,
@@ -959,12 +1158,16 @@ class VCenterClient:
                 "vm_cpu_count":        cpu_count,
                 "vm_memory_mb":        mem_mb,
                 "vm_disk_gb":          disk_gb,
+                "vm_disks":            disks_detail or None,
                 "vm_power_state":      power_state,
                 "vm_tools_status":     (guest.get("tools_status") or ""),
                 "vm_network_info":     networks,
                 "vm_cluster":          str(cluster_name) if cluster_name else "",
                 "vm_datastore":        datastore_name,
                 "vm_hardware_version": hw_version,
+                "vm_host_name":        host_name,
+                "vm_host_ref":         host_ref,
+                "vm_guest_os_full":    guest_os_full,
                 "os_type":             (guest.get("family") or "") or self._guest_os_family_fallback(details.get("guest_OS", "")),
             }
         except Exception as e:

@@ -422,7 +422,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           } ${
             childActive
               ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
-              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -450,7 +450,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <button
           onClick={() => toggleGroup(child.key, subActive)}
           className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
-            subActive ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            subActive ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -484,7 +484,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           className={`w-full flex items-center px-3 py-2 rounded-lg transition-all duration-200 ${
             groupActive
               ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]'
-              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{item.icon}</span>
@@ -516,7 +516,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className={`flex items-center justify-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     childActive
                       ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                   }`}
                 >
                   <span className="flex-shrink-0 text-current">{child.icon}</span>
@@ -533,7 +533,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div className="h-screen flex overflow-hidden" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Sidebar — viewport'a sabit; yalnızca iç menü kayar */}
       <aside
-        className={`${sidebarOpen ? 'w-60' : 'w-16'} h-full border-r transition-all duration-300 flex flex-col flex-shrink-0`}
+        className={`app-sidebar ${sidebarOpen ? 'w-60' : 'w-16'} h-full border-r transition-all duration-300 flex flex-col flex-shrink-0`}
         style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
       >
         {/* Logo */}
@@ -559,7 +559,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
+            className={`p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
           >
             {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
           </button>
@@ -572,7 +572,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               if (item.type === 'section') {
                 return sidebarOpen ? (
                   <li key={`sec-${idx}`} className="px-3 pt-3 pb-1">
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                    <span className="app-sidebar-section text-[10px] font-semibold uppercase tracking-widest">
                       {item.label}
                     </span>
                   </li>
@@ -595,7 +595,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 ${
                         active
                           ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                       }`}
                     >
                       <span className="flex-shrink-0 text-current">{item.icon}</span>

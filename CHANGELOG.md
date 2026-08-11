@@ -11,6 +11,43 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.23] - 2026-08-11
+
+### Düzeltildi — Dark tema ana menü okunabilirliği
+- Dark `--text-secondary` / `--text-muted` token'ları `#c5d0e8` / `#9aabcb` (sidebar yüzeyinde yüksek kontrast).
+- Ana menü (Layout) inactive öğeler `--text-secondary`; `aside.app-sidebar` için zorunlu nav renk kuralları eklendi.
+- Prod frontend imajı yeniden build edilmeden görünmez (kaynak mount yok).
+
+### Düzeltildi — Fiziksel host ekleme UI donması
+- `POST /servers/` artık DB kaydını hemen döner; SSH OS probe + Dropt projeksiyonu
+  `BackgroundTasks` ile arka planda (kısa SSH timeout). Önceden istek 20–60s+
+  bloke olunca modal "Ekleniyor..."da kalıyordu; kayıt yine de oluşuyordu.
+- `virt_datastores` tablosu: datastore başına capacity/free/accessible (ESX metric sync ile upsert).
+- `servers` VM alanları: `vm_host_name/ref`, `vm_guest_os_full`, `vm_disks`, QuickStats özeti (`vm_cpu_usage_mhz`, `vm_mem_active_mb`, `vm_stats_as_of`).
+- VM enrich: disk listesi, NIC portgroup, SOAP placement (host/cluster).
+- Hypervisor intelligence datastore yolu: taze DB önce, değilse canlı API.
+- Chat tools: `db_list_vms`, `db_vm_detail`, `db_list_datastores`, `db_list_esx_hosts`, `db_virt_alarms` (DB-first; stale → canlı tool).
+- Chat tool politikası (`chat_tool_policy` + `unified_tool_chat`): virt / vCenter domain’de
+  ilk 2 adımda `vcenter_ask` / `vcenter_live_*` şemadan gizlenir; DB `stale`/boş/hata veya
+  faz dolunca canlı araçlar açılır (HypervisorChat + Unified aynı döngü).
+- Virt chat: ince LangGraph `chat_source` (`decide_source → execute_tools → finalize`) +
+  `WorkflowRun` izi; başarısızsa eski `run_read_only_tool_loop` fallback.
+- VMware metric sync: QuickStats (`vm_stats_as_of` / cpu_mhz / mem) metric_data olmasa
+  bile Server satırına commit edilir.
+- Deterministik virt QA: VM envanter özetine host kırılımı; tek-VM QuickStats (DB);
+  datastore boş özetinde kaynak etiketi DB/canlı; `db_list_vms` power_state filtresi
+  `POWERED_ON` ile doğru eşleşir.
+- Virt chat VM liste limiti: Gelişmiş Ayarlar `virt_chat_vm_list_limit` /
+  `virt_chat_vm_list_hard_max`. “Tüm VM’ler” → uyarı → onay; onay **yalnızca o soruya**
+  hard_max uygular, cevap bitince varsayılan limite döner.
+- Tüm chat’ler (Linux/Windows/Unified/Virt/OCP): ortak `chat_full_scan_policy` —
+  “tüm filo / tüm liste / bütün sunucular / all servers …” keyword’leri; onaylı tek-soru
+  `chat_fleet_hard_max`; varsayılan `chat_ssh_fleet_cap`.
+- Chat chitchat hızlı yolu (`chat_chitchat_policy`): selam / hâl hatır / kimlik /
+  teşekkür / vedâ / kısa onay / yardım / nezaket (TR+EN+kısaltma+bileşik kalıplar);
+  SSH/tool/RAG yok; ops kelimesi varsa chitchat değil. Full-scan onayı chitchat’ten önce
+  (ok/tamam çakışmaz).
+
 ## [1.0.9.22] - 2026-08-10
 
 
