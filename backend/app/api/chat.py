@@ -1345,6 +1345,11 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
+            # Kullanıcı mesajını stream başında kaydet (sayfa değişse bile history'de kalsın)
+            if not ephemeral:
+                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.commit()
+
             from app.services.chat_obs import ChatTiming
             _timing = ChatTiming(platform=chat_platform)
 
@@ -1367,7 +1372,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 for i in range(0, len(clarify), 8):
                     yield _sse({"token": clarify[i:i + 8]})
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=clarify,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=clarify,
                     meta={"intents": ["full_scan_clarify"]},
                 )
                 yield _sse({"done": True, "session_id": session_id, "needs_confirmation": True})
@@ -1378,7 +1383,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 for i in range(0, len(decline), 8):
                     yield _sse({"token": decline[i:i + 8]})
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=decline,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=decline,
                     meta={"intents": ["full_scan_declined"]},
                 )
                 yield _sse({"done": True, "session_id": session_id})
@@ -1397,7 +1402,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 for i in range(0, len(_cc), 8):
                     yield _sse({"token": _cc[i:i + 8]})
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=_cc,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=_cc,
                     meta={"intents": ["chitchat"]},
                 )
                 _timing.finish(cache_hit=False, extra={"path": "chitchat"})
@@ -1437,7 +1442,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 _timing.note_ttft()
                 for i in range(0, len(answer), 8):
                     yield _sse({"token": answer[i:i+8]})
-                _persist_chat_pair(db, session_id, ephemeral=ephemeral, user=message, assistant=answer)
+                _persist_chat_pair(db, session_id, ephemeral=ephemeral, user=None, assistant=answer)
                 _timing.finish(cache_hit=True, extra={"from_cache": True})
                 yield _sse({"done": True, "session_id": session_id, "from_cache": True})
                 return
@@ -1470,7 +1475,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 for i in range(0, len(inv_answer), 8):
                     yield _sse({"token": inv_answer[i:i + 8]})
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=inv_answer,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=inv_answer,
                 )
                 if not ephemeral:
                     save_to_cache(
@@ -1491,7 +1496,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     for i in range(0, len(_inv_note), 8):
                         yield _sse({"token": _inv_note[i:i + 8]})
                     _persist_chat_pair(
-                        db, session_id, ephemeral=ephemeral, user=message, assistant=_inv_note,
+                        db, session_id, ephemeral=ephemeral, user=None, assistant=_inv_note,
                     )
                     yield _sse({"done": True, "session_id": session_id})
                     return
@@ -1524,7 +1529,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 for i in range(0, len(inv_answer), 8):
                     yield _sse({"token": inv_answer[i:i + 8]})
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=inv_answer,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=inv_answer,
                 )
                 yield _sse({"done": True, "session_id": session_id})
                 return
@@ -1558,7 +1563,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     for i in range(0, len(_ask), 8):
                         yield _sse({"token": _ask[i:i + 8]})
                     _persist_chat_pair(
-                        db, session_id, ephemeral=ephemeral, user=message, assistant=_ask,
+                        db, session_id, ephemeral=ephemeral, user=None, assistant=_ask,
                     )
                     yield _sse({"done": True, "session_id": session_id})
                     return
@@ -1695,7 +1700,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
                 # Oturuma kaydet
                 _persist_chat_pair(
-                    db, session_id, ephemeral=ephemeral, user=message, assistant=full_resp,
+                    db, session_id, ephemeral=ephemeral, user=None, assistant=full_resp,
                 )
                 yield _sse({"done": True, "session_id": session_id})
                 return
@@ -1811,7 +1816,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                         yield _sse({"token": answer_text[i:i+8]})
                     _persist_chat_pair(
                         db, session_id, ephemeral=ephemeral,
-                        user=message, assistant=answer_text,
+                        user=None, assistant=answer_text,
                         meta={"charts": chart_result["charts"]},
                     )
                     yield _sse({"done": True, "session_id": session_id})
@@ -2278,10 +2283,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 platform=chat_platform,
             )
 
-            # Kullanıcı mesajını kaydet (gizli modda atla — assistant ile birlikte sonda)
-            if not ephemeral:
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                db.commit()
+            # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
 
             # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
             yield _sse({"phase": "answering"})

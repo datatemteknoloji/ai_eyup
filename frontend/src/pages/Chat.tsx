@@ -24,6 +24,14 @@ import {
   nlAssistantBubbleClass,
 } from '../components/nlChatUi'
 
+import {
+  useChatStream,
+  startChatStream,
+  abortChatStream,
+  loadPersistedSessionId,
+  persistSessionId,
+} from '../lib/chatStreamStore'
+
 function _cleanCell(raw: string): string {
   return raw
     // Markdown bold/italic
@@ -150,9 +158,18 @@ const Chat: React.FC<{
   initialQuestion?: string | null
   onInitialQuestionUsed?: () => void
 }> = ({ embedded, inventoryPlatform = 'linux', initialQuestion = null, onInitialQuestionUsed }) => {
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
+  const streamChannel = inventoryPlatform
+  const stream = useChatStream(streamChannel)
+  const isLoading = stream.isLoading
+  const pendingUserMessage = stream.pendingUserMessage
+  const streamingText = stream.streamingText
+  const thinkingPhase = stream.thinkingPhase
+  const toolCalls = stream.toolCalls
+
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(() =>
+    loadPersistedSessionId(streamChannel),
+  )
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
@@ -161,10 +178,6 @@ const Chat: React.FC<{
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
   // Envanter NLQ UI kaldırıldı — doğal dil = canlı/agentic (Virt formu)
   const effectiveInventoryMode = false
-  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
-  const [streamingText, setStreamingText] = useState<string>('')
-  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'tools' | 'streaming'>('idle')
-  const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const inventoryMsgSeq = useRef(-1000)
 
 
@@ -179,9 +192,20 @@ const Chat: React.FC<{
   const serverBtnRef = useRef<HTMLButtonElement>(null)
   const serverMenuRef = useRef<HTMLDivElement>(null)
   const [serverMenuRect, setServerMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)  // hangi session için stream çalışıyor
   const initialHandled = useRef(false)
+
+  useEffect(() => {
+    persistSessionId(streamChannel, selectedSessionId)
+  }, [streamChannel, selectedSessionId])
+
+  // Aktif stream varsa (başka sayfadan dönüş) aynı session'a otur
+  useEffect(() => {
+    if (stream.isLoading && stream.sessionId != null) {
+      setSelectedSessionId(stream.sessionId)
+    }
+    streamSessionRef.current = stream.sessionId ?? streamSessionRef.current
+  }, [stream.isLoading, stream.sessionId])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -276,11 +300,7 @@ const Chat: React.FC<{
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['chat-sessions', inventoryPlatform] })
-      abortRef.current?.abort()
-      setIsLoading(false)
-      setStreamingText('')
-      setPendingUserMessage(null)
-      setThinkingPhase('idle')
+      abortChatStream(streamChannel)
       setSelectedSessionId(data.id)
       setInput('')
       setSuppressAutoCreate(false)
@@ -336,14 +356,8 @@ const Chat: React.FC<{
   }, [sessionsFetched, sessions.length, selectedSessionId])
 
   const sendInventoryQuery = async (messageText: string) => {
-    if (!messageText.trim() || isLoading) return
-    setIsLoading(true)
-    setPendingUserMessage(messageText)
-    setStreamingText('')
-    setThinkingPhase('streaming')
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    streamSessionRef.current = selectedSessionId
+    // Envanter NLQ kapalı (effectiveInventoryMode=false); yedek yol — stream store kullanma
+    if (!messageText.trim() || stream.isLoading) return
     const ts = new Date().toISOString()
     try {
       const liveHint = /canlı|simdi dogrula|şimdi doğrula|live check|ssh ile|ssh at|çalıştır|calistir|journalctl|systemctl|sestatus/i.test(messageText)
@@ -356,47 +370,39 @@ const Chat: React.FC<{
           live_check: liveHint,
           server_ids: selectedServers.length ? selectedServers : undefined,
         }),
-        signal: ctrl.signal,
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data?.detail || `HTTP ${res.status}`)
-      }
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
       let content = ''
-      if (data.status === 'success') {
-        content = data.answer_markdown || `_Sonuç yok._`
-      } else if (data.status === 'unsupported') {
-        content = `Bu soru mevcut envanter alanlarıyla cevaplanamıyor.\n\n${data.reason || ''}\n\n_İpucu: Teknik SSH/diagnostik için «Envanter sorgu»yu kapatın veya soruya «canlı doğrula» ekleyin._`
+      if (data.status === 'success') content = data.answer_markdown || `_Sonuç yok._`
+      else if (data.status === 'unsupported') {
+        content = `Bu soru mevcut envanter alanlarıyla cevaplanamıyor.\n\n${data.reason || ''}`
       } else if (data.status === 'invalid_query') {
-        content = `Sorgu geçersiz: ${data.message || 'bilinmeyen hata'}${data.invalid_field ? ` (alan: ${data.invalid_field})` : ''}`
+        content = `Sorgu geçersiz: ${data.message || 'bilinmeyen hata'}`
       } else {
         content = typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2)
       }
       const uid = inventoryMsgSeq.current--
       const aid = inventoryMsgSeq.current--
-      setLocalInventoryMessages(prev => [
+      setLocalInventoryMessages((prev) => [
         ...prev,
         { id: uid, role: 'user', content: messageText, created_at: ts },
         { id: aid, role: 'assistant', content, created_at: new Date().toISOString() },
       ])
-      setPendingUserMessage(null)
-      setStreamingText('')
       setInput('')
     } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        const uid = inventoryMsgSeq.current--
-        const aid = inventoryMsgSeq.current--
-        setLocalInventoryMessages(prev => [
-          ...prev,
-          { id: uid, role: 'user', content: messageText, created_at: ts },
-          { id: aid, role: 'assistant', content: `**Envanter sorgu hatası:** ${err?.message || 'bilinmeyen'}`, created_at: new Date().toISOString() },
-        ])
-      }
-      setPendingUserMessage(null)
-    } finally {
-      setIsLoading(false)
-      setThinkingPhase('idle')
-      abortRef.current = null
+      const uid = inventoryMsgSeq.current--
+      const aid = inventoryMsgSeq.current--
+      setLocalInventoryMessages((prev) => [
+        ...prev,
+        { id: uid, role: 'user', content: messageText, created_at: ts },
+        {
+          id: aid,
+          role: 'assistant',
+          content: `**Envanter sorgu hatası:** ${err?.message || 'bilinmeyen'}`,
+          created_at: new Date().toISOString(),
+        },
+      ])
     }
   }
 
@@ -440,118 +446,37 @@ const Chat: React.FC<{
       'multipath','lvm','vgdisplay','oom','coredump','smartctl','crontab','nftables',
       'docker','podman','kubectl','container','neden','kök neden','teşhis','diagnos']
     const needsSsh = SSH_ONLY_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
-    setIsLoading(true)
-    setPendingUserMessage(messageText)
-    setStreamingText('')
-    setToolCalls([])
-    setThinkingPhase(needsSsh ? 'context' : 'streaming')
-
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    // Bu isteğin başladığı session — done gelince hâlâ aynı session'da mıyız?
-    const startSessionId = selectedSessionId
     streamSessionRef.current = selectedSessionId
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: messageText,
-          session_id: selectedSessionId,
-          server_ids: selectedServers.length > 0 ? selectedServers : undefined,
-          hypervisor_ids: undefined,
-          model: selectedModel,
-          use_rag: true,
-          ephemeral: false,
-          platform: inventoryPlatform,
-        }),
-        signal: ctrl.signal
-      })
-
-      if (!res.ok || !res.body) {
-        throw new Error(`HTTP ${res.status}`)
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let accumulated = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const jsonStr = line.slice(6).trim()
-          if (!jsonStr) continue
-          try {
-            const chunk = JSON.parse(jsonStr)
-            if (chunk.start) {
-              if (chunk.session_id && chunk.session_id !== selectedSessionId) {
-                setSelectedSessionId(chunk.session_id)
-              }
-              setThinkingPhase('streaming')
-            }
-            if (chunk.phase === 'collecting') setThinkingPhase('context')
-            if (chunk.phase === 'tools') setThinkingPhase('tools')
-            if (chunk.phase === 'answering') setThinkingPhase('streaming')
-            if (chunk.token) {
-              accumulated += chunk.token
-              setStreamingText(accumulated)
-            }
-            if (chunk.type === 'tool_call') {
-              const tool = chunk.tool || ''
-              const label = chunk.label || tool
-              setToolCalls(prev => [...prev, { tool, label, done: false }])
-            }
-            if (chunk.type === 'tool_result') {
-              const tool = chunk.tool || ''
-              setToolCalls(prev => {
-                const idx = [...prev].reverse().findIndex(t => t.tool === tool && !t.done)
-                if (idx === -1) return prev
-                const realIdx = prev.length - 1 - idx
-                const next = [...prev]
-                next[realIdx] = { ...next[realIdx], done: true }
-                return next
-              })
-            }
-            if (chunk.error) {
-              setStreamingText(`**Hata:** ${chunk.error}`)
-              setThinkingPhase('idle')
-            }
-            if (chunk.done) {
-              setThinkingPhase('idle')
-              // Sadece hâlâ aynı session'daysa güncelle — karışmaması için
-              if (startSessionId === selectedSessionId || chunk.session_id === selectedSessionId) {
-                await refetchMessages()
-              }
-              await refetchSessions()
-              setStreamingText('')
-              setPendingUserMessage(null)
-              setInput('')
-            }
-            // Cache'den gelen yanıt: anında streaming gibi göster
-            if (chunk.from_cache) {
-              setThinkingPhase('streaming')
-            }
-          } catch { /* json parse error yoksay */ }
+    await startChatStream({
+      channel: streamChannel,
+      url: `${API_BASE_URL}/chat/stream`,
+      body: {
+        message: messageText,
+        session_id: selectedSessionId,
+        server_ids: selectedServers.length > 0 ? selectedServers : undefined,
+        hypervisor_ids: undefined,
+        model: selectedModel,
+        use_rag: true,
+        ephemeral: false,
+        platform: inventoryPlatform,
+      },
+      sessionId: selectedSessionId,
+      message: messageText,
+      initialPhase: needsSsh ? 'context' : 'streaming',
+      onSessionId: (id) => {
+        setSelectedSessionId(id)
+        streamSessionRef.current = id
+      },
+      onDone: async (sid) => {
+        const id = sid ?? selectedSessionId
+        if (id != null) {
+          await queryClient.invalidateQueries({ queryKey: ['chat-messages', id] })
         }
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        setStreamingText(`**Bağlantı hatası.** Tekrar deneyin.`)
-      }
-      setThinkingPhase('idle')
-    } finally {
-      setIsLoading(false)
-      abortRef.current = null
-    }
+        await queryClient.invalidateQueries({ queryKey: ['chat-sessions', inventoryPlatform] })
+        setInput('')
+      },
+    })
   }
 
   useEffect(() => {
@@ -564,11 +489,7 @@ const Chat: React.FC<{
   }, [initialQuestion])
 
   const handleAbort = () => {
-    abortRef.current?.abort()
-    setIsLoading(false)
-    setThinkingPhase('idle')
-    setStreamingText('')
-    setPendingUserMessage(null)
+    abortChatStream(streamChannel)
   }
 
   const formatDate = (dateString: string) => {
@@ -601,10 +522,14 @@ const Chat: React.FC<{
     inventoryPlatform === 'exadata' ? <Layers size={24} className="text-white" /> :
     <ServerIcon size={24} className="text-white" />
 
+  const streamBelongsHere =
+    pendingUserMessage != null &&
+    (stream.sessionId === selectedSessionId ||
+      (stream.isLoading && (stream.sessionId == null || stream.sessionId === selectedSessionId)))
   const hasMessages =
     messages.length > 0 ||
     localInventoryMessages.length > 0 ||
-    (pendingUserMessage != null && streamSessionRef.current === selectedSessionId)
+    streamBelongsHere
 
   const showEmpty = selectedSessionId === null || !hasMessages
 
@@ -615,11 +540,8 @@ const Chat: React.FC<{
 
   const handleSessionSelect = (id: number) => {
     if (id !== selectedSessionId) {
-      abortRef.current?.abort()
-      setIsLoading(false)
-      setStreamingText('')
-      setPendingUserMessage(null)
-      setThinkingPhase('idle')
+      // Başka session'a geçerken bu channel stream'ini iptal et
+      abortChatStream(streamChannel)
       setLocalInventoryMessages([])
     }
     setSelectedSessionId(id)
@@ -739,7 +661,7 @@ const Chat: React.FC<{
                 {[
                   ...messages,
                   ...localInventoryMessages,
-                  ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
+                  ...(pendingUserMessage && streamBelongsHere
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
                 ].map(msg => {
@@ -808,7 +730,7 @@ const Chat: React.FC<{
                   )
                 })}
 
-                {isLoading && streamSessionRef.current === selectedSessionId && (
+                {isLoading && (stream.sessionId === selectedSessionId || stream.sessionId == null) && (
                   <div className="flex justify-start mb-4">
                     <div className={nlAssistantBubbleClass}>
                       {toolCalls.length > 0 && (

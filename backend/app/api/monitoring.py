@@ -88,9 +88,11 @@ async def list_metric_servers(
             hostname=s.hostname,
             name=s.name,
         )
-        # Prometheus'ta yoksa eski IP:9100 etiketini kullan (görüntüleme)
+        # Prometheus'ta yoksa görüntüleme etiketi: hostname tercih (IP yedek)
         if not instance:
-            instance = f"{(s.ip_address or '').strip()}:9100"
+            host_label = (s.hostname or s.name or s.ip_address or "").strip()
+            # FQDN ise kısa ad da olabilir; gösterimde kayıtlı adı kullan
+            instance = f"{host_label}:9100" if host_label else "?:9100"
             live = False
 
         # Listede tut: canlı Prometheus hedefi VEYA daha önce kurulu işaretli
@@ -535,7 +537,9 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
                 if not installed:
                     from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
                     try:
-                        if node_exporter_up_for_server(server.ip_address, server.hostname):
+                        if node_exporter_up_for_server(
+                            server.ip_address, server.hostname, name=server.name,
+                        ):
                             installed = True
                             running = True
                     except Exception as e:
@@ -564,37 +568,14 @@ async def list_ai_ready_servers(db: Session = Depends(get_db)):
         logger.error(f"AI Ready sunucular listesi hatası: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Liste hatası: {str(e)}")
 
-def _prometheus_node_exporter_up(server_ip: Optional[str], hostname: Optional[str]) -> bool:
-    """Prometheus'tan bu sunucuda node-exporter'ın up olup olmadığını kontrol et"""
-    if not server_ip and not hostname:
-        return False
-    try:
-        from app.core.config import promql_job_matcher
-        job = promql_job_matcher(kind="linux")
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.get(
-                f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": f'up{{{job}}}'},
-            )
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            if data.get("status") != "success":
-                return False
-            for r in data.get("data", {}).get("result", []):
-                instance = (r.get("metric") or {}).get("instance", "")
-                value = r.get("value")
-                if value is None or len(value) < 2:
-                    continue
-                if str(value[1]) != "1":
-                    continue
-                if server_ip and (instance == f"{server_ip}:9100" or instance.startswith(server_ip + ":")):
-                    return True
-                if hostname and (instance.startswith(hostname) or hostname in instance):
-                    return True
-    except Exception as e:
-        logger.debug(f"Prometheus fallback hatası: {e}")
-    return False
+def _prometheus_node_exporter_up(
+    server_ip: Optional[str],
+    hostname: Optional[str],
+    name: Optional[str] = None,
+) -> bool:
+    """Prometheus'tan bu sunucuda node-exporter'ın up olup olmadığını kontrol et."""
+    from app.services.monitoring.prometheus_metrics import node_exporter_up_for_server
+    return node_exporter_up_for_server(server_ip, hostname, name=name)
 
 
 @router.get("/node-exporter/status/{server_id}")
@@ -613,7 +594,7 @@ async def check_node_exporter_status(server_id: int, db: Session = Depends(get_d
 
     # DB'de kayıt yoksa Prometheus'tan kontrol et ve DB'ye yaz
     if not installed and (server.ip_address or server.hostname):
-        if _prometheus_node_exporter_up(server.ip_address, server.hostname):
+        if _prometheus_node_exporter_up(server.ip_address, server.hostname, name=server.name):
             installed = True
             running = True
             from datetime import datetime

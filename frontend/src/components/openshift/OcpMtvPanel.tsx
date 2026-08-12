@@ -108,7 +108,20 @@ export default function OcpMtvPanel({ clusterId, overview }: { clusterId: number
       {!plans.length ? <p className="py-3 text-xs text-slate-500">{readyProvider ? 'Henüz plan yok. Yeni plan oluşturarak başlayın.' : 'Önce hazır bir vSphere provider ekleyin.'}</p> : <div className="space-y-2">{plans.map((p) => <PlanRow key={p.name} plan={p} canWrite={!!canWrite} watching={watch === p.name} onWatch={() => setWatch(watch === p.name ? null : p.name)} onStart={() => { if (window.confirm(`"${p.name}" planı başlatılsın mı? Açık kaynak VM'ler soğuk taşımada kapatılabilir.`)) act(() => api(`${base}/plans/${encodeURIComponent(p.name)}/start`, { method: 'POST' }), 'Taşıma başlatıldı.'); setWatch(p.name) }} onCancel={() => { if (window.confirm(`"${p.name}" taşıması iptal edilsin mi? Plan korunur.`)) act(() => api(`${base}/plans/${encodeURIComponent(p.name)}/cancel`, { method: 'POST' }), 'Taşıma iptal edildi.') }} onDelete={() => { if (window.confirm(`"${p.name}" planı silinsin mi?`)) act(() => api(`${base}/plans/${encodeURIComponent(p.name)}`, { method: 'DELETE' }), 'Plan silindi.') }} />)}</div>}
     </section>
     {watch && <ProgressWatch clusterId={clusterId} base={base} plan={watch} status={status} />}
-    {wizard && <PlanWizard clusterId={clusterId} base={base} providers={providers.filter((p) => p.type === 'vsphere' && p.ready)} hypervisors={hypervisors} onClose={() => setWizard(false)} onCreated={() => { setWizard(false); load(); setMsg('Plan oluşturuldu; MTV doğrulamasından sonra başlatabilirsiniz.') }} />}
+    {wizard && (
+      <PlanWizard
+        clusterId={clusterId}
+        base={base}
+        providers={providers.filter((p) => p.type === 'vsphere')}
+        hypervisors={hypervisors}
+        onClose={() => setWizard(false)}
+        onCreated={() => {
+          setWizard(false)
+          load()
+          setMsg('Plan oluşturuldu; MTV doğrulamasından sonra başlatabilirsiniz.')
+        }}
+      />
+    )}
     {vddkFor && <VddkModal base={base} provider={vddkFor} onClose={() => setVddkFor(null)} onSaved={() => { setVddkFor(null); load(); setMsg('VDDK ayarı kaydedildi.') }} />}
   </div>
 }
@@ -149,19 +162,327 @@ function VddkModal({ base, provider, onClose, onSaved }: any) {
 }
 
 function PlanWizard({ clusterId, base, providers, hypervisors, onClose, onCreated }: any) {
-  const [step, setStep] = useState(1); const [name, setName] = useState(''); const [providerName, setProviderName] = useState(providers[0]?.name || ''); const [hypervisorId, setHypervisorId] = useState(String(hypervisors[0]?.id || '')); const [vms, setVms] = useState<any[]>([]); const [selected, setSelected] = useState<Set<string>>(new Set()); const [search, setSearch] = useState(''); const [targets, setTargets] = useState<any>(null); const [refs, setRefs] = useState<any>(null); const [sMap, setSMap] = useState<Record<string, string>>({}); const [nMap, setNMap] = useState<Record<string, string>>({}); const [targetNs, setTargetNs] = useState('vm-migrasyon'); const [warm, setWarm] = useState(false); const [loading, setLoading] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { if (!hypervisorId) return; api<any[]>(`${base}/source-vms?hypervisor_id=${encodeURIComponent(hypervisorId)}`).then(setVms).catch((e) => setError(e.message)); setSelected(new Set()) }, [base, hypervisorId])
-  useEffect(() => { api<any>(`${base}/targets`).then(setTargets).catch((e) => setError(e.message)) }, [base])
+  const sourceProviders = (providers || []).filter((p: any) => p.type !== 'openshift')
+  // Atlas ile aynı: VDDK'lı provider varsayılan (yoksa ilk)
+  const [providerName, setProviderName] = useState(
+    () => (sourceProviders.find((p: any) => p.vddk) || sourceProviders[0])?.name || '',
+  )
+  const selectedProvider = sourceProviders.find((p: any) => p.name === providerName)
+  const [step, setStep] = useState(1)
+  const [name, setName] = useState('')
+  const [hypervisorId, setHypervisorId] = useState(String(hypervisors[0]?.id || ''))
+  const [vms, setVms] = useState<any[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [targets, setTargets] = useState<any>(null)
+  const [refs, setRefs] = useState<any>(null)
+  const [sMap, setSMap] = useState<Record<string, string>>({})
+  const [nMap, setNMap] = useState<Record<string, string>>({})
+  const [targetNs, setTargetNs] = useState('vm-migrasyon')
+  const [warm, setWarm] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!hypervisorId) return
+    api<any[]>(`${base}/source-vms?hypervisor_id=${encodeURIComponent(hypervisorId)}`)
+      .then(setVms)
+      .catch((e) => setError(e.message))
+    setSelected(new Set())
+  }, [base, hypervisorId])
+  useEffect(() => {
+    api<any>(`${base}/targets`).then(setTargets).catch((e) => setError(e.message))
+  }, [base])
+  // Provider listesi yenilenince VDDK'lıyı tercih et (ilk açılış / boş seçim)
+  useEffect(() => {
+    if (!sourceProviders.length) return
+    if (providerName && sourceProviders.some((p: any) => p.name === providerName)) return
+    setProviderName((sourceProviders.find((p: any) => p.vddk) || sourceProviders[0]).name)
+  }, [providers])
+
   const defaultSc = targets?.storage_classes?.find((s: any) => s.default)?.name || targets?.storage_classes?.[0]?.name || ''
-  const next = async () => { setLoading(true); setError(''); try { const r = await api<any>(`${base}/source-refs`, { method: 'POST', body: JSON.stringify({ hypervisor_id: Number(hypervisorId), vm_morefs: [...selected] }) }); setRefs(r); setSMap(Object.fromEntries((r.datastores || []).map((d: any) => [d.moref, defaultSc]))); setNMap(Object.fromEntries((r.networks || []).map((n: any) => [n.moref, 'pod']))); setStep(2) } catch (e: any) { setError(e.message) } finally { setLoading(false) } }
-  const create = async () => { setLoading(true); setError(''); try { const networkOptions = targets?.networks || [{ type: 'pod', name: 'pod' }]; await api(`${base}/plans`, { method: 'POST', body: JSON.stringify({ plan_name: name, provider_name: providerName, hypervisor_id: Number(hypervisorId), vms: vms.filter((v) => selected.has(v.moref)).map((v) => ({ id: v.moref, name: v.name })), target_namespace: targetNs, warm, storage_class: defaultSc, network: { type: 'pod' }, storage_map: (refs?.datastores || []).map((d: any) => ({ source_id: d.moref, source_name: d.name, storage_class: sMap[d.moref] })), network_map: (refs?.networks || []).map((n: any) => { const key = nMap[n.moref] || 'pod'; const o = networkOptions.find((x: any) => (x.type === 'pod' ? 'pod' : `multus:${x.name}`) === key) || { type: 'pod' }; return { source_id: n.moref, source_name: n.name, type: o.type, name: o.name, namespace: o.namespace, namespaces: o.namespaces } }) }) }); onCreated() } catch (e: any) { setError(e.message) } finally { setLoading(false) } }
-  const toggle = (id: string) => setSelected((old) => { const next = new Set(old); next.has(id) ? next.delete(id) : next.add(id); return next })
+  const next = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const r = await api<any>(`${base}/source-refs`, {
+        method: 'POST',
+        body: JSON.stringify({ hypervisor_id: Number(hypervisorId), vm_morefs: [...selected] }),
+      })
+      setRefs(r)
+      setSMap(Object.fromEntries((r.datastores || []).map((d: any) => [d.moref, defaultSc])))
+      setNMap(Object.fromEntries((r.networks || []).map((n: any) => [n.moref, 'pod'])))
+      setStep(2)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  const create = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const networkOptions = targets?.networks || [{ type: 'pod', name: 'pod' }]
+      await api(`${base}/plans`, {
+        method: 'POST',
+        body: JSON.stringify({
+          plan_name: name,
+          provider_name: providerName,
+          hypervisor_id: Number(hypervisorId),
+          vms: vms.filter((v) => selected.has(v.moref)).map((v) => ({ id: v.moref, name: v.name })),
+          target_namespace: targetNs,
+          warm,
+          storage_class: defaultSc,
+          network: { type: 'pod' },
+          storage_map: (refs?.datastores || []).map((d: any) => ({
+            source_id: d.moref,
+            source_name: d.name,
+            storage_class: sMap[d.moref],
+          })),
+          network_map: (refs?.networks || []).map((n: any) => {
+            const key = nMap[n.moref] || 'pod'
+            const o =
+              networkOptions.find((x: any) => (x.type === 'pod' ? 'pod' : `multus:${x.name}`) === key) ||
+              { type: 'pod' }
+            return {
+              source_id: n.moref,
+              source_name: n.name,
+              type: o.type,
+              name: o.name,
+              namespace: o.namespace,
+              namespaces: o.namespaces,
+            }
+          }),
+        }),
+      })
+      onCreated()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  const toggle = (id: string) =>
+    setSelected((old) => {
+      const next = new Set(old)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   const nets = targets?.networks || [{ type: 'pod', name: 'pod', label: 'Pod ağı' }]
-  return <Modal title="Yeni Taşıma Planı" onClose={onClose} wide><div className="flex items-center gap-2 mb-4">{['VM Seçimi', 'Eşleme', 'Hedef & Onay'].map((label, i) => <div key={label} className="flex items-center gap-1.5 flex-1"><span className={`h-5 w-5 rounded-full text-[10px] flex items-center justify-center ${step > i + 1 ? 'bg-emerald-500' : step === i + 1 ? 'bg-cyan-600' : 'bg-white/[0.08] text-slate-500'}`}>{step > i + 1 ? <Check size={12} /> : i + 1}</span><span className={`text-[11px] ${step >= i + 1 ? 'text-slate-200' : 'text-slate-500'}`}>{label}</span></div>)}</div>{error && <p className="rounded-lg bg-rose-500/10 p-2 text-xs text-rose-200">{error}</p>}
-    {step === 1 && <div className="space-y-3"><div className="grid sm:grid-cols-2 gap-3"><label className="text-xs text-slate-500">Plan adı<input className={`${input} mt-1`} value={name} onChange={(e) => setName(e.target.value)} placeholder="örn. uretim-tasima" /></label><label className="text-xs text-slate-500">MTV provider<select className={`${input} mt-1`} value={providerName} onChange={(e) => setProviderName(e.target.value)}>{providers.map((p: any) => <option key={p.name} value={p.name}>{p.name}</option>)}</select></label></div><label className="block text-xs text-slate-500">Kaynak vCenter<select className={`${input} mt-1`} value={hypervisorId} onChange={(e) => setHypervisorId(e.target.value)}>{hypervisors.map((h: any) => <option key={h.id} value={h.id}>{h.name} ({h.hostname || h.ip || '—'})</option>)}</select></label><div><div className="flex mb-1"><p className="text-xs text-slate-500">{selected.size} VM seçili</p><input className="ml-auto rounded border border-white/[0.08] bg-cyber-deep px-2 py-1 text-xs" placeholder="ara…" value={search} onChange={(e) => setSearch(e.target.value)} /></div><div className="max-h-52 overflow-auto rounded-lg border border-white/[0.06]">{vms.filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase())).map((v) => <label key={v.moref} className="flex gap-2 border-b border-white/[0.04] px-3 py-2 text-xs hover:bg-white/[0.03]"><input type="checkbox" checked={selected.has(v.moref)} onChange={() => toggle(v.moref)} /><span className={v.power_state === 'poweredOn' ? 'text-emerald-400' : 'text-slate-500'}>●</span><span className="text-slate-200">{v.name}</span><span className="ml-auto font-mono text-slate-500">{v.moref}</span></label>) || <p className="p-3 text-xs text-slate-500">VM yok</p>}</div></div><button disabled={!name.trim() || !selected.size || loading} onClick={next} className="w-full rounded-lg bg-cyan-600 py-2 text-sm text-white disabled:opacity-40">{loading ? 'Kaynaklar okunuyor…' : 'Devam — Eşlemeye Geç'}</button></div>}
-    {step === 2 && <div className="space-y-4"><p className="text-xs text-slate-400">VM'lerin kullandığı datastore ve ağları OpenShift hedeflerine eşleyin.</p>{refs?.warnings?.length > 0 && <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100">{refs.warnings.map((w: string) => <p key={w}>• {w}</p>)}</div>}<Mapping title="Depolama eşlemesi" icon={<HardDrive size={14} />} refs={refs?.datastores} value={sMap} setValue={setSMap} options={targets?.storage_classes || []} optionKey={(x: any) => x.name} optionLabel={(x: any) => `${x.name}${x.default ? ' (varsayılan)' : ''}`} /><Mapping title="Ağ eşlemesi" icon={<Network size={14} />} refs={refs?.networks} value={nMap} setValue={setNMap} options={nets} optionKey={(x: any) => x.type === 'pod' ? 'pod' : `multus:${x.name}`} optionLabel={(x: any) => x.label || x.name} /><div className="flex gap-2"><button className={button} onClick={() => setStep(1)}>Geri</button><button className="flex-1 rounded-lg bg-cyan-600 py-2 text-sm text-white" onClick={() => setStep(3)}>Devam</button></div></div>}
-    {step === 3 && <div className="space-y-3"><label className="text-xs text-slate-500">Hedef namespace<input className={`${input} mt-1`} value={targetNs} onChange={(e) => setTargetNs(e.target.value)} /></label><label className="flex gap-2 text-xs text-slate-300"><input type="checkbox" checked={warm} onChange={(e) => setWarm(e.target.checked)} /> <span>Ilık taşıma (warm)<span className="block mt-1 text-slate-500">VM açıkken kopyalar; son geçişte kısa kesinti olur. CBT açık olmalıdır.</span></span></label><div className="rounded-lg bg-cyber-deep p-3 text-xs text-slate-400"><p><b className="text-slate-200">{selected.size} VM</b> → <span className="font-mono">{targetNs}</span></p><p className="mt-1">Taşıma tipi: {warm ? 'ılık' : 'soğuk'} {!warm && <span className="text-amber-300">— açık VM'ler kapatılabilir</span>}</p></div><div className="flex gap-2"><button className={button} onClick={() => setStep(2)}>Geri</button><button disabled={loading} onClick={create} className="flex-1 rounded-lg bg-cyan-600 py-2 text-sm text-white disabled:opacity-40">{loading ? 'Oluşturuluyor…' : `Planı Oluştur (${selected.size} VM)`}</button></div></div>}
-  </Modal>
+  const filteredVms = vms.filter(
+    (v) => !search || v.name.toLowerCase().includes(search.toLowerCase()),
+  )
+
+  return (
+    <Modal title="Yeni Taşıma Planı" onClose={onClose} wide>
+      <div className="flex items-center gap-2 mb-4">
+        {['VM Seçimi', 'Eşleme', 'Hedef & Onay'].map((label, i) => (
+          <div key={label} className="flex items-center gap-1.5 flex-1">
+            <span
+              className={`h-5 w-5 rounded-full text-[10px] flex items-center justify-center ${
+                step > i + 1 ? 'bg-emerald-500' : step === i + 1 ? 'bg-cyan-600' : 'bg-white/[0.08] text-slate-500'
+              }`}
+            >
+              {step > i + 1 ? <Check size={12} /> : i + 1}
+            </span>
+            <span className={`text-[11px] ${step >= i + 1 ? 'text-slate-200' : 'text-slate-500'}`}>{label}</span>
+          </div>
+        ))}
+      </div>
+      {error && <p className="rounded-lg bg-rose-500/10 p-2 text-xs text-rose-200">{error}</p>}
+
+      {step === 1 && (
+        <div className="space-y-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-500">
+              Plan adı
+              <input
+                className={`${input} mt-1`}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="örn. uretim-tasima"
+              />
+            </label>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Kaynak sağlayıcı (MTV)</label>
+              <select
+                className={input}
+                value={providerName}
+                onChange={(e) => setProviderName(e.target.value)}
+              >
+                {sourceProviders.map((p: any) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name} — {p.vddk ? 'VDDK etkin (hızlı)' : 'VDDK yok (yavaş)'}
+                  </option>
+                ))}
+              </select>
+              {selectedProvider && !selectedProvider.vddk && (
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300/90">
+                  <AlertTriangle className="mt-px h-3.5 w-3.5 flex-shrink-0" />
+                  <span>
+                    Bu sağlayıcıda VDDK tanımlı değil — diskler vCenter&apos;dan HTTPS ile çekilir
+                    (tipik 5–10 kat yavaş). Sağlayıcı kartındaki <b>Ayarla</b> ile VDDK imajını
+                    tanımlayın.
+                  </span>
+                </p>
+              )}
+            </div>
+          </div>
+          <label className="block text-xs text-slate-500">
+            Kaynak vCenter
+            <select
+              className={`${input} mt-1`}
+              value={hypervisorId}
+              onChange={(e) => setHypervisorId(e.target.value)}
+            >
+              {hypervisors.map((h: any) => (
+                <option key={h.id} value={h.id}>
+                  {h.name} ({h.hostname || h.ip || '—'})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div>
+            <div className="mb-1 flex items-center gap-2">
+              <p className="text-xs text-slate-500">Taşınacak VM&apos;ler ({selected.size} seçili)</p>
+              <input
+                className="ml-auto rounded border border-white/[0.08] bg-cyber-deep px-2 py-1 text-xs"
+                placeholder="ara…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="max-h-52 overflow-auto rounded-lg border border-white/[0.06]">
+              {filteredVms.length ? (
+                filteredVms.map((v) => (
+                  <label
+                    key={v.moref}
+                    className="flex gap-2 border-b border-white/[0.04] px-3 py-2 text-xs hover:bg-white/[0.03]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(v.moref)}
+                      onChange={() => toggle(v.moref)}
+                    />
+                    <span className={v.power_state === 'poweredOn' ? 'text-emerald-400' : 'text-slate-500'}>
+                      ●
+                    </span>
+                    <span className="text-slate-200">{v.name}</span>
+                    {!warm && v.power_state === 'poweredOn' && (
+                      <span className="text-[10px] text-amber-400/80">soğuk taşımada kapatılacak</span>
+                    )}
+                    <span className="ml-auto font-mono text-slate-500">{v.moref}</span>
+                  </label>
+                ))
+              ) : (
+                <p className="p-3 text-xs text-slate-500">VM yok</p>
+              )}
+            </div>
+          </div>
+          <button
+            disabled={!name.trim() || !selected.size || !providerName || loading}
+            onClick={next}
+            className="w-full rounded-lg bg-cyan-600 py-2 text-sm text-white disabled:opacity-40"
+          >
+            {loading ? 'Kaynaklar okunuyor…' : 'Devam — Eşlemeye Geç'}
+          </button>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-4">
+          <p className="text-xs text-slate-400">
+            VM&apos;lerin kullandığı datastore ve ağları OpenShift hedeflerine eşleyin.
+          </p>
+          {refs?.warnings?.length > 0 && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100">
+              {refs.warnings.map((w: string) => (
+                <p key={w}>• {w}</p>
+              ))}
+            </div>
+          )}
+          <Mapping
+            title="Depolama eşlemesi"
+            icon={<HardDrive size={14} />}
+            refs={refs?.datastores}
+            value={sMap}
+            setValue={setSMap}
+            options={targets?.storage_classes || []}
+            optionKey={(x: any) => x.name}
+            optionLabel={(x: any) => `${x.name}${x.default ? ' (varsayılan)' : ''}`}
+          />
+          <Mapping
+            title="Ağ eşlemesi"
+            icon={<Network size={14} />}
+            refs={refs?.networks}
+            value={nMap}
+            setValue={setNMap}
+            options={nets}
+            optionKey={(x: any) => (x.type === 'pod' ? 'pod' : `multus:${x.name}`)}
+            optionLabel={(x: any) => x.label || x.name}
+          />
+          <div className="flex gap-2">
+            <button className={button} onClick={() => setStep(1)}>
+              Geri
+            </button>
+            <button className="flex-1 rounded-lg bg-cyan-600 py-2 text-sm text-white" onClick={() => setStep(3)}>
+              Devam
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-3">
+          <label className="text-xs text-slate-500">
+            Hedef namespace
+            <input className={`${input} mt-1`} value={targetNs} onChange={(e) => setTargetNs(e.target.value)} />
+          </label>
+          <label className="flex gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={warm} onChange={(e) => setWarm(e.target.checked)} />
+            <span>
+              Ilık taşıma (warm)
+              <span className="mt-1 block text-slate-500">
+                VM açıkken kopyalar; son geçişte kısa kesinti olur. CBT açık olmalıdır.
+              </span>
+            </span>
+          </label>
+          <div className="rounded-lg bg-cyber-deep p-3 text-xs text-slate-400 space-y-1">
+            <p>
+              <b className="text-slate-200">{selected.size} VM</b> →{' '}
+              <span className="font-mono">{targetNs}</span>
+            </p>
+            <p>
+              Sağlayıcı: <span className="font-mono text-slate-200">{providerName}</span>{' '}
+              {selectedProvider?.vddk ? (
+                <span className="text-emerald-400">— VDDK etkin, hızlı kopyalama</span>
+              ) : (
+                <span className="text-amber-300">— VDDK yok (HTTPS, yavaş)</span>
+              )}
+            </p>
+            <p>
+              Taşıma tipi:{' '}
+              <b className="text-slate-200">{warm ? 'ılık (warm)' : 'soğuk (cold)'}</b>
+              {!warm && <span className="text-amber-300"> — açık VM&apos;ler kapatılacak</span>}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button className={button} onClick={() => setStep(2)}>
+              Geri
+            </button>
+            <button
+              disabled={loading}
+              onClick={create}
+              className="flex-1 rounded-lg bg-cyan-600 py-2 text-sm text-white disabled:opacity-40"
+            >
+              {loading ? 'Oluşturuluyor…' : `Planı Oluştur (${selected.size} VM)`}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
 }
 
 function Mapping({ title, icon, refs, value, setValue, options, optionKey, optionLabel }: any) { return <div><p className="mb-2 flex gap-1.5 text-xs text-slate-300">{icon} {title}</p>{!refs?.length ? <p className="text-xs text-slate-500">Kaynak bulunamadı.</p> : <div className="space-y-1.5">{refs.map((r: any) => <div key={r.moref} className="grid grid-cols-[1fr_1fr] gap-2 text-xs items-center"><span className="truncate text-slate-300">{r.name}</span><select className={input} value={value[r.moref] || ''} onChange={(e) => setValue({ ...value, [r.moref]: e.target.value })}>{options.map((o: any) => <option key={optionKey(o)} value={optionKey(o)}>{optionLabel(o)}</option>)}</select></div>)}</div>}</div> }

@@ -598,6 +598,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
             yield _sse({"session_id": session_id, "start": True})
 
+            db.add(ChatMessage(session_id=session_id, role="user", content=message))
+            db.commit()
+
             from app.services.chat_obs import ChatTiming
             _timing = ChatTiming(platform="windows")
 
@@ -618,7 +621,6 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 yield _sse({"needs_confirmation": True, "intent": "full_scan_clarify"})
                 for i in range(0, len(clarify), 8):
                     yield _sse({"token": clarify[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=clarify,
                     meta={"intents": ["full_scan_clarify"]},
@@ -631,7 +633,6 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 yield _sse({"phase": "answering"})
                 for i in range(0, len(decline), 8):
                     yield _sse({"token": decline[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=decline,
                     meta={"intents": ["full_scan_declined"]},
@@ -651,7 +652,6 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 _timing.note_ttft()
                 for i in range(0, len(_cc), 8):
                     yield _sse({"token": _cc[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=_cc,
                     meta={"intents": ["chitchat"]},
@@ -718,8 +718,6 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             )
             _timing.mark("cache")
             if cached:
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                db.commit()
                 answer = cached["answer"]
                 yield _sse({"phase": "answering"})
                 _timing.note_ttft()
@@ -1001,10 +999,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 history_block=history_block,
             )
 
-            db.add(ChatMessage(session_id=session_id, role="user", content=message))
-            db.commit()
-
-            # model/provider yukarıda agentic için belirlendi
+            # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
             yield _sse({"phase": "answering"})
             full_response = ""
             _ttft_sent = False

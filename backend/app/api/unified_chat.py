@@ -351,6 +351,9 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
             yield _sse({"session_id": session_id, "start": True})
 
+            db.add(ChatMessage(session_id=session_id, role="user", content=message))
+            db.commit()
+
             from app.services.chat_obs import ChatTiming
             _timing = ChatTiming(platform="unified")
 
@@ -371,7 +374,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 yield _sse({"needs_confirmation": True, "intent": "full_scan_clarify"})
                 for i in range(0, len(clarify), 8):
                     yield _sse({"token": clarify[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=clarify,
                     meta={"intents": ["full_scan_clarify"]},
@@ -384,7 +386,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 yield _sse({"phase": "answering"})
                 for i in range(0, len(decline), 8):
                     yield _sse({"token": decline[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=decline,
                     meta={"intents": ["full_scan_declined"]},
@@ -404,7 +405,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 _timing.note_ttft()
                 for i in range(0, len(_cc), 8):
                     yield _sse({"token": _cc[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=_cc,
                     meta={"intents": ["chitchat"]},
@@ -437,8 +437,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
             )
             _timing.mark("cache")
             if cached:
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
-                db.commit()
                 answer = cached["answer"]
                 yield _sse({"phase": "answering"})
                 _timing.note_ttft()
@@ -502,7 +500,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 _timing.note_ttft()
                 for i in range(0, len(answer_text), 8):
                     yield _sse({"token": answer_text[i:i + 8]})
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
                 db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text))
                 s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if s:
@@ -987,9 +984,6 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 pass
 
             prompt = _build_prompt(message, context_str, collection_summary, history_block)
-
-            db.add(ChatMessage(session_id=session_id, role="user", content=message))
-            db.commit()
 
             yield _sse({"phase": "answering"})
             full_response = ""

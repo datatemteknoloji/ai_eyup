@@ -59,11 +59,32 @@ class MetricCollector:
     
     def collect_server_metrics(self, db: Session, server: Server) -> int:
         """Collect current metrics for a server"""
-        if not server.ip_address:
+        if not server.ip_address and not server.hostname and not server.name:
             return 0
         
         collected = 0
-        instance = f"{server.ip_address}:9100"
+        instance = f"{server.ip_address}:9100" if server.ip_address else None
+        try:
+            from app.services.monitoring.prometheus_metrics import (
+                get_node_exporter_up_map,
+                match_prometheus_instance,
+            )
+            matched, _up = match_prometheus_instance(
+                get_node_exporter_up_map(),
+                ip=server.ip_address,
+                hostname=server.hostname,
+                name=server.name,
+            )
+            if matched:
+                instance = matched
+        except Exception:
+            pass
+        if not instance:
+            host = (server.hostname or server.name or "").strip()
+            if host:
+                instance = f"{host}:9100"
+            else:
+                return 0
         
         # Metric definitions
         metrics_config = [

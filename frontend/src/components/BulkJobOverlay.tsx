@@ -64,10 +64,10 @@ export async function restoreActiveBulkJobId(): Promise<string | null> {
   return null
 }
 
-/** Kullanıcı manuel tetiklediğinde: tam ekran modal açılsın */
+/** Kullanıcı manuel tetiklediğinde: varsayılan sağ alt (arka plan) chip */
 export function beginBulkJobModal(jobId: string) {
-  sessionStorage.removeItem(STORAGE_MIN)
   sessionStorage.setItem(STORAGE_JOB, jobId)
+  sessionStorage.setItem(STORAGE_MIN, jobId)
 }
 
 export function persistBulkJobId(jobId: string | null) {
@@ -92,9 +92,8 @@ export const BulkJobOverlay: React.FC<{
   })
   const [elapsedSec, setElapsedSec] = useState(0)
   const [cancelling, setCancelling] = useState(false)
-  const [minimized, setMinimized] = useState(
-    () => sessionStorage.getItem(STORAGE_MIN) === jobId
-  )
+  // Varsayılan: sağ alt chip; kullanıcı “Ön plana getir” ile modal açar
+  const [minimized, setMinimized] = useState(true)
   const startedAtRef = React.useRef(Date.now())
   const onDoneRef = React.useRef(onDone)
   onDoneRef.current = onDone
@@ -102,7 +101,9 @@ export const BulkJobOverlay: React.FC<{
   useEffect(() => {
     startedAtRef.current = Date.now()
     setElapsedSec(0)
-    setMinimized(sessionStorage.getItem(STORAGE_MIN) === jobId)
+    sessionStorage.setItem(STORAGE_JOB, jobId)
+    sessionStorage.setItem(STORAGE_MIN, jobId)
+    setMinimized(true)
     const t = setInterval(() => {
       setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000))
     }, 1000)
@@ -187,6 +188,7 @@ export const BulkJobOverlay: React.FC<{
         <button
           type="button"
           onClick={reopen}
+          title="Ön plana getir"
           className="w-full text-left bg-slate-800/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl shadow-black/50 p-3 hover:border-blue-500/50 transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -346,8 +348,9 @@ export const BulkJobOverlay: React.FC<{
 
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            Bu kontrol SSH değil, TCP port taramasıdır. Büyük ortamlarda birkaç dakika sürebilir.
-            “Arka planda devam et” ile küçültebilir; “Zorla iptal” işi hemen kapatır (takılı %0 işler dahil).
+            İşlem varsayılan olarak sağ altta arka planda ilerler; bu pencereyi
+            chip’e tıklayarak açtınız. “Arka planda devam et” ile tekrar küçültebilir;
+            “Zorla iptal” işi hemen kapatır (takılı %0 işler dahil).
           </p>
         )}
         {job.status === 'error' && job.error && (

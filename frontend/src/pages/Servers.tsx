@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import React, { useState, useEffect, useRef, Suspense } from 'react'
 import {
   ChevronDown, Settings2, Activity, Wifi,
   RefreshCw, CheckCircle2, AlertCircle, AlertTriangle,
   Cloud, Camera, Tag, Radio,
   Terminal, Info, Trash2, ShieldCheck, HardDrive,
 } from 'lucide-react'
-const SshTerminalModal = lazy(() => import('../components/SshTerminal'))
+import { lazyWithRetry } from '../lib/lazyWithRetry'
+const SshTerminalModal = lazyWithRetry(() => import('../components/SshTerminal'))
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'

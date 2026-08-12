@@ -212,6 +212,10 @@ def create_vsphere_provider(
         },
     }
     vddk = (vddk_init_image or "").strip()
+    # Yeni provider oluştururken VDDK verilmediyse cluster içi bilinen imajı dene
+    # (Atlas ile aynı registry yolu). Yoksa HTTPS yavaş yola düşer.
+    if not vddk:
+        vddk = "image-registry.openshift-image-registry.svc:5000/openshift-mtv/vddk:9.1.0"
     if vddk:
         if not re.match(r"^[a-zA-Z0-9][\w./:@\-]{0,250}$", vddk):
             raise MtvError("Geçersiz VDDK imaj adresi")

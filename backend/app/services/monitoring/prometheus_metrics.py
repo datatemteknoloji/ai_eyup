@@ -9,33 +9,20 @@ from app.core.config import settings, promql_job_matcher
 logger = logging.getLogger(__name__)
 
 
-def node_exporter_up_for_server(server_ip: Optional[str], hostname: Optional[str]) -> bool:
+def node_exporter_up_for_server(
+    server_ip: Optional[str],
+    hostname: Optional[str],
+    name: Optional[str] = None,
+) -> bool:
     """Prometheus'tan bu sunucuda node-exporter'ın up olup olmadığını kontrol et (sync)."""
-    if not server_ip and not hostname:
+    if not server_ip and not hostname and not name:
         return False
     try:
-        job = promql_job_matcher(kind="linux")
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.get(
-                f"{settings.PROMETHEUS_URL}/api/v1/query",
-                params={"query": f'up{{{job}}}'},
-            )
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            if data.get("status") != "success":
-                return False
-            for r in data.get("data", {}).get("result", []):
-                instance = (r.get("metric") or {}).get("instance", "")
-                value = r.get("value")
-                if value is None or len(value) < 2:
-                    continue
-                if str(value[1]) != "1":
-                    continue
-                if server_ip and (instance == f"{server_ip}:9100" or instance.startswith(server_ip + ":")):
-                    return True
-                if hostname and (instance.startswith(hostname) or hostname in instance):
-                    return True
+        up_map = get_node_exporter_up_map()
+        _inst, is_up = match_prometheus_instance(
+            up_map, ip=server_ip, hostname=hostname, name=name,
+        )
+        return bool(is_up)
     except Exception as e:
         logger.debug(f"Prometheus node_exporter up check hatası: {e}")
     return False
@@ -66,6 +53,47 @@ def get_node_exporter_up_map() -> Dict[str, str]:
     return result_map
 
 
+def _hostname_candidates(*values: Optional[str]) -> List[str]:
+    """Tekilleştirilmiş hostname / kısa ad adayları (lowercase)."""
+    out: List[str] = []
+    seen = set()
+    for v in values:
+        c = (v or "").strip().lower()
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+        short = c.split(".")[0]
+        if short and short not in seen:
+            seen.add(short)
+            out.append(short)
+    return out
+
+
+def _match_hostname_in_up_map(
+    up_map: Dict[str, str], candidates: List[str],
+) -> tuple[Optional[str], bool]:
+    """Kısa ad ↔ FQDN: oprkbarcdbt → oprkbarcdbt.kfs.local:9100."""
+    if not up_map or not candidates:
+        return None, False
+    for cand in candidates:
+        short = cand.split(".")[0]
+        for inst, val in up_map.items():
+            host_part = inst.rsplit(":", 1)[0].lower()
+            host_short = host_part.split(".")[0]
+            # Tam eşitlik veya kısa ad + domain eki
+            if (
+                host_part == cand
+                or host_part == short
+                or host_part.startswith(cand + ".")
+                or host_part.startswith(short + ".")
+                or host_short == short
+                or host_short == cand
+            ):
+                return inst, val == "1"
+    return None, False
+
+
 def match_prometheus_instance(
     up_map: Dict[str, str],
     *,
@@ -73,10 +101,10 @@ def match_prometheus_instance(
     hostname: Optional[str] = None,
     name: Optional[str] = None,
 ) -> tuple[Optional[str], bool]:
-    """Sunucuyu Prometheus instance etiketiyle eşleştir (IP veya hostname).
+    """Sunucuyu Prometheus instance etiketiyle eşleştir.
 
-    Merkezi node_exporter kurulumlarında instance genelde hostname:9100 olur;
-    sadece IP:9100 aramak host listesini boş bırakır.
+    Merkezi/harici Prometheus'ta instance çoğu zaman hostname:9100 veya
+    FQDN:9100 olur (oprkbarcdbt.sys.yapikredi.com.tr:9100). IP:9100 yedektir.
     Returns: (matched_instance, is_up)
     """
     if not up_map:
@@ -86,24 +114,20 @@ def match_prometheus_instance(
     hostname = (hostname or "").strip()
     name = (name or "").strip()
 
-    # 1) Tam IP:9100
+    # 1) Hostname / name önce (kısa ad → FQDN)
+    matched, is_up = _match_hostname_in_up_map(
+        up_map, _hostname_candidates(hostname, name),
+    )
+    if matched:
+        return matched, is_up
+
+    # 2) IP:9100 yedek
     if ip:
         exact = f"{ip}:9100"
         if exact in up_map:
             return exact, up_map[exact] == "1"
         for inst, val in up_map.items():
             if inst.startswith(ip + ":"):
-                return inst, val == "1"
-
-    # 2) Hostname / name (FQDN veya kısa ad)
-    candidates = [c.lower() for c in (hostname, name) if c]
-    for cand in candidates:
-        short = cand.split(".")[0]
-        for inst, val in up_map.items():
-            host_part = inst.rsplit(":", 1)[0].lower()
-            if host_part == cand or host_part.startswith(cand + ".") or host_part == short:
-                return inst, val == "1"
-            if cand in host_part or short == host_part.split(".")[0]:
                 return inst, val == "1"
 
     return None, False

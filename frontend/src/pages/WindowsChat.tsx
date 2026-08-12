@@ -14,6 +14,13 @@ import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
   NlEmptyState, NlChatInput, nlUserBubbleClass, nlAssistantBubbleClass,
 } from '../components/nlChatUi'
+import {
+  useChatStream,
+  startChatStream,
+  abortChatStream,
+  loadPersistedSessionId,
+  persistSessionId,
+} from '../lib/chatStreamStore'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -141,18 +148,23 @@ const WindowsChat: React.FC<{
   initialQuestion?: string | null
   onInitialQuestionUsed?: () => void
 }> = ({ embedded, initialQuestion = null, onInitialQuestionUsed }) => {
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
+  const streamChannel = 'windows'
+  const stream = useChatStream(streamChannel)
+  const isLoading = stream.isLoading
+  const pendingUserMessage = stream.pendingUserMessage
+  const streamingText = stream.streamingText
+  const thinkingPhase = stream.thinkingPhase
+  const toolCalls = stream.toolCalls
+
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(() =>
+    loadPersistedSessionId(streamChannel),
+  )
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('windows_chat_selected_model') || 'llama3:70b')
-  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null)
-  const [streamingText, setStreamingText] = useState<string>('')
-  const [thinkingPhase, setThinkingPhase] = useState<'idle' | 'context' | 'tools' | 'streaming'>('idle')
-  const [toolCalls, setToolCalls] = useState<{ tool: string; label: string; done: boolean }[]>([])
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -164,9 +176,19 @@ const WindowsChat: React.FC<{
   const serverBtnRef = useRef<HTMLButtonElement>(null)
   const serverMenuRef = useRef<HTMLDivElement>(null)
   const [serverMenuRect, setServerMenuRect] = useState<{top:number;left:number;width:number}|null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)
   const initialHandled = useRef(false)
+
+  useEffect(() => {
+    persistSessionId(streamChannel, selectedSessionId)
+  }, [streamChannel, selectedSessionId])
+
+  useEffect(() => {
+    if (stream.isLoading && stream.sessionId != null) {
+      setSelectedSessionId(stream.sessionId)
+    }
+    streamSessionRef.current = stream.sessionId ?? streamSessionRef.current
+  }, [stream.isLoading, stream.sessionId])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -225,7 +247,7 @@ const WindowsChat: React.FC<{
           { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' }
         ]
 
-  const { data: sessions = [], refetch: refetchSessions, isFetched: sessionsFetched } = useQuery<ChatSession[]>({
+  const { data: sessions = [], isFetched: sessionsFetched } = useQuery<ChatSession[]>({
     queryKey: ['windows-chat-sessions'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/windows-chat/sessions`)
@@ -234,7 +256,7 @@ const WindowsChat: React.FC<{
     }
   })
 
-  const { data: messages = [], refetch: refetchMessages } = useQuery<Message[]>({
+  const { data: messages = [] } = useQuery<Message[]>({
     queryKey: ['windows-chat-messages', selectedSessionId],
     queryFn: async () => {
       if (!selectedSessionId) return []
@@ -253,11 +275,7 @@ const WindowsChat: React.FC<{
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['windows-chat-sessions'] })
-      abortRef.current?.abort()
-      setIsLoading(false)
-      setStreamingText('')
-      setPendingUserMessage(null)
-      setThinkingPhase('idle')
+      abortChatStream(streamChannel)
       setSelectedSessionId(data.id)
       setInput('')
       setSuppressAutoCreate(false)
@@ -318,112 +336,34 @@ const WindowsChat: React.FC<{
       'olay günlüğü','update','güncelleme','yama','patch','network','ağ','os','işletim sistemi',
       'donanım','hardware','performans','performance','kullanım','usage']
     const needsWinrm = WINRM_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
-    setIsLoading(true)
-    setPendingUserMessage(messageText)
-    setStreamingText('')
-    setToolCalls([])
-    setThinkingPhase(needsWinrm ? 'context' : 'streaming')
-
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    const startSessionId = selectedSessionId
     streamSessionRef.current = selectedSessionId
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/windows-chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: messageText,
-          session_id: selectedSessionId,
-          server_ids: selectedServers.length > 0 ? selectedServers : undefined,
-          model: selectedModel,
-          use_rag: true
-        }),
-        signal: ctrl.signal
-      })
-
-      if (!res.ok || !res.body) {
-        throw new Error(`HTTP ${res.status}`)
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let accumulated = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const jsonStr = line.slice(6).trim()
-          if (!jsonStr) continue
-          try {
-            const chunk = JSON.parse(jsonStr)
-            if (chunk.start) {
-              if (chunk.session_id && chunk.session_id !== selectedSessionId) {
-                setSelectedSessionId(chunk.session_id)
-              }
-              setThinkingPhase('streaming')
-            }
-            if (chunk.phase === 'collecting') setThinkingPhase('context')
-            if (chunk.phase === 'tools') setThinkingPhase('tools')
-            if (chunk.phase === 'answering') setThinkingPhase('streaming')
-            if (chunk.token) {
-              accumulated += chunk.token
-              setStreamingText(accumulated)
-            }
-            if (chunk.type === 'tool_call') {
-              const tool = chunk.tool || ''
-              const label = chunk.label || tool
-              setToolCalls(prev => [...prev, { tool, label, done: false }])
-            }
-            if (chunk.type === 'tool_result') {
-              const tool = chunk.tool || ''
-              setToolCalls(prev => {
-                const idx = [...prev].reverse().findIndex(t => t.tool === tool && !t.done)
-                if (idx === -1) return prev
-                const realIdx = prev.length - 1 - idx
-                const next = [...prev]
-                next[realIdx] = { ...next[realIdx], done: true }
-                return next
-              })
-            }
-            if (chunk.error) {
-              setStreamingText(`**Hata:** ${chunk.error}`)
-              setThinkingPhase('idle')
-            }
-            if (chunk.done) {
-              setThinkingPhase('idle')
-              if (startSessionId === selectedSessionId || chunk.session_id === selectedSessionId) {
-                await refetchMessages()
-              }
-              await refetchSessions()
-              setStreamingText('')
-              setPendingUserMessage(null)
-              setInput('')
-            }
-            if (chunk.from_cache) {
-              setThinkingPhase('streaming')
-            }
-          } catch { /* json parse error yoksay */ }
+    await startChatStream({
+      channel: streamChannel,
+      url: `${API_BASE_URL}/windows-chat/stream`,
+      body: {
+        message: messageText,
+        session_id: selectedSessionId,
+        server_ids: selectedServers.length > 0 ? selectedServers : undefined,
+        model: selectedModel,
+        use_rag: true,
+      },
+      sessionId: selectedSessionId,
+      message: messageText,
+      initialPhase: needsWinrm ? 'context' : 'streaming',
+      onSessionId: (id) => {
+        setSelectedSessionId(id)
+        streamSessionRef.current = id
+      },
+      onDone: async (sid) => {
+        const id = sid ?? selectedSessionId
+        if (id != null) {
+          await queryClient.invalidateQueries({ queryKey: ['windows-chat-messages', id] })
         }
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        setStreamingText(`**Bağlantı hatası.** Tekrar deneyin.`)
-      }
-      setThinkingPhase('idle')
-    } finally {
-      setIsLoading(false)
-      abortRef.current = null
-    }
+        await queryClient.invalidateQueries({ queryKey: ['windows-chat-sessions'] })
+        setInput('')
+      },
+    })
   }
 
   const handleSubmit = () => {
@@ -443,12 +383,14 @@ const WindowsChat: React.FC<{
   }, [initialQuestion])
 
   const handleAbort = () => {
-    abortRef.current?.abort()
-    setIsLoading(false)
-    setThinkingPhase('idle')
-    setStreamingText('')
-    setPendingUserMessage(null)
+    abortChatStream(streamChannel)
   }
+
+  const streamBelongsHere =
+    pendingUserMessage != null &&
+    (stream.sessionId === selectedSessionId ||
+      (stream.isLoading && (stream.sessionId == null || stream.sessionId === selectedSessionId)))
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -475,11 +417,7 @@ const WindowsChat: React.FC<{
           selectedId={selectedSessionId}
           onSelect={id => {
             if (id !== selectedSessionId) {
-              abortRef.current?.abort()
-              setIsLoading(false)
-              setStreamingText('')
-              setPendingUserMessage(null)
-              setThinkingPhase('idle')
+              abortChatStream(streamChannel)
             }
             setSelectedSessionId(id)
             setInput('')
@@ -597,7 +535,7 @@ const WindowsChat: React.FC<{
           <ChatPlatformStatsBar platform="windows" />
 
           <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
-            {messages.length === 0 && !pendingUserMessage ? (
+            {messages.length === 0 && !streamBelongsHere ? (
               <NlEmptyState
                 icon={<Shield size={24} className="text-white" />}
                 description="Windows sunucu durumu, servis, event log ve güncelleme sorularını doğal dilde sorun."
@@ -606,8 +544,8 @@ const WindowsChat: React.FC<{
               <div className="max-w-3xl mx-auto space-y-4">
                 {[
                   ...messages,
-                  ...(pendingUserMessage && streamSessionRef.current === selectedSessionId
-                    ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
+                  ...(streamBelongsHere
+                    ? [{ id: -1, role: 'user' as const, content: pendingUserMessage!, created_at: new Date().toISOString() }]
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -675,7 +613,7 @@ const WindowsChat: React.FC<{
                   </div>
                 ))}
 
-                {isLoading && streamSessionRef.current === selectedSessionId && (
+                {isLoading && streamBelongsHere && (
                   <div className="flex justify-start">
                     <div className={`${nlAssistantBubbleClass} max-w-[min(85%,48rem)] w-full`}>
                       {toolCalls.length > 0 && (

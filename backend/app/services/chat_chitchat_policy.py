@@ -223,24 +223,14 @@ _SOFT_FILLER = re.compile(
 )
 
 _CANNED = {
-    "greeting": (
-        "Merhaba! Ben **ainew** altyapı asistanıyım. "
-        "Linux, Windows, sanallaştırma veya Unified sohbette ortamınızla ilgili "
-        "sorularınıza yardımcı olurum. Ne bakmak istersiniz?"
-    ),
-    "presence": (
-        "Buradayım — ainew hazır. "
-        "Sunucu, VM, kapasite veya bir teşhis sorusu yazabilirsiniz."
-    ),
-    "wellbeing": (
-        "Teşekkürler, iyiyim — hazırım. "
-        "Sunucu, VM, kapasite veya bir teşhis konusunda yardımcı olayım mı?"
-    ),
+    "greeting": "Merhaba, size nasıl destek olabilirim?",
+    "presence": "Buradayım — nasıl yardımcı olabilirim?",
+    "wellbeing": "Teşekkürler, iyiyim. Size nasıl destek olabilirim?",
     "identity": (
-        "Ben **ainew** — Datatem’in altyapı yönetim asistanıyım. "
-        "Envanter, sağlık, metrik, log ve sanallaştırma sorularında "
-        "okuma amaçlı araçlarla yardımcı olurum; değişiklik için onaylı akışlar kullanılır. "
-        "Örn: “kaç Linux sunucu online?”, “datastore boş alan”, “failed servisler”."
+        "Ben **ainew** — 15+ yıllık deneyime sahip bir Altyapı Mimarisinin "
+        "(Senior Infrastructure Architect) AI destekli simülasyon sistemiyim. "
+        "Linux, Windows ve sanallaştırma ortamları (VMware / Hyper-V / KVM / Proxmox) "
+        "hakkında gerçek-zaman veriyi toplar, analiz eder ve platforma özel öneriler sunarım."
     ),
     "thanks": "Rica ederim! Başka bir şey olursa yazmanız yeterli.",
     "farewell": "Görüşürüz! İhtiyacınız olursa buradayım.",
@@ -305,20 +295,6 @@ def canned_chitchat_answer(message: Optional[str], *, platform: Optional[str] = 
         return None
     plat = (platform or "").strip().lower()
     if cat == "greeting" and plat:
-        labels = {
-            "linux": "Linux",
-            "windows": "Windows",
-            "virt": "sanallaştırma",
-            "hypervisor": "sanallaştırma",
-            "openshift": "OpenShift",
-            "unified": "Unified",
-            "exadata": "Exadata",
-        }
-        label = labels.get(plat)
-        if label:
-            text = (
-                f"Merhaba! Bu **{label}** sohbeti — ainew asistanıyım. "
-                "Kısa selam için buradayım; ortam sorularınızda canlı/DB araçlarıyla yardımcı olurum. "
-                "Ne sormak istersiniz?"
-            )
+        # Platform etiketli uzun “kısa selam” metni yok — tek satırlık net karşılama
+        text = "Merhaba, size nasıl destek olabilirim?"
     return text

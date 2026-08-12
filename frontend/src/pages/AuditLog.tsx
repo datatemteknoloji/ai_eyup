@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { lazyWithRetry } from '../lib/lazyWithRetry'
 import './level1/level1-theme.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -636,7 +637,7 @@ function Level1AuditEmbed() {
   )
 }
 
-const Level1AuditContentLazy = React.lazy(() =>
+const Level1AuditContentLazy = lazyWithRetry(() =>
   import('./level1/Level1Audit').then((m) => ({ default: m.Level1AuditContent })),
 )
 
