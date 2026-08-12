@@ -199,8 +199,8 @@ export const PlatformStatusTab: React.FC = () => {
   const dropt = containers.filter((c) => c.group === 'dropt')
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex flex-col gap-4 h-[min(780px,calc(100vh-9rem))] min-h-[520px]">
+      <div className="flex flex-wrap items-start justify-between gap-3 shrink-0">
         <div>
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
             <Activity size={20} className="text-blue-400" />
@@ -223,13 +223,13 @@ export const PlatformStatusTab: React.FC = () => {
       </div>
 
       {error && (
-        <div className="rounded-[10px] border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+        <div className="shrink-0 rounded-[10px] border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
           {(error as Error).message}
         </div>
       )}
 
       {!isLoading && data && !data.available && (
-        <div className="rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+        <div className="shrink-0 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           Docker API erişilemiyor. {(data.reasons || []).join(' · ')}
           <div className="text-xs text-amber-200/70 mt-1">
             Backend&apos;e <code className="font-mono">/var/run/docker.sock</code> mount edilmeli.
@@ -238,7 +238,7 @@ export const PlatformStatusTab: React.FC = () => {
       )}
 
       {data?.summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'Toplam', value: data.summary.total },
             { label: 'Çalışıyor', value: data.summary.running },
@@ -253,8 +253,8 @@ export const PlatformStatusTab: React.FC = () => {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-5 gap-4 min-h-[420px]">
-        <div className="lg:col-span-2 space-y-4">
+      <div className="grid lg:grid-cols-5 gap-4 flex-1 min-h-0">
+        <div className="lg:col-span-2 flex flex-col gap-4 min-h-0 overflow-y-auto pr-0.5">
           <GroupList
             title="ainew"
             rows={ainew}
@@ -279,8 +279,8 @@ export const PlatformStatusTab: React.FC = () => {
           />
         </div>
 
-        <div className="lg:col-span-3 flex flex-col rounded-[10px] border border-white/[0.06] bg-cyber-deep/30 overflow-hidden min-h-[420px]">
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.06]">
+        <div className="lg:col-span-3 flex flex-col rounded-[10px] border border-white/[0.06] bg-cyber-deep/30 overflow-hidden min-h-0 h-full">
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.06]">
             <div className="min-w-0">
               <div className="text-sm font-medium text-white truncate">
                 {selectedRow ? selectedRow.name : 'Container seçin'}
@@ -315,11 +315,11 @@ export const PlatformStatusTab: React.FC = () => {
             </div>
           </div>
           {logErr && (
-            <div className="px-4 py-2 text-xs text-rose-300 bg-rose-500/10 border-b border-rose-500/20">{logErr}</div>
+            <div className="shrink-0 px-4 py-2 text-xs text-rose-300 bg-rose-500/10 border-b border-rose-500/20">{logErr}</div>
           )}
           <pre
             ref={logBoxRef}
-            className="flex-1 overflow-auto p-4 text-[11px] leading-relaxed font-mono text-slate-300 whitespace-pre-wrap break-all bg-black/40"
+            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 text-[11px] leading-relaxed font-mono text-slate-300 whitespace-pre-wrap break-all bg-black/40"
           >
             {logText || (selectedRow?.present ? 'Log yükleniyor…' : 'Container yok veya seçilmedi.')}
           </pre>
@@ -327,10 +327,10 @@ export const PlatformStatusTab: React.FC = () => {
       </div>
 
       {restartMut.isError && (
-        <div className="text-sm text-rose-300">{(restartMut.error as Error).message}</div>
+        <div className="shrink-0 text-sm text-rose-300">{(restartMut.error as Error).message}</div>
       )}
       {restartMut.isSuccess && (
-        <div className="text-sm text-emerald-300">Yeniden başlatma isteği gönderildi.</div>
+        <div className="shrink-0 text-sm text-emerald-300">Yeniden başlatma isteği gönderildi.</div>
       )}
     </div>
   )

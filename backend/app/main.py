@@ -470,6 +470,10 @@ async def startup_tasks():
             if _rows.get("remote_llm_api_key"):
                 from app.core.encryption import decrypt_secret as _dec
                 _s.REMOTE_LLM_API_KEY = _dec(_rows["remote_llm_api_key"])
+            if _rows.get("remote_llm_virtual_key") is not None:
+                from app.core.encryption import decrypt_secret as _dec_vk
+                raw_vk = _rows["remote_llm_virtual_key"] or ""
+                _s.REMOTE_LLM_VIRTUAL_KEY = _dec_vk(raw_vk) if raw_vk else ""
             if _rows.get("remote_llm_verify_ssl") is not None:
                 _s.REMOTE_LLM_VERIFY_SSL = _rows["remote_llm_verify_ssl"].lower() == "true"
             if _rows.get("remote_llm_ca_bundle") is not None:

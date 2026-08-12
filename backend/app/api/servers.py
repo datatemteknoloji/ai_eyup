@@ -3,7 +3,7 @@ Servers API endpoints
 """
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 from app.core.database import get_db, SessionLocal
@@ -61,6 +61,8 @@ def _server_list_item(
         "os_release_id": s.os_release_id or "",
         "os_version_id": s.os_version_id or "",
         "vm_guest_os_full": getattr(s, "vm_guest_os_full", None) or "",
+        "vm_name": getattr(s, "vm_name", None) or "",
+        "vm_guest_hostname": getattr(s, "vm_guest_hostname", None) or "",
         "kernel_version": s.kernel_version or "",
         "server_type": s.server_type or "VIRTUAL",
         "cpu_cores": s.cpu_cores or 0,
@@ -81,6 +83,23 @@ def _server_list_item(
     return item
 
 
+def _name_mismatch_sql_filter():
+    """vm_name dolu ve normalize(short hostname) != normalize(vm_name)."""
+    short_hn = func.split_part(func.lower(func.coalesce(Server.hostname, "")), ".", 1)
+    norm_hn = func.regexp_replace(short_hn, "[^a-z0-9]", "", "g")
+    norm_vm = func.regexp_replace(
+        func.lower(func.coalesce(Server.vm_name, "")), "[^a-z0-9]", "", "g"
+    )
+    return and_(
+        Server.vm_name.isnot(None),
+        func.length(func.trim(Server.vm_name)) > 0,
+        or_(
+            func.length(func.trim(func.coalesce(Server.hostname, ""))) == 0,
+            norm_hn != norm_vm,
+        ),
+    )
+
+
 def _apply_server_list_filters(
     query,
     *,
@@ -92,6 +111,7 @@ def _apply_server_list_filters(
     os_filter: Optional[str] = None,
     node_exporter: Optional[str] = None,
     ip: Optional[str] = None,
+    name_mismatch: Optional[bool] = None,
 ):
     if q and q.strip():
         like = f"%{q.strip()}%"
@@ -100,6 +120,8 @@ def _apply_server_list_filters(
                 Server.name.ilike(like),
                 Server.hostname.ilike(like),
                 Server.ip_address.ilike(like),
+                Server.vm_name.ilike(like),
+                Server.vm_guest_hostname.ilike(like),
             )
         )
     if ip and ip.strip():
@@ -142,6 +164,8 @@ def _apply_server_list_filters(
             query = query.filter(
                 or_(Server.node_exporter_installed.is_(False), Server.node_exporter_installed.is_(None))
             )
+    if name_mismatch is True:
+        query = query.filter(_name_mismatch_sql_filter())
     return query
 
 
@@ -549,6 +573,7 @@ def list_servers(
     os_filter: Optional[str] = Query(None, alias="os"),
     node_exporter: Optional[str] = None,
     ip: Optional[str] = None,
+    name_mismatch: Optional[bool] = None,
     include_connection_config: bool = False,
 ):
     """
@@ -573,10 +598,11 @@ def list_servers(
             os_filter=os_filter,
             node_exporter=node_exporter,
             ip=ip,
+            name_mismatch=name_mismatch,
         )
         total = query.count()
         servers = (
-            query.order_by(Server.name.asc())
+            query.order_by(func.coalesce(Server.hostname, Server.name).asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
@@ -621,6 +647,7 @@ def servers_summary(
         ai_ready = _base().filter(Server.ai_ready.is_(True)).count()
         ne_installed = _base().filter(Server.node_exporter_installed.is_(True)).count()
         ne_running = _base().filter(Server.node_exporter_running.is_(True)).count()
+        name_mismatch = _base().filter(_name_mismatch_sql_filter()).count()
 
         os_rows = (
             _base()
@@ -645,6 +672,7 @@ def servers_summary(
             "ai_ready": ai_ready,
             "node_exporter_installed": ne_installed,
             "node_exporter_running": ne_running,
+            "name_mismatch": name_mismatch,
             "cpu_cores": cpu_cores,
             "memory_gb": memory_gb,
             "by_status": by_status,

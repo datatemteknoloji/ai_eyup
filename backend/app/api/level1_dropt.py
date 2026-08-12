@@ -82,18 +82,51 @@ def _dropt_headers(token: str) -> dict[str, str]:
 
 
 @router.get("/linux-servers")
+def _is_rhel_server(
+    *,
+    os_type: Optional[str] = None,
+    os_version: Optional[str] = None,
+) -> bool:
+    """RHEL: os_type≈rhel veya PRETTY_NAME RHEL / Red Hat Enterprise Linux."""
+    ot = (os_type or "").strip().lower()
+    ov = (os_version or "").strip().lower()
+    if ot in ("rhel", "redhat", "red hat", "red-hat"):
+        return True
+    if ot.startswith("rhel"):
+        return True
+    if ov.startswith("red hat enterprise linux") or "red hat enterprise linux" in ov:
+        return True
+    if ov.startswith("rhel") or ov.startswith("rhel "):
+        return True
+    # örn. "rhel 9.5" / "RHEL-9.4"
+    if "rhel" in ov.split()[:2] or ov.startswith("rhel-"):
+        return True
+    return False
+
+
+def _eligible_for_dropt_inventory_sync(server: Server) -> bool:
+    """Operasyon Merkezi sync: AI Ready + RHEL + IP (Dropt tarafında SSH yok)."""
+    if not (server.ip_address or "").strip():
+        return False
+    if not bool(server.ai_ready):
+        return False
+    return _is_rhel_server(os_type=server.os_type, os_version=server.os_version)
+
+
 def list_linux_servers_for_level1(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """Ainew Linux sunucuları — Level 1 Operasyon Merkezi listesi."""
-    q = db.query(Server).filter(Server.ip_address.isnot(None))
-    # Prefer non-windows if os_type set
+    """Ainew → Level 1 sync adayları: AI Ready + RHEL + IP."""
+    q = db.query(Server).filter(
+        Server.ip_address.isnot(None),
+        Server.ip_address != "",
+        Server.ai_ready.is_(True),  # noqa: E712
+    )
     rows = q.order_by(Server.name.asc()).limit(5000).all()
     out = []
     for s in rows:
-        os_t = (s.os_type or "").lower()
-        if os_t and ("win" in os_t or os_t == "windows"):
+        if not _is_rhel_server(os_type=s.os_type, os_version=s.os_version):
             continue
         out.append({
             "id": s.id,
@@ -157,7 +190,9 @@ def ensure_dropt_server(
                     "hostname": hostname,
                     "ip": ip,
                     "port": 22,
-                    "description": f"ainew:{s.id}",
+                    "description": (
+                        f"ainew:{s.id} {(s.name or '').strip()}".strip()[:512]
+                    ),
                     "skip_connection_test": False,
                     "ainew_ai_ready": bool(s.ai_ready),
                 },
@@ -207,7 +242,7 @@ def sync_all_linux_servers_to_dropt(
     user: User = Depends(get_current_user),
     background: bool = Query(True, description="True: arka planda job; False: senkron bulk"),
 ) -> SyncAllOut:
-    """Ainew Linux envanterini Dropt target_servers ile senkronize et (bulk)."""
+    """Ainew AI Ready + RHEL envanterini Dropt'a yaz (bulk, SSH testi yok)."""
     from app.services import bulk_job_tracker as jobs
 
     linux = list_linux_servers_for_level1(db, user)
@@ -219,12 +254,17 @@ def sync_all_linux_servers_to_dropt(
             skipped += 1
             continue
         hostname = (row.get("hostname") or row.get("name") or ip).strip()
+        ainew_name = (row.get("name") or "").strip()
+        desc = f"ainew:{row.get('id')}"
+        if ainew_name:
+            desc = f"{desc} {ainew_name}"[:512]
         hosts_payload.append({
             "hostname": hostname,
             "ip": ip,
             "port": 22,
-            "description": f"ainew:{row.get('id')}",
-            "skip_connection_test": False,
+            "description": desc,
+            # Sync maliyeti / banner timeout: ainew AI Ready yeter; Dropt SSH bootstrap yok
+            "skip_connection_test": True,
             "ainew_ai_ready": bool(row.get("ai_ready")),
         })
 

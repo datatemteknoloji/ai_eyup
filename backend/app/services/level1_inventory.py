@@ -204,7 +204,7 @@ def ensure_dropt_for_server(
                 "hostname": hostname,
                 "ip": ip,
                 "port": 22,
-                "description": f"ainew:{server.id}",
+                "description": f"ainew:{server.id} {(server.name or '').strip()}".strip()[:512],
                 "skip_connection_test": skip_connection_test,
             },
         )

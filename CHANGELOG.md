@@ -11,6 +11,21 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Eklendi / iyileştirildi — Linux sunucu kimliği
+- Linux Yönetimi listesi: birincil etiket OS **hostname** (yoksa guest FQDN / name); ikincil satırda IP + VM adı.
+- Arama: hostname, VM adı (`vm_name`), guest hostname ve IP; varsayılan sıralama hostname.
+- Admin / linux modülü: VM adı ≠ hostname için **İsim uyumsuz** badge + filtre + summary sayısı.
+- Level 1 Dropt sync: AI Ready + RHEL + `skip_connection_test`; description’a ainew adı; Ops Center araması description’ı da tarar.
+
+### Eklendi / iyileştirildi — Chat, Remote LLM, platform
+- Model erişilemez banner (Linux / Windows / Unified / Hypervisor chat).
+- Remote LLM isteğe bağlı Virtual Key (`REMOTE_LLM_VIRTUAL_KEY` / `x-bf-vk`).
+- Platform Durumu log paneli kendi içinde kayar.
+- Live Metrics select: dark `colorScheme` (okunabilir dropdown).
+
+### Düzeltildi — DB taşıma / restore
+- `pg_dump` `\restrict` / stderr satırları sanitize; Timescale DROP CASCADE hazırlığı; restore öncesi app pool dispose.
+
 ## [1.0.9.23] - 2026-08-11
 
 ### Eklendi / iyileştirildi — Linux Yönetimi

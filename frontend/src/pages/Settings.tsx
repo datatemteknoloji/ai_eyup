@@ -93,6 +93,8 @@ interface RemoteLlmSettings {
   model: string
   api_key_set: boolean
   api_key_masked: string
+  virtual_key_set?: boolean
+  virtual_key_masked?: string
   verify_ssl: boolean
   ca_bundle: string
 }
@@ -691,14 +693,20 @@ const ConfigBackupTab: React.FC = () => {
 /** Tam PostgreSQL dump (ainew + Dropt) — Settings üzerinden taşıma */
 const DbBackupSection: React.FC = () => {
   const [busy, setBusy] = useState(false)
+  const [busyPhase, setBusyPhase] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [includeDropt, setIncludeDropt] = useState(true)
+  const [includeSecretsInZip, setIncludeSecretsInZip] = useState(true)
   const [restoreAinew, setRestoreAinew] = useState(true)
   const [restoreDropt, setRestoreDropt] = useState(true)
   const [requireFp, setRequireFp] = useState(true)
+  const [applySecrets, setApplySecrets] = useState(true)
   const [confirm, setConfirm] = useState('')
   const [preview, setPreview] = useState<any>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [secretExportConfirm, setSecretExportConfirm] = useState('')
+  const [includeDbPasswords, setIncludeDbPasswords] = useState(true)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
   const { data: cap } = useQuery({
@@ -710,14 +718,24 @@ const DbBackupSection: React.FC = () => {
     },
   })
 
+  const { data: migSecrets, refetch: refetchMigSecrets } = useQuery({
+    queryKey: ['db-backup-migration-secrets'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/migration-secrets`)
+      if (!r.ok) throw new Error('Secret özeti alınamadı')
+      return r.json()
+    },
+  })
+
   const downloadDb = async () => {
-    setBusy(true); setErr(null); setMsg(null)
+    setBusy(true); setBusyPhase('Veritabanı yedeği hazırlanıyor…'); setErr(null); setMsg(null)
     try {
-      const r = await fetch(`${API_BASE_URL}/settings/db-backup/export?include_dropt=${includeDropt ? 'true' : 'false'}`)
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/export?include_dropt=${includeDropt ? 'true' : 'false'}&include_migration_secrets=${includeSecretsInZip ? 'true' : 'false'}`)
       if (!r.ok) {
         const body = await r.json().catch(() => ({}))
         throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       }
+      setBusyPhase('İndiriliyor…')
       const blob = await r.blob()
       const cd = r.headers.get('Content-Disposition') || ''
       const m = /filename="?([^";]+)"?/i.exec(cd)
@@ -732,12 +750,45 @@ const DbBackupSection: React.FC = () => {
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Yedek alınamadı')
     } finally {
-      setBusy(false)
+      setBusy(false); setBusyPhase(null)
+    }
+  }
+
+  const downloadMigrationSecrets = async () => {
+    setBusy(true); setBusyPhase('Taşıma secret dosyası hazırlanıyor…'); setErr(null); setMsg(null)
+    try {
+      const phrase = migSecrets?.export_confirm_phrase || 'TASIMA SIRLARINI INDIR'
+      const q = new URLSearchParams({
+        confirm: secretExportConfirm,
+        include_db_passwords: includeDbPasswords ? 'true' : 'false',
+      })
+      const r = await fetch(`${API_BASE_URL}/settings/db-backup/migration-secrets/export?${q}`)
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const cd = r.headers.get('Content-Disposition') || ''
+      const m = /filename="?([^";]+)"?/i.exec(cd)
+      const name = m?.[1] || `ainew-migrate-secrets.env`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(url)
+      setMsg(`Taşıma secret dosyası indirildi (${name}). Hedefte ilgili .env satırlarına yapıştırın; docker restart yetmez — recreate edin.`)
+      setSecretExportConfirm('')
+      refetchMigSecrets()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Secret export başarısız')
+    } finally {
+      setBusy(false); setBusyPhase(null)
     }
   }
 
   const validateFile = async (file: File) => {
-    setBusy(true); setErr(null); setMsg(null); setPreview(null)
+    setBusy(true); setBusyPhase('Yedek doğrulanıyor…'); setErr(null); setMsg(null); setPreview(null)
     try {
       const fd = new FormData()
       fd.append('file', file)
@@ -745,38 +796,60 @@ const DbBackupSection: React.FC = () => {
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       setPreview(body)
-      setMsg('Yedek doğrulandı — geri yüklemeden önce onay metnini yazın.')
+      setPendingFile(file)
+      setMsg(`Yedek doğrulandı (${file.name}). Onay metnini yazıp «Geri yükle»ye basın — dosyayı yeniden seçmeniz gerekmez.`)
     } catch (e) {
+      setPendingFile(null)
       setErr(e instanceof Error ? e.message : 'Doğrulama başarısız')
     } finally {
-      setBusy(false)
+      setBusy(false); setBusyPhase(null)
       if (fileRef.current) fileRef.current.value = ''
     }
   }
 
-  const runRestore = async (file: File) => {
-    setBusy(true); setErr(null); setMsg(null)
+  const runRestore = async (file?: File | null) => {
+    const f = file ?? pendingFile
+    if (!f) {
+      setErr('Önce «Dosya seç & doğrula» ile yedek seçin.')
+      return
+    }
+    if (confirm !== phrase) {
+      setErr(`Onay metnini tam yazın: ${phrase}`)
+      return
+    }
+    setBusy(true)
+    setBusyPhase(
+      applySecrets
+        ? 'Geri yükleme başladı — secret’lar yazılıyor, ardından veritabanı…'
+        : 'Geri yükleme başladı — veritabanı yazılıyor (birkaç dakika sürebilir)…',
+    )
+    setErr(null); setMsg(null)
     try {
       const fd = new FormData()
-      fd.append('file', file)
+      fd.append('file', f)
       fd.append('confirm', confirm)
       fd.append('restore_ainew', restoreAinew ? 'true' : 'false')
       fd.append('restore_dropt', restoreDropt ? 'true' : 'false')
       fd.append('require_fingerprint_match', requireFp ? 'true' : 'false')
+      fd.append('apply_migration_secrets', applySecrets ? 'true' : 'false')
       const r = await fetch(`${API_BASE_URL}/settings/db-backup/restore`, { method: 'POST', body: fd })
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      setBusyPhase('Tamamlandı')
       setMsg(body.message || 'Geri yükleme tamam')
       setPreview(null)
+      setPendingFile(null)
       setConfirm('')
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Geri yükleme başarısız')
     } finally {
-      setBusy(false)
+      setBusy(false); setBusyPhase(null)
     }
   }
 
   const phrase = cap?.restore_confirm_phrase || 'VERITABANI GERI YUKLE'
+  const secretPhrase = migSecrets?.export_confirm_phrase || 'TASIMA SIRLARINI INDIR'
+  const installHint = migSecrets?.install_dir_hint || '/data'
 
   return (
     <div>
@@ -793,21 +866,120 @@ const DbBackupSection: React.FC = () => {
         </div>
       )}
 
+      <div className="mb-4 rounded-[10px] border border-violet-500/25 bg-violet-500/5 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-violet-200">Taşıma secret’ları</h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+              Zip dışa aktarımında varsayılan olarak <code className="text-slate-400">migration-secrets.env</code> da paketlenir;
+              içe aktarımda hedef <code className="text-slate-400">.env</code> / <code className="text-slate-400">dropt/.env</code> güncellenir.
+              Aşağıdaki tablo yalnızca bu ortamın fingerprint özeti; ayrı indirme yedek / acil durum içindir.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refetchMigSecrets()}
+            className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04]"
+          >
+            Yenile
+          </button>
+        </div>
+
+        {migSecrets && (
+          <>
+            <div className="flex flex-wrap gap-2 mb-3 text-[11px]">
+              <span className={`px-2 py-1 rounded border ${migSecrets.ready_for_full_migrate ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-200 bg-amber-500/10'}`}>
+                {migSecrets.ready_for_full_migrate ? 'Tam taşıma için hazır' : 'Eksik zorunlu anahtar var'}
+              </span>
+              <span className={`px-2 py-1 rounded border ${migSecrets.bridge_match ? 'border-emerald-500/30 text-emerald-300/90' : 'border-amber-500/30 text-amber-200'}`}>
+                Bridge {migSecrets.bridge_match ? 'eşleşiyor' : 'uyumsuz / eksik'}
+              </span>
+            </div>
+            <div className="overflow-x-auto mb-3">
+              <table className="w-full text-[11px] text-left text-slate-300">
+                <thead className="text-slate-500 border-b border-white/[0.06]">
+                  <tr>
+                    <th className="py-1.5 pr-3 font-medium">Anahtar</th>
+                    <th className="py-1.5 pr-3 font-medium">Hedef dosya</th>
+                    <th className="py-1.5 pr-3 font-medium">Durum</th>
+                    <th className="py-1.5 font-medium font-mono">Fingerprint</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(migSecrets.keys || []).map((row: any, i: number) => (
+                    <tr key={`${row.key}-${row.target_file}-${i}`} className="border-b border-white/[0.04]">
+                      <td className="py-1.5 pr-3 font-mono text-slate-200">
+                        {row.key}
+                        {row.required && <span className="text-rose-300/80 ml-1">*</span>}
+                      </td>
+                      <td className="py-1.5 pr-3 text-slate-400 font-mono">{row.target_file}</td>
+                      <td className="py-1.5 pr-3">
+                        {row.present
+                          ? <span className="text-emerald-400">var</span>
+                          : <span className="text-amber-300">yok</span>}
+                      </td>
+                      <td className="py-1.5 font-mono text-slate-400">{row.fingerprint}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {(migSecrets.missing_required || []).length > 0 && (
+              <p className="text-[11px] text-amber-200/90 mb-3">
+                Eksik: {(migSecrets.missing_required || []).join(' · ')}
+              </p>
+            )}
+            <p className="text-[11px] text-slate-500 mb-3">
+              Kopyalamayın: {(migSecrets.do_not_copy || []).join(', ')}.
+              Recreate: <code className="text-slate-400">docker compose up -d --force-recreate backend worker</code>
+            </p>
+          </>
+        )}
+
+        <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
+          <input type="checkbox" checked={includeDbPasswords} onChange={e => setIncludeDbPasswords(e.target.checked)}
+            className="rounded border-slate-600" />
+          DB parolalarını da dahil et (POSTGRES / DROPT_POSTGRES)
+        </label>
+        <input
+          value={secretExportConfirm}
+          onChange={e => setSecretExportConfirm(e.target.value)}
+          placeholder={secretPhrase}
+          className="w-full mb-2 px-3 py-2 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white font-mono"
+        />
+        <button
+          type="button"
+          disabled={busy || secretExportConfirm !== secretPhrase}
+          onClick={downloadMigrationSecrets}
+          className="px-4 py-2 rounded-lg text-sm bg-violet-600/80 hover:bg-violet-600 text-white disabled:opacity-40"
+        >
+          {busy ? 'Hazırlanıyor…' : 'Taşıma .env indir'}
+        </button>
+        <p className="text-[10px] text-slate-600 mt-2">
+          Onay: <code className="text-slate-500">{secretPhrase}</code> — indirme audit log’a yazılır.
+        </p>
+      </div>
+
       <div className="grid md:grid-cols-2 gap-4 mb-4">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
           <h3 className="text-sm font-semibold text-cyan-300 mb-3">Dışa aktar</h3>
-          <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
             <input type="checkbox" checked={includeDropt} onChange={e => setIncludeDropt(e.target.checked)}
               className="rounded border-slate-600" disabled={!cap?.dropt_db_present} />
             Level 1 (Dropt) veritabanını dahil et
             {!cap?.dropt_db_present && <span className="text-slate-600">(container yok)</span>}
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
+            <input type="checkbox" checked={includeSecretsInZip} onChange={e => setIncludeSecretsInZip(e.target.checked)}
+              className="rounded border-slate-600" />
+            Taşıma secret’larını zip’e ekle (SECRET_KEY, bridge, FERNET, DB parolaları)
           </label>
           <button type="button" disabled={busy || !cap?.available} onClick={downloadDb}
             className="px-4 py-2 rounded-lg text-sm bg-gradient-to-r from-blue-600 to-blue-700 text-white disabled:opacity-50">
             {busy ? 'Hazırlanıyor…' : 'Zip indir'}
           </button>
           <p className="text-[11px] text-slate-500 mt-3">
-            Parmak izi: <code className="text-slate-400 font-mono">{cap?.secret_key_fingerprint || '—'}</code>
+            Parmak izi: <code className="text-slate-400 font-mono">{cap?.secret_key_fingerprint || migSecrets?.secret_key_fingerprint || '—'}</code>
             {' · '}sürüm {cap?.app_version || '—'}
           </p>
         </div>
@@ -815,8 +987,8 @@ const DbBackupSection: React.FC = () => {
         <div className="bg-cyber-deep/50 rounded-[10px] border border-rose-500/20 p-5">
           <h3 className="text-sm font-semibold text-rose-300 mb-2">İçe aktar (üzerine yazar)</h3>
           <p className="text-xs text-slate-500 mb-3">
-            Hedef DB&apos;deki mevcut veri silinir/yenilenir. Aynı <code className="text-slate-400">SECRET_KEY</code> şart
-            (şifreli alanlar). Önce doğrulayın, sonra onay metnini yazıp yükleyin.
+            Hedef DB üzerine yazar. Zip’te secret varsa bunları hedef .env’e yazıp ardından
+            container recreate edin. Fingerprint uyumsuzsa secret uygula seçiliyken restore devam eder.
           </p>
           <div className="flex flex-wrap gap-3 mb-3 text-xs text-slate-400">
             <label className="flex items-center gap-1.5 cursor-pointer">
@@ -824,6 +996,9 @@ const DbBackupSection: React.FC = () => {
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={restoreDropt} onChange={e => setRestoreDropt(e.target.checked)} /> Dropt DB
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={applySecrets} onChange={e => setApplySecrets(e.target.checked)} /> Secret’ları .env’e yaz
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={requireFp} onChange={e => setRequireFp(e.target.checked)} /> SECRET_KEY eşleşmesi zorunlu
@@ -841,21 +1016,26 @@ const DbBackupSection: React.FC = () => {
               className="px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 disabled:opacity-50">
               Dosya seç & doğrula
             </button>
-            <label className={`px-3 py-2 rounded-lg text-sm border cursor-pointer ${
-              confirm === phrase && !busy
-                ? 'bg-rose-600/30 border-rose-500/40 text-rose-100'
-                : 'opacity-40 pointer-events-none border-white/[0.06] text-slate-500'
-            }`}>
+            <button
+              type="button"
+              disabled={busy || confirm !== phrase || !pendingFile}
+              onClick={() => runRestore()}
+              className={`px-3 py-2 rounded-lg text-sm border ${
+                confirm === phrase && pendingFile && !busy
+                  ? 'bg-rose-600/30 border-rose-500/40 text-rose-100 hover:bg-rose-600/40'
+                  : 'opacity-40 border-white/[0.06] text-slate-500'
+              }`}
+              title={!pendingFile ? 'Önce dosya seçip doğrulayın' : confirm !== phrase ? `Onay: ${phrase}` : 'Geri yüklemeyi başlat'}
+            >
               Geri yükle
-              <input type="file" accept=".zip,application/zip" className="hidden" disabled={busy || confirm !== phrase}
-                onChange={e => {
-                  const f = e.target.files?.[0]
-                  if (f) runRestore(f)
-                  e.target.value = ''
-                }}
-              />
-            </label>
+            </button>
           </div>
+          {pendingFile && (
+            <p className="text-[11px] text-slate-500 mt-2">
+              Seçili dosya: <code className="text-slate-400">{pendingFile.name}</code>
+              {' '}({(pendingFile.size / (1024 * 1024)).toFixed(1)} MB)
+            </p>
+          )}
           <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden"
             onChange={e => {
               const f = e.target.files?.[0]
@@ -865,13 +1045,36 @@ const DbBackupSection: React.FC = () => {
         </div>
       </div>
 
+      {busy && busyPhase && (
+        <div className="mb-3 rounded-[10px] border border-sky-500/30 bg-sky-500/10 p-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <div className="text-sm text-sky-100">{busyPhase}</div>
+          </div>
+          <div className="h-1.5 rounded-full bg-black/30 overflow-hidden">
+            <div className="h-full w-1/3 min-w-[30%] rounded-full bg-sky-400/80 animate-pulse"
+              style={{ animation: 'ainewRestoreBar 1.6s ease-in-out infinite' }} />
+          </div>
+          <style>{`@keyframes ainewRestoreBar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }`}</style>
+          <p className="text-[11px] text-slate-500 mt-2">
+            Büyük dump’larda birkaç dakika sürebilir — sayfayı kapatmayın.
+          </p>
+        </div>
+      )}
+
       {preview && (
         <div className="mb-3 rounded-[10px] border border-white/[0.08] bg-cyber-deep/40 p-4 text-xs text-slate-300 space-y-1">
           <div>Kaynak sürüm: <span className="text-white">{preview.manifest?.app_version}</span> · {preview.manifest?.exported_at}</div>
           <div>SECRET_KEY: {preview.fingerprint_match
             ? <span className="text-emerald-400">eşleşiyor</span>
             : <span className="text-amber-300">farklı (risk)</span>}
-            {' '}({preview.manifest?.secret_key_fingerprint} → {preview.current_fingerprint})
+            {' '}({preview.zip_secret_key_fingerprint || preview.manifest?.secret_key_fingerprint} → {preview.current_fingerprint})
+          </div>
+          <div>
+            Taşıma secret’ları:{' '}
+            {preview.has_migration_secrets
+              ? <span className="text-emerald-400">zip içinde var (restore’da .env’e yazılabilir)</span>
+              : <span className="text-amber-300">yok — elle SECRET_KEY/FERNET eşitleyin</span>}
           </div>
           <div>ainew: {(preview.ainew_size_bytes / 1024).toFixed(1)} KB · Dropt: {preview.has_dropt ? `${(preview.dropt_size_bytes / 1024).toFixed(1)} KB` : 'yok'}</div>
         </div>
@@ -1412,7 +1615,16 @@ const Settings: React.FC = () => {
   }
 
   // Uzak AI (OpenAI-uyumlu gateway, örn. Bifrost) ayarları
-  const [remoteLlmForm, setRemoteLlmForm] = useState({ enabled: false, url: '', model: '', api_key: '', verify_ssl: true, ca_bundle: '' })
+  const [remoteLlmForm, setRemoteLlmForm] = useState({
+    enabled: false,
+    url: '',
+    model: '',
+    api_key: '',
+    virtual_key: '',
+    clear_virtual_key: false,
+    verify_ssl: true,
+    ca_bundle: '',
+  })
   const [remoteLlmSaved, setRemoteLlmSaved] = useState(false)
   const [remoteLlmError, setRemoteLlmError] = useState('')
   const [remoteLlmSaving, setRemoteLlmSaving] = useState(false)
@@ -1440,6 +1652,7 @@ const Settings: React.FC = () => {
         model: r.model || '',
         verify_ssl: r.verify_ssl ?? true,
         ca_bundle: r.ca_bundle || '',
+        clear_virtual_key: false,
       }))
     }
   }, [generalSettings?.remote_llm])
@@ -1456,13 +1669,15 @@ const Settings: React.FC = () => {
           url: remoteLlmForm.url.trim(),
           model: remoteLlmForm.model.trim(),
           api_key: remoteLlmForm.api_key.trim() || undefined,
+          virtual_key: remoteLlmForm.virtual_key.trim() || undefined,
+          clear_virtual_key: remoteLlmForm.clear_virtual_key || undefined,
           verify_ssl: remoteLlmForm.verify_ssl,
           ca_bundle: remoteLlmForm.ca_bundle.trim(),
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Kaydedilemedi')
-      setRemoteLlmForm(f => ({ ...f, api_key: '' }))
+      setRemoteLlmForm(f => ({ ...f, api_key: '', virtual_key: '', clear_virtual_key: false }))
       setRemoteLlmSaved(true)
       queryClient.invalidateQueries({ queryKey: ['general-settings'] })
       queryClient.invalidateQueries({ queryKey: ['ai-models'] })
@@ -1486,6 +1701,7 @@ const Settings: React.FC = () => {
           url: remoteLlmForm.url.trim(),
           model: remoteLlmForm.model.trim(),
           api_key: remoteLlmForm.api_key.trim() || undefined,
+          virtual_key: remoteLlmForm.virtual_key.trim() || undefined,
           verify_ssl: remoteLlmForm.verify_ssl,
           ca_bundle: remoteLlmForm.ca_bundle.trim(),
         }),
@@ -2172,6 +2388,38 @@ const Settings: React.FC = () => {
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">Authorization header'ına doğrudan (Bearer öneki olmadan) konur.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">Virtual Key (opsiyonel)</label>
+                      <input
+                        type="password"
+                        value={remoteLlmForm.virtual_key}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, virtual_key: e.target.value, clear_virtual_key: false }))}
+                        placeholder={
+                          generalSettings?.remote_llm?.virtual_key_set
+                            ? `Kayıtlı: ${generalSettings.remote_llm.virtual_key_masked || '••••'} (değiştirmek için yeni değer girin)`
+                            : 'Bifrost x-bf-vk — boş bırakılabilir'
+                        }
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Doluysa isteğe <code>x-bf-vk</code> header&apos;ı eklenir (Bifrost virtual key). Boşsa gönderilmez.
+                      </p>
+                      {generalSettings?.remote_llm?.virtual_key_set && (
+                        <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={remoteLlmForm.clear_virtual_key}
+                            onChange={e => setRemoteLlmForm(f => ({
+                              ...f,
+                              clear_virtual_key: e.target.checked,
+                              virtual_key: e.target.checked ? '' : f.virtual_key,
+                            }))}
+                            className="rounded border-slate-600"
+                          />
+                          Kayıtlı virtual key&apos;i kaldır
+                        </label>
+                      )}
                     </div>
 
                     <div className="border-t border-white/[0.06] pt-4">

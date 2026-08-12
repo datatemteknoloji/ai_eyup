@@ -917,10 +917,11 @@ const LiveMetrics: React.FC = () => {
               value={timeRangeIndex}
               onChange={(e) => setTimeRangeIndex(Number(e.target.value))}
               disabled={realTimeMode}
+              style={{ colorScheme: 'dark' }}
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {TIME_RANGES.map((r, i) => (
-                <option key={r.value} value={i}>{r.label}</option>
+                <option key={r.value} value={i} className="bg-slate-900 text-white">{r.label}</option>
               ))}
             </select>
             {realTimeMode && (
@@ -1041,10 +1042,11 @@ const LiveMetrics: React.FC = () => {
               <select
                 value={realTimeRefetchMs}
                 onChange={(e) => setRealTimeRefetchMs(Number(e.target.value))}
+                style={{ colorScheme: 'dark' }}
                 className="bg-cyber-card border border-white/[0.06] rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {REAL_TIME_REFETCH_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.label}</option>
                 ))}
               </select>
             </div>
@@ -1137,17 +1139,18 @@ const LiveMetrics: React.FC = () => {
                 <select
                   value={chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex]}
                   onChange={(e) => setChartSlot(slotIndex, e.target.value)}
-                  className="bg-white/[0.07] border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
+                  style={{ colorScheme: 'dark' }}
+                  className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
                 >
-                  <optgroup label="Preset metrikler">
+                  <optgroup label="Preset metrikler" className="bg-slate-900 text-white">
                     {METRIC_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
+                      <option key={p.id} value={p.id} className="bg-slate-900 text-white">{p.label}</option>
                     ))}
                   </optgroup>
                   {nodeMetricNames.length > 0 && (
-                    <optgroup label="Node Exporter (ham metrik)">
+                    <optgroup label="Node Exporter (ham metrik)" className="bg-slate-900 text-white">
                       {nodeMetricNames.map((name) => (
-                        <option key={name} value={`raw:${name}`}>{name}</option>
+                        <option key={name} value={`raw:${name}`} className="bg-slate-900 text-white">{name}</option>
                       ))}
                     </optgroup>
                   )}

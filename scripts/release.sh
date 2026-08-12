@@ -9,7 +9,9 @@
 # yazarak bu ikisinin senkron kalmasını sağlar.
 #
 # Kullanım:
-#   ./scripts/release.sh 1.0.9.17 "Kısa özet satırı" [--with-ollama] [--no-images]
+#   ./scripts/release.sh 1.0.9.17 "Kısa özet satırı" [--with-ollama] [--no-images] [--no-publish]
+#
+#   --no-publish  VERSION/CHANGELOG/paket + yerel commit/tag; GitHub Release / push yok
 #
 # Notlar:
 #   - CHANGELOG.md'deki [Unreleased] bölümü varsa, yeni sürüm başlığının
@@ -31,10 +33,20 @@ SUMMARY="${2:-}"
 shift 2 || true
 
 if [[ -z "$VERSION" || -z "$SUMMARY" ]]; then
-  echo "Kullanım: $0 <version> \"<kısa özet>\" [build-distribution.sh argümanları]" >&2
+  echo "Kullanım: $0 <version> \"<kısa özet>\" [build-distribution.sh argümanları] [--no-publish]" >&2
   echo "Örnek:    $0 1.0.9.17 \"vCenter timeout düzeltmesi\" --with-ollama" >&2
   exit 1
 fi
+
+NO_PUBLISH=0
+BUILD_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --no-publish) NO_PUBLISH=1 ;;
+    *) BUILD_ARGS+=("$a") ;;
+  esac
+done
+set -- "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}"
 
 CHANGELOG="CHANGELOG.md"
 TODAY="$(date +%Y-%m-%d)"
@@ -109,7 +121,16 @@ for a in "$@"; do
   esac
 done
 
-if [[ -x scripts/publish-github-release.sh ]]; then
+if [[ "$NO_PUBLISH" -eq 1 ]]; then
+  echo
+  echo "▶ --no-publish: GitHub Release atlanıyor; VERSION/CHANGELOG commit + yerel tag."
+  git add VERSION "$CHANGELOG"
+  git commit -m "chore(release): v${VERSION}" || true
+  git tag "v${VERSION}" 2>/dev/null || true
+  echo "✓ Paket: dist/ainew-${VERSION}-linux-amd64*.tar.gz (varsa)"
+  echo "  Notlar: ${NOTES_FILE}"
+  echo "  Yayınlamak için: ./scripts/publish-github-release.sh ${VERSION} --notes-file '${NOTES_FILE}'"
+elif [[ -x scripts/publish-github-release.sh ]]; then
   echo
   echo "▶ GitHub'a yayınlanıyor (scripts/publish-github-release.sh)..."
   ./scripts/publish-github-release.sh "${PUBLISH_ARGS[@]}"

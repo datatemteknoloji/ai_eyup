@@ -178,7 +178,14 @@ async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[Li
             or model
         )
         headers = {
-            "Authorization": settings.REMOTE_LLM_API_KEY,
+            **{
+                k: v
+                for k, v in {
+                    "Authorization": (settings.REMOTE_LLM_API_KEY or "").strip() or None,
+                    "x-bf-vk": (getattr(settings, "REMOTE_LLM_VIRTUAL_KEY", None) or "").strip() or None,
+                }.items()
+                if v
+            },
             "Content-Type": "application/json",
         }
         # SSL: remote_llm_ssl_verify bool veya CA path; httpx verify=...

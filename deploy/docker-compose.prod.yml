@@ -132,6 +132,7 @@ services:
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
       - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
       - HOST_ETC_HOSTS=/host-etc-hosts
+      - AINEW_INSTALL_MOUNT=/ainew-install
     volumes:
       - ./backend/static:/app/static:Z
       - ./VERSION:/app/VERSION:ro
@@ -150,6 +151,9 @@ services:
       - ${DATA_DIR:-/data/data}/certs:/app/certs:Z
       # AD / OpenShift hostname çözümlemesi — host OS /etc/hosts (dinamik)
       - /etc/hosts:/host-etc-hosts:ro
+      # DB restore: migration-secrets → kurulum .env (AINEW_INSTALL_DIR)
+      - ${AINEW_INSTALL_DIR:-.}/.env:/ainew-install/.env
+      - ${AINEW_INSTALL_DIR:-.}/dropt/.env:/ainew-install/dropt/.env
     depends_on:
       db:
         condition: service_healthy

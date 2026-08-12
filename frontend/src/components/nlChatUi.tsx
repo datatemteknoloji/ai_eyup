@@ -188,7 +188,7 @@ export function NlModelSelect({
           if (storageKey) localStorage.setItem(storageKey, e.target.value)
         }}
         className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
-        style={{ appearance: 'auto' }}
+        style={{ appearance: 'auto', colorScheme: 'dark' }}
       >
         {models.map(m => (
           <option key={m.name} value={m.name} className="bg-slate-900 text-white">
@@ -196,6 +196,50 @@ export function NlModelSelect({
           </option>
         ))}
       </select>
+    </div>
+  )
+}
+
+/** Model listesi alınamadığında / Ollama-remote erişilemezken kalıcı uyarı. */
+export function NlModelUnavailableBanner({
+  modelsData,
+  isFetched,
+}: {
+  modelsData?: {
+    success?: boolean
+    reachable?: boolean
+    models?: unknown[]
+    error?: string
+    remote?: boolean
+    provider?: string
+  } | null
+  isFetched?: boolean
+}) {
+  if (!isFetched || !modelsData) return null
+  const reachable =
+    modelsData.reachable === true ||
+    (modelsData.success === true && (modelsData.models?.length ?? 0) > 0)
+  if (reachable) return null
+
+  const provider = modelsData.remote || modelsData.provider === 'remote' ? 'uzak gateway' : 'Ollama'
+  const detail = (modelsData.error || '').trim()
+
+  return (
+    <div
+      role="status"
+      className="mx-4 mt-3 mb-1 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+    >
+      <p className="font-medium text-amber-200">AI modeli şu an erişilemiyor ({provider})</p>
+      <p className="mt-1 text-amber-100/80 text-xs leading-relaxed">
+        Selamlaşma gibi hazır kısa cevaplar çalışabilir; analiz, teşhis ve ortam soruları için model gerekir
+        ve şu an yanıtlanamayabilir. Ayarlar → AI Ayarları üzerinden Ollama / uzak gateway bağlantısını kontrol edin.
+        {detail ? (
+          <>
+            {' '}
+            <span className="text-amber-200/70 font-mono">({detail.slice(0, 160)})</span>
+          </>
+        ) : null}
+      </p>
     </div>
   )
 }

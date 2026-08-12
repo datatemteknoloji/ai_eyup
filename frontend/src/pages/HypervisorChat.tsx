@@ -12,7 +12,8 @@ import {
 import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '../utils/pdfExport'
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
 import {
-  NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect, NlChatInput,
+  NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
+  NlModelUnavailableBanner, NlChatInput,
 } from '../components/nlChatUi'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -335,15 +336,29 @@ export default function HypervisorChat({
     return () => clearTimeout(t)
   }, [historySearch])
 
-  const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+  const { data: modelsData, isFetched: modelsFetched } = useQuery<{
+    success: boolean
+    reachable?: boolean
+    models: AIModel[]
+    default: string
+    error?: string
+    remote?: boolean
+    provider?: string
+  }>({
     queryKey: ['ai-models'],
     queryFn: async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/chat/models`, { signal: AbortSignal.timeout(5000) })
-        if (!res.ok) return { success: false, models: [], default: 'llama3.2:3b' }
+        if (!res.ok) return { success: false, reachable: false, models: [], default: 'llama3.2:3b', error: `HTTP ${res.status}` }
         return res.json()
-      } catch {
-        return { success: false, models: [], default: 'llama3.2:3b' }
+      } catch (e) {
+        return {
+          success: false,
+          reachable: false,
+          models: [],
+          default: 'llama3.2:3b',
+          error: e instanceof Error ? e.message : 'bağlantı hatası',
+        }
       }
     },
     retry: false,
@@ -573,6 +588,8 @@ export default function HypervisorChat({
           storageKey="virt_chat_selected_model"
         />
       </NlTopBar>
+
+      <NlModelUnavailableBanner modelsData={modelsData} isFetched={modelsFetched} />
 
       <QuickStatsBar />
 

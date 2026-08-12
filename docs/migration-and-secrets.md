@@ -39,16 +39,19 @@ Tam zip (`ainew.sql` + opsiyonel `dropt.sql`) **ciphertext** taşır.
 ### Kaynak
 
 1. Settings → **Veritabanı yedeği** → zip indir  
-2. `.env` yedeği alın (en azından `SECRET_KEY`, `AINEW_BRIDGE_SECRET`, DB parolaları)
+   (varsayılan: Dropt DB + `migration-secrets.env` dahil — SECRET_KEY, bridge, FERNET, DB parolaları)  
+2. İsteğe bağlı: **Taşıma secret’ları** ayrı indirme / `./scripts/export-migration-secrets.sh`  
+3. Zip’i güvenli saklayın (plaintext secret içerir)
 
 ### Hedef
 
 1. Temiz kurulum yapın  
-2. Hedef `.env` içinde **yeni rastgele `SECRET_KEY` üretmeyin** — kaynaktaki `SECRET_KEY` (ve bridge) değerlerini yapıştırın  
-3. Servisleri ayağa kaldırın  
-4. Settings → zip **doğrula** → fingerprint **eşleşiyor** olmalı  
-5. Onay metni (secret değil): `VERITABANI GERI YUKLE`  
-6. Restore sonrası gerekirse backend/worker restart; admin login + bir SSH/vCenter smoke test
+2. Settings → zip **doğrula** — “Taşıma secret’ları: zip içinde var” görünmeli  
+3. **Secret’ları .env’e yaz** işaretli → onay: `VERITABANI GERI YUKLE` → geri yükle  
+4. `docker compose up -d --force-recreate backend worker` (+ Dropt stack) — yalnız `restart` yetmez  
+5. Admin login + SSH/vCenter smoke test  
+
+Not: Backend, kurulum `.env` dosyalarını `/ainew-install` bind-mount üzerinden yazar (`AINEW_INSTALL_DIR`). Yazılamazsa artefakt: `$DATA_DIR/backups/last-restore-migration-secrets.env`.
 
 Fingerprint eşleşmiyorsa restore’a zorlamayın (veya bilinçli riskle `require_fingerprint_match=false` — şifreli alanlar açılamayabilir).
 

@@ -12,6 +12,7 @@ import ChatPinFact from '../components/ChatPinFact'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
+  NlModelUnavailableBanner,
   NlEmptyState, NlChatInput, nlUserBubbleClass, nlAssistantBubbleClass,
 } from '../components/nlChatUi'
 import {
@@ -225,14 +226,30 @@ const WindowsChat: React.FC<{
     }
   })
 
-  const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
+  const { data: modelsData, isFetched: modelsFetched } = useQuery<{
+    success: boolean
+    reachable?: boolean
+    models: AIModel[]
+    default: string
+    error?: string
+    remote?: boolean
+    provider?: string
+  }>({
     queryKey: ['windows-ai-models'],
     queryFn: async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/windows-chat/models`, { signal: AbortSignal.timeout(5000) })
-        if (!res.ok) return { success: false, models: [], default: 'llama3.2:3b' }
+        if (!res.ok) return { success: false, reachable: false, models: [], default: 'llama3.2:3b', error: `HTTP ${res.status}` }
         return res.json()
-      } catch { return { success: false, models: [], default: 'llama3.2:3b' } }
+      } catch (e) {
+        return {
+          success: false,
+          reachable: false,
+          models: [],
+          default: 'llama3.2:3b',
+          error: e instanceof Error ? e.message : 'bağlantı hatası',
+        }
+      }
     },
     retry: false, staleTime: 60000
   })
@@ -531,6 +548,8 @@ const WindowsChat: React.FC<{
               )}
             </div>
           </NlTopBar>
+
+          <NlModelUnavailableBanner modelsData={modelsData} isFetched={modelsFetched} />
 
           <ChatPlatformStatsBar platform="windows" />
 

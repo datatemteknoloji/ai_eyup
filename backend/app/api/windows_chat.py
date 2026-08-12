@@ -151,9 +151,11 @@ async def list_available_models(db: Session = Depends(get_db)):
         model = llm_gateway.active_model_label()
         return {
             "success": True,
+            "reachable": True,
             "models": [{"name": model, "size": None, "parameter_size": None, "family": "remote"}],
             "default": model,
             "remote": True,
+            "provider": "remote",
         }
     try:
         ollama_url = settings.OLLAMA_URL
@@ -170,11 +172,31 @@ async def list_available_models(db: Session = Depends(get_db)):
                     }
                     for m in data.get("models", [])
                 ]
-                return {"success": True, "models": models, "default": get_active_model(db)}
-            return {"success": False, "models": [], "default": get_active_model(db), "error": "Ollama'ya bağlanılamadı"}
+                return {
+                    "success": True,
+                    "reachable": True,
+                    "models": models,
+                    "default": get_active_model(db),
+                    "provider": "ollama",
+                }
+            return {
+                "success": False,
+                "reachable": False,
+                "models": [],
+                "default": get_active_model(db),
+                "error": "Ollama'ya bağlanılamadı",
+                "provider": "ollama",
+            }
     except Exception as e:
         logger.error(f"Model listesi alınamadı: {e}")
-        return {"success": False, "models": [], "default": get_active_model(db), "error": str(e)}
+        return {
+            "success": False,
+            "reachable": False,
+            "models": [],
+            "default": get_active_model(db),
+            "error": str(e),
+            "provider": "ollama",
+        }
 
 
 @router.get("/sessions")

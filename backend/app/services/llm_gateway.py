@@ -28,9 +28,23 @@ def _remote_chat_url() -> str:
     return settings.REMOTE_LLM_URL.rstrip("/") + "/v1/chat/completions"
 
 
-def _remote_headers() -> Dict[str, str]:
-    # Not: Bifrost gateway ham API key'i (Bearer öneki OLMADAN) Authorization header'ında bekliyor.
-    return {"Authorization": settings.REMOTE_LLM_API_KEY, "Content-Type": "application/json"}
+def _remote_headers(
+    api_key: Optional[str] = None,
+    virtual_key: Optional[str] = None,
+) -> Dict[str, str]:
+    """Uzak gateway header'ları.
+
+    Authorization: API key (Bearer öneki yok — Bifrost uyumu).
+    x-bf-vk: opsiyonel virtual key; doluysa eklenir.
+    """
+    key = (api_key if api_key is not None else settings.REMOTE_LLM_API_KEY) or ""
+    vk = (virtual_key if virtual_key is not None else settings.REMOTE_LLM_VIRTUAL_KEY) or ""
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if key.strip():
+        headers["Authorization"] = key.strip()
+    if vk.strip():
+        headers["x-bf-vk"] = vk.strip()
+    return headers
 
 
 def _resolve_model(requested_model: Optional[str]) -> str:

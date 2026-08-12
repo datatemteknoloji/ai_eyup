@@ -16,6 +16,7 @@ export type ServerSummary = {
   ai_ready: number
   node_exporter_installed: number
   node_exporter_running: number
+  name_mismatch?: number
   cpu_cores?: number
   memory_gb?: number
   by_status: Record<string, number>
@@ -34,6 +35,7 @@ export type ListServersParams = {
   os?: string
   node_exporter?: string
   ip?: string
+  name_mismatch?: boolean | null
   include_connection_config?: boolean
 }
 
@@ -70,6 +72,7 @@ export async function fetchServersPage<T = Record<string, unknown>>(
   if (params.os && params.os !== 'all') sp.set('os', params.os)
   if (params.node_exporter && params.node_exporter !== 'all') sp.set('node_exporter', params.node_exporter)
   if (params.ip) sp.set('ip', params.ip)
+  if (params.name_mismatch === true) sp.set('name_mismatch', 'true')
   if (params.include_connection_config) sp.set('include_connection_config', 'true')
   const r = await fetch(`${API_BASE_URL}/servers/?${sp}`)
   if (!r.ok) {

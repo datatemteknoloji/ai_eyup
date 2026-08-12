@@ -730,6 +730,8 @@ async def get_settings(db: Session = Depends(get_db)):
             "model": settings.REMOTE_LLM_MODEL,
             "api_key_set": bool(settings.REMOTE_LLM_API_KEY),
             "api_key_masked": _mask_key(settings.REMOTE_LLM_API_KEY),
+            "virtual_key_set": bool(getattr(settings, "REMOTE_LLM_VIRTUAL_KEY", "") or ""),
+            "virtual_key_masked": _mask_key(getattr(settings, "REMOTE_LLM_VIRTUAL_KEY", "") or ""),
             "verify_ssl": settings.REMOTE_LLM_VERIFY_SSL,
             "ca_bundle": settings.REMOTE_LLM_CA_BUNDLE,
         },
@@ -880,6 +882,8 @@ async def set_remote_llm(
     url = (payload.get("url") or "").strip().rstrip("/")
     model = (payload.get("model") or "").strip()
     api_key_raw = payload.get("api_key")
+    virtual_key_raw = payload.get("virtual_key")
+    clear_virtual_key = bool(payload.get("clear_virtual_key"))
     # Sertifika doğrulaması: varsayılan True (güvenli); gönderilmezse mevcut değeri koru.
     verify_ssl = bool(payload.get("verify_ssl", settings.REMOTE_LLM_VERIFY_SSL))
     ca_bundle = (payload.get("ca_bundle") or "").strip()
@@ -902,6 +906,11 @@ async def set_remote_llm(
     if api_key_raw:  # boş/None gönderilirse mevcut key korunur
         _save("remote_llm_api_key", encrypt_secret(api_key_raw))
 
+    if clear_virtual_key:
+        _save("remote_llm_virtual_key", "")
+    elif virtual_key_raw:  # boş/None → mevcut VK korunur
+        _save("remote_llm_virtual_key", encrypt_secret(str(virtual_key_raw)))
+
     db.commit()
 
     # Runtime'a hemen yansıt (restart beklemeden) — management_server_ip ile aynı desen.
@@ -912,12 +921,25 @@ async def set_remote_llm(
     settings.REMOTE_LLM_CA_BUNDLE = ca_bundle
     if api_key_raw:
         settings.REMOTE_LLM_API_KEY = api_key_raw
+    if clear_virtual_key:
+        settings.REMOTE_LLM_VIRTUAL_KEY = ""
+    elif virtual_key_raw:
+        settings.REMOTE_LLM_VIRTUAL_KEY = str(virtual_key_raw)
 
     logger.info(
         f"Uzak AI gateway güncellendi: enabled={enabled} url={url} model={model} "
-        f"verify_ssl={verify_ssl} ca_bundle={'set' if ca_bundle else 'unset'}"
+        f"verify_ssl={verify_ssl} ca_bundle={'set' if ca_bundle else 'unset'} "
+        f"virtual_key={'cleared' if clear_virtual_key else ('set' if virtual_key_raw else 'unchanged')}"
     )
-    return {"success": True, "enabled": enabled, "url": url, "model": model, "verify_ssl": verify_ssl, "ca_bundle": ca_bundle}
+    return {
+        "success": True,
+        "enabled": enabled,
+        "url": url,
+        "model": model,
+        "verify_ssl": verify_ssl,
+        "ca_bundle": ca_bundle,
+        "virtual_key_set": bool(settings.REMOTE_LLM_VIRTUAL_KEY),
+    }
 
 
 @router.post("/remote-llm/test")
@@ -927,19 +949,22 @@ async def test_remote_llm(
 ):
     """Uzak AI gateway bağlantısını test et (kaydetmeden form değerleriyle denenebilir).
 
-    Body: {url, model, api_key?, verify_ssl?, ca_bundle?}
-    api_key boşsa kayıtlı REMOTE_LLM_API_KEY kullanılır.
+    Body: {url, model, api_key?, virtual_key?, verify_ssl?, ca_bundle?}
+    api_key / virtual_key boşsa kayıtlı değerler kullanılır.
     """
     import time
 
     import httpx
 
     from app.core.config import settings
+    from app.services.llm_gateway import _remote_headers
 
     url = (payload.get("url") or settings.REMOTE_LLM_URL or "").strip().rstrip("/")
     model = (payload.get("model") or settings.REMOTE_LLM_MODEL or "").strip()
     api_key_raw = payload.get("api_key")
     api_key = (api_key_raw or "").strip() or (settings.REMOTE_LLM_API_KEY or "").strip()
+    vk_raw = payload.get("virtual_key")
+    virtual_key = (vk_raw or "").strip() or (getattr(settings, "REMOTE_LLM_VIRTUAL_KEY", None) or "").strip()
     verify_ssl = bool(payload.get("verify_ssl", settings.REMOTE_LLM_VERIFY_SSL))
     ca_bundle = (payload.get("ca_bundle") or settings.REMOTE_LLM_CA_BUNDLE or "").strip()
 
@@ -958,10 +983,7 @@ async def test_remote_llm(
         verify = ca_bundle
 
     chat_url = f"{url}/v1/chat/completions"
-    # Bazı OpenAI-uyumlu uçlar (yerel Ollama) key istemez; Bifrost vb. Authorization ister.
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = api_key
+    headers = _remote_headers(api_key=api_key, virtual_key=virtual_key)
     body = {
         "model": model,
         "messages": [{"role": "user", "content": "ping"}],
@@ -982,9 +1004,16 @@ async def test_remote_llm(
     latency_ms = int((time.monotonic() - t0) * 1000)
     if resp.status_code >= 400:
         detail = (resp.text or "")[:280]
+        msg = f"HTTP {resp.status_code}: {detail or 'yanıt gövdesi boş'}"
+        low = detail.lower()
+        if resp.status_code == 401 and ("virtual_key" in low or "x-bf-vk" in low):
+            msg += (
+                " — Gateway virtual key istiyor. AI Ayarları'nda "
+                "opsiyonel Virtual Key (x-bf-vk) alanını doldurup tekrar deneyin."
+            )
         return {
             "ok": False,
-            "message": f"HTTP {resp.status_code}: {detail or 'yanıt gövdesi boş'}",
+            "message": msg,
             "latency_ms": latency_ms,
             "url": chat_url,
             "model": model,
@@ -1060,6 +1089,7 @@ async def set_metric_retention(payload: dict, db: Session = Depends(get_db)):
 
 _SENSITIVE_APP_SETTING_KEYS = frozenset({
     "remote_llm_api_key",
+    "remote_llm_virtual_key",
     "global_winrm_credential",
     "ucmdb_connection",
 })
@@ -1081,7 +1111,7 @@ def _decrypt_setting_value(key: str, value: str) -> str:
     """Export için Fernet alanlarını plaintext'e çevir."""
     if not value:
         return value
-    if key == "remote_llm_api_key":
+    if key in ("remote_llm_api_key", "remote_llm_virtual_key"):
         return decrypt_secret(value) or ""
     if key == "global_winrm_credential":
         try:
@@ -1100,7 +1130,7 @@ def _encrypt_setting_value(key: str, value: str) -> str:
     """Restore: plaintext → hedef SECRET_KEY ile Fernet."""
     if not value:
         return value
-    if key == "remote_llm_api_key":
+    if key in ("remote_llm_api_key", "remote_llm_virtual_key"):
         return encrypt_secret(value) or value
     if key == "global_winrm_credential":
         try:
@@ -1157,6 +1187,12 @@ def _apply_runtime_overlays(db: Session) -> None:
             plain = decrypt_secret(api_enc) or api_enc
             os.environ["REMOTE_LLM_API_KEY"] = plain
             cfg.REMOTE_LLM_API_KEY = plain
+        vk_enc = _get("remote_llm_virtual_key")
+        if vk_enc is not None:
+            plain_vk = decrypt_secret(vk_enc) if vk_enc else ""
+            plain_vk = plain_vk or ""
+            os.environ["REMOTE_LLM_VIRTUAL_KEY"] = plain_vk
+            cfg.REMOTE_LLM_VIRTUAL_KEY = plain_vk
         vs = _get("remote_llm_verify_ssl")
         if vs is not None:
             verify = str(vs).lower() in ("1", "true", "yes", "on")
@@ -1193,7 +1229,7 @@ async def config_backup(
             val = _decrypt_setting_value(row.key, val)
         elif (not include_secrets) and row.key in _SENSITIVE_APP_SETTING_KEYS:
             # Sırları dışarı verme — placeholder
-            if row.key == "remote_llm_api_key":
+            if row.key in ("remote_llm_api_key", "remote_llm_virtual_key"):
                 val = ""
             elif row.key == "global_winrm_credential":
                 try:
@@ -1317,7 +1353,7 @@ async def config_restore(
             raw = str(value)
             if key in _SENSITIVE_APP_SETTING_KEYS:
                 # Export plaintext veya eski ciphertext — hedef key ile yeniden şifrele
-                if key == "remote_llm_api_key" and raw in ("", "***"):
+                if key in ("remote_llm_api_key", "remote_llm_virtual_key") and raw in ("", "***"):
                     continue
                 store = _encrypt_setting_value(key, raw)
             else:
@@ -1774,6 +1810,7 @@ def db_backup_capability(_admin: User = Depends(require_role("admin"))):
 def db_backup_export(
     request: Request,
     include_dropt: bool = True,
+    include_migration_secrets: bool = True,
     admin: User = Depends(require_role("admin")),
 ):
     """ainew (+ opsiyonel Dropt) PostgreSQL dump zip indir."""
@@ -1783,7 +1820,10 @@ def db_backup_export(
     from app.services.audit import record_audit
 
     try:
-        zip_path, manifest = dmb.create_backup_zip(include_dropt=include_dropt)
+        zip_path, manifest = dmb.create_backup_zip(
+            include_dropt=include_dropt,
+            include_migration_secrets=include_migration_secrets,
+        )
     except Exception as e:
         record_audit(
             None,
@@ -1797,6 +1837,7 @@ def db_backup_export(
         )
         raise HTTPException(503, f"Yedek alınamadı: {e}")
 
+    secrets_meta = (manifest.get("migration_secrets") or {})
     record_audit(
         None,
         category="admin",
@@ -1806,6 +1847,8 @@ def db_backup_export(
         summary="Tam veritabanı yedeği indirildi",
         detail={
             "include_dropt": include_dropt,
+            "include_migration_secrets": include_migration_secrets,
+            "migration_secrets_included": bool(secrets_meta.get("included")),
             "ainew_bytes": ((manifest.get("databases") or {}).get("ainew") or {}).get("size_bytes"),
             "dropt_included": ((manifest.get("databases") or {}).get("dropt") or {}).get("included"),
         },
@@ -1857,11 +1900,17 @@ async def db_backup_validate(
                 "app_version": man.get("app_version"),
                 "exported_at": man.get("exported_at"),
                 "secret_key_fingerprint": man.get("secret_key_fingerprint"),
+                "migration_secrets": {
+                    "included": bool(parsed.get("has_migration_secrets")),
+                    "secret_key_fingerprint": parsed.get("zip_secret_key_fingerprint"),
+                },
                 "databases": man.get("databases"),
                 "warnings": man.get("warnings"),
             },
             "fingerprint_match": parsed["fingerprint_match"],
             "current_fingerprint": parsed["current_fingerprint"],
+            "zip_secret_key_fingerprint": parsed.get("zip_secret_key_fingerprint"),
+            "has_migration_secrets": bool(parsed.get("has_migration_secrets")),
             "has_dropt": bool(parsed.get("dropt_sql")),
             "ainew_size_bytes": len(parsed["ainew_sql"] or b""),
             "dropt_size_bytes": len(parsed["dropt_sql"] or b"") if parsed.get("dropt_sql") else 0,
@@ -1884,11 +1933,13 @@ async def db_backup_restore(
     restore_ainew: bool = Form(True),
     restore_dropt: bool = Form(True),
     require_fingerprint_match: bool = Form(True),
+    apply_migration_secrets: bool = Form(True),
     admin: User = Depends(require_role("admin")),
 ):
     """
     Tam DB geri yükleme. Mevcut verinin üzerine yazar.
     confirm alanı tam olarak: VERITABANI GERI YUKLE
+    apply_migration_secrets: zip içindeki migration-secrets.env → hedef .env
     """
     import tempfile
     from pathlib import Path
@@ -1907,6 +1958,7 @@ async def db_backup_restore(
             restore_ainew=restore_ainew,
             restore_dropt=restore_dropt,
             require_fingerprint_match=require_fingerprint_match,
+            apply_migration_secrets=apply_migration_secrets,
         )
     except ValueError as e:
         record_audit(
@@ -1937,6 +1989,21 @@ async def db_backup_restore(
         except Exception:
             pass
 
+    # Audit: secret değerleri yazma
+    audit_detail = {
+        k: v for k, v in (result or {}).items()
+        if k != "migration_secrets"
+    }
+    ms = (result or {}).get("migration_secrets") or {}
+    audit_detail["migration_secrets"] = {
+        "applied": ms.get("applied"),
+        "skipped": ms.get("skipped"),
+        "install_dir": ms.get("install_dir"),
+        "artifact": ms.get("artifact"),
+        "errors": ms.get("errors"),
+        "recreate_required": ms.get("recreate_required"),
+    }
+
     record_audit(
         None,
         category="admin",
@@ -1944,13 +2011,93 @@ async def db_backup_restore(
         status="success",
         actor=admin,
         summary="Tam veritabanı geri yüklendi",
-        detail=result,
+        detail=audit_detail,
         ip_address=request.client.host if request.client else None,
     )
+
+    msg = "Veritabanı geri yüklendi."
+    if ms.get("applied"):
+        msg += (
+            " Secret'lar .env dosyalarına yazıldı — "
+            "docker compose up -d --force-recreate backend worker (+ dropt) çalıştırın, "
+            "sonra oturumu yenileyin."
+        )
+    elif ms.get("artifact"):
+        msg += f" Secret artefaktı: {ms.get('artifact')} — elle uygulayıp recreate edin."
+    else:
+        msg += " Oturumu yenileyin; gerekirse backend/worker'ı yeniden başlatın."
+
     return {
         "ok": True,
-        "message": (
-            "Veritabanı geri yüklendi. Oturumu yenileyin; gerekirse backend/worker'ı yeniden başlatın."
-        ),
+        "message": msg,
         "result": result,
     }
+
+
+@router.get("/db-backup/migration-secrets")
+def db_backup_migration_secrets_status(_admin: User = Depends(require_role("admin"))):
+    """Taşıma secret fingerprint özeti (plaintext yok)."""
+    from app.services import migration_secrets as ms
+
+    return ms.public_status()
+
+
+@router.get("/db-backup/migration-secrets/export")
+def db_backup_migration_secrets_export(
+    request: Request,
+    confirm: str = "",
+    include_db_passwords: bool = True,
+    admin: User = Depends(require_role("admin")),
+):
+    """Hedefe yapıştırılacak migration .env dosyasını indir (audit'li)."""
+    from datetime import datetime, timezone
+    from fastapi.responses import Response
+    from app.services import migration_secrets as ms
+    from app.services.audit import record_audit
+
+    if (confirm or "").strip() != ms.EXPORT_CONFIRM:
+        raise HTTPException(
+            400,
+            f"Onay metni gerekli: {ms.EXPORT_CONFIRM}",
+        )
+
+    try:
+        body, meta = ms.build_export_env_text(include_db_passwords=include_db_passwords)
+    except Exception as e:
+        record_audit(
+            None,
+            category="admin",
+            action="db_backup.migration_secrets_export",
+            status="failed",
+            actor=admin,
+            summary=f"Taşıma secret export başarısız: {e}",
+            detail={"error": str(e)[:400]},
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(503, f"Export alınamadı: {e}")
+
+    record_audit(
+        None,
+        category="admin",
+        action="db_backup.migration_secrets_export",
+        status="success",
+        actor=admin,
+        summary="Taşıma secret dosyası indirildi",
+        detail={
+            "include_db_passwords": include_db_passwords,
+            "secret_key_fingerprint": meta.get("secret_key_fingerprint"),
+            "fernet_present": any(
+                k.get("key") == "FERNET_KEY" and k.get("present") for k in (meta.get("keys") or [])
+            ),
+            "ready_for_full_migrate": meta.get("ready_for_full_migrate"),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"ainew-migrate-secrets-{ts}.env"
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

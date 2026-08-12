@@ -193,6 +193,7 @@ def list_servers(
             func.lower(TargetServer.hostname).like(term),
             func.lower(TargetServer.ip).like(term),
             func.lower(TargetServer.tags).like(term),
+            func.lower(TargetServer.description).like(term),
         )
         stmt = stmt.where(filt)
         count_stmt = count_stmt.where(filt)

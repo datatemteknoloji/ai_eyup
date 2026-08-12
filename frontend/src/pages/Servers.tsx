@@ -16,6 +16,7 @@ import remarkGfm from 'remark-gfm'
 import { isPoweredOn } from '../utils/powerState'
 import { OsIcon } from '../components/OsIcon'
 import { shortenOsLabel, fullOsLabel, serverTypeLabel } from '../lib/osLabel'
+import { useAuth } from '../auth/AuthContext'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -51,6 +52,8 @@ interface Server {
   os_release_id: string
   os_version_id: string
   vm_guest_os_full?: string
+  vm_name?: string
+  vm_guest_hostname?: string
   kernel_version: string
   server_type: string
   cpu_cores: number
@@ -64,6 +67,35 @@ interface Server {
     installed: boolean
     running: boolean
   }
+}
+
+/** OS kimliği — liste birincil etiketi. */
+function displayHostname(s: Pick<Server, 'hostname' | 'vm_guest_hostname' | 'name'>): string {
+  return (s.hostname || s.vm_guest_hostname || s.name || '').trim() || '-'
+}
+
+function _normNameToken(v: string): string {
+  return v.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/** VM adı hostname'den farklıysa ikincil satırda göster. */
+function displayVmLabel(s: Server): string | null {
+  const vm = (s.vm_name || s.name || '').trim()
+  if (!vm) return null
+  const hn = displayHostname(s)
+  if (_normNameToken(vm) === _normNameToken(hn)) return null
+  if (_normNameToken(vm.split('.')[0] || '') === _normNameToken(hn.split('.')[0] || '')) return null
+  return vm
+}
+
+/** vm_name dolu ve normalize(short hostname) ≠ normalize(vm_name). */
+function hasNameMismatch(s: Server): boolean {
+  const vm = (s.vm_name || '').trim()
+  if (!vm) return false
+  const hn = (s.hostname || '').trim()
+  if (!hn) return true
+  const shortHn = hn.split('.')[0] || hn
+  return _normNameToken(shortHn) !== _normNameToken(vm)
 }
 
 const SSH_CRED_HINT =
@@ -591,7 +623,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
             <span className="text-xs font-bold text-blue-400">SRV</span>
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-white font-semibold text-base truncate">{server.name}</h2>
+            <h2 className="text-white font-semibold text-base truncate" title={server.name !== displayHostname(server) ? server.name : undefined}>
+              {displayHostname(server)}
+            </h2>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
               {server.hypervisor_name && (
@@ -1144,6 +1178,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
 
 const Servers: React.FC = () => {
+  const { user, hasModule } = useAuth()
+  const canSeeNameMismatch = Boolean(user?.is_admin || user?.role === 'admin' || hasModule('linux'))
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
@@ -1155,12 +1191,13 @@ const Servers: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string>('all') // all, VIRTUAL, PHYSICAL
   const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
+  const [nameMismatchFilter, setNameMismatchFilter] = useState(false)
   const [page, setPage] = useState(1)
   const pageSize = 50
   const [bulkJobId, setBulkJobId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; server: Server } | null>(null)
 
-  const [sortKey, setSortKey] = useState<string>('name')
+  const [sortKey, setSortKey] = useState<string>('hostname')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [sshTarget, setSshTarget] = useState<{id: number; name: string; ip: string} | null>(null)
   const rowClickTimer = useRef<number | null>(null)
@@ -1311,10 +1348,10 @@ const Servers: React.FC = () => {
   // Filtre değişince ilk sayfaya dön
   React.useEffect(() => {
     setPage(1)
-  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter])
+  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter])
 
   const { data: serversPage, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter],
+    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter],
     queryFn: () =>
       fetchServersPage<Server>({
         platform: 'linux',
@@ -1327,9 +1364,20 @@ const Servers: React.FC = () => {
         server_type: typeFilter !== 'all' ? typeFilter : undefined,
         os: osFilter !== 'all' ? osFilter : undefined,
         node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
+        name_mismatch: canSeeNameMismatch && nameMismatchFilter ? true : null,
       }),
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
+  })
+
+  const { data: linuxSummary } = useQuery({
+    queryKey: ['servers', 'summary', 'linux'],
+    queryFn: async () => {
+      const { fetchServersSummary } = await import('../api/servers')
+      return fetchServersSummary('linux')
+    },
+    enabled: canSeeNameMismatch,
+    refetchInterval: 120_000,
   })
 
   const { data: globalCreds } = useQuery({
@@ -1455,10 +1503,11 @@ const Servers: React.FC = () => {
         aValue = getNodeExporterOrder(a)
         bValue = getNodeExporterOrder(b)
         break
+      case 'hostname':
       case 'name':
       default:
-        aValue = a.name || ''
-        bValue = b.name || ''
+        aValue = displayHostname(a).toLowerCase()
+        bValue = displayHostname(b).toLowerCase()
         break
     }
 
@@ -1564,10 +1613,10 @@ const Servers: React.FC = () => {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Hostname veya IP..."
+                placeholder="Hostname, VM adı veya IP..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-64 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-72 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
             </div>
@@ -1581,6 +1630,22 @@ const Servers: React.FC = () => {
               />
               <span className="text-sm text-slate-300">Çevrimdışıları Göster</span>
             </label>
+            {canSeeNameMismatch && (
+              <label className="flex items-center space-x-2 cursor-pointer" title="VM adı ile OS hostname uyuşmayanlar">
+                <input
+                  type="checkbox"
+                  checked={nameMismatchFilter}
+                  onChange={(e) => setNameMismatchFilter(e.target.checked)}
+                  className="w-4 h-4 text-amber-500 bg-white/[0.07] border-slate-600 rounded focus:ring-amber-500"
+                />
+                <span className="text-sm text-slate-300">
+                  İsim uyumsuz
+                  {typeof linuxSummary?.name_mismatch === 'number' ? (
+                    <span className="ml-1 text-amber-400/90">({linuxSummary.name_mismatch})</span>
+                  ) : null}
+                </span>
+              </label>
+            )}
             {/* Status Filter */}
             {showOffline && (
               <select
@@ -1688,7 +1753,7 @@ const Servers: React.FC = () => {
                   </div>
                 </th>
                 {([
-                  { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'name'   },
+                  { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'hostname' },
                   { key: 'tip',    label: 'Tip',         sortable: true,  sortKey: 'type'   },
                   { key: 'status', label: 'Durum',       sortable: true,  sortKey: 'status' },
                   { key: 'os',     label: 'OS',          sortable: true,  sortKey: 'os'     },
@@ -1781,22 +1846,36 @@ const Servers: React.FC = () => {
                     />
                   </td>
 
-                  {/* ── Sunucu Adı + IP + Hostname ── */}
+                  {/* ── Hostname (birincil) + IP + VM adı ── */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <OsIcon os={osLabelInput} size={26} className="mt-0.5" />
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors truncate max-w-[180px]">
-                          {server.name}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors truncate max-w-[180px]" title={displayHostname(server)}>
+                            {displayHostname(server)}
+                          </div>
+                          {canSeeNameMismatch && hasNameMismatch(server) && (
+                            <span
+                              className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded"
+                              title={`VM adı: ${server.vm_name || server.name}`}
+                            >
+                              <AlertTriangle size={10} strokeWidth={2} />
+                              İsim
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="text-xs font-mono text-slate-400">{server.ip_address || '-'}</span>
+                          {displayVmLabel(server) && (
+                            <span className="text-[11px] text-slate-500 truncate max-w-[140px]" title={`VM: ${displayVmLabel(server)!}`}>
+                              VM: {displayVmLabel(server)}
+                            </span>
+                          )}
                           {server.hypervisor_name ? (
                             <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
                               <Cloud size={10} strokeWidth={2} /> {server.hypervisor_name}
                             </span>
-                          ) : server.hostname && server.hostname !== server.name && server.hostname !== server.ip_address ? (
-                            <span className="text-xs text-slate-600 truncate max-w-[100px]">{server.hostname}</span>
                           ) : null}
                         </div>
                       </div>
@@ -1932,8 +2011,8 @@ const Servers: React.FC = () => {
         </div>
         {sortedServers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
-            {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all'
-              ? 'Filtreye uygun sunucu bulunamadı' 
+            {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all' || nameMismatchFilter
+              ? 'Filtreye uygun sunucu bulunamadı'
               : 'Henüz sunucu yok — envanter Entegrasyonlar üzerinden eklenir'}
           </div>
         )}

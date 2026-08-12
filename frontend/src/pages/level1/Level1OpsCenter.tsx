@@ -141,7 +141,7 @@ export default function Level1OpsCenter() {
             {syncing ? 'Senkronize ediliyor…' : 'Envanteri senkronize et'}
           </button>
           <span className="text-[11px] text-slate-500 max-w-xl leading-snug">
-            Linux / vCenter envanterindeki sunucuları Operasyon Merkezi listesine aktarır (vCenter “Sync VMs” sonrası gerekir).
+            ainew&apos;de AI Ready + RHEL olan sunucuları Operasyon Merkezi listesine aktarır (SSH yeniden denenmez).
           </span>
           {syncMsg && !syncError && (
             <span className="text-xs text-emerald-400/90 ml-auto">{syncMsg}</span>

@@ -151,11 +151,11 @@ def rotate_secret_key(db: Session, old_key: str, new_key: str) -> Dict[str, Any]
     # AppSettings sensitive
     from app.models.app_settings import AppSettings
     for row in db.query(AppSettings).filter(
-        AppSettings.key.in_(["remote_llm_api_key", "global_winrm_credential"])
+        AppSettings.key.in_(["remote_llm_api_key", "remote_llm_virtual_key", "global_winrm_credential"])
     ).all():
         if not row.value:
             continue
-        if row.key == "remote_llm_api_key":
+        if row.key in ("remote_llm_api_key", "remote_llm_virtual_key"):
             nv, ch = reencrypt_value(old_f, new_f, row.value)
             if ch:
                 row.value = nv
