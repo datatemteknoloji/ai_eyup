@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.25] - 2026-08-13
+
 ### Remote LLM / Bifrost kimlik
 - Çift yol netleştirildi: **Virtual Key → `x-bf-vk`** (Bifrost `sk-bf-…`, API Key boş = curl ile aynı); **API Key → `Authorization`** (eski yol). İkisi birlikte de gönderilebilir.
 - Ayarlar UI sırası/hint’leri ve bağlantı testi 401 mesajı buna göre.
