@@ -15,9 +15,7 @@ import {
   type PkgSubscriptionRow,
   updatePkgLocalRepo,
 } from '@dropt/api'
-import { getToken, saveSession } from '@dropt/session'
-import { API_BASE_URL } from '../../config/api'
-import { getToken as getAinewToken } from '../../auth/authStore'
+import { ensureDroptSession } from './Level1Shell'
 
 type SourceType = 'nfs' | 'portal_files' | 'subscription'
 
@@ -61,33 +59,6 @@ function sourceBadgeClass(st: string | undefined): string {
   if (st === 'portal_files') return 'border-cyan-500/25 bg-cyan-500/10 text-cyan-300'
   if (st === 'subscription') return 'border-blue-500/25 bg-blue-500/10 text-blue-300'
   return 'border-amber-500/25 bg-amber-500/10 text-amber-300'
-}
-
-async function ensureDroptToken(): Promise<string> {
-  const existing = getToken()
-  if (existing) return existing
-  const ainew = getAinewToken() || ''
-  const res = await fetch(`${API_BASE_URL}/level1/dropt-session`, {
-    method: 'POST',
-    headers: {
-      Authorization: ainew ? `Bearer ${ainew}` : '',
-      'Content-Type': 'application/json',
-    },
-  })
-  if (!res.ok) {
-    const t = await res.text()
-    throw new Error(t || 'Dropt oturumu açılamadı')
-  }
-  const data = await res.json()
-  const access = data.access_token as string
-  saveSession(
-    access,
-    JSON.stringify({
-      username: data.dropt_username,
-      role: data.dropt_role,
-    }),
-  )
-  return access
 }
 
 export default function PackageSourcesPanel() {
@@ -148,7 +119,7 @@ export default function PackageSourcesPanel() {
     let cancelled = false
     ;(async () => {
       try {
-        const tok = await ensureDroptToken()
+        const tok = await ensureDroptSession()
         if (cancelled) return
         setToken(tok)
         setReady(true)

@@ -34,7 +34,7 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "bulk_ssh_workers": {
         "default": 25, "type": "int", "min": 1, "max": 128,
         "group": "workers", "label": "Toplu SSH/WinRM worker",
-        "help": "AI Ready, credential apply, OS yenileme paralel bağlantı sayısı. Centrify için 25 önerilir.",
+        "help": "AI Ready, credential apply, OS yenileme paralel bağlantı sayısı. Centrify için 25; ~7k filoda 16–32 deneyin.",
         "env": "BULK_SSH_WORKERS",
     },
     "log_ssh_workers": {
@@ -46,14 +46,30 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "bulk_tcp_workers": {
         "default": 100, "type": "int", "min": 1, "max": 256,
         "group": "workers", "label": "Toplu TCP health worker",
-        "help": "Health checker paralel TCP probe sayısı.",
+        "help": "Health checker paralel TCP probe sayısı. Büyük filoda 64–128 yeterli.",
         "env": "BULK_TCP_WORKERS",
     },
     "vcenter_sync_workers": {
         "default": 10, "type": "int", "min": 1, "max": 64,
         "group": "workers", "label": "vCenter sync worker",
-        "help": "VM detay çekme paralelliği.",
+        "help": "VM detay çekme paralelliği. ~7k VM için 8–16 makul; vCenter’ı boğmayın.",
         "env": "VCENTER_SYNC_WORKERS",
+    },
+    "celery_concurrency": {
+        "default": 2, "type": "int", "min": 1, "max": 32,
+        "group": "process", "label": "Celery concurrency",
+        "help": "Filo arka plan kuyruğu (onboarding, metric, log…) paralelliği. Kaynak artınca 4–8 deneyin. Uygulamak için worker container recreate gerekir.",
+        "env": "CELERY_CONCURRENCY",
+        "requires_restart": True,
+        "restart_target": "worker",
+    },
+    "uvicorn_workers": {
+        "default": 1, "type": "int", "min": 1, "max": 8,
+        "group": "process", "label": "Uvicorn workers (API)",
+        "help": "HTTP API process sayısı. Ağır BG Celery’de; 2–4 güvenli. Scheduler tek worker’da kalır. Uygulamak için backend recreate gerekir.",
+        "env": "UVICORN_WORKERS",
+        "requires_restart": True,
+        "restart_target": "backend",
     },
     # ── SSH ─────────────────────────────────────────────────────────
     "ssh_connect_timeout_sec": {
@@ -513,6 +529,7 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
 GROUP_LABELS = {
     "health": "Health checker",
     "workers": "Paralellik (worker)",
+    "process": "Process (Celery / Uvicorn)",
     "ssh": "SSH timeout",
     "winrm": "WinRM",
     "background": "Arka plan görevleri",
@@ -526,6 +543,12 @@ GROUP_LABELS = {
     "proxy": "Proxy / Nginx",
     "api_cache": "API önbellek (Redis)",
 }
+
+# UI kaydı → entrypoint’in okuduğu dosya (volume: /app/uploads)
+PROCESS_WORKERS_ENV_FILE = os.environ.get(
+    "PROCESS_WORKERS_ENV_FILE", "/app/uploads/ainew_process_workers.env"
+)
+PROCESS_WORKER_KEYS = ("celery_concurrency", "uvicorn_workers")
 
 _cache: Dict[str, Any] = {}
 _cache_ts: float = 0.0
@@ -654,8 +677,55 @@ def list_advanced_settings() -> List[dict]:
             "help": meta.get("help", ""),
             "env": meta.get("env"),
             "choices": meta.get("choices"),
+            "requires_restart": bool(meta.get("requires_restart")),
+            "restart_target": meta.get("restart_target") or "",
         })
     return out
+
+
+def write_process_workers_env_file(*, celery_concurrency: Any = None, uvicorn_workers: Any = None) -> str:
+    """Entrypoint’in okuduğu CELERY_CONCURRENCY / UVICORN_WORKERS dosyasını güncelle."""
+    path = PROCESS_WORKERS_ENV_FILE
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    except Exception:
+        pass
+
+    # Mevcut değerleri koru
+    current: Dict[str, str] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    k, v = k.strip(), v.strip()
+                    if k in ("CELERY_CONCURRENCY", "UVICORN_WORKERS"):
+                        current[k] = v
+        except Exception:
+            pass
+
+    if celery_concurrency is None:
+        celery_concurrency = get_setting("celery_concurrency")
+    if uvicorn_workers is None:
+        uvicorn_workers = get_setting("uvicorn_workers")
+
+    current["CELERY_CONCURRENCY"] = str(int(celery_concurrency))
+    current["UVICORN_WORKERS"] = str(int(uvicorn_workers))
+
+    body = (
+        "# ainew process workers — docker-entrypoint okur; container recreate gerekir\n"
+        f"CELERY_CONCURRENCY={current['CELERY_CONCURRENCY']}\n"
+        f"UVICORN_WORKERS={current['UVICORN_WORKERS']}\n"
+    )
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    os.replace(tmp, path)
+    logger.info("Process workers env yazıldı: %s", path)
+    return path
 
 
 def save_advanced_settings(updates: Dict[str, Any], db) -> Dict[str, Any]:
@@ -677,5 +747,16 @@ def save_advanced_settings(updates: Dict[str, Any], db) -> Dict[str, Any]:
         saved[key] = val
     db.commit()
     invalidate_cache()
+
+    restart_keys = [k for k in saved if ADVANCED_SCHEMA.get(k, {}).get("requires_restart")]
+    if restart_keys:
+        try:
+            write_process_workers_env_file(
+                celery_concurrency=saved.get("celery_concurrency"),
+                uvicorn_workers=saved.get("uvicorn_workers"),
+            )
+        except Exception as exc:
+            logger.warning("process workers env yazılamadı: %s", exc)
+
     logger.info("Gelişmiş ayarlar güncellendi: %s", list(saved.keys()))
     return saved

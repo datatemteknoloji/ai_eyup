@@ -672,17 +672,39 @@ async def put_advanced_settings(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role("admin")),
 ):
-    """Gelişmiş ayarları kaydet. Restart gerekmez (cache 15sn)."""
+    """Gelişmiş ayarları kaydet. Çoğu restart gerektirmez; process worker ayarları recreate ister."""
     from app.services.runtime_settings import save_advanced_settings, ADVANCED_SCHEMA
     if not isinstance(body.settings, dict) or not body.settings:
         raise HTTPException(status_code=400, detail="settings sözlüğü gerekli")
     unknown = [k for k in body.settings if k not in ADVANCED_SCHEMA]
     saved = save_advanced_settings(body.settings, db)
+    restart_needed = [
+        {
+            "key": k,
+            "target": ADVANCED_SCHEMA[k].get("restart_target") or "container",
+            "label": ADVANCED_SCHEMA[k].get("label") or k,
+        }
+        for k in saved
+        if ADVANCED_SCHEMA.get(k, {}).get("requires_restart")
+    ]
+    if restart_needed:
+        targets = sorted({x["target"] for x in restart_needed})
+        msg = (
+            f"{len(saved)} ayar kaydedildi. Process worker değerleri dosyaya yazıldı — "
+            f"uygulamak için recreate: {', '.join(targets)} "
+            f"(örn. docker compose up -d --force-recreate {' '.join(targets)})."
+        )
+    else:
+        msg = (
+            f"{len(saved)} ayar kaydedildi. "
+            "Arka plan görevleri bir sonraki döngüde yeni aralığı kullanır."
+        )
     return {
         "success": True,
         "saved": saved,
         "unknown_keys": unknown,
-        "message": f"{len(saved)} ayar kaydedildi. Arka plan görevleri bir sonraki döngüde yeni aralığı kullanır.",
+        "restart_needed": restart_needed,
+        "message": msg,
     }
 
 
@@ -972,6 +994,14 @@ async def test_remote_llm(
         raise HTTPException(status_code=400, detail="Gateway URL gerekli")
     if not model:
         raise HTTPException(status_code=400, detail="Model adı gerekli")
+    if not api_key and not virtual_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Kimlik gerekli: Bifrost için Virtual Key (x-bf-vk / sk-bf-…) "
+                "veya eski yol için API Key (Authorization) alanlarından en az biri."
+            ),
+        )
 
     verify: bool | str = verify_ssl
     if ca_bundle:
@@ -1006,10 +1036,12 @@ async def test_remote_llm(
         detail = (resp.text or "")[:280]
         msg = f"HTTP {resp.status_code}: {detail or 'yanıt gövdesi boş'}"
         low = detail.lower()
-        if resp.status_code == 401 and ("virtual_key" in low or "x-bf-vk" in low):
+        if resp.status_code in (401, 403) and (
+            "virtual_key" in low or "x-bf-vk" in low or "unauthorized" in low or "forbidden" in low
+        ):
             msg += (
-                " — Gateway virtual key istiyor. AI Ayarları'nda "
-                "opsiyonel Virtual Key (x-bf-vk) alanını doldurup tekrar deneyin."
+                " — Bifrost için Virtual Key alanına sk-bf-… yazıp API Key'i boş bırakın "
+                "(yalnızca x-bf-vk). Eski Authorization yolu için anahtarı API Key'e koyun."
             )
         return {
             "ok": False,

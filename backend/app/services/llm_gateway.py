@@ -32,10 +32,15 @@ def _remote_headers(
     api_key: Optional[str] = None,
     virtual_key: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Uzak gateway header'ları.
+    """Uzak gateway header'ları — iki yol birlikte veya ayrı kullanılabilir.
 
-    Authorization: API key (Bearer öneki yok — Bifrost uyumu).
-    x-bf-vk: opsiyonel virtual key; doluysa eklenir.
+    Bifrost (güncel / sıkı VK): yalnızca Virtual Key → ``x-bf-vk: sk-bf-…``
+    (Authorization gönderilmez; curl ile aynı şekil).
+
+    Eski / Authorization yolu: yalnızca API Key → ``Authorization`` (Bearer yok).
+
+    İkisi doluysa her iki header da gider (gateway auth + VK senaryosu).
+    İkisi boşsa yalnızca Content-Type kalır — çağıran 401/400 görür.
     """
     key = (api_key if api_key is not None else settings.REMOTE_LLM_API_KEY) or ""
     vk = (virtual_key if virtual_key is not None else settings.REMOTE_LLM_VIRTUAL_KEY) or ""

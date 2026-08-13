@@ -1270,6 +1270,8 @@ interface AdvancedSettingItem {
   help: string
   env?: string
   choices?: string[]
+  requires_restart?: boolean
+  restart_target?: string
 }
 
 interface AdvancedGroup {
@@ -1325,8 +1327,9 @@ const AdvancedSettingsTab: React.FC = () => {
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({ queryKey: ['advanced-settings'] })
-      setSaveMsg(r.message || 'Kaydedildi')
-      setTimeout(() => setSaveMsg(null), 4000)
+      const restart = Array.isArray(r?.restart_needed) && r.restart_needed.length > 0
+      setSaveMsg(r.message || (restart ? 'Kaydedildi — recreate gerekir' : 'Kaydedildi'))
+      setTimeout(() => setSaveMsg(null), restart ? 12000 : 4000)
     },
   })
 
@@ -1371,7 +1374,8 @@ const AdvancedSettingsTab: React.FC = () => {
         <div className="flex-1 min-w-0">
           <h2 className="text-xl font-semibold text-white">Gelişmiş Ayarlar</h2>
           <p className="text-slate-400 text-sm mt-1">
-            Timeout, health checker, worker ve arka plan interval değerleri. Kayıt sonrası restart gerekmez (≈15 sn içinde etkili).
+            Timeout, health checker, worker ve arka plan interval değerleri. Çoğu kayıt sonrası restart gerekmez (≈15 sn).
+            <span className="text-amber-300/90"> Celery concurrency / Uvicorn workers</span> için container recreate gerekir.
             Nginx proxy timeout için conf güncellemesi / yeniden deploy gerekir.
           </p>
         </div>
@@ -1422,7 +1426,14 @@ const AdvancedSettingsTab: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {group.settings.map(s => (
                 <div key={s.key} className="min-w-0">
-                  <label className="block text-sm text-slate-300 mb-1">{s.label}</label>
+                  <label className="block text-sm text-slate-300 mb-1 flex flex-wrap items-center gap-2">
+                    <span>{s.label}</span>
+                    {s.requires_restart ? (
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        recreate{s.restart_target ? `: ${s.restart_target}` : ''}
+                      </span>
+                    ) : null}
+                  </label>
                   {s.type === 'bool' ? (
                     <select
                       value={['1', 'true', 'yes', 'on'].includes(String(draft[s.key] ?? '').toLowerCase()) ? 'true' : 'false'}
@@ -2379,18 +2390,9 @@ const Settings: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-slate-300 mb-2">API Key</label>
-                      <input
-                        type="password"
-                        value={remoteLlmForm.api_key}
-                        onChange={e => setRemoteLlmForm(f => ({ ...f, api_key: e.target.value }))}
-                        placeholder={generalSettings?.remote_llm?.api_key_set ? `Kayıtlı: ${generalSettings.remote_llm.api_key_masked} (değiştirmek için yeni değer girin)` : 'sk-bf-...'}
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Authorization header'ına doğrudan (Bearer öneki olmadan) konur.</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2">Virtual Key (opsiyonel)</label>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Virtual Key <span className="text-slate-500 font-normal">(Bifrost — önerilen)</span>
+                      </label>
                       <input
                         type="password"
                         value={remoteLlmForm.virtual_key}
@@ -2398,12 +2400,13 @@ const Settings: React.FC = () => {
                         placeholder={
                           generalSettings?.remote_llm?.virtual_key_set
                             ? `Kayıtlı: ${generalSettings.remote_llm.virtual_key_masked || '••••'} (değiştirmek için yeni değer girin)`
-                            : 'Bifrost x-bf-vk — boş bırakılabilir'
+                            : 'sk-bf-… → x-bf-vk'
                         }
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">
-                        Doluysa isteğe <code>x-bf-vk</code> header&apos;ı eklenir (Bifrost virtual key). Boşsa gönderilmez.
+                        Bifrost sıkı / VK-only: bu alana <code>sk-bf-…</code> yazın, API Key&apos;i boş bırakın
+                        (curl ile aynı: yalnızca <code>x-bf-vk</code>).
                       </p>
                       {generalSettings?.remote_llm?.virtual_key_set && (
                         <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
@@ -2420,6 +2423,22 @@ const Settings: React.FC = () => {
                           Kayıtlı virtual key&apos;i kaldır
                         </label>
                       )}
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        API Key <span className="text-slate-500 font-normal">(eski Authorization yolu)</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={remoteLlmForm.api_key}
+                        onChange={e => setRemoteLlmForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder={generalSettings?.remote_llm?.api_key_set ? `Kayıtlı: ${generalSettings.remote_llm.api_key_masked} (değiştirmek için yeni değer girin)` : 'Authorization — Bearer yok'}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Gateway anahtarı <code>Authorization</code> ile bekliyorsa buraya yazın (Bearer öneki yok).
+                        İki alan birden doluysa her iki header da gönderilir.
+                      </p>
                     </div>
 
                     <div className="border-t border-white/[0.06] pt-4">

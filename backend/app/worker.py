@@ -1,4 +1,4 @@
-"""Celery worker — ağır işler (health check, ileride Ansible/bulk SSH)."""
+"""Celery worker — ağır filo işleri + bulk health check."""
 from __future__ import annotations
 
 import logging
@@ -34,6 +34,22 @@ def make_celery():
 
 celery_app = make_celery() if Celery is not None else None
 
+# task_name → runner in fleet_jobs
+_FLEET_TASKS = {
+    "fleet.health_check": "run_health_check",
+    "fleet.auto_onboarding": "run_auto_onboarding",
+    "fleet.nlq_linux_inventory": "run_nlq_linux_inventory",
+    "fleet.inventory_sync": "run_inventory_sync",
+    "fleet.metric_sync": "run_metric_sync",
+    "fleet.esx_metric_sync": "run_esx_metric_sync",
+    "fleet.node_exporter_sync": "run_node_exporter_sync",
+    "fleet.windows_exporter_sync": "run_windows_exporter_sync",
+    "fleet.log_collection": "run_log_collection",
+    "fleet.anomaly_scan": "run_anomaly_scan",
+    "fleet.windows_log_collection": "run_windows_log_collection",
+    "fleet.windows_live_metrics": "run_windows_live_metrics",
+}
+
 
 def celery_workers_available(*, timeout: float = 0.8) -> bool:
     """En az bir Celery worker ping'e cevap veriyor mu?"""
@@ -50,19 +66,27 @@ def celery_workers_available(*, timeout: float = 0.8) -> bool:
         return False
 
 
-def enqueue_check_health(job_id: str) -> bool:
-    """Celery'ye health check gönder. Worker yoksa / hata varsa False (caller thread'e düşer)."""
+def enqueue_fleet_job(task_name: str, *args, **kwargs) -> bool:
+    """Filo işini Celery'ye gönder. Worker yoksa False (caller local fallback)."""
+    if task_name not in _FLEET_TASKS and task_name != "servers.check_health":
+        logger.warning("Bilinmeyen fleet task: %s", task_name)
+        return False
     if celery_app is None:
         return False
     if not celery_workers_available():
-        logger.info("Celery worker yok — health check thread fallback kullanılacak")
+        logger.info("Celery worker yok — %s local fallback", task_name)
         return False
     try:
-        celery_app.send_task("servers.check_health", args=[job_id])
+        celery_app.send_task(task_name, args=list(args), kwargs=kwargs)
         return True
     except Exception as exc:
-        logger.warning("Celery enqueue check_health başarısız: %s", exc)
+        logger.warning("Celery enqueue %s başarısız: %s", task_name, exc)
         return False
+
+
+def enqueue_check_health(job_id: str) -> bool:
+    """Celery'ye health check gönder. Worker yoksa / hata varsa False (caller thread'e düşer)."""
+    return enqueue_fleet_job("servers.check_health", job_id)
 
 
 def _run_check_health(job_id: str) -> dict:
@@ -124,7 +148,16 @@ def _run_check_health(job_id: str) -> dict:
         bg.close()
 
 
-if celery_app is not None:
-    check_health_task = celery_app.task(name="servers.check_health")(_run_check_health)
-else:  # pragma: no cover
-    check_health_task = _run_check_health  # type: ignore
+def _bind_fleet_tasks() -> None:
+    if celery_app is None:
+        return
+    from app.services import fleet_jobs
+
+    for task_name, fn_name in _FLEET_TASKS.items():
+        fn = getattr(fleet_jobs, fn_name)
+        celery_app.task(name=task_name)(fn)
+
+    celery_app.task(name="servers.check_health")(_run_check_health)
+
+
+_bind_fleet_tasks()

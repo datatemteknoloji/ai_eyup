@@ -9,6 +9,7 @@ export function saveSession(token: string, userJson: string) {
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem("dtt_token_expires_at");
 }
 
 export function getToken(): string | null {

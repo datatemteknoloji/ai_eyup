@@ -34,13 +34,13 @@ class Settings:
     # REMOTE_LLM /v1/embeddings için model adı (boşsa OLLAMA_EMBED_MODEL)
     REMOTE_LLM_EMBED_MODEL: str = os.getenv("REMOTE_LLM_EMBED_MODEL", "")
 
-    # Uzak AI Gateway (OpenAI-uyumlu, örn. Bifrost) — ayarlıysa ve aktifse tüm chat/agent
-    # çağrıları yerel Ollama yerine buraya gider. URL kökü olmalı (örn. .../v1/chat/completions
-    # olmadan), API key aynen curl örneğindeki gibi Authorization header'ına konur.
+    # Uzak AI Gateway (OpenAI-uyumlu, örn. Bifrost) — aktifse chat/agent Ollama yerine buraya gider.
+    # URL kökü (…/v1/chat/completions olmadan). Kimlik iki yoldan (birlikte veya ayrı):
+    #   REMOTE_LLM_VIRTUAL_KEY → x-bf-vk   (Bifrost sk-bf-…; sıkı/VK-only kurulum)
+    #   REMOTE_LLM_API_KEY     → Authorization (Bearer yok; eski Authorization yolu)
     REMOTE_LLM_ENABLED: bool = os.getenv("REMOTE_LLM_ENABLED", "false").lower() == "true"
     REMOTE_LLM_URL: str = os.getenv("REMOTE_LLM_URL", "")
     REMOTE_LLM_API_KEY: str = os.getenv("REMOTE_LLM_API_KEY", "")
-    # Bifrost vb. opsiyonel virtual key → HTTP header x-bf-vk (boşsa gönderilmez)
     REMOTE_LLM_VIRTUAL_KEY: str = os.getenv("REMOTE_LLM_VIRTUAL_KEY", "")
     REMOTE_LLM_MODEL: str = os.getenv("REMOTE_LLM_MODEL", "")
     REMOTE_LLM_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_LLM_TIMEOUT_SECONDS", "120"))

@@ -364,6 +364,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
 
+    // ── Level 1 Operations ────────────────────────────────────────────────
+    {
+      type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
+      children: [
+        { type: 'link', path: '/level1', name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
+        { type: 'link', path: '/level1/jobs', name: 'İşler', icon: <ClipboardList size={15} /> },
+        { type: 'link', path: '/level1/audit', name: 'Denetim', icon: <ScrollText size={15} />, adminOnly: true },
+        { type: 'link', path: '/level1/settings', name: 'Ayarlar', icon: <Settings size={15} />, adminOnly: true },
+      ],
+    },
+
     // ── Integrations ──────────────────────────────────────────────────────
     {
       type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
@@ -374,17 +385,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/physical-hosts', name: 'Fiziksel Hostlar', icon: <Server size={15} /> },
         { type: 'link', path: '/integrations/exadata', name: 'Exadata Envanter', icon: <Layers size={15} /> },
         { type: 'link', path: '/integrations/openshift', name: 'OpenShift Envanter', icon: <Boxes size={15} /> },
-      ],
-    },
-
-    // ── Level 1 Operations ────────────────────────────────────────────────
-    {
-      type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
-      children: [
-        { type: 'link', path: '/level1', name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
-        { type: 'link', path: '/level1/jobs', name: 'İşler', icon: <ClipboardList size={15} /> },
-        { type: 'link', path: '/level1/audit', name: 'Denetim', icon: <ScrollText size={15} />, adminOnly: true },
-        { type: 'link', path: '/level1/settings', name: 'Ayarlar', icon: <Settings size={15} />, adminOnly: true },
       ],
     },
 

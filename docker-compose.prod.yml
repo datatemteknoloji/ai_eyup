@@ -132,6 +132,8 @@ services:
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
       - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
       - HOST_ETC_HOSTS=/host-etc-hosts
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
     volumes:
       - ./backend/static:/app/static:Z
       - ./VERSION:/app/VERSION:ro
@@ -175,13 +177,16 @@ services:
       - APP_VERSION=${APP_VERSION:-}
       - DATA_DIR=${DATA_DIR:-/data/data}
       - HOST_ETC_HOSTS=/host-etc-hosts
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
     volumes:
       - ./VERSION:/app/VERSION:ro
+      - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro
       - ${DATA_DIR:-/data/data}/chroma:/app/chroma:Z
       - ${DATA_DIR:-/data/data}/repos:/app/repos:Z
       - ${DATA_DIR:-/data/data}/uploads:/app/uploads:Z
       - /etc/hosts:/host-etc-hosts:ro
-    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency", "2"]
     depends_on:
       db:
         condition: service_healthy

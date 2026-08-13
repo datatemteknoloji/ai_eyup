@@ -193,7 +193,8 @@ ainew/
 | `app/models/` | Database schema (SQLAlchemy), relationships |
 | `app/core/config.py` | Central settings from env vars |
 | `app/core/database.py` | SQLAlchemy engine + session factory |
-| `app/background_tasks.py` | Scheduler for health checks, metric collection, anomaly detection |
+| `app/background_tasks.py` | Periyodik scheduler (çoğu tick → Celery enqueue) |
+| `app/worker.py` / `app/services/fleet_jobs.py` | Celery filo görevleri (onboarding, metric, log, …) |
 | `app/services/agent/` | LangGraph graph + tool executor + guard layer |
 | `app/services/aiops_engine.py` | Metric anomaly detection (Z-score, IQR) |
 | `app/services/mcp_client.py` | MCP server connection + tool proxy |

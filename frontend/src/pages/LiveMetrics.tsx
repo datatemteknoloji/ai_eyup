@@ -377,7 +377,17 @@ const EnterpriseMetricChart: React.FC<{
   height?: number
   instanceLabels?: Record<string, string>
   loading?: boolean
-}> = ({ chartId = 'chart', title, results, unit = '', height = 280, instanceLabels = {}, loading }) => {
+  emptyMessage?: string
+}> = ({
+  chartId = 'chart',
+  title,
+  results,
+  unit = '',
+  height = 280,
+  instanceLabels = {},
+  loading,
+  emptyMessage = 'Veri yok',
+}) => {
   const { chartData, seriesKeys } = useMemo(() => {
     if (!results.length) return { chartData: [], seriesKeys: [] as string[] }
     const keys = results.map((r, idx) => {
@@ -421,7 +431,7 @@ const EnterpriseMetricChart: React.FC<{
           <span className="text-sm font-semibold text-slate-200">{title}</span>
           {unit && <span className="text-xs text-slate-400">{unit}</span>}
         </div>
-        <div className="flex items-center justify-center h-48 text-slate-500">Veri yok</div>
+        <div className="flex items-center justify-center h-48 text-slate-500">{emptyMessage}</div>
       </div>
     )
   }
@@ -705,32 +715,34 @@ const LiveMetrics: React.FC = () => {
   const customSlot2Query = getRangeQueryForMetricKey(chartSlots[2] ?? DEFAULT_CHART_METRICS[2])
   const customSlot3Query = getRangeQueryForMetricKey(chartSlots[3] ?? DEFAULT_CHART_METRICS[3])
 
+  const hasServerSelection = chartInstances.length > 0
+
   const customChart0 = useQuery({
     queryKey: ['prometheus-custom-chart', 0, customSlot0Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot0Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot0Query,
+    enabled: hasServerSelection && !!customSlot0Query,
     refetchIntervalInBackground: false,
   })
   const customChart1 = useQuery({
     queryKey: ['prometheus-custom-chart', 1, customSlot1Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot1Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot1Query,
+    enabled: hasServerSelection && !!customSlot1Query,
     refetchIntervalInBackground: false,
   })
   const customChart2 = useQuery({
     queryKey: ['prometheus-custom-chart', 2, customSlot2Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot2Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot2Query,
+    enabled: hasServerSelection && !!customSlot2Query,
     refetchIntervalInBackground: false,
   })
   const customChart3 = useQuery({
     queryKey: ['prometheus-custom-chart', 3, customSlot3Query, rangeSeconds, stepSeconds, realTimeMode],
     queryFn: () => fetchPrometheusRange(customSlot3Query, rangeSeconds, stepSeconds),
     refetchInterval: refetchIntervalRange,
-    enabled: !!customSlot3Query,
+    enabled: hasServerSelection && !!customSlot3Query,
     refetchIntervalInBackground: false,
   })
   const customChartResults = [customChart0.data ?? [], customChart1.data ?? [], customChart2.data ?? [], customChart3.data ?? []]
@@ -765,22 +777,22 @@ const LiveMetrics: React.FC = () => {
   }, [diskRangeResults])
 
   const rows = useMemo(() => {
-    const base =
-      selectedInstances.length === 0
-        ? onlineMetricServers
-        : onlineMetricServers.filter((s) => selectedInstances.includes(s.instance))
-    return base.map((s) => ({
-      serverId: s.id,
-      instance: s.instance,
-      hostname: s.name,
-      live: s.live,
-      cpu: cpuMap[s.instance],
-      memory: memoryMap[s.instance],
-      disk: diskMap[s.instance],
-      load: loadMap[s.instance],
-      netRx: netRxMap[s.instance],
-      netTx: netTxMap[s.instance],
-    }))
+    // Seçim yokken tablo yok — tüm filoyu satır satır basmak hem yanıltıcı hem pahalı
+    if (selectedInstances.length === 0) return []
+    return onlineMetricServers
+      .filter((s) => selectedInstances.includes(s.instance))
+      .map((s) => ({
+        serverId: s.id,
+        instance: s.instance,
+        hostname: s.name,
+        live: s.live,
+        cpu: cpuMap[s.instance],
+        memory: memoryMap[s.instance],
+        disk: diskMap[s.instance],
+        load: loadMap[s.instance],
+        netRx: netRxMap[s.instance],
+        netTx: netTxMap[s.instance],
+      }))
   }, [onlineMetricServers, selectedInstances, cpuMap, memoryMap, diskMap, loadMap, netRxMap, netTxMap])
 
   const filteredRows = useMemo(() => {
@@ -936,7 +948,7 @@ const LiveMetrics: React.FC = () => {
             >
               <span className="truncate">
                 {selectedInstances.length === 0
-                  ? 'Tüm Sunucular'
+                  ? 'Sunucu seçin'
                   : `${selectedInstances.length} sunucu seçili`}
               </span>
               <span className="ml-auto text-slate-500 shrink-0">{instanceDropdownOpen ? '▲' : '▼'}</span>
@@ -1028,13 +1040,15 @@ const LiveMetrics: React.FC = () => {
               </div>
             )}
           </div>
-          <input
-            type="text"
-            placeholder="Hostname filtre..."
-            value={hostFilter}
-            onChange={(e) => setHostFilter(e.target.value)}
-            className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          {selectedInstances.length > 0 && (
+            <input
+              type="text"
+              placeholder="Hostname filtre..."
+              value={hostFilter}
+              onChange={(e) => setHostFilter(e.target.value)}
+              className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          )}
 
           {realTimeMode ? (
             <div className="flex items-center gap-2">
@@ -1159,136 +1173,139 @@ const LiveMetrics: React.FC = () => {
               <EnterpriseMetricChart
                 chartId={`slot-${slotIndex}`}
                 title={getLabelForMetricKey(chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex])}
-                results={customChartResults[slotIndex]}
+                results={hasServerSelection ? customChartResults[slotIndex] : []}
                 unit={getUnitForMetricKey(chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex])}
                 height={280}
                 instanceLabels={instanceLabels}
-                loading={customChartLoading[slotIndex]}
+                loading={hasServerSelection && customChartLoading[slotIndex]}
+                emptyMessage={hasServerSelection ? 'Veri yok' : 'Sunucu seçin — grafik 0'}
               />
             </div>
           ))}
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-cyber-deep/50">
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('hostname')} className="flex items-center gap-1">
-                    Hostname <span className="text-[10px]">{getSortIcon('hostname')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Durum</th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('cpu')} className="flex items-center gap-1">
-                    CPU <span className="text-[10px]">{getSortIcon('cpu')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('memory')} className="flex items-center gap-1">
-                    Memory <span className="text-[10px]">{getSortIcon('memory')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('disk')} className="flex items-center gap-1">
-                    Disk (/) <span className="text-[10px]">{getSortIcon('disk')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('load')} className="flex items-center gap-1">
-                    Load <span className="text-[10px]">{getSortIcon('load')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('netRx')} className="flex items-center gap-1">
-                    Net RX <span className="text-[10px]">{getSortIcon('netRx')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  <button onClick={() => toggleSort('netTx')} className="flex items-center gap-1">
-                    Net TX <span className="text-[10px]">{getSortIcon('netTx')}</span>
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.05]">
-              {pagedRows.map((row) => (
-                <tr key={row.serverId} className={`hover:bg-white/[0.03] transition-colors ${!row.live ? 'opacity-70' : ''}`}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                    <div className="font-medium">{row.hostname}</div>
-                    <div className="text-xs text-slate-400 font-mono">{row.instance}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {row.live ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Canlı
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-orange-500/15 text-orange-300 border border-orange-500/30">
-                        Scrape hatası
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <MetricBar value={row.live ? (row.cpu ?? 0) : 0} color="#60a5fa" />
-                      <span className="text-sm text-slate-200">{row.live ? `${(row.cpu ?? 0).toFixed(2)}%` : '—'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <MetricBar value={row.live ? (row.memory ?? 0) : 0} color="#34d399" />
-                      <span className="text-sm text-slate-200">{row.live ? `${(row.memory ?? 0).toFixed(2)}%` : '—'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <MetricBar value={row.live ? (row.disk ?? 0) : 0} color="#fbbf24" />
-                      <span className="text-sm text-slate-200">{row.live ? `${(row.disk ?? 0).toFixed(2)}%` : '—'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? (row.load ?? 0).toFixed(2) : '—'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netRx ?? 0).toFixed(0)} B/s` : '—'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netTx ?? 0).toFixed(0)} B/s` : '—'}</td>
+      {/* Tablo yalnızca sunucu seçilince — seçim yokken render yok */}
+      {selectedInstances.length > 0 && (
+        <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-cyber-deep/50">
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('hostname')} className="flex items-center gap-1">
+                      Hostname <span className="text-[10px]">{getSortIcon('hostname')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Durum</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('cpu')} className="flex items-center gap-1">
+                      CPU <span className="text-[10px]">{getSortIcon('cpu')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('memory')} className="flex items-center gap-1">
+                      Memory <span className="text-[10px]">{getSortIcon('memory')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('disk')} className="flex items-center gap-1">
+                      Disk (/) <span className="text-[10px]">{getSortIcon('disk')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('load')} className="flex items-center gap-1">
+                      Load <span className="text-[10px]">{getSortIcon('load')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('netRx')} className="flex items-center gap-1">
+                      Net RX <span className="text-[10px]">{getSortIcon('netRx')}</span>
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    <button onClick={() => toggleSort('netTx')} className="flex items-center gap-1">
+                      Net TX <span className="text-[10px]">{getSortIcon('netTx')}</span>
+                    </button>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {sortedRows.length > TABLE_PAGE_SIZE && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
-            <span className="text-xs text-slate-500">
-              {sortedRows.length} satır · sayfa {safeTablePage}/{tablePageCount}
-            </span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={safeTablePage <= 1}
-                onClick={() => setTablePage((p) => Math.max(1, p - 1))}
-                className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
-              >
-                Önceki
-              </button>
-              <button
-                type="button"
-                disabled={safeTablePage >= tablePageCount}
-                onClick={() => setTablePage((p) => Math.min(tablePageCount, p + 1))}
-                className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
-              >
-                Sonraki
-              </button>
+              </thead>
+              <tbody className="divide-y divide-white/[0.05]">
+                {pagedRows.map((row) => (
+                  <tr key={row.serverId} className={`hover:bg-white/[0.03] transition-colors ${!row.live ? 'opacity-70' : ''}`}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
+                      <div className="font-medium">{row.hostname}</div>
+                      <div className="text-xs text-slate-400 font-mono">{row.instance}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {row.live ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Canlı
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-orange-500/15 text-orange-300 border border-orange-500/30">
+                          Scrape hatası
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <MetricBar value={row.live ? (row.cpu ?? 0) : 0} color="#60a5fa" />
+                        <span className="text-sm text-slate-200">{row.live ? `${(row.cpu ?? 0).toFixed(2)}%` : '—'}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <MetricBar value={row.live ? (row.memory ?? 0) : 0} color="#34d399" />
+                        <span className="text-sm text-slate-200">{row.live ? `${(row.memory ?? 0).toFixed(2)}%` : '—'}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <MetricBar value={row.live ? (row.disk ?? 0) : 0} color="#fbbf24" />
+                        <span className="text-sm text-slate-200">{row.live ? `${(row.disk ?? 0).toFixed(2)}%` : '—'}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? (row.load ?? 0).toFixed(2) : '—'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netRx ?? 0).toFixed(0)} B/s` : '—'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{row.live ? `${(row.netTx ?? 0).toFixed(0)} B/s` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {sortedRows.length > TABLE_PAGE_SIZE && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
+              <span className="text-xs text-slate-500">
+                {sortedRows.length} satır · sayfa {safeTablePage}/{tablePageCount}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={safeTablePage <= 1}
+                  onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
+                >
+                  Önceki
+                </button>
+                <button
+                  type="button"
+                  disabled={safeTablePage >= tablePageCount}
+                  onClick={() => setTablePage((p) => Math.min(tablePageCount, p + 1))}
+                  className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
+                >
+                  Sonraki
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-        {sortedRows.length === 0 && (
-          <div className="text-center py-12 text-slate-500">
-            {isLoading ? 'Metrikler yükleniyor...' : 'Metrik bulunamadı'}
-          </div>
-        )}
-      </div>
+          )}
+          {sortedRows.length === 0 && (
+            <div className="text-center py-12 text-slate-500">
+              {isLoading ? 'Metrikler yükleniyor...' : 'Metrik bulunamadı'}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

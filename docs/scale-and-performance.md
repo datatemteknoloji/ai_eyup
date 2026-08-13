@@ -7,14 +7,15 @@ için yapılan ayarları ve bunların **neden** gerekli olduğunu belgeler. Bura
 her madde gerçek bir "hang" (donma) veya performans sorununun kök nedenidir —
 sadece teorik tavsiye değildir.
 
-## Altın kural: FastAPI'de bloklayan çağrı = tüm platform donar
+## Altın kural: FastAPI'de bloklayan çağrı = API tıkanır
 
-Uygulama **tek Uvicorn worker** ve tek `asyncio` event loop üzerinde çalışır.
-Bir `async def` endpoint içinde `await` olmadan senkron/bloklayan bir çağrı
-(SSH, WinRM, vCenter SOAP, LLM HTTP isteği, Ansible subprocess) yapılırsa, o
-çağrı bitene kadar **event loop'taki başka hiçbir istek işlenmez** — `/health`
-dahil. Bu, müşteri ortamında yaşanan "tüm sayfa spinner'da donuyor" hatasının
-kök nedeniydi.
+Uygulama varsayılan olarak **tek Uvicorn worker** ile başlar; Gelişmiş
+Ayarlar’dan `uvicorn_workers` artırılabilir (recreate gerekir). Ağır filo
+işleri (onboarding, metric sync, log, …) artık **Celery worker**
+(`server_management_worker`) üzerindedir — API process yalnızca aralıklı
+enqueue tick atar. Yine de bir `async def` endpoint içinde `await` olmadan
+senkron SSH/WinRM/vCenter/LLM yapılırsa **o worker’ın** event loop’u
+tıkanır.
 
 **İki geçerli çözüm:**
 
@@ -54,23 +55,24 @@ donma. `max_connections` compose dosyasında **explicit** ayarlanmazsa
 Postgres varsayılana (100) düşer — bu iki değer (pool + Postgres) birlikte
 değiştirilmelidir.
 
-## Worker sayıları (Ayarlar → Worker sayıları)
+## Worker sayıları (Ayarlar → Gelişmiş)
 
-Tüm toplu (bulk) SSH/WinRM/TCP işlemleri sabit kodlanmış worker sayısı yerine
-`bulk_concurrency.py`'daki fonksiyonlardan okur — çalışma zamanında Ayarlar
-sayfasından değiştirilebilir:
+Toplu SSH/WinRM/TCP işlemleri `bulk_concurrency.py` / runtime settings üzerinden
+okunur (çoğu **restart gerektirmez**):
 
 | Ayar | Varsayılan | Aralık | Kullanıldığı yer |
 |---|---|---|---|
 | `bulk_ssh_workers` | 25 | 1-128 | Auto-onboarding, app discovery, bulk NE kurulum, live metrics |
 | `log_ssh_workers` | 32 | 1-64 | Linux log tarama |
-| `windows_log_workers` | 20 | 1-64 | Windows Event Log toplama |
 | `bulk_tcp_workers` | 100 | 1-256 | Toplu TCP health check |
-| `windows_log_batch_size` | 500 | 50-5000 | Windows log tarama batch boyutu |
+| `vcenter_sync_workers` | 10 | 1-64 | VM detay çekme |
+| **`celery_concurrency`** | 2 | 1-32 | Filo kuyruğu — **worker recreate** |
+| **`uvicorn_workers`** | 1 | 1-8 | HTTP API — **backend recreate** |
 
-10.000+ sunucu ortamında bu değerleri **DB pool'un kaldırabileceği payla**
-dengeli artırın (worker sayısı × ortalama sorgu süresi, pool_timeout'u
-aşmamalı).
+Process ayarları kaydedilince `/app/uploads/ainew_process_workers.env` yazılır;
+entrypoint bir sonraki recreate’de `CELERY_CONCURRENCY` / `UVICORN_WORKERS`
+uygular. Multi-uvicorn’da arka plan scheduler yalnızca bir process’te çalışır
+(fcntl lock).
 
 ## Metrik senkronizasyonu: batch PromQL sorguları
 
@@ -124,6 +126,32 @@ yapıyordu.
 Silme işlemi 5000'lik batch'ler halinde yapılır — tek büyük transaction'da
 kilit tutmaz.
 
+## Celery filo kuyruğu (Dalga 2)
+
+Ağır periyodik işler `app.services.fleet_jobs` + `app.worker` üzerinden
+Celery’ye gider. API’deki `background_tasks` döngüleri **enqueue-only**
+(worker yoksa local fallback). Çift çalışmayı Redis `ainew:fleet_lock:*`
+önler (`fleet_mutex`).
+
+Örnek task adları: `fleet.auto_onboarding`, `fleet.metric_sync`,
+`fleet.log_collection`, `fleet.health_check`, `servers.check_health` (UI bulk).
+
+Doğrulama: `docker logs server_management_worker` içinde `Task fleet.* succeeded`
+ve API logunda `metric_sync → Celery` / `health → Celery`.
+
+## Level 1 (Dropt) oturum UX
+
+- Dropt portal token TTL cache + paralel çağrı dedupe (`ensureDroptSession`).
+- Soft open: Level 1 sayfası bridge bitmeden render edilir; hata üst banner.
+- Asistan model sync fire-and-forget; Dropt 401 ainew oturumunu düşürmez.
+
+## Prometheus: yerel file-SD vs kurumsal URL
+
+| Mod | Davranış |
+|-----|----------|
+| **Yerel** (compose Prometheus) | Backend `prometheus/targets/*.json` yazar (node/windows exporter). Permission denied → entrypoint chown + atomic save. |
+| **Kurumsal** (Ayarlar’daki Prometheus URL) | ainew scrape **yönetmez**; yalnızca sorgu atar. Hedef listesi o Prom’un scrape config’idir. |
+
 ## uCMDB senkronizasyonu: O(N²) → O(1) arama
 
 `ucmdb_sync_service.py`'deki `_find_by_ucmdb_id` eskiden **tüm sunucuları**
@@ -134,16 +162,13 @@ veritabanı seviyesinde yapılıyor (O(1) indeksli arama).
 ## Kontrol listesi: Yeni bir müşteri ortamı 10k+ sunucu ile geliyorsa
 
 1. Postgres `max_connections` ≥ 500, SQLAlchemy pool + overflow ile uyumlu mu?
-2. `bulk_ssh_workers` / `log_ssh_workers` / `windows_log_workers` ortamın
-   SSH/WinRM kapasitesine göre ayarlandı mı? (Çok yüksek değer hedef
-   sunucuları veya jump host'u zorlayabilir.)
-3. Yeni eklenen tüm bloklayan I/O içeren endpoint'ler `def` mi, yoksa
-   `run_in_executor` ile mi sarılı? (Bkz. "Altın kural" yukarıda.)
-4. Prometheus tarafında `scrape_interval`/`scrape_timeout` sunucu sayısına
-   göre makul mü? (Binlerce hedef varsa çok kısa interval Prometheus'u
-   zorlar.)
-5. `system_events` retention ayarı (varsayılan 180 gün) ortamın disk/performans
-   kısıtlarına uygun mu?
+2. `bulk_ssh_workers` / `log_ssh_workers` / `celery_concurrency` ortamın
+   kapasitesine göre ayarlandı mı? (Celery/uvicorn için recreate unutulmasın.)
+3. `server_management_worker` ayakta mı; filo işleri Celery’de mi görünüyor?
+4. Yeni eklenen bloklayan I/O endpoint’leri `def` mi / `run_in_executor` ile mi?
+5. Prometheus: yerel file-SD yazılabilir mi; kurumsal URL kullanılıyorsa scrape
+   kapsamı bilinçli mi?
+6. `system_events` retention (varsayılan 180 gün) disk’e uygun mu?
 
 ## İlgili
 - [Metrik Mimarisi (VM vs Fiziksel)](explanation-metrics-architecture.md)

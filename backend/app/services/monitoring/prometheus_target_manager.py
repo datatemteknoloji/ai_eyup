@@ -54,14 +54,24 @@ class PrometheusTargetManager:
             return []
     
     def save_targets(self, targets: List[Dict[str, Any]]) -> bool:
-        """Target dosyasını kaydet"""
+        """Target dosyasını kaydet (atomic replace — yarım yazım / izin hatalarını azaltır)."""
         try:
-            with open(self.targets_file, 'w') as f:
+            self.targets_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.targets_file.with_suffix(self.targets_file.suffix + ".tmp")
+            with open(tmp, "w") as f:
                 json.dump(targets, f, indent=2)
+                f.flush()
+            tmp.replace(self.targets_file)
             logger.info(f"Target dosyası kaydedildi: {self.targets_file}")
             return True
         except Exception as e:
             logger.error(f"Target dosyası kaydedilemedi: {e}")
+            try:
+                tmp = self.targets_file.with_suffix(self.targets_file.suffix + ".tmp")
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
             return False
     
     def upsert_target(self, instance: str, labels: Optional[Dict[str, str]] = None) -> bool:

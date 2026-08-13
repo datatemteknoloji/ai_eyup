@@ -37,10 +37,27 @@ export function installFetchInterceptor() {
     const res = await originalFetch(input as any, init)
 
     // Oturum süresi dolmuş / geçersiz → login'e gönder (login uçları hariç).
+    // Level1/Dropt proxy eski kodda upstream 401 geçiriyordu; detail ainew
+    // JWT mesajı değilse oturumu düşürme.
     if (res.status === 401 && isApi && !isLoginEndpoint) {
-      clearToken()
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login'
+      let clearSession = true
+      try {
+        const body = await res.clone().json()
+        const detail = typeof body?.detail === 'string' ? body.detail : ''
+        if (
+          detail &&
+          !/geçersiz veya eksik kimlik|not authenticated|could not validate/i.test(detail)
+        ) {
+          clearSession = false
+        }
+      } catch {
+        /* body yok → klasik 401 */
+      }
+      if (clearSession) {
+        clearToken()
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login'
+        }
       }
     }
     return res

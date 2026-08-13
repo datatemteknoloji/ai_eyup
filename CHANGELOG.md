@@ -11,6 +11,21 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Remote LLM / Bifrost kimlik
+- Çift yol netleştirildi: **Virtual Key → `x-bf-vk`** (Bifrost `sk-bf-…`, API Key boş = curl ile aynı); **API Key → `Authorization`** (eski yol). İkisi birlikte de gönderilebilir.
+- Ayarlar UI sırası/hint’leri ve bağlantı testi 401 mesajı buna göre.
+
+### Level 1 / Dropt envanter filtresi
+- Sync adayları: **AI Ready + IP + (RHEL | Oracle Linux)**; `exadata_nodes.server_id` bağlı sunucular hariç.
+- Linux modülü görünürlüğü bu filtreden bağımsız (ileride Exadata Linux listesinde de görünebilir; Dropt’a gitmez).
+- Create sonrası best-effort Dropt projeksiyonu aynı eligibility kuralını kullanır.
+
+### Performans / altyapı (Dalga 0–3)
+- **Disk/Docker hijyen:** kullanılmayan imaj/cache temizliği; Prometheus file-SD yazma izni (`appuser` + entrypoint chown, atomic target save).
+- **Level 1 oturum UX:** Dropt token TTL cache + in-flight dedupe; soft open (sayfa spinner’sız açılır); asistan sync fire-and-forget. Dropt upstream 401/403 artık ainew JWT 401’i gibi oturum düşürmez (502).
+- **Arka plan → Celery:** onboarding, NLQ inventory, inventory/metric/ESX sync, log/anomaly, exporter bayrak sync, windows live metrics, health — `server_management_worker` kuyruğunda. API process yalnızca scheduler tick + enqueue; Redis `fleet_lock` ile çift çalışma engeli; worker yoksa local fallback.
+- **Process worker ayarları (Gelişmiş):** `celery_concurrency`, `uvicorn_workers` — kayıt `/app/uploads/ainew_process_workers.env`; uygulamak için ilgili container recreate. Multi-uvicorn’da BG scheduler fcntl ile tek process.
+
 ## [1.0.9.24] - 2026-08-13
 
 ### Eklendi / iyileştirildi — Linux sunucu kimliği

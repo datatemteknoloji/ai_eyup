@@ -2,11 +2,15 @@
 
 - ainew connection_config → GlobalCredential / form (örn. datatem)
 - Dropt TargetServer cred → Level 1 otomasyon (örn. root) — ensure-host
+
+Level 1 / Dropt eligibility (Linux modülü görünürlüğünden bağımsız):
+  AI Ready + IP + (RHEL | Oracle Linux) + ExadataNode bağlantısı yok.
+  Linux modülü ileride Exadata’yı da gösterebilir; Dropt adaylığı ayrı kalır.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 import httpx
 from sqlalchemy.orm import Session
@@ -17,6 +21,75 @@ from app.models.credential import GlobalCredential
 from app.models.server import Server
 
 logger = logging.getLogger(__name__)
+
+
+def is_rhel_server(*, os_type: Optional[str] = None, os_version: Optional[str] = None) -> bool:
+    """RHEL: os_type≈rhel veya PRETTY_NAME RHEL / Red Hat Enterprise Linux."""
+    ot = (os_type or "").strip().lower()
+    ov = (os_version or "").strip().lower()
+    if ot in ("rhel", "redhat", "red hat", "red-hat"):
+        return True
+    if ot.startswith("rhel"):
+        return True
+    if ov.startswith("red hat enterprise linux") or "red hat enterprise linux" in ov:
+        return True
+    if ov.startswith("rhel") or ov.startswith("rhel "):
+        return True
+    if "rhel" in ov.split()[:2] or ov.startswith("rhel-"):
+        return True
+    return False
+
+
+def is_oracle_linux(*, os_type: Optional[str] = None, os_version: Optional[str] = None) -> bool:
+    """Standalone Oracle Linux — os-release ID=ol / PRETTY_NAME Oracle Linux…"""
+    ot = (os_type or "").strip().lower()
+    ov = (os_version or "").strip().lower()
+    if ot in ("ol", "oraclelinux", "oracle-linux", "oracle linux"):
+        return True
+    # ol8 / ol9 / ol-8 (ID varyantları); "old" vb. false positive olmasın
+    if ot.startswith("ol") and len(ot) >= 2:
+        rest = ot[2:]
+        if rest == "" or (rest and (rest[0].isdigit() or rest[0] in "-_")):
+            return True
+    if "oracle linux" in ov:
+        return True
+    if ov.startswith("ol ") or ov.startswith("ol-"):
+        return True
+    return False
+
+
+def is_level1_dropt_os(*, os_type: Optional[str] = None, os_version: Optional[str] = None) -> bool:
+    """Level 1 Dropt OS ailesi: RHEL veya Oracle Linux (Exadata envanter bağından ayrı)."""
+    return is_rhel_server(os_type=os_type, os_version=os_version) or is_oracle_linux(
+        os_type=os_type, os_version=os_version
+    )
+
+
+def eligible_for_level1_dropt_sync(
+    server: Server,
+    *,
+    db: Optional[Session] = None,
+    exadata_ids: Optional[Set[int]] = None,
+) -> bool:
+    """Operasyon Merkezi / best-effort Dropt: AI Ready + IP + RHEL|OL + Exadata değil.
+
+    Exadata ayrımı OS string’e değil `exadata_nodes.server_id` bağlantısına dayanır.
+    Linux modülü listesi bu kuralı kullanmak zorunda değildir.
+    """
+    if not (server.ip_address or "").strip():
+        return False
+    if not bool(server.ai_ready):
+        return False
+    ids = exadata_ids
+    if ids is None and db is not None:
+        from app.services.platform_scope import get_exadata_server_id_set
+
+        ids = get_exadata_server_id_set(db)
+    if ids is not None and server.id in ids:
+        return False
+    if not is_level1_dropt_os(os_type=server.os_type, os_version=server.os_version):
+        return False
+    return True
 
 
 def _apply_global_connection_config(
@@ -248,7 +321,10 @@ def best_effort_ensure_after_ainew_create(server: Server, *, actor_username: str
             return
         dropt_id = None
         token = None
-        if secret:
+        # Level 1 Dropt: RHEL|OL + AI Ready + IP; Exadata bağlıysa projeksiyon yok
+        # (tip detect aşağıda yine çalışabilir).
+        project_dropt = bool(secret) and eligible_for_level1_dropt_sync(row, db=db)
+        if project_dropt:
             try:
                 token = bridge_dropt_token(
                     dropt_base=base,
@@ -268,6 +344,11 @@ def best_effort_ensure_after_ainew_create(server: Server, *, actor_username: str
                     dropt_id = None
             except Exception as exc:  # noqa: BLE001
                 logger.warning("best_effort Dropt ensure failed for server %s: %s", server.id, exc)
+        elif secret:
+            logger.debug(
+                "best_effort Dropt skip server %s (not Level1-eligible: OS/Exadata/ai_ready)",
+                server.id,
+            )
         # Tip: önce Dropt facts (otomasyon), yoksa ainew SSH
         if (row.server_type or "").upper() in ("", "UNKNOWN", "PHYSICAL", "VIRTUAL") and not row.hypervisor_id:
             probe_and_apply(

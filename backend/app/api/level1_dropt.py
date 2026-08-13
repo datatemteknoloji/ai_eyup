@@ -63,7 +63,7 @@ def create_dropt_session(user: User = Depends(get_current_user)) -> DroptSession
         logger.error("Dropt bridge unreachable: %s", exc)
         raise HTTPException(503, detail=f"Dropt API erişilemiyor: {exc}") from exc
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, detail=r.text[:500] or "Dropt bridge hatası")
+        _raise_dropt_upstream(r.status_code, r.text[:500] or "Dropt bridge hatası")
     data = r.json()
     token = (data.get("token") or {}).get("access_token")
     if not token:
@@ -77,47 +77,33 @@ def create_dropt_session(user: User = Depends(get_current_user)) -> DroptSession
     )
 
 
+def _raise_dropt_upstream(status_code: int, detail: str) -> None:
+    """Dropt hata kodunu ainew JWT 401'inden ayır — aksi halde FE oturumu düşer."""
+    # authStore her /api/v1 401'inde clearToken yapıyor; upstream 401/403 ≠ ainew oturumu
+    if status_code in (401, 403):
+        raise HTTPException(502, detail=detail)
+    raise HTTPException(status_code, detail=detail)
+
+
 def _dropt_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 @router.get("/linux-servers")
-def _is_rhel_server(
-    *,
-    os_type: Optional[str] = None,
-    os_version: Optional[str] = None,
-) -> bool:
-    """RHEL: os_type≈rhel veya PRETTY_NAME RHEL / Red Hat Enterprise Linux."""
-    ot = (os_type or "").strip().lower()
-    ov = (os_version or "").strip().lower()
-    if ot in ("rhel", "redhat", "red hat", "red-hat"):
-        return True
-    if ot.startswith("rhel"):
-        return True
-    if ov.startswith("red hat enterprise linux") or "red hat enterprise linux" in ov:
-        return True
-    if ov.startswith("rhel") or ov.startswith("rhel "):
-        return True
-    # örn. "rhel 9.5" / "RHEL-9.4"
-    if "rhel" in ov.split()[:2] or ov.startswith("rhel-"):
-        return True
-    return False
-
-
-def _eligible_for_dropt_inventory_sync(server: Server) -> bool:
-    """Operasyon Merkezi sync: AI Ready + RHEL + IP (Dropt tarafında SSH yok)."""
-    if not (server.ip_address or "").strip():
-        return False
-    if not bool(server.ai_ready):
-        return False
-    return _is_rhel_server(os_type=server.os_type, os_version=server.os_version)
-
-
 def list_linux_servers_for_level1(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """Ainew → Level 1 sync adayları: AI Ready + RHEL + IP."""
+    """Ainew → Level 1 sync adayları: AI Ready + (RHEL|Oracle Linux) + IP; Exadata hariç.
+
+    Linux modülü görünürlüğünden bağımsız — Exadata bağlı sunucular burada yok
+    (ileride Linux listesinde görünseler bile Dropt adayı değiller).
+    """
+    _ = user
+    from app.services.level1_inventory import eligible_for_level1_dropt_sync
+    from app.services.platform_scope import get_exadata_server_id_set
+
+    exadata_ids = get_exadata_server_id_set(db)
     q = db.query(Server).filter(
         Server.ip_address.isnot(None),
         Server.ip_address != "",
@@ -126,7 +112,7 @@ def list_linux_servers_for_level1(
     rows = q.order_by(Server.name.asc()).limit(5000).all()
     out = []
     for s in rows:
-        if not _is_rhel_server(os_type=s.os_type, os_version=s.os_version):
+        if not eligible_for_level1_dropt_sync(s, exadata_ids=exadata_ids):
             continue
         out.append({
             "id": s.id,
@@ -198,7 +184,9 @@ def ensure_dropt_server(
                 },
             )
             if cr.status_code >= 400:
-                raise HTTPException(cr.status_code, detail=f"Dropt ensure-host: {cr.text[:400]}")
+                _raise_dropt_upstream(
+                    cr.status_code, f"Dropt ensure-host: {cr.text[:400]}"
+                )
             result = cr.json()
             dropt_id = int(result["id"])
             if (result.get("status") or "").lower() == "unreachable":
@@ -242,7 +230,7 @@ def sync_all_linux_servers_to_dropt(
     user: User = Depends(get_current_user),
     background: bool = Query(True, description="True: arka planda job; False: senkron bulk"),
 ) -> SyncAllOut:
-    """Ainew AI Ready + RHEL envanterini Dropt'a yaz (bulk, SSH testi yok)."""
+    """Ainew AI Ready + RHEL|Oracle Linux envanterini Dropt'a yaz (Exadata hariç; SSH testi yok)."""
     from app.services import bulk_job_tracker as jobs
 
     linux = list_linux_servers_for_level1(db, user)
@@ -414,7 +402,9 @@ def sync_assistant_llm_from_ainew(
     except httpx.RequestError as exc:
         raise HTTPException(503, detail=f"Dropt API erişilemiyor: {exc}") from exc
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, detail=f"Dropt assistant sync: {r.text[:400]}")
+        _raise_dropt_upstream(
+            r.status_code, f"Dropt assistant sync: {r.text[:400]}"
+        )
     return SyncAssistantOut(
         ok=True,
         mode=mode,

@@ -1,13 +1,13 @@
 """
 Background Tasks - Periyodik görevler
-Tüm blocking (SSH, socket, vCenter) çağrılar run_in_executor ile thread pool'da çalışır.
+Ağır işler Celery'ye enqueue edilir; API process yalnızca scheduler tick atar.
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
-from app.services.monitoring.server_health_checker import ServerHealthChecker
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +21,62 @@ def _rt_sec(key: str, default: int) -> int:
         return default
 
 
+async def _enqueue_or_run(task_name: str, local_callable, *, label: str) -> None:
+    """Önce Celery; worker yoksa local (executor / await)."""
+    try:
+        from app.worker import enqueue_fleet_job
+        if enqueue_fleet_job(task_name):
+            logger.info("%s → Celery", label)
+            return
+    except Exception as exc:
+        logger.warning("%s Celery enqueue hata, local: %s", label, exc)
+
+    logger.info("%s → local fallback", label)
+    if asyncio.iscoroutinefunction(local_callable):
+        await local_callable()
+        return
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, local_callable)
+
+
 class BackgroundTaskManager:
     """Arka plan görevlerini yöneten sınıf"""
 
     def __init__(self):
         self.running = False
         self.tasks = []
+        self._scheduler_lock_fh = None
+
+    def _try_become_scheduler(self) -> bool:
+        """Uvicorn multi-worker'da tek scheduler — process-içi fcntl lock."""
+        try:
+            import fcntl
+            path = os.environ.get("AINEW_BG_SCHEDULER_LOCK", "/tmp/ainew_bg_scheduler.lock")
+            fh = open(path, "w", encoding="utf-8")
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fh.write(str(os.getpid()))
+            fh.flush()
+            self._scheduler_lock_fh = fh
+            return True
+        except Exception as exc:
+            # BlockingIOError / OSError → başka worker aldı
+            logger.info("BG scheduler lock alınamadı (%s) — bu worker scheduler değil", exc)
+            try:
+                if self._scheduler_lock_fh:
+                    self._scheduler_lock_fh.close()
+            except Exception:
+                pass
+            self._scheduler_lock_fh = None
+            return False
 
     async def start(self):
         if self.running:
             logger.warning("Background tasks already running")
+            return
+
+        # Multi-uvicorn: yalnızca bir process scheduler olsun (fcntl lock)
+        if not self._try_become_scheduler():
+            logger.info("Background scheduler başka worker'da — bu process atlanıyor")
             return
 
         self.running = True
@@ -96,32 +142,10 @@ class BackgroundTaskManager:
                 interval = max(120, _rt_sec("health_check_interval_sec", 600))
                 await asyncio.sleep(30 if first_run else interval)
                 first_run = False
-
                 if not self.running:
                     break
-
-                db = SessionLocal()
-                try:
-                    from app.services.fleet_mutex import fleet_lock
-                    with fleet_lock("health") as ok:
-                        if not ok:
-                            continue
-                        logger.info(f"Running scheduled health check at {datetime.now()}")
-                        loop = asyncio.get_event_loop()
-                        stats = await loop.run_in_executor(
-                            None, ServerHealthChecker.update_server_statuses, db
-                        )
-                        if stats.get("updated", 0) > 0 or stats.get("checked", 0) > 0:
-                            logger.info(
-                                f"Health check: {stats.get('checked',0)} checked, "
-                                f"{stats.get('updated',0)} updated, "
-                                f"{stats.get('online',0)} online, {stats.get('offline',0)} offline"
-                            )
-                except Exception as e:
-                    logger.error(f"Health check error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_health_check
+                await _enqueue_or_run("fleet.health_check", run_health_check, label="health")
             except asyncio.CancelledError:
                 logger.info("Health check task cancelled")
                 break
@@ -130,51 +154,15 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("health_check_interval_sec", 600))
 
     async def _periodic_log_collection(self):
-        """Periyodik Linux log toplama — batch + paralel worker (15k ölçek)."""
-        logger.info("Log collection task started (batch/workers, executor)")
+        """Periyodik Linux log toplama — Celery (fallback local)."""
+        logger.info("Log collection task started (batch/workers, Celery)")
         await asyncio.sleep(90)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.fleet_mutex import fleet_lock
-                    with fleet_lock("logs") as ok:
-                        if not ok:
-                            continue
-                        from app.services.log_collector import collect_all_servers_logs
-                        from app.services.log_anomaly_detector import detect_log_anomalies
-
-                        loop = asyncio.get_event_loop()
-
-                        result = await loop.run_in_executor(
-                            None,
-                            lambda: collect_all_servers_logs(db, batch_mode=True),
-                        )
-                        if result.get("total_saved", 0) > 0 or result.get("total_servers", 0) > 0:
-                            logger.warning(
-                                "Log collection: saved=%s batch=%s/%s workers=%s",
-                                result.get("total_saved"),
-                                result.get("total_servers"),
-                                result.get("fleet_total"),
-                                result.get("workers"),
-                            )
-
-                        anomalies = await loop.run_in_executor(
-                            None, detect_log_anomalies, db
-                        )
-                        if anomalies:
-                            critical = [a for a in anomalies if a["severity"] == "critical"]
-                            logger.warning(
-                                f"Log anomaly: {len(anomalies)} anomali ({len(critical)} kritik)"
-                            )
-                except Exception as e:
-                    logger.error(f"Log collection/anomaly error: {e}")
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_log_collection
+                await _enqueue_or_run("fleet.log_collection", run_log_collection, label="logs")
                 await asyncio.sleep(_rt_sec("log_collection_interval_sec", 300))
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -188,21 +176,12 @@ class BackgroundTaskManager:
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.windows_log_collector import collect_all_windows_logs
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(None, collect_all_windows_logs, db)
-                    if result.get("total_saved", 0) > 0:
-                        logger.warning(
-                            "Windows log collection: %s yeni log, %s sunucu",
-                            result["total_saved"],
-                            result["servers_with_logs"],
-                        )
-                except Exception as e:
-                    logger.error(f"Windows log collection error: {e}")
-                finally:
-                    db.close()
+                from app.services.fleet_jobs import run_windows_log_collection
+                await _enqueue_or_run(
+                    "fleet.windows_log_collection",
+                    run_windows_log_collection,
+                    label="windows_logs",
+                )
                 await asyncio.sleep(_rt_sec("windows_log_interval_sec", 900))
             except asyncio.CancelledError:
                 break
@@ -243,49 +222,15 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("virt_log_interval_sec", 900))
 
     async def _periodic_anomaly_scan(self):
-        """Her 5 dakikada Prometheus metriklerinden anomali tarar.
-        CPU yogun olabilir -> thread pool da calistir."""
-        logger.info("Anomaly scan task started (300s interval, executor)")
+        """Anomaly + AIOps — Celery (fallback local)."""
+        logger.info("Anomaly scan task started (300s interval, Celery)")
         await asyncio.sleep(120)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.anomaly_detector import detect_all_anomalies
-                    from app.services.aiops_engine import run_aiops_cycle
-
-                    loop = asyncio.get_event_loop()
-                    anomalies = await loop.run_in_executor(
-                        None, detect_all_anomalies, db
-                    )
-                    if anomalies:
-                        critical = [a for a in anomalies if a["severity"] == "critical"]
-                        warning  = [a for a in anomalies if a["severity"] == "warning"]
-                        logger.warning(
-                            f"Anomaly scan: {len(anomalies)} anomali -- "
-                            f"{len(critical)} kritik, {len(warning)} uyari"
-                        )
-
-                    # Kapalı döngü: event üret → incident aç → otomatik RCA
-                    # (Ollama çağrıları blocking olduğu için executor'da çalıştır)
-                    result = await loop.run_in_executor(
-                        None, run_aiops_cycle, db, anomalies
-                    )
-                    if result.get("created") or result.get("incidents") or result.get("rca_done"):
-                        logger.warning(
-                            f"AIOps cycle: {result.get('created',0)} yeni event, "
-                            f"{result.get('resolved',0)} cozuldu, "
-                            f"{result.get('incidents',0)} incident, "
-                            f"{result.get('rca_done',0)} otomatik RCA"
-                        )
-                except Exception as e:
-                    logger.error(f"Anomaly scan error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_anomaly_scan
+                await _enqueue_or_run("fleet.anomaly_scan", run_anomaly_scan, label="anomaly")
                 await asyncio.sleep(_rt_sec("anomaly_scan_interval_sec", 300))
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -293,32 +238,15 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("anomaly_scan_interval_sec", 300))
 
     async def _periodic_metric_sync(self):
-        """Her 10 dakikada Prometheus metriklerini TimescaleDB ye yazar.
-        MetricSyncService zaten async."""
-        logger.info("Metric sync task started (600s interval)")
+        """Prometheus → TimescaleDB — Celery."""
+        logger.info("Metric sync task started (600s interval, Celery)")
         await asyncio.sleep(60)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.fleet_mutex import fleet_lock
-                    with fleet_lock("metric_sync") as ok:
-                        if not ok:
-                            continue
-                        from app.services.metric_sync import MetricSyncService
-                        stats = await MetricSyncService.sync_all_servers_metrics(db, minutes=12)
-                        logger.info(
-                            f"Metric sync: {stats.get('synced_servers',0)}/{stats.get('total_servers',0)} "
-                            f"sunucu, {stats.get('total_metrics',0)} kayit"
-                        )
-                except Exception as e:
-                    logger.error(f"Metric sync error: {e}")
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_metric_sync
+                await _enqueue_or_run("fleet.metric_sync", run_metric_sync, label="metric_sync")
                 await asyncio.sleep(_rt_sec("metric_sync_interval_sec", 600))
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -326,9 +254,9 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("metric_sync_interval_sec", 600))
 
     async def _periodic_inventory_sync(self):
-        """Ayarlardan okunan aralikta hypervisor lardan VM leri DB ye ceker."""
+        """Hypervisor VM inventory — Celery."""
         DEFAULT_MINUTES = 5
-        logger.info("Inventory sync task started (interval from Gelişmiş ayarlar)")
+        logger.info("Inventory sync task started (Celery, interval from Gelişmiş ayarlar)")
         await asyncio.sleep(60)
 
         while self.running:
@@ -340,59 +268,18 @@ class BackgroundTaskManager:
                     interval_sec = DEFAULT_MINUTES * 60
 
                 await asyncio.sleep(interval_sec)
-
                 if not self.running:
                     break
 
-                db = SessionLocal()
-                try:
-                    from app.services.inventory_sync_service import sync_all_hypervisors
-
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        None, sync_all_hypervisors, db
-                    )
-                    logger.info(
-                        f"Inventory sync: {result['total_synced']} sunucu, "
-                        f"{len(result['hypervisors'])} hypervisor"
-                    )
-
-                    # uCMDB REST (açıksa): fiziksel + Exadata
-                    try:
-                        from app.services.ucmdb_sync_service import load_connection, sync_from_ucmdb
-                        ucfg = load_connection(db)
-                        if ucfg.get("enabled") and ucfg.get("base_url") and ucfg.get("password"):
-                            ures = await loop.run_in_executor(
-                                None, lambda: sync_from_ucmdb(db, dry_run=False)
-                            )
-                            logger.info(
-                                "uCMDB sync: physical +%s/~%s, exadata fetched=%s errors=%s",
-                                ures.get("created"), ures.get("updated"),
-                                ures.get("exadata_fetched"), len(ures.get("errors") or []),
-                            )
-                    except Exception as ue:
-                        logger.warning("uCMDB periodic sync skipped/failed: %s", ue)
-
-                    from app.services import qa_cache
-                    qa_cache.invalidate_all()
-                    try:
-                        from app.services.chat_cache_service import invalidate_context
-                        invalidate_context(db, platform="virt", all_for_platform=True)
-                        invalidate_context(db, platform="unified", all_for_platform=True)
-                    except Exception as _ice:
-                        logger.debug("chat QA invalidate after inventory: %s", _ice)
-                except Exception as e:
-                    logger.error(f"Inventory sync error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_inventory_sync
+                await _enqueue_or_run(
+                    "fleet.inventory_sync", run_inventory_sync, label="inventory"
+                )
             except asyncio.CancelledError:
-                logger.info("Inventory sync task cancelled")
                 break
             except Exception as e:
-                logger.error(f"Inventory sync task error: {e}")
+                logger.error(f"Inventory sync task error: {e}", exc_info=True)
                 await asyncio.sleep(max(60, _rt_sec("inventory_sync_interval_minutes", 5) * 60))
-
 
     async def _periodic_openshift_sync(self):
         """OpenShift Container Platform cluster'larından envanter + olay senkronizasyonu (10 dk)."""
@@ -429,38 +316,21 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("openshift_sync_interval_sec", 600))
 
     async def _periodic_esx_metric_sync(self):
-        """Her 15 dakikada VMware vCenter'lardan ESX host metriklerini DB'ye yazar.
-        vCenter SOAP çağrıları blocking → thread pool'da çalıştır."""
-        logger.info("ESX metric sync task started (900s interval, first run in 120s)")
+        """ESX host metrikleri — Celery."""
+        logger.info("ESX metric sync task started (900s interval, Celery)")
         await asyncio.sleep(120)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.esx_metric_sync import sync_esx_metrics
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(None, sync_esx_metrics, db)
-                    if result["hosts"] > 0 or result["errors"]:
-                        logger.info(
-                            f"ESX metric sync: {result['hypervisors']} hypervisor, "
-                            f"{result['hosts']} host kaydı yazıldı"
-                            + (f", hatalar: {result['errors']}" if result["errors"] else "")
-                        )
-                except Exception as e:
-                    logger.error(f"ESX metric sync error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_esx_metric_sync
+                await _enqueue_or_run("fleet.esx_metric_sync", run_esx_metric_sync, label="esx_metric")
                 await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
-
             except asyncio.CancelledError:
                 logger.info("ESX metric sync task cancelled")
                 break
             except Exception as e:
                 logger.error(f"ESX metric sync task unexpected error: {e}")
                 await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
-
 
     async def _periodic_rag_reindex(self):
         """Her 30 dakikada incident + event + Bilgi Bankası kayıtlarını RAG hafızasına indeksler.
@@ -608,43 +478,17 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("sysupdate_recovery_interval_sec", 300))
 
     async def _periodic_node_exporter_sync(self):
-        """Her 10 dakikada Prometheus up durumuna göre node_exporter_running bayrağını senkronlar."""
-        logger.info("Node exporter sync task started (600s interval, first run in 120s)")
+        """Node exporter targets/flags — Celery."""
+        logger.info("Node exporter sync task started (600s interval, Celery)")
         await asyncio.sleep(120)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.monitoring.prometheus_metrics import (
-                        sync_node_exporter_running_from_prometheus,
-                        sync_node_exporter_targets_from_db,
-                    )
-                    loop = asyncio.get_event_loop()
-                    target_stats = await loop.run_in_executor(
-                        None, sync_node_exporter_targets_from_db, db
-                    )
-                    stats = await loop.run_in_executor(
-                        None, sync_node_exporter_running_from_prometheus, db
-                    )
-                    if target_stats.get("removed_orphans") or target_stats.get("targets_before") != target_stats.get("targets_after"):
-                        logger.info(
-                            f"Prometheus targets: {target_stats.get('targets_before')} -> "
-                            f"{target_stats.get('targets_after')} "
-                            f"({target_stats.get('removed_orphans', 0)} yetim kaldırıldı)"
-                        )
-                    if stats.get("updated"):
-                        logger.info(
-                            f"Node exporter sync: {stats.get('live', 0)} canlı, "
-                            f"{stats.get('cleared', 0)} temizlendi, {stats.get('promoted', 0)} eklendi"
-                        )
-                except Exception as e:
-                    logger.error(f"Node exporter sync error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_node_exporter_sync
+                await _enqueue_or_run(
+                    "fleet.node_exporter_sync", run_node_exporter_sync, label="node_exporter"
+                )
                 await asyncio.sleep(_rt_sec("node_exporter_sync_interval_sec", 600))
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -652,44 +496,19 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("node_exporter_sync_interval_sec", 600))
 
     async def _periodic_windows_exporter_sync(self):
-        """Her 10 dakikada Prometheus up durumuna göre windows_exporter_running bayrağını senkronlar
-        (node_exporter sync'in Windows eşleniği)."""
-        logger.info("Windows exporter sync task started (600s interval, first run in 150s)")
+        """Windows exporter targets/flags — Celery."""
+        logger.info("Windows exporter sync task started (600s interval, Celery)")
         await asyncio.sleep(150)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.monitoring.prometheus_metrics import (
-                        sync_windows_exporter_running_from_prometheus,
-                        sync_windows_exporter_targets_from_db,
-                    )
-                    loop = asyncio.get_event_loop()
-                    target_stats = await loop.run_in_executor(
-                        None, sync_windows_exporter_targets_from_db, db
-                    )
-                    stats = await loop.run_in_executor(
-                        None, sync_windows_exporter_running_from_prometheus, db
-                    )
-                    if target_stats.get("removed_orphans") or target_stats.get("targets_before") != target_stats.get("targets_after"):
-                        logger.info(
-                            f"Windows exporter targets: {target_stats.get('targets_before')} -> "
-                            f"{target_stats.get('targets_after')} "
-                            f"({target_stats.get('removed_orphans', 0)} yetim kaldırıldı)"
-                        )
-                    if stats.get("updated"):
-                        logger.info(
-                            f"Windows exporter sync: {stats.get('live', 0)} canlı, "
-                            f"{stats.get('cleared', 0)} temizlendi, {stats.get('promoted', 0)} eklendi"
-                        )
-                except Exception as e:
-                    logger.error(f"Windows exporter sync error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_windows_exporter_sync
+                await _enqueue_or_run(
+                    "fleet.windows_exporter_sync",
+                    run_windows_exporter_sync,
+                    label="windows_exporter",
+                )
                 await asyncio.sleep(_rt_sec("windows_exporter_sync_interval_sec", 600))
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -730,85 +549,17 @@ class BackgroundTaskManager:
 
 
     async def _periodic_auto_onboarding(self):
-        """Entegrasyonlar'dan gelen yeni sunucuları otomatik olarak Canlı Metrikler'e
-        düşürür: önce SSH/WinRM ile AI Ready testi, sonra AI Ready olanlara
-        Node Exporter / Windows Exporter kurulumu. Manuel müdahale gerektirmez.
-        İlk çalışma: 150sn, sonra her 10 dakikada bir."""
-        logger.info("Auto-onboarding task started (600s interval, first run in 150s)")
+        """AI Ready + exporter onboarding — Celery (SSH fırtınasının ana kaynağı)."""
+        logger.info("Auto-onboarding task started (600s interval, Celery)")
         await asyncio.sleep(150)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.fleet_mutex import fleet_lock
-                    with fleet_lock("onboarding") as ok:
-                        if not ok:
-                            continue
-                        loop = asyncio.get_event_loop()
-
-                        from app.api.servers import update_ai_ready
-                        from app.api.windows import update_windows_ai_ready, install_exporter_all
-                        from app.services.auto_onboarding import (
-                            auto_install_node_exporter,
-                            collect_os_release_info,
-                            collect_windows_update_status,
-                            collect_linux_security_audit,
-                        )
-
-                        ai_stats = await loop.run_in_executor(
-                            None, lambda: update_ai_ready({"throttled": True}, db)
-                        )
-                        if ai_stats.get("ai_ready"):
-                            logger.info(f"Auto-onboarding: {ai_stats['ai_ready']} Linux sunucu AI Ready oldu")
-
-                        win_ai_stats = await loop.run_in_executor(
-                            None, lambda: update_windows_ai_ready({"throttled": True}, db)
-                        )
-                        if win_ai_stats.get("ai_ready_count"):
-                            logger.info(f"Auto-onboarding: {win_ai_stats['ai_ready_count']} Windows sunucu AI Ready oldu")
-
-                        os_stats = await loop.run_in_executor(None, collect_os_release_info, db)
-                        if os_stats.get("updated"):
-                            logger.info(f"Auto-onboarding: {os_stats['updated']} sunucunun OS/kernel bilgisi toplandı")
-
-                        ne_stats = await loop.run_in_executor(None, auto_install_node_exporter, db)
-                        if ne_stats.get("success"):
-                            logger.info(f"Auto-onboarding: {ne_stats['success']} sunucuya Node Exporter kuruldu")
-
-                        we_stats = await loop.run_in_executor(None, install_exporter_all, None, db)
-                        if we_stats.get("installed_count"):
-                            logger.info(f"Auto-onboarding: {we_stats['installed_count']} Windows sunucuya exporter kuruldu")
-
-                        # Yama/güvenlik raporları için cache — ağır işlemler olduğundan
-                        # (COM update search, SSH turu) 6 saatten eski kontrolü olanlar için çalışır.
-                        winupd_stats = await loop.run_in_executor(None, collect_windows_update_status, db)
-                        if winupd_stats.get("updated"):
-                            logger.info(f"Auto-onboarding: {winupd_stats['updated']} Windows sunucunun update/Defender durumu toplandı")
-
-                        secaudit_stats = await loop.run_in_executor(None, collect_linux_security_audit, db)
-                        if secaudit_stats.get("updated"):
-                            logger.info(f"Auto-onboarding: {secaudit_stats['updated']} Linux sunucunun güvenlik denetimi toplandı")
-
-                        # Uygulama/servis keşfi (Oracle DB, PostgreSQL, Nginx, IIS, MSSQL vb.) —
-                        # sunucu bazında en fazla 12 saatte bir taranır (app_discovery.RESCAN_INTERVAL).
-                        from app.services.app_discovery import discover_applications_all_servers
-                        appdisc_stats = await loop.run_in_executor(None, discover_applications_all_servers, db)
-                        if appdisc_stats.get("scanned"):
-                            logger.info(
-                                f"Auto-onboarding: {appdisc_stats['scanned']} sunucuda uygulama taraması yapıldı "
-                                f"({appdisc_stats.get('apps_found', 0)} uygulama tespit edildi)"
-                            )
-
-                        from app.services import qa_cache
-                        qa_cache.invalidate_all()
-                except Exception as e:
-                    logger.error(f"Auto-onboarding error: {e}", exc_info=True)
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_auto_onboarding
+                await _enqueue_or_run(
+                    "fleet.auto_onboarding", run_auto_onboarding, label="onboarding"
+                )
                 await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
-
             except asyncio.CancelledError:
                 logger.info("Auto-onboarding task cancelled")
                 break
@@ -816,39 +567,18 @@ class BackgroundTaskManager:
                 logger.error(f"Auto-onboarding task error: {e}")
                 await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
 
-
     async def _periodic_linux_inventory_nlq(self):
-        """Linux NL inventory snapshot collector (allowlisted SSH + metrics)."""
-        logger.info("Linux NL inventory collector task started")
+        """Linux NL inventory snapshot — Celery."""
+        logger.info("Linux NL inventory collector task started (Celery)")
         await asyncio.sleep(180)
         while self.running:
             try:
-                from app.services.nlq.linux_inventory_collector import (
-                    get_collector_status,
-                    run_linux_inventory_collection,
+                from app.services.fleet_jobs import run_nlq_linux_inventory
+                await _enqueue_or_run(
+                    "fleet.nlq_linux_inventory",
+                    run_nlq_linux_inventory,
+                    label="nlq",
                 )
-                if get_collector_status().get("running"):
-                    logger.info("NLQ collector already running — skip this tick")
-                else:
-                    workers = min(100, max(1, _rt_sec("nlq_collector_workers", 50)))
-
-                    def _run():
-                        db = SessionLocal()
-                        try:
-                            return run_linux_inventory_collection(
-                                db, workers=workers, only_ai_ready=True,
-                            )
-                        finally:
-                            db.close()
-
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(None, _run)
-                    logger.info(
-                        "NLQ linux inventory: success=%s failed=%s total=%s",
-                        (result or {}).get("success"),
-                        (result or {}).get("failed"),
-                        (result or {}).get("total"),
-                    )
                 await asyncio.sleep(_rt_sec("nlq_collector_interval_sec", 900))
             except asyncio.CancelledError:
                 logger.info("Linux NL inventory collector cancelled")
@@ -857,16 +587,18 @@ class BackgroundTaskManager:
                 logger.error(f"Linux NL inventory collector error: {e}", exc_info=True)
                 await asyncio.sleep(_rt_sec("nlq_collector_interval_sec", 900))
 
-
     async def _periodic_windows_live_metrics(self):
-        """Windows WinRM live-metrics cache — istek yolundan bağımsız yenileme."""
-        logger.info("Windows live-metrics cache task started")
+        """Windows WinRM live-metrics cache — Celery."""
+        logger.info("Windows live-metrics cache task started (Celery)")
         await asyncio.sleep(90)
         while self.running:
             try:
-                from app.services import windows_live_metrics as wlm
-                # refresh_async başlatır veya zaten sürüyorsa no-op
-                wlm.refresh_async()
+                from app.services.fleet_jobs import run_windows_live_metrics
+                await _enqueue_or_run(
+                    "fleet.windows_live_metrics",
+                    run_windows_live_metrics,
+                    label="windows_live",
+                )
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
                 logger.info("Windows live-metrics task cancelled")
@@ -874,7 +606,6 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Windows live-metrics task error: {e}", exc_info=True)
                 await asyncio.sleep(60)
-
 
 def _run_vm_sync_batch(db) -> None:
     """

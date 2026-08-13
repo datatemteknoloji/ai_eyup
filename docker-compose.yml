@@ -111,10 +111,13 @@ services:
       - HOST_ETC_HOSTS=/host-etc-hosts
       # Restore: migration-secrets → host .env yazımı
       - AINEW_INSTALL_MOUNT=/ainew-install
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
       - ./backend/VERSION:/app/VERSION:ro
+      - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro
       - ./docs/rag_seed:/app/docs/rag_seed:ro
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
@@ -152,14 +155,17 @@ services:
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-Kim13Sun}
       - APP_VERSION=${APP_VERSION:-}
       - HOST_ETC_HOSTS=/host-etc-hosts
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
     volumes:
       - ./backend/app:/app/app
       - ./backend/VERSION:/app/VERSION:ro
+      - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro
       - /data/data/chroma:/app/chroma
       - /data/data/repos:/app/repos
       - /data/data/uploads:/app/uploads
       - /etc/hosts:/host-etc-hosts:ro
-    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency", "2"]
     depends_on:
       db:
         condition: service_healthy
