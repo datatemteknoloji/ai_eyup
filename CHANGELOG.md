@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.24] - 2026-08-13
+
 ### Eklendi / iyileştirildi — Linux sunucu kimliği
 - Linux Yönetimi listesi: birincil etiket OS **hostname** (yoksa guest FQDN / name); ikincil satırda IP + VM adı.
 - Arama: hostname, VM adı (`vm_name`), guest hostname ve IP; varsayılan sıralama hostname.
