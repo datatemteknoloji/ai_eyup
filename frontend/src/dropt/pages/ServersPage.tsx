@@ -37,6 +37,7 @@ import {
   ServerPublic,
   ServerStatus,
   testServerConnection,
+  testServerConnectionsBulk,
   updateServer,
   UserPublic,
 } from "@dropt/api";
@@ -127,10 +128,23 @@ export function ServersPage({
   /** Sunucu ekle / Excel import / düzenle — admin (Level 1 Ops Center dahil) */
   const showInventoryCrud = isAdmin;
   const canTestConnection = isAdmin || level1Mode;
-  const token = getToken()!;
   const t = useT();
   const navigate = useNavigate();
   const consoleBase = level1Mode ? "/level1/console" : "/app/servers";
+
+  /** Level 1: JWT cache stale olabilir — her API için canlı oturum al / 401'de yenile. */
+  const withAuth = useCallback(
+    async <T,>(fn: (token: string) => Promise<T>): Promise<T> => {
+      if (level1Mode) {
+        const { withDroptToken } = await import("../../pages/level1/Level1Shell");
+        return withDroptToken(fn);
+      }
+      const tok = getToken();
+      if (!tok) throw new Error("Oturum gerekli");
+      return fn(tok);
+    },
+    [level1Mode],
+  );
 
   const [items, setItems] = useState<ServerPublic[]>([]);
   const [total, setTotal] = useState(0);
@@ -193,12 +207,14 @@ export function ServersPage({
     setLoading(true);
     setError(null);
     try {
-      const data = await listServers(token, {
-        q: q || undefined,
-        status,
-        page,
-        page_size: pageSize,
-      });
+      const data = await withAuth((token) =>
+        listServers(token, {
+          q: q || undefined,
+          status,
+          page,
+          page_size: pageSize,
+        }),
+      );
       setItems(data.items);
       setTotal(data.total);
       setRowSelection({});
@@ -207,14 +223,14 @@ export function ServersPage({
     } finally {
       setLoading(false);
     }
-  }, [token, q, status, page, pageSize, t]);
+  }, [withAuth, q, status, page, pageSize, t]);
 
   useEffect(() => {
-    void getServerDefaults(token).then((d) => setAutomationUsername(d.username));
-    void getAdminSettings(token)
+    void withAuth((token) => getServerDefaults(token)).then((d) => setAutomationUsername(d.username));
+    void withAuth((token) => getAdminSettings(token))
       .then((s) => setAutomationPasswordSet(Boolean(s.automation_password_set)))
       .catch(() => setAutomationPasswordSet(false));
-  }, [token]);
+  }, [withAuth]);
 
   useEffect(() => {
     void load();
@@ -275,14 +291,14 @@ export function ServersPage({
         return;
       }
       try {
-        const result = await testServerConnection(token, server.id);
+        const result = await withAuth((tok) => testServerConnection(tok, server.id));
         setInfo(`${result.hostname}: ${result.last_connection_message}`);
         await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Test failed");
       }
     },
-    [token, load, automationOpsEnabled],
+    [withAuth, load, automationOpsEnabled],
   );
 
   const onDelete = useCallback(
@@ -290,24 +306,26 @@ export function ServersPage({
       if (!window.confirm(t("confirm_delete_server", { hostname: server.hostname }))) return;
       try {
         if (level1Mode) {
-          await ainewInventoryFetch("/level1/inventory/servers/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              dropt_token: token,
-              ip: server.ip,
-              dropt_server_id: server.id,
+          await withAuth(async (tok) =>
+            ainewInventoryFetch("/level1/inventory/servers/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                dropt_token: tok,
+                ip: server.ip,
+                dropt_server_id: server.id,
+              }),
             }),
-          });
+          );
         } else {
-          await deleteServer(token, server.id);
+          await withAuth((tok) => deleteServer(tok, server.id));
         }
         await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Delete failed");
       }
     },
-    [token, load, t, level1Mode],
+    [withAuth, load, t, level1Mode],
   );
 
   const openOpsFor = useCallback((servers: ServerPublic[], x: number, y: number) => {
@@ -570,40 +588,33 @@ export function ServersPage({
     setBulkTestTotal(targets.length);
     setBulkTestCurrent("");
     setBulkTestItems([]);
-    const results: BulkTestItem[] = [];
-    let ok = 0;
-    for (let i = 0; i < targets.length; i += 1) {
-      const s = targets[i];
-      setBulkTestCurrent(s.hostname);
-      setBulkTestDone(i);
-      let item: BulkTestItem;
-      try {
-        const r = await testServerConnection(token, s.id);
-        const success = Boolean(r.connection_ok);
-        if (success) ok += 1;
-        item = {
-          id: s.id,
-          hostname: s.hostname,
-          ok: success,
-          message: r.last_connection_message || (success ? "OK" : "Fail"),
-        };
-      } catch (err) {
-        item = {
-          id: s.id,
-          hostname: s.hostname,
-          ok: false,
-          message: err instanceof Error ? err.message : "Hata",
-        };
-      }
-      results.push(item);
-      setBulkTestItems([...results]);
-      setBulkTestDone(i + 1);
+    try {
+      setBulkTestCurrent(t("bulk_test_parallel", { total: targets.length }));
+      const r = await withAuth((tok) =>
+        testServerConnectionsBulk(
+          tok,
+          targets.map((s) => s.id),
+        ),
+      );
+      const results: BulkTestItem[] = r.items.map((it) => ({
+        id: it.id,
+        hostname: it.hostname || targets.find((s) => s.id === it.id)?.hostname || String(it.id),
+        ok: it.ok,
+        message: it.message || (it.ok ? "OK" : "Fail"),
+      }));
+      setBulkTestItems(results);
+      setBulkTestDone(r.total);
+      setBulkTestCurrent("");
+      setBulkTestFinished(true);
+      setInfo(t("bulk_test_summary", { ok: r.ok, total: r.total }));
+      await load();
+    } catch (err) {
+      setBulkTestFinished(true);
+      setError(err instanceof Error ? err.message : "Toplu bağlantı testi başarısız");
+    } finally {
+      setBulkTesting(false);
+      setBulkTestCurrent("");
     }
-    setBulkTestCurrent("");
-    setBulkTestFinished(true);
-    setBulkTesting(false);
-    setInfo(t("bulk_test_summary", { ok, total: targets.length }));
-    await load();
   }
 
   async function onImportFile(file: File | null) {
@@ -628,7 +639,7 @@ export function ServersPage({
         });
         rows = parsed.rows || [];
       } else {
-        const parsed = await parseServerImport(token, file);
+        const parsed = await withAuth((tok) => parseServerImport(tok, file));
         rows = parsed.rows;
       }
       setImportTotal(rows.length);
@@ -644,16 +655,18 @@ export function ServersPage({
         let item: ServerImportRowResult;
         try {
           if (level1Mode) {
-            const r = await ainewInventoryFetch("/level1/inventory/import/row", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                dropt_token: token,
-                hostname: row.hostname,
-                ip: row.ip,
-                os_type: "linux",
+            const r = await withAuth(async (tok) =>
+              ainewInventoryFetch("/level1/inventory/import/row", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  dropt_token: tok,
+                  hostname: row.hostname,
+                  ip: row.ip,
+                  os_type: "linux",
+                }),
               }),
-            });
+            );
             item = {
               hostname: r.hostname,
               ip: r.ip,
@@ -662,7 +675,7 @@ export function ServersPage({
               server_id: r.server_id ?? r.dropt_server_id ?? null,
             };
           } else {
-            item = await importServerRow(token, row);
+            item = await withAuth((tok) => importServerRow(tok, row));
           }
         } catch (err) {
           item = {
@@ -716,33 +729,37 @@ export function ServersPage({
     try {
       if (level1Mode) {
         if (editing) {
-          const result = await ainewInventoryFetch("/level1/inventory/servers/update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              dropt_token: token,
-              current_ip: editing.ip,
-              hostname: form.hostname,
-              ip: form.ip,
-              dropt_server_id: editing.id,
+          const result = await withAuth(async (tok) =>
+            ainewInventoryFetch("/level1/inventory/servers/update", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                dropt_token: tok,
+                current_ip: editing.ip,
+                hostname: form.hostname,
+                ip: form.ip,
+                dropt_server_id: editing.id,
+              }),
             }),
-          });
+          );
           setDialogOpen(false);
           setInfo(result.message || `${form.hostname} güncellendi`);
         } else {
-          const body: Record<string, unknown> = {
-            dropt_token: token,
-            hostname: form.hostname,
-            ip: form.ip,
-            os_type: "linux",
-          };
-          if (form.password.trim()) {
-            body.ssh_password = form.password.trim();
-          }
-          const result = await ainewInventoryFetch("/level1/inventory/servers", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+          const result = await withAuth(async (tok) => {
+            const body: Record<string, unknown> = {
+              dropt_token: tok,
+              hostname: form.hostname,
+              ip: form.ip,
+              os_type: "linux",
+            };
+            if (form.password.trim()) {
+              body.ssh_password = form.password.trim();
+            }
+            return ainewInventoryFetch("/level1/inventory/servers", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
           });
           setDialogOpen(false);
           setInfo(result.message || `${result.hostname} eklendi`);
@@ -751,18 +768,22 @@ export function ServersPage({
       } else {
         let result: ServerPublic;
         if (editing) {
-          result = await updateServer(token, editing.id, {
-            hostname: form.hostname,
-            ip: form.ip,
-            ...(form.password.trim() ? { password: form.password } : {}),
-            test_connection: true,
-          });
+          result = await withAuth((tok) =>
+            updateServer(tok, editing.id, {
+              hostname: form.hostname,
+              ip: form.ip,
+              ...(form.password.trim() ? { password: form.password } : {}),
+              test_connection: true,
+            }),
+          );
         } else {
-          result = await createServer(token, {
-            hostname: form.hostname,
-            ip: form.ip,
-            password: form.password,
-          });
+          result = await withAuth((tok) =>
+            createServer(tok, {
+              hostname: form.hostname,
+              ip: form.ip,
+              password: form.password,
+            }),
+          );
         }
         setDialogOpen(false);
         setInfo(`${result.hostname}: ${result.last_connection_message}`);
@@ -1262,9 +1283,14 @@ export function ServersPage({
             ) : null}
             <div className="h-2 overflow-hidden rounded-full bg-[var(--color-muted)]">
               <div
-                className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
+                className={`h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300 ${
+                  bulkTesting && !bulkTestFinished && bulkTestDone === 0 ? "w-1/3 animate-pulse" : ""
+                }`}
                 style={{
-                  width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
+                  width:
+                    bulkTesting && !bulkTestFinished && bulkTestDone === 0
+                      ? undefined
+                      : `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
                 }}
               />
             </div>

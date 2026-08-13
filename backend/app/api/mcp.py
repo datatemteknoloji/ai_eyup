@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_active_model, settings
 from app.core.database import get_db
+from app.core.encryption import decrypt_secret
 from app.models.credential import GlobalCredential
 from app.models.server import Server
 from app.services.mcp_client import (
@@ -55,8 +56,8 @@ def _default_credential(db: Session) -> GlobalCredential:
 def _to_mcp_credential(cred: GlobalCredential) -> McpCredential:
     return McpCredential(
         username=cred.username,
-        password=cred.password,
-        private_key=cred.private_key,
+        password=decrypt_secret(cred.password) if cred.password else None,
+        private_key=decrypt_secret(cred.private_key) if cred.private_key else None,
         port=cred.port or 22,
     )
 

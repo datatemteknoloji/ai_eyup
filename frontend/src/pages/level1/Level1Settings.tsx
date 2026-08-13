@@ -1,8 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { KeyRound, Mail, Shield, Package, CheckCircle2, AlertCircle } from 'lucide-react'
-import { Level1Shell } from './Level1Shell'
+import { Level1Shell, withDroptToken } from './Level1Shell'
 import PackageSourcesPanel from './PackageSourcesPanel'
-import { getToken } from '@dropt/session'
 import {
   getAdminSettings,
   updateAdminSettings,
@@ -67,8 +66,7 @@ export default function Level1Settings() {
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    const token = getToken()!
-    const data = await getAdminSettings(token)
+    const data = await withDroptToken((token) => getAdminSettings(token))
     setS(data)
     setUsername(data.automation_username || 'root')
     const k = data.automation_user_kind
@@ -87,13 +85,12 @@ export default function Level1Settings() {
     setErr(null)
     setSaving(true)
     try {
-      const token = getToken()!
       const body: Record<string, unknown> = {
         automation_username: username.trim() === 'root' ? 'root' : username,
         automation_user_kind: username.trim() === 'root' ? 'root' : kind,
       }
       if (password.trim()) body.automation_password = password.trim()
-      const updated = await updateAdminSettings(token, body as any)
+      const updated = await withDroptToken((token) => updateAdminSettings(token, body as any))
       setS(updated)
       setPassword('')
       setMsg('Otomasyon ayarları kaydedildi')
@@ -292,11 +289,12 @@ function MailPanel({ settings, onSaved }: { settings: AdminSettings; onSaved: (s
     setErr(null)
     setSaving(true)
     try {
-      const token = getToken()!
-      const updated = await updateAdminSettings(token, {
-        smtp_host: host,
-        smtp_test_mail: testMail,
-      } as any)
+      const updated = await withDroptToken((token) =>
+        updateAdminSettings(token, {
+          smtp_host: host,
+          smtp_test_mail: testMail,
+        } as any),
+      )
       onSaved(updated)
       setMsg('Mail ayarları kaydedildi')
       setTimeout(() => setMsg(null), 3000)
@@ -347,7 +345,6 @@ function MailPanel({ settings, onSaved }: { settings: AdminSettings; onSaved: (s
 }
 
 function CentrifyPanel() {
-  const token = getToken()!
   const [rows, setRows] = useState<CentrifyCredentialRow[]>([])
   const [username, setUsername] = useState('')
   const [domain, setDomain] = useState('')
@@ -360,9 +357,9 @@ function CentrifyPanel() {
   const [msg, setMsg] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
-    const data = await listCentrifyCredentials(token)
+    const data = await withDroptToken((token) => listCentrifyCredentials(token))
     setRows(data.credentials || [])
-  }, [token])
+  }, [])
 
   useEffect(() => {
     setLoading(true)
@@ -403,11 +400,11 @@ function CentrifyPanel() {
         enabled: true,
       }
       if (editingId != null) {
-        await updateCentrifyCredential(token, editingId, body)
+        await withDroptToken((token) => updateCentrifyCredential(token, editingId, body))
         setMsg(`Güncellendi: ${body.domain}`)
       } else {
         if (!body.password) throw new Error('Yeni kayıt için şifre zorunlu')
-        await createCentrifyCredential(token, { ...body, password: body.password })
+        await withDroptToken((token) => createCentrifyCredential(token, { ...body, password: body.password! }))
         setMsg(`Eklendi: ${body.domain}`)
       }
       resetForm()
@@ -544,7 +541,7 @@ function CentrifyPanel() {
                     type="button"
                     className={dangerBtn}
                     onClick={() =>
-                      void deleteCentrifyCredential(token, r.id)
+                      void withDroptToken((token) => deleteCentrifyCredential(token, r.id))
                         .then(reload)
                         .catch((e) => setError(e instanceof Error ? e.message : 'Silinemedi'))
                     }

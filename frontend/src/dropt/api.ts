@@ -820,6 +820,44 @@ export async function testServerConnection(token: string, id: number): Promise<S
   return res.json();
 }
 
+export type BulkConnectionTestItem = {
+  id: number;
+  hostname: string;
+  ip?: string;
+  ok: boolean;
+  message: string;
+  status?: string | null;
+};
+
+export type BulkConnectionTestResult = {
+  total: number;
+  ok: number;
+  failed: number;
+  workers: number;
+  items: BulkConnectionTestItem[];
+};
+
+export async function testServerConnectionsBulk(
+  token: string,
+  serverIds: number[],
+  opts?: { refreshFacts?: boolean; workers?: number },
+): Promise<BulkConnectionTestResult> {
+  const res = await fetch(apiUrl("/api/servers/test-connections"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      server_ids: serverIds,
+      refresh_facts: opts?.refreshFacts ?? false,
+      ...(opts?.workers != null ? { workers: opts.workers } : {}),
+    }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export async function deleteServer(token: string, id: number): Promise<void> {
   const res = await fetch(apiUrl(`/api/servers/${id}`), {
     method: "DELETE",

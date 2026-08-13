@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.models.server import Server
 from app.models.credential import GlobalCredential
 from app.services.ssh_manager import SSHManager
+from app.services.ssh_credentials import resolve_ssh_creds
 from app.services.agent.policy import classify_command, RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -91,15 +92,25 @@ def run_ssh_command(
             "error": "Varsayılan SSH kimlik bilgisi bulunamadı.",
         }
 
+    # DB Fernet ciphertext — AI Ready / collect ile aynı decrypt yolu zorunlu
+    creds = resolve_ssh_creds(server, global_cred=cred)
+    if not creds.get("has_secret"):
+        return {
+            "ok": False, "stdout": "", "stderr": "",
+            "command": command, "server": server.name,
+            "error": "SSH şifresi veya private key bulunamadı.",
+        }
+
+    plain_sudo = sudo_password_override or creds.get("sudo_password")
     ssh = SSHManager(
-        host=server.ip_address,
-        username=cred.username,
-        password=cred.password,
-        private_key=cred.private_key,
-        port=cred.port or 22,
+        host=creds["host"] or server.ip_address,
+        username=creds["username"],
+        password=creds["password"],
+        private_key=creds["private_key"],
+        port=creds["port"] or 22,
         # Transient override (kullanıcının onayda girdiği root şifresi) varsa onu kullan;
         # bu şifre DB'ye yazılmaz, yalnızca bu çağrı için bellekte tutulur.
-        sudo_password=sudo_password_override or cred.sudo_password,
+        sudo_password=plain_sudo,
     )
 
     if not ssh.connect():
@@ -135,9 +146,7 @@ def run_ssh_command(
             and not use_sudo
             and _perm_denied(stdout, stderr)
         ):
-            sudo_pwd = sudo_password_override or (cred.sudo_password if cred else None)
-
-            if sudo_pwd:
+            if plain_sudo:
                 logger.info(f"[AgentExecutor] Permission denied → sudo retry: {server.name} {exec_cmd[:60]}")
                 try:
                     success2, stdout2, stderr2 = ssh.execute_command(

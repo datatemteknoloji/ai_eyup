@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { getToken as getAinewToken } from '../../auth/authStore'
-import { Level1Shell, ensureDroptSession } from './Level1Shell'
+import { Level1Shell, withDroptToken } from './Level1Shell'
 import { ServersPage } from '@dropt/pages/ServersPage'
 import { I18nProvider } from '@dropt/i18n/I18nProvider'
 import BulkJobOverlay, { beginBulkJobModal } from '../../components/BulkJobOverlay'
@@ -44,25 +44,27 @@ export default function Level1OpsCenter() {
       setSyncMsg(null)
     }
     try {
-      const droptToken = await ensureDroptSession()
-      const res = await fetch(
-        `${API_BASE_URL}/level1/servers/sync-all?background=${background ? 'true' : 'false'}`,
-        {
-          method: 'POST',
-          headers: ainewAuthHeaders(),
-          body: JSON.stringify({ dropt_token: droptToken }),
-        },
-      )
-      const text = await res.text()
-      let data: Record<string, unknown> = {}
-      try {
-        data = text ? JSON.parse(text) : {}
-      } catch {
-        data = {}
-      }
-      if (!res.ok) {
-        throw new Error(syncErrorMessage(data, text.slice(0, 300) || `HTTP ${res.status}`))
-      }
+      const data = await withDroptToken(async (droptToken) => {
+        const res = await fetch(
+          `${API_BASE_URL}/level1/servers/sync-all?background=${background ? 'true' : 'false'}`,
+          {
+            method: 'POST',
+            headers: ainewAuthHeaders(),
+            body: JSON.stringify({ dropt_token: droptToken }),
+          },
+        )
+        const text = await res.text()
+        let parsed: Record<string, unknown> = {}
+        try {
+          parsed = text ? JSON.parse(text) : {}
+        } catch {
+          parsed = {}
+        }
+        if (!res.ok) {
+          throw new Error(syncErrorMessage(parsed, text.slice(0, 300) || `HTTP ${res.status}`))
+        }
+        return parsed
+      })
       localStorage.setItem(SYNC_AT_KEY, String(Date.now()))
       const jobId = typeof data.job_id === 'string' ? data.job_id : null
       if (jobId) {

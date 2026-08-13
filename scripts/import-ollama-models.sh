@@ -8,13 +8,13 @@
 # Kullanım:
 #   ./scripts/import-ollama-models.sh <tarball> [ollama-veri-dizini]
 #
-# Varsayılan ollama-veri-dizini: /data/data/ollama
-#   (docker-compose.prod.yml'deki ollama servisinin volume'ü)
+# Varsayılan ollama-veri-dizini: ${DATA_DIR:-./data}/ollama
+#   (compose ollama volume — kurulum köküne göre)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 TARBALL="${1:-}"
-OLLAMA_DIR="${2:-/data/data/ollama}"
+OLLAMA_DIR="${2:-${DATA_DIR:-./data}/ollama}"
 
 if [[ -z "$TARBALL" || ! -f "$TARBALL" ]]; then
   echo "Kullanım: $0 <tarball> [ollama-veri-dizini]" >&2

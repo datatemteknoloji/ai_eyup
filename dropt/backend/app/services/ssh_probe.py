@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import socket
 
 import paramiko
 
@@ -20,6 +21,22 @@ class BootstrapResult:
     password_ok: bool
     key_installed: bool
     message: str
+
+
+def probe_tcp(
+    *,
+    host: str,
+    port: int,
+    timeout: float = 2.0,
+) -> SshProbeResult:
+    """Fast reachability check before Paramiko (dead hosts fail in ~2s, not 8–12s)."""
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return SshProbeResult(ok=True, message="TCP erişilebilir")
+    except OSError as exc:
+        return SshProbeResult(ok=False, message=f"TCP/{port} erişilemiyor: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        return SshProbeResult(ok=False, message=f"TCP kontrolü başarısız: {exc}")
 
 
 def ensure_portal_keypair() -> tuple[Path, Path]:

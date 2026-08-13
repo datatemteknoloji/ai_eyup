@@ -7,7 +7,7 @@
 import { useEffect, useState, ReactNode } from 'react'
 import { API_BASE_URL } from '../../config/api'
 import { getToken as getAinewToken } from '../../auth/authStore'
-import { getToken as getDroptToken, saveSession } from '@dropt/session'
+import { clearSession, getToken as getDroptToken, saveSession } from '@dropt/session'
 import { TooltipProvider } from '@dropt/components/ui/tooltip'
 import { I18nProvider } from '@dropt/i18n/I18nProvider'
 import { AssistantFab } from '@dropt/components/AssistantFab'
@@ -50,14 +50,37 @@ function cachedDroptTokenValid(): string | null {
   return null
 }
 
+/** JWT henüz dolmamış olsa bile Dropt sunucu oturumu (jti) revoke/idle olabilir. */
+async function isDroptPortalSessionAlive(token: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/dropt/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+export function isDroptSessionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err || '')
+  return /oturum geçersiz|sonlandırılmış|oturum gerekli|oturum yenilenmeli|hareketsizlik|401/i.test(msg)
+}
+
 /**
- * Dropt portal token — cache + in-flight dedupe.
- * `force: true` ile bridge'i yeniden çağırır.
+ * Dropt portal token — cache + sunucu doğrulama + in-flight dedupe.
+ * `force: true` ile bridge'i yeniden çağırır (stale jti temizlenir).
  */
 export async function ensureDroptSession(opts?: { force?: boolean }): Promise<string> {
   if (!opts?.force) {
     const cached = cachedDroptTokenValid()
-    if (cached) return cached
+    if (cached) {
+      if (await isDroptPortalSessionAlive(cached)) return cached
+      // JWT var ama portal session DB'de yok/revoke — hard refresh bile yetmezdi
+      clearSession()
+    }
+  } else {
+    clearSession()
   }
   if (inflightSession) return inflightSession
 
@@ -89,6 +112,18 @@ export async function ensureDroptSession(opts?: { force?: boolean }): Promise<st
   })()
 
   return inflightSession
+}
+
+/** API çağrısı; 401/oturum hatasında bir kez force bridge + retry. */
+export async function withDroptToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
+  const token = await ensureDroptSession()
+  try {
+    return await fn(token)
+  } catch (err) {
+    if (!isDroptSessionError(err)) throw err
+    const fresh = await ensureDroptSession({ force: true })
+    return await fn(fresh)
+  }
 }
 
 /** Sync ainew AI Ayarları → Dropt assistant (model/gateway). Best-effort. */

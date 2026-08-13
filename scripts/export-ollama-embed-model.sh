@@ -9,7 +9,7 @@
 # Varsayılanlar:
 #   çıktı  : ollama-models-nomic-embed-text.tar.gz
 #   models : /usr/share/ollama/.ollama/models  (host ollama) veya
-#            /data/data/ollama/models
+#            ${DATA_DIR:-./data}/ollama/models
 #   model  : nomic-embed-text
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -22,8 +22,8 @@ find_models_dir() {
     "${2:-}"
     "/usr/share/ollama/.ollama/models"
     "${HOME}/.ollama/models"
-    "/data/data/ollama/models"
-    "/data/data/ollama"
+    "${DATA_DIR:-./data}/ollama/models"
+    "${DATA_DIR:-./data}/ollama"
   )
   local d
   for d in "${candidates[@]}"; do

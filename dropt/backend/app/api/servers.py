@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -7,7 +9,7 @@ from sqlmodel import Session, col, func, or_, select
 
 from app.api.deps import get_current_user, require_admin
 from app.assistant.servers import invalidate_server_index
-from app.core.database import get_session
+from app.core.database import engine, get_session
 from app.models.server import Credential, ServerStatus, TargetServer
 from app.models.user import User
 from app.schemas.server import (
@@ -27,6 +29,7 @@ from app.services.ssh_probe import (
     ensure_portal_keypair,
     install_portal_pubkey_with_password,
     probe_ssh_key,
+    probe_tcp,
 )
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -98,6 +101,7 @@ def _bootstrap_connection(
     port: int,
     username: str,
     password: str,
+    refresh_facts: bool = True,
 ) -> bool:
     """
     Enroll / re-enroll a host.
@@ -106,6 +110,12 @@ def _bootstrap_connection(
     """
     ensure_portal_keypair()
 
+    tcp = probe_tcp(host=host, port=port)
+    if not tcp.ok:
+        server.last_connection_message = tcp.message[:1024]
+        server.status = ServerStatus.unreachable
+        return False
+
     key_probe = probe_ssh_key(host=host, port=port, username=username)
     if key_probe.ok:
         server.last_connection_message = (
@@ -113,7 +123,8 @@ def _bootstrap_connection(
         )[:1024]
         server.ssh_key_installed = True
         server.status = ServerStatus.ready
-        _refresh_inventory_facts(session, server)
+        if refresh_facts:
+            _refresh_inventory_facts(session, server)
         return True
 
     result = install_portal_pubkey_with_password(
@@ -126,7 +137,7 @@ def _bootstrap_connection(
     server.last_connection_message = result.message[:1024]
     server.ssh_key_installed = result.key_installed
     server.status = ServerStatus.ready if ok else ServerStatus.unreachable
-    if ok:
+    if ok and refresh_facts:
         _refresh_inventory_facts(session, server)
     return ok
 
@@ -140,6 +151,7 @@ def _test_connection(
     username: str,
     password: str,
     force_reinstall: bool = False,
+    refresh_facts: bool = True,
 ) -> bool:
     """
     Prefer pubkey probe when already installed.
@@ -147,12 +159,19 @@ def _test_connection(
     """
     ensure_portal_keypair()
 
+    tcp = probe_tcp(host=host, port=port)
+    if not tcp.ok:
+        server.last_connection_message = tcp.message[:1024]
+        server.status = ServerStatus.unreachable
+        return False
+
     if server.ssh_key_installed and not force_reinstall:
         key_probe = probe_ssh_key(host=host, port=port, username=username)
         if key_probe.ok:
             server.last_connection_message = key_probe.message[:1024]
             server.status = ServerStatus.ready
-            _refresh_inventory_facts(session, server)
+            if refresh_facts:
+                _refresh_inventory_facts(session, server)
             return True
         # Key flag was stale or host lost authorized_keys — repair below.
 
@@ -163,7 +182,59 @@ def _test_connection(
         port=port,
         username=username,
         password=password,
+        refresh_facts=refresh_facts,
     )
+
+
+def _default_bulk_test_workers() -> int:
+    raw = os.environ.get("DROPT_BULK_TEST_WORKERS", "20").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 20
+    return max(1, min(n, 40))
+
+
+def _ensure_automation_cred(
+    session: Session,
+    server: TargetServer,
+    *,
+    username: str,
+    password: str | None,
+) -> tuple[Credential, str]:
+    """Sync automation username/password onto server credential; return (cred, plain password)."""
+    cred = session.get(Credential, server.credentials_id) if server.credentials_id else None
+    if password:
+        try:
+            crypto = CredentialManager()
+            if cred is None:
+                cred = Credential(
+                    label=f"{server.hostname}-ainew",
+                    ssh_username=username,
+                    encrypted_ssh_password=crypto.encrypt(password),
+                )
+                session.add(cred)
+                session.flush()
+                server.credentials_id = cred.id
+            else:
+                cred.ssh_username = username
+                cred.encrypted_ssh_password = crypto.encrypt(password)
+                session.add(cred)
+        except CredentialCryptoError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
+        return cred, password
+    if cred is None or not cred.encrypted_ssh_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kayıtlı şifre yok")
+    try:
+        plain = CredentialManager().decrypt(cred.encrypted_ssh_password)
+    except CredentialCryptoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    cred.ssh_username = username
+    return cred, plain
 
 
 @router.get("/defaults")
@@ -864,9 +935,165 @@ def update_server(
     return _public(session, server, cred, connection_ok=connection_ok)
 
 
+class BulkConnectionTestIn(BaseModel):
+    server_ids: list[int] = Field(default_factory=list, min_length=1, max_length=500)
+    refresh_facts: bool = False
+    workers: int | None = Field(default=None, ge=1, le=40)
+
+
+class BulkConnectionTestItemOut(BaseModel):
+    id: int
+    hostname: str
+    ip: str = ""
+    ok: bool
+    message: str = ""
+    status: ServerStatus | None = None
+
+
+class BulkConnectionTestOut(BaseModel):
+    total: int
+    ok: int
+    failed: int
+    workers: int
+    items: list[BulkConnectionTestItemOut] = Field(default_factory=list)
+
+
+def _run_one_connection_test(
+    server_id: int,
+    *,
+    username: str,
+    settings_password: str | None,
+    refresh_facts: bool,
+) -> BulkConnectionTestItemOut:
+    """Thread-safe single-host test (own DB session)."""
+    with Session(engine) as session:
+        server = session.get(TargetServer, server_id)
+        if server is None:
+            return BulkConnectionTestItemOut(
+                id=server_id,
+                hostname="",
+                ok=False,
+                message="Sunucu bulunamadı",
+            )
+        hostname = server.hostname
+        ip = server.ip or ""
+        try:
+            cred, password = _ensure_automation_cred(
+                session,
+                server,
+                username=username,
+                password=settings_password,
+            )
+            ok = _test_connection(
+                session,
+                server,
+                host=server.ip,
+                port=server.port,
+                username=username,
+                password=password,
+                refresh_facts=refresh_facts,
+            )
+            server.updated_at = datetime.now(UTC)
+            session.add(cred)
+            session.add(server)
+            session.commit()
+            session.refresh(server)
+            return BulkConnectionTestItemOut(
+                id=server_id,
+                hostname=hostname,
+                ip=ip,
+                ok=ok,
+                message=(server.last_connection_message or "")[:1024],
+                status=server.status,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            return BulkConnectionTestItemOut(
+                id=server_id,
+                hostname=hostname,
+                ip=ip,
+                ok=False,
+                message=detail[:1024],
+            )
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            return BulkConnectionTestItemOut(
+                id=server_id,
+                hostname=hostname,
+                ip=ip,
+                ok=False,
+                message=str(exc)[:1024],
+            )
+
+
+@router.post("/test-connections", response_model=BulkConnectionTestOut)
+def test_connections_bulk(
+    body: BulkConnectionTestIn,
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> BulkConnectionTestOut:
+    """Parallel connection tests for Level 1 Ops Center (SSH probe; facts optional)."""
+    from app.services.bootstrap import automation_password_is_set
+
+    if not automation_password_is_set(session):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Önce Level 1 → Ayarlar’da otomasyon kullanıcı şifresini kaydedin "
+            "(vCenter / Linux envanter kaydı yeterli değildir).",
+        )
+
+    # Dedupe while preserving order
+    seen: set[int] = set()
+    ids: list[int] = []
+    for sid in body.server_ids:
+        if sid not in seen:
+            seen.add(sid)
+            ids.append(sid)
+
+    username = get_automation_username(session)
+    settings_password = get_automation_password(session)
+    workers = body.workers or _default_bulk_test_workers()
+    workers = max(1, min(workers, len(ids), 40))
+
+    # Prefetch portal key once in parent thread
+    ensure_portal_keypair()
+
+    items: list[BulkConnectionTestItemOut] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dropt-bulk-test") as pool:
+        futures = {
+            pool.submit(
+                _run_one_connection_test,
+                sid,
+                username=username,
+                settings_password=settings_password,
+                refresh_facts=body.refresh_facts,
+            ): sid
+            for sid in ids
+        }
+        for fut in as_completed(futures):
+            items.append(fut.result())
+
+    # Stable order matching request
+    by_id = {it.id: it for it in items}
+    ordered = [by_id[sid] for sid in ids if sid in by_id]
+    ok_count = sum(1 for it in ordered if it.ok)
+    invalidate_server_index()
+    return BulkConnectionTestOut(
+        total=len(ordered),
+        ok=ok_count,
+        failed=len(ordered) - ok_count,
+        workers=workers,
+        items=ordered,
+    )
+
+
 @router.post("/{server_id}/test-connection", response_model=ServerPublic)
 def test_connection(
     server_id: int,
+    refresh_facts: bool = Query(
+        False,
+        description="True ise başarılı SSH sonrası inventory facts çekilir (yavaş).",
+    ),
     _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> ServerPublic:
@@ -881,35 +1108,12 @@ def test_connection(
     server = _get_server_or_404(session, server_id)
     username = get_automation_username(session)
     password = get_automation_password(session)
-    cred = session.get(Credential, server.credentials_id) if server.credentials_id else None
-    if password:
-        # Ayarlardaki güncel otomasyon şifresini kullan
-        try:
-            crypto = CredentialManager()
-            if cred is None:
-                cred = Credential(
-                    label=f"{server.hostname}-ainew",
-                    ssh_username=username,
-                    encrypted_ssh_password=crypto.encrypt(password),
-                )
-                session.add(cred)
-                session.flush()
-                server.credentials_id = cred.id
-            else:
-                cred.ssh_username = username
-                cred.encrypted_ssh_password = crypto.encrypt(password)
-                session.add(cred)
-        except CredentialCryptoError as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-    elif cred is None or not cred.encrypted_ssh_password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kayıtlı şifre yok")
-    else:
-        try:
-            password = CredentialManager().decrypt(cred.encrypted_ssh_password)
-        except CredentialCryptoError as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    cred.ssh_username = username
+    cred, password = _ensure_automation_cred(
+        session,
+        server,
+        username=username,
+        password=password,
+    )
     ok = _test_connection(
         session,
         server,
@@ -917,6 +1121,7 @@ def test_connection(
         port=server.port,
         username=username,
         password=password,
+        refresh_facts=refresh_facts,
     )
     server.updated_at = datetime.now(UTC)
     session.add(cred)

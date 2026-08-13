@@ -76,28 +76,30 @@ dosyalarını bozmaz, sadece eksikleri tamamlar. Yaptıkları:
 
 1. Docker CE + Compose plugin kurulumu (yoksa, `dnf` ile resmi Docker reposundan)
 2. **Kurulum dizini seçimi** — varsayılan `/data`.
-   Paket + kalıcı veri + (yeni Docker kurulumunda) Docker data-root hep `/data` altındadır.
-   Veriler `/data/data/` altında; Docker imajları `/data/docker/` altında.
-   `/opt` ve `/var/lib/server_management` kullanılmaz.
+   Paket (compose, `.env`, images) seçilen `INSTALL_DIR` altına kurulur.
+   **Kalıcı veri her zaman `$INSTALL_DIR/data` altındadır** (`DATA_DIR`).
+   Varsayılan `/data` seçildiğinde veri yolu `/data/data` olur; örn. `--install-dir /opt/ainew`
+   ile kurulumda veri `/opt/ainew/data` olur. `/var/lib/server_management` kullanılmaz.
 3. `.env` dosyası: `SECRET_KEY` / `POSTGRES_PASSWORD` rastgele üretilir
    (`GENERATE_WITH_*` placeholder'ları da değiştirilir);
    `ADMIN_DEFAULT_PASSWORD=Kim13Sun` (sabit ilk admin parolası);
-   `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır.
+   `CORS_ORIGINS` sunucunun birincil IP'sine göre ayarlanır;
+   `DATA_DIR` / `AINEW_INSTALL_DIR` / `AINEW_DATA_DIR` kanonik değerlere yazılır.
    Taşıma / rotate: `docs/migration-and-secrets.md`, `./scripts/rotate-secrets.sh`.
-4. Self-signed TLS sertifikası (`<kurulum-dizini>/data/certs`) — 10 yıl geçerli
+4. Self-signed TLS sertifikası (`$DATA_DIR/certs` = `<kurulum-dizini>/data/certs`) — 10 yıl geçerli
 5. `firewalld` üzerinde 80/443/9090/9091 portlarının açılması
 6. İmajların yüklenmesi (`docker load`, offline modda) veya derlenmesi (online modda)
-7. `docker compose -f docker-compose.prod.yml up -d`
+7. `docker compose -f docker-compose.prod.yml up -d` (veya paketteki `docker-compose.yml`)
 8. Sağlık kontrolü ve giriş bilgilerinin ekrana yazdırılması
 
-Kurulum sonunda ekranda şu bilgiler görünür:
+Kurulum sonunda ekranda şu bilgiler görünür (varsayılan `/data` örneği):
 
 ```
 Arayüz         : https://<sunucu-ip>
 Kullanıcı      : admin
 Parola         : <otomatik üretilen parola>
 Kurulum dizini : /data  (paket + .env)
-Veri dizini    : /data/data  (DB, Redis, Chroma, yüklenen dosyalar, Prometheus, sertifikalar, Ollama)
+Veri dizini    : /data/data  (= $INSTALL_DIR/data — DB, Redis, Chroma, uploads, certs, Ollama)
 ```
 
 **Tarayıcı "bağlantı güvenli değil" uyarısı verecektir** — bu normaldir, çünkü
@@ -211,13 +213,15 @@ cat ollama.tar.gz.part01 ollama.tar.gz.part02 > ollama.tar.gz
 sha256sum -c ollama.tar.gz.sha256
 sha256sum -c ollama-models-nomic-embed-text.tar.gz.sha256
 
-# Hedef sunucuda (DATA_DIR'ı .env'den doğrulayın, varsayılan /data/data):
-mkdir -p /data/data/.ollama-runtime-cache
-cp ollama.tar.gz ollama-models-nomic-embed-text.tar.gz /data/data/.ollama-runtime-cache/
+# Hedef sunucuda (DATA_DIR = $INSTALL_DIR/data — .env'den doğrulayın;
+# varsayılan kurulumda /data/data):
+DATA_DIR="${DATA_DIR:-/data/data}"
+mkdir -p "$DATA_DIR/.ollama-runtime-cache" "$DATA_DIR/ollama"
+cp ollama.tar.gz ollama-models-nomic-embed-text.tar.gz "$DATA_DIR/.ollama-runtime-cache/"
 gunzip -c ollama.tar.gz | docker load
-tar xzf ollama-models-nomic-embed-text.tar.gz -C /data/data/ollama
-chmod -R 777 /data/data/ollama
-cd /data && docker compose -f docker-compose.prod.yml --profile ollama up -d
+tar xzf ollama-models-nomic-embed-text.tar.gz -C "$DATA_DIR/ollama"
+chmod -R 777 "$DATA_DIR/ollama"
+cd "${AINEW_INSTALL_DIR:-/data}" && docker compose -f docker-compose.prod.yml --profile ollama up -d
 ```
 
 Cache dizini doluyken bir sonraki `install-rhel.sh` / `update-rhel.sh` çalıştırması
@@ -269,10 +273,11 @@ docker compose -f docker-compose.prod.yml exec db pg_dump -U postgres server_man
 
 ## 7. Güncelleme (yeni sürüm) ve geri alma (rollback)
 
-Kalıcı veri (`DATA_DIR` — DB, Redis, sertifikalar, Ollama modelleri, yüklenen
+Kalıcı veri (`DATA_DIR` = `$INSTALL_DIR/data` — DB, Redis, sertifikalar, Ollama modelleri, yüklenen
 dosyalar) **asla silinmez / üzerine yazılmaz**. Güncelleme sadece uygulama
 dosyalarını ve Docker imaj etiketlerini değiştirir. Her güncellemeden önce
-otomatik yedek alınır.
+otomatik yedek alınır. `update-rhel.sh` `.env` içindeki `DATA_DIR`’i kanonik
+`$INSTALL_DIR/data` değerine hizalar.
 
 ### 7.1 Güncelleme
 
@@ -309,7 +314,10 @@ sudo ./rollback-rhel.sh
 sudo ./rollback-rhel.sh --restore-db
 
 # C) Belirli bir yedeğe dön
-sudo ./rollback-rhel.sh --backup /data/data/backups/pre-update-1.0.0-to-1.0.1-20260713-153000
+# B) Uygulama + Postgres dump geri yüklensin (veri değişikliği de geri alınsın)
+sudo ./rollback-rhel.sh --backup "$DATA_DIR/backups/pre-update-1.0.0-to-1.0.1-20260713-153000"
+# varsayılan kurulumda örn.:
+# sudo ./rollback-rhel.sh --backup /data/data/backups/pre-update-1.0.0-to-1.0.1-20260713-153000
 ```
 
 **Ne zaman `--restore-db`?** Yeni sürüm DB şemasını ileri taşıdıktan sonra

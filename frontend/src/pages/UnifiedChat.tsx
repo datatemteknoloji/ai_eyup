@@ -22,6 +22,7 @@ import {
   loadPersistedSessionId,
   persistSessionId,
 } from '../lib/chatStreamStore'
+import { useChatStickToBottom } from '../lib/chatScroll'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -161,7 +162,6 @@ const UnifiedChat: React.FC<{
     loadPersistedSessionId(streamChannel),
   )
   const [input, setInput] = useState('')
-  const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('unified_chat_selected_model') || 'llama3:70b')
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
@@ -255,7 +255,6 @@ const UnifiedChat: React.FC<{
       abortChatStream(streamChannel)
       setSelectedSessionId(data.id)
       setInput('')
-      setSuppressAutoCreate(false)
     }
   })
 
@@ -280,32 +279,21 @@ const UnifiedChat: React.FC<{
       queryClient.setQueryData<ChatSession[]>(['unified-chat-sessions'], [])
       queryClient.removeQueries({ queryKey: ['unified-chat-messages'] })
       setSelectedSessionId(null)
-      setSuppressAutoCreate(true)
     }
   })
 
-  const scrollToBottom = (force = false) => {
-    const el = messagesContainerRef.current
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (force || nearBottom) el.scrollTop = el.scrollHeight
-  }
-  useEffect(() => { scrollToBottom() }, [messages, streamingText])
+  useChatStickToBottom(messagesContainerRef, {
+    sessionId: selectedSessionId,
+    messageCount: messages.length,
+    followKey: `${streamingText}|${thinkingPhase}|${pendingUserMessage ?? ''}|${isLoading}`,
+    sending: Boolean(pendingUserMessage) || isLoading,
+  })
 
   useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null) {
-      setSelectedSessionId(sessions[0].id)
-      setSuppressAutoCreate(true)
-    }
-  }, [sessions, selectedSessionId])
-
-  // İlk kullanım: hiç chat session'ı yoksa kullanıcıyı "seçim ekranında" bırakmak yerine
-  // otomatik olarak yeni bir sohbet başlat ki doğrudan yazmaya başlayabilsin.
-  useEffect(() => {
-    if (sessionsFetched && sessions.length === 0 && selectedSessionId === null && !createSessionMutation.isPending) {
-      createSessionMutation.mutate()
-    }
-  }, [sessionsFetched, sessions.length, selectedSessionId])
+    if (!sessionsFetched) return
+    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) return
+    setSelectedSessionId(sessions.length > 0 ? sessions[0].id : null)
+  }, [sessionsFetched, sessions, selectedSessionId])
 
   const sendMessage = async (messageText: string) => {
     if (!messageText.trim() || isLoading) return
@@ -313,18 +301,22 @@ const UnifiedChat: React.FC<{
       'update', 'güncelleme', 'yama', 'patch', 'network', 'ağ', 'os', 'işletim sistemi',
       'performans', 'performance', 'kullanım', 'usage', 'güvenlik', 'security', 'durum', 'genel', 'özet']
     const needsContext = CONTEXT_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
-    streamSessionRef.current = selectedSessionId
+    const activeSessionId =
+      selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)
+        ? selectedSessionId
+        : null
+    streamSessionRef.current = activeSessionId
 
     await startChatStream({
       channel: streamChannel,
       url: `${API_BASE_URL}/unified-chat/stream`,
       body: {
         message: messageText,
-        session_id: selectedSessionId,
+        session_id: activeSessionId,
         model: selectedModel,
         use_rag: true,
       },
-      sessionId: selectedSessionId,
+      sessionId: activeSessionId,
       message: messageText,
       initialPhase: needsContext ? 'context' : 'streaming',
       onSessionId: (id) => {

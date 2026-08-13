@@ -102,3 +102,6 @@ docs/rag_seed/**
 !docs/rag_seed/README.md
 !docs/rag_seed/manifest.json
 !docs/rag_seed/.gitkeep
+
+# Runtime kalıcı veri ($INSTALL_DIR/data) — asla commit etme
+/data/

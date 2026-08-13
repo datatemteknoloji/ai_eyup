@@ -11,6 +11,12 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### DATA_DIR kanonik yol
+- Kalıcı veri her zaman `$INSTALL_DIR/data` (örn. `/dttadvance/app/data`). Compose `${DATA_DIR:-./data}`; hardcoded `/data/data` kaldırıldı.
+- `install-rhel.sh` / `update-rhel.sh` DATA_DIR’i kanonik yola zorlar.
+- Doküman (`deployment.md`, `INSTALL_RHEL.md`) aynı kurala güncellendi.
+- Dev `docker-compose.yml`: tüm ana servislere `restart: unless-stopped` (reboot sonrası Dropt ile aynı otomatik kalkış; prod zaten vardı).
+
 ## [1.0.9.25] - 2026-08-13
 
 ### Remote LLM / Bifrost kimlik

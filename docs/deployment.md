@@ -70,7 +70,8 @@ CORS_ORIGINS=https://infra.example.com
 
 - Image: `timescale/timescaledb:latest-pg15`
 - Port: `5432` (host-mapped)
-- Data: `/data/data/postgres` (prod varsayılan; `DATA_DIR`)
+- Data: `$DATA_DIR/postgres` — `DATA_DIR` her zaman `$INSTALL_DIR/data`
+  (varsayılan kurulum `/data` ise → `/data/data/postgres`)
 
 TimescaleDB is used for time-series metric storage. The backend auto-creates hypertables on startup via `init_timescaledb()`.
 
@@ -78,7 +79,7 @@ TimescaleDB is used for time-series metric storage. The backend auto-creates hyp
 
 - Image: `redis:7-alpine`
 - Port: `6379` (host-mapped)
-- Data: `/data/data/redis`
+- Data: `$DATA_DIR/redis` (varsayılan örnek: `/data/data/redis`)
 
 Used as a task queue backend (Celery) and for ephemeral caching.
 
@@ -94,10 +95,12 @@ Used as a task queue backend (Celery) and for ephemeral caching.
 | `/app/app` | `./backend/app` | Live-reload in dev |
 | `/app/static` | `./backend/static` | Static file serving |
 | `/prometheus/targets` | `./prometheus/targets` | Prometheus target files |
-| `/app/chroma` | `/data/data/chroma` | ChromaDB vector store |
-| `/app/repos` | `/data/data/repos` | Local RPM/DEB repo files |
-| `/app/uploads` | `/data/data/uploads` | Uploaded package files (+ `ainew_process_workers.env`) |
-| `/app/updates` | `/data/data/updates` | Platform self-update packages (prod) |
+| `/app/chroma` | `$DATA_DIR/chroma` | ChromaDB vector store |
+| `/app/repos` | `$DATA_DIR/repos` | Local RPM/DEB repo files |
+| `/app/uploads` | `$DATA_DIR/uploads` | Uploaded package files (+ `ainew_process_workers.env`) |
+| `/app/updates` | `$DATA_DIR/updates` | Platform self-update packages (prod) |
+
+Compose bind’leri `${DATA_DIR:-./data}/...` kullanır; `.env` içindeki mutlak `DATA_DIR` geçerli olur.
 
 ### Celery worker (`worker` / `server_management_worker`)
 
@@ -118,15 +121,28 @@ Nginx serves the React SPA and proxies `/api/` requests to the backend at `local
 
 ## Data persistence
 
-**Tek disk politikası:** sunucuda uygulama ve kalıcı veri `/data` altındadır (`/opt`, `/var/lib/server_management` kullanılmaz).
+**Kural:** Kalıcı veri her zaman uygulama kurulum dizininin altında tutulur:
+
+`DATA_DIR="$INSTALL_DIR/data"`
+
+`install-rhel.sh` / `update-rhel.sh` bunu `.env` içine zorlar. Compose volume’ları
+`${DATA_DIR:-./data}/...` şeklindedir (proje köküne göre `./data` varsayılanı).
+
+| Kurulum dizini (`INSTALL_DIR`) | Veri kökü (`DATA_DIR`) |
+|---|---|
+| `/data` (varsayılan) | `/data/data` |
+| `/dttadvance/app` | `/dttadvance/app/data` |
+| `/opt/ainew` | `/opt/ainew/data` |
+
+Örnek ağaç (varsayılan `INSTALL_DIR=/data`):
 
 ```
 /data/                          # INSTALL_DIR — paket, compose, .env, images/
-├── docker-compose.prod.yml
+├── docker-compose.yml
 ├── .env
 ├── VERSION
 ├── images/
-└── data/                       # DATA_DIR (= /data/data)
+└── data/                       # DATA_DIR (= $INSTALL_DIR/data)
     ├── postgres/
     ├── redis/
     ├── chroma/
@@ -135,25 +151,27 @@ Nginx serves the React SPA and proxies `/api/` requests to the backend at `local
     ├── updates/                # GUI / SCP platform paketleri
     ├── prometheus/
     ├── certs/
-    └── ollama/
-/data/docker/                   # Docker data-root (imaj + volume; yeni kurulumda)
+    ├── ollama/
+    └── dropt/                  # Level 1 sidecar DB/redis/artifacts
+/data/docker/                   # Docker data-root (imaj + volume; yeni kurulumda, isteğe bağlı)
 ```
 
-Create these directories before first run if they don't exist:
+Create these directories before first run if they don't exist (`DATA_DIR` değerinizi kullanın):
 
 ```bash
-sudo mkdir -p /data/data/{postgres,redis,chroma,repos,uploads,updates,prometheus,certs,ollama}
-sudo mkdir -p /data/docker/tmp
+# Örnek: INSTALL_DIR=/data → DATA_DIR=/data/data
+sudo mkdir -p "$DATA_DIR"/{postgres,redis,chroma,repos,uploads,updates,prometheus,certs,ollama}
+sudo mkdir -p /data/docker/tmp   # yalnızca Docker data-root /data/docker ise
 # Backend container appuser (uid 100 / gid 102) ile yazar
-sudo chown -R 100:102 /data/data/chroma /data/data/uploads /data/data/repos /data/data/updates
+sudo chown -R 100:102 "$DATA_DIR"/chroma "$DATA_DIR"/uploads "$DATA_DIR"/repos "$DATA_DIR"/updates
 ```
 
 Eski kurulumlarda chroma `root` sahipliğinde kaldıysa:
 
 ```bash
-sudo chown -R 100:102 /data/data/chroma
+sudo chown -R 100:102 "$DATA_DIR"/chroma
 # veya Docker ile:
-docker run --rm -v /data/data/chroma:/chroma alpine chown -R 100:102 /chroma
+docker run --rm -v "$DATA_DIR"/chroma:/chroma alpine chown -R 100:102 /chroma
 ```
 
 ---
@@ -208,6 +226,7 @@ Admin → **Ayarlar → Platform Güncelleme**:
 
 1. Paketi yükleyin **veya** sunucuya bırakın:
    ```bash
+   # DATA_DIR=$INSTALL_DIR/data — varsayılan /data kurulumunda:
    scp ainew-<version>-linux-amd64.tar.gz root@host:/data/data/updates/
    ```
 2. **Hazırla** → hedef sürümü onay kutusuna yazın → **Güncellemeyi Uygula**.
@@ -218,7 +237,7 @@ Gereksinimler (prod compose’da varsayılan):
 
 - `PLATFORM_UPDATE_ENABLED=true`
 - `/var/run/docker.sock` backend’e mount
-- `AINEW_INSTALL_DIR` (ör. `/data`) + `DATA_DIR/updates` (ör. `/data/data/updates`)
+- `AINEW_INSTALL_DIR` (ör. `/data`) + `DATA_DIR` (`$INSTALL_DIR/data`, ör. `/data/data`) + `$DATA_DIR/updates`
 - Updater için host’ta `alpine:3.20` (veya `PLATFORM_UPDATER_IMAGE`) yüklü olmalı — air-gap’te pakete ekleyin veya önceden `docker load` edin
 
 İşlem logları: `$DATA_DIR/updates/apply.log` ve `status.json`.
@@ -231,11 +250,11 @@ Gereksinimler (prod compose’da varsayılan):
 # Backup PostgreSQL
 docker exec server_management_db pg_dump -U postgres server_management > backup.sql
 
-# Backup ChromaDB (vector store)
-tar czf chroma-backup.tar.gz /data/data/chroma
-
-# Backup repos
-tar czf repos-backup.tar.gz /data/data/repos
+# Backup ChromaDB / repos — DATA_DIR'ı .env'den alın
+# shellcheck: source=.env
+DATA_DIR="${DATA_DIR:-$(grep '^DATA_DIR=' .env | cut -d= -f2-)}"
+tar czf chroma-backup.tar.gz "$DATA_DIR/chroma"
+tar czf repos-backup.tar.gz "$DATA_DIR/repos"
 ```
 
 ---

@@ -15,6 +15,7 @@ import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
   NlModelUnavailableBanner, NlChatInput,
 } from '../components/nlChatUi'
+import { useChatStickToBottom } from '../lib/chatScroll'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -375,7 +376,7 @@ export default function HypervisorChat({
           { name: 'llama3:70b', size: 0, parameter_size: '70.6B', family: 'llama' },
         ]
 
-  const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
+  const { data: sessions = [], isLoading: sessionsLoading, isFetched: hvSessionsFetched } = useQuery<ChatSession[]>({
     queryKey: ['hv-chat-sessions', debouncedSearch],
     queryFn: async () => {
       const q = debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : ''
@@ -422,10 +423,10 @@ export default function HypervisorChat({
   }, [selectedSessionId, loadSessionMessages])
 
   useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null && !debouncedSearch) {
-      setSelectedSessionId(sessions[0].id)
-    }
-  }, [sessions, selectedSessionId, debouncedSearch])
+    if (!hvSessionsFetched || debouncedSearch) return
+    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) return
+    setSelectedSessionId(sessions.length > 0 ? sessions[0].id : null)
+  }, [hvSessionsFetched, sessions, selectedSessionId, debouncedSearch])
 
   const createSessionMutation = useMutation({
     mutationFn: async () => {
@@ -467,15 +468,25 @@ export default function HypervisorChat({
     },
   })
 
-  useEffect(() => {
-    const el = messagesContainerRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, loading])
+  useChatStickToBottom(messagesContainerRef, {
+    sessionId: selectedSessionId,
+    messageCount: messages.length,
+    followKey: `${loading}|${messages.map((m) => m.id).join(',')}`,
+    sending: loading,
+  })
 
   const sendQuestion = useCallback(async (q: string, sessionId?: number | null) => {
     if (!q.trim() || loading) return
 
-    let activeSessionId = sessionId ?? selectedSessionId
+    let activeSessionId = sessionId !== undefined ? sessionId : selectedSessionId
+    if (
+      activeSessionId != null &&
+      !debouncedSearch &&
+      sessions.length > 0 &&
+      !sessions.some((s) => s.id === activeSessionId)
+    ) {
+      activeSessionId = null
+    }
 
     const userMsg: Message = {
       id: `tmp-${Date.now()}`,
@@ -531,7 +542,7 @@ export default function HypervisorChat({
     } finally {
       setLoading(false)
     }
-  }, [loading, selectedSessionId, selectedModel, queryClient, loadSessionMessages])
+  }, [loading, selectedSessionId, selectedModel, queryClient, loadSessionMessages, sessions, debouncedSearch])
 
   useEffect(() => {
     if (initialQuestion && !initialHandled.current) {

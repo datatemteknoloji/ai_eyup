@@ -34,6 +34,7 @@ import {
   ServerPublic,
   ServerStatus,
   testServerConnection,
+  testServerConnectionsBulk,
   updateServer,
   UserPublic,
 } from "@/api";
@@ -455,40 +456,31 @@ export function ServersPage() {
     setBulkTestTotal(targets.length);
     setBulkTestCurrent("");
     setBulkTestItems([]);
-    const results: BulkTestItem[] = [];
-    let ok = 0;
-    for (let i = 0; i < targets.length; i += 1) {
-      const s = targets[i];
-      setBulkTestCurrent(s.hostname);
-      setBulkTestDone(i);
-      let item: BulkTestItem;
-      try {
-        const r = await testServerConnection(token, s.id);
-        const success = Boolean(r.connection_ok);
-        if (success) ok += 1;
-        item = {
-          id: s.id,
-          hostname: s.hostname,
-          ok: success,
-          message: r.last_connection_message || (success ? "OK" : "Fail"),
-        };
-      } catch (err) {
-        item = {
-          id: s.id,
-          hostname: s.hostname,
-          ok: false,
-          message: err instanceof Error ? err.message : "Hata",
-        };
-      }
-      results.push(item);
-      setBulkTestItems([...results]);
-      setBulkTestDone(i + 1);
+    try {
+      setBulkTestCurrent(t("bulk_test_parallel", { total: targets.length }));
+      const r = await testServerConnectionsBulk(
+        token,
+        targets.map((s) => s.id),
+      );
+      const results: BulkTestItem[] = r.items.map((it) => ({
+        id: it.id,
+        hostname: it.hostname || targets.find((s) => s.id === it.id)?.hostname || String(it.id),
+        ok: it.ok,
+        message: it.message || (it.ok ? "OK" : "Fail"),
+      }));
+      setBulkTestItems(results);
+      setBulkTestDone(r.total);
+      setBulkTestCurrent("");
+      setBulkTestFinished(true);
+      setInfo(t("bulk_test_summary", { ok: r.ok, total: r.total }));
+      await load();
+    } catch (err) {
+      setBulkTestFinished(true);
+      setError(err instanceof Error ? err.message : "Toplu bağlantı testi başarısız");
+    } finally {
+      setBulkTesting(false);
+      setBulkTestCurrent("");
     }
-    setBulkTestCurrent("");
-    setBulkTestFinished(true);
-    setBulkTesting(false);
-    setInfo(t("bulk_test_summary", { ok, total: targets.length }));
-    await load();
   }
 
   async function onImportFile(file: File | null) {

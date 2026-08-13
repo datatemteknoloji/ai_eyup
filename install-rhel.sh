@@ -86,7 +86,6 @@ fi
 # dizinlerine dağılmaz. Zaten kurulmuşsa (bu dizinde .env varsa) tekrar sorulmaz.
 if [[ -f "$SCRIPT_DIR/$ENV_FILE" ]] && grep -q '^DATA_DIR=' "$SCRIPT_DIR/$ENV_FILE" 2>/dev/null; then
   INSTALL_DIR="$SCRIPT_DIR"
-  DATA_DIR="$(grep '^DATA_DIR=' "$SCRIPT_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
   c_green "Mevcut kurulum tespit edildi, kurulum dizini: $INSTALL_DIR"
 else
   if [[ -z "${INSTALL_DIR:-}" ]]; then
@@ -113,7 +112,13 @@ else
     cd "$INSTALL_DIR"
     SCRIPT_DIR="$INSTALL_DIR"
   fi
-  DATA_DIR="$INSTALL_DIR/data"
+fi
+
+# Kanonik: kalıcı veri her zaman $INSTALL_DIR/data (eski /data/data veya sapmış .env ezilir).
+_OLD_DATA_DIR="$(grep '^DATA_DIR=' "$INSTALL_DIR/$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+DATA_DIR="$INSTALL_DIR/data"
+if [[ -n "$_OLD_DATA_DIR" && "$_OLD_DATA_DIR" != "$DATA_DIR" ]]; then
+  c_yellow "DATA_DIR kanonikleştirildi: $_OLD_DATA_DIR → $DATA_DIR (veriyi elle taşımanız gerekebilir)"
 fi
 
 # Tarball/build kullanıcısı (ör. datatem) sahipliği müşteri host'ta kalmasın.
@@ -283,9 +288,8 @@ fill_env_var "POSTGRES_PASSWORD" "$(openssl rand -hex 16)"
 # İlk kurulum admin parolası sabit — müşteri/operasyon bilinen değerle giriş yapsın
 fill_env_var "ADMIN_DEFAULT_PASSWORD" "Kim13Sun"
 fill_env_var "CORS_ORIGINS" "https://${PRIMARY_IP},http://${PRIMARY_IP}"
-# .env.example DATA_DIR=/data/data sabittir; --install-dir /testdizin/app iken
-# fill_env_var ezmez → certs $INSTALL_DIR/data'ya yazılır, compose /data/data mount eder.
-# Bu yüzden DATA_DIR/AINEW_* her zaman shell'deki kanonik değere ZORLA yazılır.
+# DATA_DIR/AINEW_* her zaman $INSTALL_DIR/data kanonik değerine ZORLA yazılır
+# (compose ${DATA_DIR:-./data} kullanır; .env ile mutlak yol verilir).
 set_env_var "DATA_DIR" "$DATA_DIR"
 set_env_var "AINEW_INSTALL_DIR" "$INSTALL_DIR"
 set_env_var "AINEW_DATA_DIR" "$DATA_DIR"

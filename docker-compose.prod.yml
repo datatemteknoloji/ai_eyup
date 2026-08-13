@@ -18,7 +18,7 @@
 #  - RHEL/SELinux uyumluluğu için bind mount'larda :Z etiketi kullanılır.
 #  - Frontend HTTPS (443) sunar, self-signed sertifika install-rhel.sh ile üretilir.
 #  - DB/Redis portları sadece localhost'a bind edilir.
-#  - Tüm kalıcı veri kökü ${DATA_DIR:-/data/data} altındadır.
+#  - Tüm kalıcı veri kökü ${DATA_DIR:-./data} altındadır.
 #  - Dropt Level 1 sidecar: docker-compose.dropt.yml (include).
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - ${DATA_DIR:-/data/data}/postgres:/var/lib/postgresql/data:Z
+      - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data:Z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -84,7 +84,7 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
-      - ${DATA_DIR:-/data/data}/redis:/data:Z
+      - ${DATA_DIR:-./data}/redis:/data:Z
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -119,11 +119,11 @@ services:
       - APP_VERSION=${APP_VERSION:-}
       - AINEW_BRIDGE_SECRET=${AINEW_BRIDGE_SECRET:-}
       - DROPT_API_URL=${DROPT_API_URL:-http://127.0.0.1:8001}
-      - DATA_DIR=${DATA_DIR:-/data/data}
+      - DATA_DIR=${DATA_DIR:-./data}
       # Platform GUI güncelleme (admin): paket upload + update-rhel.sh host job
       - PLATFORM_UPDATE_ENABLED=${PLATFORM_UPDATE_ENABLED:-true}
       - AINEW_INSTALL_DIR=${AINEW_INSTALL_DIR:-/data}
-      - AINEW_DATA_DIR=${DATA_DIR:-/data/data}
+      - AINEW_DATA_DIR=${DATA_DIR:-./data}
       - AINEW_UPDATES_DIR=/app/updates
       - DOCKER_SOCK=/var/run/docker.sock
       - PLATFORM_UPDATER_IMAGE=${PLATFORM_UPDATER_IMAGE:-alpine:3.20}
@@ -139,17 +139,17 @@ services:
       - ./VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets:Z
       - ./prometheus/targets:/etc/prometheus/targets:Z
-      - ${DATA_DIR:-/data/data}/chroma:/app/chroma:Z
-      - ${DATA_DIR:-/data/data}/repos:/app/repos:Z
-      - ${DATA_DIR:-/data/data}/uploads:/app/uploads:Z
-      - ${DATA_DIR:-/data/data}/updates:/app/updates:Z
+      - ${DATA_DIR:-./data}/chroma:/app/chroma:Z
+      - ${DATA_DIR:-./data}/repos:/app/repos:Z
+      - ${DATA_DIR:-./data}/uploads:/app/uploads:Z
+      - ${DATA_DIR:-./data}/updates:/app/updates:Z
       # GUI self-update: host Docker API (ayrık updater container başlatır)
       - /var/run/docker.sock:/var/run/docker.sock
       # Opsiyonel: REMOTE_LLM_CA_BUNDLE için — self-signed/kurumsal CA PEM dosyanızı
       # ${DATA_DIR}/certs/ altına koyup .env'de REMOTE_LLM_CA_BUNDLE=/app/certs/<dosya>.pem
       # olarak belirtin (aynı dizin, install-rhel.sh'in ürettiği TLS sertifikasını da tutar).
       # TLS UI yönetimi: sertifika yazma + nginx reload
-      - ${DATA_DIR:-/data/data}/certs:/app/certs:Z
+      - ${DATA_DIR:-./data}/certs:/app/certs:Z
       # AD / OpenShift hostname çözümlemesi — host OS /etc/hosts (dinamik)
       - /etc/hosts:/host-etc-hosts:ro
     depends_on:
@@ -175,16 +175,16 @@ services:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY .env dosyasinda tanimli olmali}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD .env dosyasinda tanimli olmali}
       - APP_VERSION=${APP_VERSION:-}
-      - DATA_DIR=${DATA_DIR:-/data/data}
+      - DATA_DIR=${DATA_DIR:-./data}
       - HOST_ETC_HOSTS=/host-etc-hosts
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
       - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
     volumes:
       - ./VERSION:/app/VERSION:ro
       - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro
-      - ${DATA_DIR:-/data/data}/chroma:/app/chroma:Z
-      - ${DATA_DIR:-/data/data}/repos:/app/repos:Z
-      - ${DATA_DIR:-/data/data}/uploads:/app/uploads:Z
+      - ${DATA_DIR:-./data}/chroma:/app/chroma:Z
+      - ${DATA_DIR:-./data}/repos:/app/repos:Z
+      - ${DATA_DIR:-./data}/uploads:/app/uploads:Z
       - /etc/hosts:/host-etc-hosts:ro
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency", "2"]
     depends_on:
@@ -211,7 +211,7 @@ services:
     volumes:
       - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:Z,ro
       # Yazılabilir: frontend entrypoint eksik server.crt/key için self-signed üretir
-      - ${DATA_DIR:-/data/data}/certs:/etc/nginx/certs:Z
+      - ${DATA_DIR:-./data}/certs:/etc/nginx/certs:Z
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -230,7 +230,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:Z,ro
       - ./prometheus/targets:/etc/prometheus/targets:Z
-      - ${DATA_DIR:-/data/data}/prometheus:/prometheus:Z
+      - ${DATA_DIR:-./data}/prometheus:/prometheus:Z
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -271,6 +271,6 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ${DATA_DIR:-/data/data}/ollama:/root/.ollama:Z
+      - ${DATA_DIR:-./data}/ollama:/root/.ollama:Z
     profiles:
       - ollama

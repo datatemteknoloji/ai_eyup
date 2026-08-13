@@ -273,8 +273,11 @@ if [[ "$NEW_PKG_DIR" == "$INSTALL_DIR" ]]; then
   exit 1
 fi
 
-DATA_DIR="$(grep '^DATA_DIR=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
-[[ -z "$DATA_DIR" ]] && DATA_DIR="$INSTALL_DIR/data"
+_OLD_DATA_DIR="$(grep '^DATA_DIR=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+DATA_DIR="$INSTALL_DIR/data"
+if [[ -n "$_OLD_DATA_DIR" && "$_OLD_DATA_DIR" != "$DATA_DIR" ]]; then
+  c_yellow "DATA_DIR kanonikleştirildi: $_OLD_DATA_DIR → $DATA_DIR (veriyi elle taşımanız gerekebilir)"
+fi
 
 OLD_VERSION="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")"
 NEW_VERSION="$(cat "$NEW_PKG_DIR/VERSION" 2>/dev/null || echo "unknown")"
@@ -443,7 +446,9 @@ fill_if_empty "DROPT_POSTGRES_PASSWORD" "$(openssl rand -hex 16)" "$INSTALL_DIR/
 fill_if_empty "DROPT_POSTGRES_DB" "dttportal" "$INSTALL_DIR/$ENV_FILE"
 fill_if_empty "DROPT_API_IMAGE" "dropt-api:local" "$INSTALL_DIR/$ENV_FILE"
 fill_if_empty "DROPT_PULL_POLICY" "never" "$INSTALL_DIR/$ENV_FILE"
-fill_if_empty "DATA_DIR" "$DATA_DIR" "$INSTALL_DIR/$ENV_FILE"
+set_env "DATA_DIR" "$DATA_DIR" "$INSTALL_DIR/$ENV_FILE"
+set_env "AINEW_INSTALL_DIR" "$INSTALL_DIR" "$INSTALL_DIR/$ENV_FILE"
+set_env "AINEW_DATA_DIR" "$DATA_DIR" "$INSTALL_DIR/$ENV_FILE"
 if [[ -f "$INSTALL_DIR/dropt/.env.example" && ! -f "$INSTALL_DIR/dropt/.env" ]]; then
   cp "$INSTALL_DIR/dropt/.env.example" "$INSTALL_DIR/dropt/.env"
 fi

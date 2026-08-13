@@ -24,7 +24,7 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
-      - ${DATA_DIR:-/data/data}/dropt/postgres:/var/lib/postgresql/data:Z
+      - ${DATA_DIR:-./data}/dropt/postgres:/var/lib/postgresql/data:Z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DROPT_POSTGRES_USER:-dtt} -d ${DROPT_POSTGRES_DB:-dttportal}"]
       interval: 5s
@@ -45,7 +45,7 @@ services:
     ports:
       - "127.0.0.1:6380:6379"
     volumes:
-      - ${DATA_DIR:-/data/data}/dropt/redis:/data:Z
+      - ${DATA_DIR:-./data}/dropt/redis:/data:Z
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -78,11 +78,11 @@ services:
       AINEW_BRIDGE_SECRET: ${AINEW_BRIDGE_SECRET:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost,http://localhost:3000}
     volumes:
-      - ${DATA_DIR:-/data/data}/dropt/ssh-keys:/ssh-keys:Z
-      - ${DATA_DIR:-/data/data}/dropt/artifacts:/artifacts:Z
-      - ${DATA_DIR:-/data/data}/dropt/keytabs:/keytabs:Z
-      - ${DATA_DIR:-/data/data}/dropt/certs:/certs:Z
-      - ${DATA_DIR:-/data/data}/dropt/rpms:/var/lib/dropt/rpms:Z,ro
+      - ${DATA_DIR:-./data}/dropt/ssh-keys:/ssh-keys:Z
+      - ${DATA_DIR:-./data}/dropt/artifacts:/artifacts:Z
+      - ${DATA_DIR:-./data}/dropt/keytabs:/keytabs:Z
+      - ${DATA_DIR:-./data}/dropt/certs:/certs:Z
+      - ${DATA_DIR:-./data}/dropt/rpms:/var/lib/dropt/rpms:Z,ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/hosts:/host-etc-hosts:ro
     # 0.0.0.0: frontend nginx (host.docker.internal) + host-network backend erişir
@@ -121,9 +121,9 @@ services:
       PORTAL_ARTIFACT_DIR: /artifacts
       AINEW_BRIDGE_SECRET: ${AINEW_BRIDGE_SECRET:-}
     volumes:
-      - ${DATA_DIR:-/data/data}/dropt/ssh-keys:/ssh-keys:Z
-      - ${DATA_DIR:-/data/data}/dropt/artifacts:/artifacts:Z
-      - ${DATA_DIR:-/data/data}/dropt/rpms:/var/lib/dropt/rpms:Z,ro
+      - ${DATA_DIR:-./data}/dropt/ssh-keys:/ssh-keys:Z
+      - ${DATA_DIR:-./data}/dropt/artifacts:/artifacts:Z
+      - ${DATA_DIR:-./data}/dropt/rpms:/var/lib/dropt/rpms:Z,ro
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
     depends_on:
       dropt-db:

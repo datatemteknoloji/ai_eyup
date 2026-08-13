@@ -19,7 +19,7 @@ Taşıma sonrası Dropt portal bağımlılığı kapatılabilir:
 
 1. Bu hostta sidecar health + Level 1 console smoke doğrulandıktan sonra
 2. 133 üzerinde `app-api-1` / `app-worker-1` / `app-frontend-1` durdurulabilir
-3. DB dump yedek: `/data/data/dropt/dttportal.dump` (bu hostta restore edilmiş)
+3. DB dump yedek: `$DATA_DIR/dropt/dttportal.dump` (örn. varsayılan kurulumda `/data/data/dropt/…`)
 4. Geri dönüş: dump’ı yeniden yükle + `docker compose -f docker-compose.dropt.yml up -d`
 
 ## Bilinçli ertelenenler

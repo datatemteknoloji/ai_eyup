@@ -32,6 +32,7 @@ import {
   loadPersistedSessionId,
   persistSessionId,
 } from '../lib/chatStreamStore'
+import { useChatStickToBottom } from '../lib/chatScroll'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -174,7 +175,6 @@ const Chat: React.FC<{
   const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
-  const [_suppressAutoCreate, setSuppressAutoCreate] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
   // Envanter NLQ UI kaldırıldı — doğal dil = canlı/agentic (Virt formu)
@@ -320,7 +320,6 @@ const Chat: React.FC<{
       abortChatStream(streamChannel)
       setSelectedSessionId(data.id)
       setInput('')
-      setSuppressAutoCreate(false)
     }
   })
 
@@ -345,32 +344,21 @@ const Chat: React.FC<{
       queryClient.setQueryData<ChatSession[]>(['chat-sessions', inventoryPlatform], [])
       queryClient.removeQueries({ queryKey: ['chat-messages'] })
       setSelectedSessionId(null)
-      setSuppressAutoCreate(true)
     }
   })
 
-  const scrollToBottom = (force = false) => {
-    const el = messagesContainerRef.current
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (force || nearBottom) el.scrollTop = el.scrollHeight
-  }
-  useEffect(() => { scrollToBottom() }, [messages, streamingText])
+  useChatStickToBottom(messagesContainerRef, {
+    sessionId: selectedSessionId,
+    messageCount: messages.length + localInventoryMessages.length,
+    followKey: `${streamingText}|${thinkingPhase}|${pendingUserMessage ?? ''}|${isLoading}`,
+    sending: Boolean(pendingUserMessage) || isLoading,
+  })
 
   useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null) {
-      setSelectedSessionId(sessions[0].id)
-      setSuppressAutoCreate(true)
-    }
-  }, [sessions, selectedSessionId])
-
-  // İlk kullanım: hiç chat session'ı yoksa kullanıcıyı "seçim ekranında" bırakmak yerine
-  // otomatik olarak yeni bir sohbet başlat ki doğrudan yazmaya başlayabilsin.
-  useEffect(() => {
-    if (sessionsFetched && sessions.length === 0 && selectedSessionId === null && !createSessionMutation.isPending) {
-      createSessionMutation.mutate()
-    }
-  }, [sessionsFetched, sessions.length, selectedSessionId])
+    if (!sessionsFetched) return
+    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) return
+    setSelectedSessionId(sessions.length > 0 ? sessions[0].id : null)
+  }, [sessionsFetched, sessions, selectedSessionId])
 
   const sendInventoryQuery = async (messageText: string) => {
     // Envanter NLQ kapalı (effectiveInventoryMode=false); yedek yol — stream store kullanma
@@ -463,14 +451,18 @@ const Chat: React.FC<{
       'multipath','lvm','vgdisplay','oom','coredump','smartctl','crontab','nftables',
       'docker','podman','kubectl','container','neden','kök neden','teşhis','diagnos']
     const needsSsh = SSH_ONLY_KEYWORDS.some(k => messageText.toLowerCase().includes(k))
-    streamSessionRef.current = selectedSessionId
+    const activeSessionId =
+      selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)
+        ? selectedSessionId
+        : null
+    streamSessionRef.current = activeSessionId
 
     await startChatStream({
       channel: streamChannel,
       url: `${API_BASE_URL}/chat/stream`,
       body: {
         message: messageText,
-        session_id: selectedSessionId,
+        session_id: activeSessionId,
         server_ids: selectedServers.length > 0 ? selectedServers : undefined,
         hypervisor_ids: undefined,
         model: selectedModel,
@@ -478,7 +470,7 @@ const Chat: React.FC<{
         ephemeral: false,
         platform: inventoryPlatform,
       },
-      sessionId: selectedSessionId,
+      sessionId: activeSessionId,
       message: messageText,
       initialPhase: needsSsh ? 'context' : 'streaming',
       onSessionId: (id) => {

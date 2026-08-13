@@ -6,8 +6,9 @@
 set -e
 cd "$(dirname "$0")"
 
-# Veri dizinleri (opsiyonel; Docker volume mount ile de oluşabilir)
-mkdir -p /data/data/chroma /data/data/redis /data/data/prometheus 2>/dev/null || true
+# Veri dizinleri — uygulama kökü altında ./data (DATA_DIR)
+mkdir -p ./data/{chroma,redis,prometheus,postgres,uploads,repos,certs,ollama,hf_cache} \
+  ./data/dropt/{postgres,redis,ssh-keys,artifacts,keytabs,certs,rpms} 2>/dev/null || true
 
 COMPOSE="docker-compose"
 command -v docker-compose >/dev/null 2>&1 || COMPOSE="docker compose"
