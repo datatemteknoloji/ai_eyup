@@ -588,7 +588,7 @@ ensure_ollama_runtime
 c_yellow "Not: Eski imajlar (${OLD_BACKEND:-eski} / ${OLD_FRONTEND:-eski}) rollback için Docker'da bırakıldı."
 
 # ── 5. Servisleri yeni imajlarla ayağa kaldır ───────────────────────────────
-step "Servisler yeniden başlatılıyor (--no-build)"
+step "Compose ortamı hazırlanıyor"
 cd "$INSTALL_DIR"
 # Docker data-root tmp (load sonrası da güvenli)
 if docker info >/dev/null 2>&1; then
@@ -617,36 +617,57 @@ elif [[ -f "$INSTALL_DIR/WITH_OLLAMA" ]]; then
   c_yellow "  docker compose --profile ollama -f $COMPOSE_FILE up -d"
 fi
 
-if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
-  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never
-else
-  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
-fi
+# set -e tuzağı: dropt-api eski PG volume şifresiyle düşerse ALTER'a gelinmesin.
+# Önce DB/Redis, unix/local trust ile ALTER USER, sonra uygulama.
+compose_up() {
+  if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
+    docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never "$@"
+  else
+    docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build "$@"
+  fi
+}
 
-# Mevcut Postgres volume + .env şifresi: ALTER USER ile senkron
-_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
-if [[ -n "$_MAIN_PG" ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'server_management_db'; then
-  for _i in $(seq 1 20); do
-    docker exec server_management_db pg_isready -U postgres >/dev/null 2>&1 && break
+sync_postgres_password() {
+  local container="$1" user="$2" password="$3" label="$4"
+  [[ -n "$password" ]] || return 0
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+    return 0
+  fi
+  local i
+  for i in $(seq 1 60); do
+    docker exec "$container" pg_isready -U "$user" >/dev/null 2>&1 && break
     sleep 1
   done
-  docker exec server_management_db psql -U postgres -d postgres \
-    -c "ALTER USER postgres WITH PASSWORD '${_MAIN_PG}';" >/dev/null 2>&1 \
-    && c_green "ainew Postgres şifresi .env ile senkron." || true
-fi
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'dropt_db'; then
-  _MP="$(grep '^DROPT_POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
-  if [[ -n "$_MP" ]]; then
-    for _i in $(seq 1 20); do
-      docker exec dropt_db pg_isready -U dtt >/dev/null 2>&1 && break
-      sleep 1
-    done
-    docker exec dropt_db psql -U dtt -d postgres -c "ALTER USER dtt WITH PASSWORD '${_MP}';" >/dev/null 2>&1 \
-      && c_green "Dropt DB şifresi .env ile senkron." || true
+  local esc="${password//\'/\'\'}"
+  if docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
+      -c "ALTER USER ${user} WITH PASSWORD '${esc}';" >/dev/null 2>&1; then
+    c_green "${label} kullanıcı şifresi .env ile senkronlandı."
+  else
+    c_yellow "${label} şifre senkronu atlandı (${container} SQL kabul etmiyor)."
   fi
+}
+
+step "Veri katmanı başlatılıyor (DB/Redis)"
+INFRA_SVCS=(db redis prometheus pushgateway)
+if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docker-compose.dropt.yml ]]; then
+  INFRA_SVCS+=(dropt-db dropt-redis)
 fi
-docker compose -f "$COMPOSE_FILE" --project-directory "$INSTALL_DIR" \
-  up -d --no-build backend dropt-api dropt-worker 2>/dev/null || true
+compose_up "${INFRA_SVCS[@]}" || true
+
+step "DB kümeleri .env ile hizalanıyor"
+_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)"
+sync_postgres_password "server_management_db" "postgres" "$_MAIN_PG" "ainew Postgres"
+if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docker-compose.dropt.yml ]]; then
+  sync_postgres_password "dropt_db" "dtt" \
+    "$(grep '^DROPT_POSTGRES_PASSWORD=' "$INSTALL_DIR/$ENV_FILE" | head -1 | cut -d= -f2-)" \
+    "Dropt DB"
+fi
+
+step "Servisler yeniden başlatılıyor (--no-build)"
+if ! compose_up; then
+  c_yellow "İlk up tam bitmedi — backend/Dropt yeniden deneniyor"
+  compose_up backend dropt-api dropt-worker || compose_up backend || true
+fi
 
 step "Sağlık kontrolü"
 READY=0

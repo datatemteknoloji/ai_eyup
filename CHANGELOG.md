@@ -13,6 +13,10 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [1.0.9.25] - 2026-08-14
 
+### Düzeltildi — kurulum / Dropt Postgres şifresi
+- Eski `data/dropt/postgres` (veya ainew Timescale) + yeni `.env` şifresi: `install-rhel.sh` / `update-rhel.sh` önce yalnızca DB/Redis açar, unix/local trust ile `ALTER USER`, sonra `dropt-api` (ağ scram). `set -e` yüzünden ALTER’a hiç gelmeme tuzağı kalktı.
+- Timescale/PG data paket imajıyla açılmazsa silinmez; `*.bak-incompatible-*` olarak kenara alınıp boş küme init edilir.
+
 ### Level 1 / Operasyon merkezi
 - Tek-host sihirbazlar (hostname, reboot, terminal, servis, path, log, sysctl, limits, network, VLAN): Ops Center / konsol `serverId` ile açılınca sunucu listesi yok; `hostname · IP` özeti.
 - Yerel kullanıcılar: tüm işlemler çoklu sunucuda; ayrı `bulk_lock` menü öğesi kalktı. Kullanıcı tablosu yalnızca tek sunucu seçiliyken görünür.

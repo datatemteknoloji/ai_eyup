@@ -11,7 +11,9 @@
 #      bulunduğu klasörü işaret eder — internete hiç çıkılmadan yüklenir)
 #
 # Bu betik idempotent'tir: tekrar çalıştırılırsa mevcut .env / sertifika
-# dosyalarını korur, sadece eksik olanları tamamlar.
+# dosyalarını korur. Eski Postgres data (önceki kurulum volume'ü) paket
+# imajı / yeni .env şifresiyle uyumsuzsa önce ALTER USER; olmazsa data
+# silinmez, *.bak-incompatible-* olarak kenara alınıp boş küme açılır.
 #
 # Ne yapar:
 #   1. Docker CE + Compose plugin kurulumu (yoksa)
@@ -770,7 +772,7 @@ if ! require_local_images; then
 fi
 
 # ── 7. Servisleri başlat (asla registry pull / build yok) ───────────────────
-step "Servisler başlatılıyor (--no-build)"
+step "Compose ortamı hazırlanıyor"
 set -a; source "$ENV_FILE"; set +a
 
 WITH_OLLAMA_PKG=0
@@ -824,51 +826,136 @@ if [[ "$WITH_OLLAMA_PKG" -eq 1 ]]; then
   fi
 fi
 
-# Compose v2: --pull never desteklenirse kullan; eski sürümlerde sadece --no-build
-if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
-  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never
-else
-  docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build
-fi
+# Compose v2: --pull never desteklenirse kullan; eski sürümlerde sadece --no-build.
+# set -e tuzağı: dropt-api eski PG volume şifresi yüzünden düşerse ALTER
+# adımına hiç gelinmesin. Önce yalnızca DB/Redis, sonra şifre, sonra uygulama.
+compose_up() {
+  if docker compose -f "$COMPOSE_FILE" up -d --help 2>&1 | grep -q -- '--pull'; then
+    docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build --pull never "$@"
+  else
+    docker compose "${COMPOSE_PROFILES[@]}" -f "$COMPOSE_FILE" up -d --no-build "$@"
+  fi
+}
 
-# Dropt Postgres volume önceki kurulumdan kalmışsa .env şifresi ile uyuşmayabilir
-# (init yalnızca ilk seferde POSTGRES_PASSWORD uygular). Local trust ile ALTER USER.
+wait_pg_ready() {
+  local container="$1" user="$2"
+  local i
+  for i in $(seq 1 60); do
+    if docker exec "$container" pg_isready -U "$user" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+pg_select_ok() {
+  local container="$1" user="$2"
+  docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1
+}
+
 sync_postgres_password() {
   local container="$1" user="$2" password="$3" label="$4"
   [[ -n "$password" ]] || return 0
   if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
     return 0
   fi
+  wait_pg_ready "$container" "$user" || true
+  local esc="${password//\'/\'\'}"
+  if docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
+      -c "ALTER USER ${user} WITH PASSWORD '${esc}';" >/dev/null 2>&1; then
+    c_green "${label} kullanıcı şifresi .env ile senkronlandı."
+    return 0
+  fi
+  c_yellow "${label} şifre senkronu atlandı (${container} SQL kabul etmiyor)."
+  return 1
+}
+
+# Önceki kurulum / dev compose (timescaledb:latest) data'sı paket imajıyla
+# (ör. 2.17.2) açılmaz. Silinmez; kenara alınıp boş küme init edilir.
+quarantine_pgdata_and_reinit() {
+  local service="$1" container="$2" datadir="$3" user="$4" label="$5"
+  local bak="${datadir}.bak-incompatible-$(date +%Y%m%dT%H%M%S)"
+  c_yellow "${label}: mevcut Postgres data bu paket imajıyla uyumsuz (şifre veya Timescale sürümü)."
+  c_yellow "  Kenara alınıyor (silinmez): $bak"
+  docker compose -f "$COMPOSE_FILE" stop "$service" >/dev/null 2>&1 || true
+  docker compose -f "$COMPOSE_FILE" rm -f -s "$service" >/dev/null 2>&1 || true
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  if [[ -e "$datadir" ]]; then
+    mv "$datadir" "$bak"
+  fi
+  mkdir -p "$datadir"
+  chmod 700 "$datadir" 2>/dev/null || true
+  compose_up "$service" || true
+  if ! wait_pg_ready "$container" "$user"; then
+    c_red "${label} yeniden oluşturulamadı — $container loguna bakın."
+    return 1
+  fi
   local i
   for i in $(seq 1 30); do
-    if docker exec "$container" pg_isready -U "$user" >/dev/null 2>&1; then
-      break
+    if pg_select_ok "$container" "$user"; then
+      c_green "${label} boş küme ile yeniden oluşturuldu."
+      return 0
     fi
     sleep 1
   done
-  if docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
-      -c "ALTER USER ${user} WITH PASSWORD '${password}';" >/dev/null 2>&1; then
-    c_green "${label} kullanıcı şifresi .env ile senkronlandı."
-  else
-    c_yellow "${label} şifre senkronu atlandı (${container} hazır değil veya psql hata)."
+  c_red "${label} init tamamlanmadı."
+  return 1
+}
+
+prepare_postgres_cluster() {
+  local container="$1" user="$2" password="$3" service="$4" datadir="$5" label="$6"
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+    c_yellow "${label} container yok — atlanıyor."
+    return 0
   fi
+  if ! wait_pg_ready "$container" "$user"; then
+    c_yellow "${label} henüz hazır değil — şifre senkronu atlandı (data dokunulmadı)."
+    return 0
+  fi
+  # local/127.0.0.1 trust: SELECT 1 geçer, ağ scram eski volume şifresini bekler.
+  # ALTER USER unix soketi üzerinden .env ile eşler; dropt-api ancak ondan sonra kalkar.
+  if pg_select_ok "$container" "$user"; then
+    sync_postgres_password "$container" "$user" "$password" "$label" || true
+    return 0
+  fi
+  local err
+  err="$(docker exec "$container" psql -U "$user" -d postgres -c 'SELECT 1' 2>&1 || true)"
+  if echo "$err" | grep -Eqi 'timescaledb|could not access file|database files are incompatible|PG_VERSION'; then
+    quarantine_pgdata_and_reinit "$service" "$container" "$datadir" "$user" "$label" || return 0
+    sync_postgres_password "$container" "$user" "$password" "$label" || true
+    return 0
+  fi
+  if sync_postgres_password "$container" "$user" "$password" "$label"; then
+    return 0
+  fi
+  c_yellow "${label}: ALTER de olmadı — data kenara alınıp sıfır küme açılacak."
+  quarantine_pgdata_and_reinit "$service" "$container" "$datadir" "$user" "$label" || true
+  sync_postgres_password "$container" "$user" "$password" "$label" || true
 }
-sync_dropt_db_password() {
-  local mp
-  mp="$(grep '^DROPT_POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
-  sync_postgres_password "dropt_db" "dtt" "$mp" "Dropt DB"
-}
-step "DB şifreleri senkronize ediliyor (kalıcı volume + yeni .env)"
-_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
-sync_postgres_password "server_management_db" "postgres" "$_MAIN_PG" "ainew Postgres"
+
+step "Veri katmanı başlatılıyor (DB/Redis)"
+INFRA_SVCS=(db redis prometheus pushgateway)
 if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docker-compose.dropt.yml ]]; then
-  sync_dropt_db_password
-  # API'yi yeni şifre / düzeltilmiş dropt/.env ile yeniden bağla
-  docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate backend dropt-api dropt-worker 2>/dev/null \
-    || docker compose -f "$COMPOSE_FILE" up -d --no-build backend dropt-api dropt-worker 2>/dev/null || true
-else
-  docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate backend 2>/dev/null \
-    || docker compose -f "$COMPOSE_FILE" up -d --no-build backend 2>/dev/null || true
+  INFRA_SVCS+=(dropt-db dropt-redis)
+fi
+compose_up "${INFRA_SVCS[@]}" || true
+
+step "DB kümeleri .env ile hizalanıyor (eski volume / Timescale uyumsuzluğu)"
+_MAIN_PG="$(grep '^POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+prepare_postgres_cluster \
+  "server_management_db" "postgres" "$_MAIN_PG" \
+  "db" "$DATA_DIR/postgres" "ainew Postgres"
+if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docker-compose.dropt.yml ]]; then
+  prepare_postgres_cluster \
+    "dropt_db" "dtt" "$(grep '^DROPT_POSTGRES_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)" \
+    "dropt-db" "$DATA_DIR/dropt/postgres" "Dropt DB"
+fi
+
+step "Servisler başlatılıyor (--no-build)"
+if ! compose_up; then
+  c_yellow "İlk up tam bitmedi — backend/Dropt yeniden deneniyor"
+  compose_up backend dropt-api dropt-worker || compose_up backend || true
 fi
 
 if [[ ${#COMPOSE_PROFILES[@]} -gt 0 ]]; then
