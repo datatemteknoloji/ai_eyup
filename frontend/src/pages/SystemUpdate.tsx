@@ -3,6 +3,8 @@ import {
   AlertTriangle, CheckCircle2, XCircle, Lock, Zap, RefreshCw, Lightbulb,
   ClipboardList, Shield, Camera, Globe, Settings as SettingsIcon,
 } from 'lucide-react'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ServerItem {
@@ -64,11 +66,11 @@ const DISTRO_LIST = [
   { key: '',       label: 'Tüm Dağıtımlar',           short: 'Tümü',   icon: '', color: 'border-slate-500/60 bg-white/[0.07]/30',  match: [] },
 ]
 
-const UPDATE_TYPES = [
-  { key: 'security', label: 'Güvenlik',       desc: 'Yalnızca CVE & güvenlik yamaları',  icon: 'SEC', color: 'border-orange-500 bg-orange-500/10 text-orange-300' },
-  { key: 'kernel',   label: 'Kernel',         desc: 'Linux çekirdeği güncellemesi',       icon: 'KRN', color: 'border-blue-500 bg-blue-500/10 text-blue-300' },
-  { key: 'all',      label: 'Tüm Paketler',   desc: 'Sistemdeki tüm paketleri güncelle',  icon: 'ALL', color: 'border-blue-500   bg-blue-500/10   text-blue-300'   },
-  { key: 'custom',   label: 'Seçili Paketler',desc: 'Listeden belirli paketleri seç',     icon: 'SEÇ', color: 'border-cyan-500   bg-cyan-500/10   text-cyan-300'    },
+const UPDATE_TYPE_KEYS = [
+  { key: 'security', labelKey: 'upd_type_security' as const, descKey: 'upd_type_security_desc' as const,  icon: 'SEC', color: 'border-orange-500 bg-orange-500/10 text-orange-300' },
+  { key: 'kernel',   labelKey: 'upd_type_kernel' as const,   descKey: 'upd_type_kernel_desc' as const,    icon: 'KRN', color: 'border-blue-500 bg-blue-500/10 text-blue-300' },
+  { key: 'all',      labelKey: 'upd_type_all' as const,      descKey: 'upd_type_all_desc' as const,       icon: 'ALL', color: 'border-blue-500   bg-blue-500/10   text-blue-300'   },
+  { key: 'custom',   labelKey: 'upd_type_custom' as const,   descKey: 'upd_type_custom_desc' as const,    icon: 'SEÇ', color: 'border-cyan-500   bg-cyan-500/10   text-cyan-300'    },
 ]
 
 const STATUS_COLOR: Record<string, string> = {
@@ -76,28 +78,43 @@ const STATUS_COLOR: Record<string, string> = {
   running: 'text-blue-400 animate-pulse', completed: 'text-green-400',
   failed: 'text-red-400', partial: 'text-orange-400', pending: 'text-slate-400', skipped: 'text-slate-500',
 }
-const STATUS_LABEL: Record<string, string> = {
-  draft: 'Taslak', ai_analyzing: 'AI Analiz...', ai_done: 'Hazır',
-  running: 'Çalışıyor', completed: 'Tamamlandı', failed: 'Başarısız',
-  partial: 'Kısmi', pending: 'Bekliyor', skipped: 'Atlandı',
+const STATUS_KEYS: Record<string, TranslationKey> = {
+  draft: 'upd_status_draft', ai_analyzing: 'upd_status_ai', ai_done: 'upd_status_ready',
+  running: 'pkg_status_running', completed: 'pkg_status_completed', failed: 'failed',
+  partial: 'upd_status_partial', pending: 'pkg_status_pending', skipped: 'pkg_status_skipped',
 }
-const fmtDate = (s: string|null) => s ? new Date(s).toLocaleString('tr-TR') : '—'
+const dateLoc = (locale: string) => locale === 'en' ? 'en-GB' : 'tr-TR'
+const fmtDate = (s: string|null, locale: string) => s ? new Date(s).toLocaleString(dateLoc(locale)) : '—'
 
-// ─── Step bar ─────────────────────────────────────────────────────────────────
-const STEP_NAMES = ['Distro', 'Sunucular', 'Yetkili Kullanıcı', 'Repo', 'Snapshot', 'Güncelleme Modu', 'AI Analiz', 'Onayla', 'İzle']
-
-const SNAPSHOT_RETENTIONS = [
-  { key: '1d', label: '1 Gün', desc: '24 saat sonra otomatik silinir' },
-  { key: '1w', label: '1 Hafta', desc: '7 gün saklanır (önerilen)' },
-  { key: '1m', label: '1 Ay', desc: '30 gün saklanır' },
-  { key: 'indefinite', label: 'Süresiz', desc: 'Manuel silinene kadar kalır' },
+const STEP_KEYS: TranslationKey[] = [
+  'upd_step_distro', 'upd_step_servers', 'upd_step_user', 'upd_step_repo',
+  'upd_step_snapshot', 'upd_step_mode', 'upd_step_ai', 'upd_step_confirm', 'upd_step_watch',
 ]
+
+const SNAPSHOT_RETENTIONS: { key: string; labelKey: TranslationKey; descKey: TranslationKey }[] = [
+  { key: '1d', labelKey: 'retention_1d', descKey: 'upd_ret_1d_desc' },
+  { key: '1w', labelKey: 'retention_1w', descKey: 'upd_ret_1w_desc' },
+  { key: '1m', labelKey: 'retention_1m', descKey: 'upd_ret_1m_desc' },
+  { key: 'indefinite', labelKey: 'retention_indefinite', descKey: 'upd_ret_inf_desc' },
+]
+
+const distroName = (d: (typeof DISTRO_LIST)[number] | undefined, t: (k: TranslationKey, vars?: Record<string, string | number>) => string) =>
+  !d || !d.key ? t('upd_all_distros') : d.label
+const distroShort = (d: (typeof DISTRO_LIST)[number] | undefined, t: (k: TranslationKey, vars?: Record<string, string | number>) => string) =>
+  !d || !d.key ? t('filter_all') : d.short
+const utypeOf = (key: string) => UPDATE_TYPE_KEYS.find(x => x.key === key)
+const statusT = (status: string, t: (k: TranslationKey, vars?: Record<string, string | number>) => string) =>
+  STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status
+
 
 const Steps = ({ current, maxReached, onGoTo, locked }: {
   current: number; maxReached: number; onGoTo: (step: number) => void; locked?: boolean
-}) => (
+}) => {
+  const t = useT()
+  return (
   <div className="flex items-center gap-1 flex-1 flex-wrap">
-    {STEP_NAMES.map((s, i) => {
+    {STEP_KEYS.map((sk, i) => {
+      const s = t(sk)
       const stepNum   = i + 1
       const isDone    = stepNum < current
       const isCurrent = stepNum === current
@@ -109,7 +126,7 @@ const Steps = ({ current, maxReached, onGoTo, locked }: {
           <button
             onClick={() => canClick && onGoTo(stepNum)}
             disabled={!canClick}
-            title={locked && isDone ? 'İş devam ederken önceki adımlara geçilemez' : canClick ? `${s} adımına git` : undefined}
+            title={locked && isDone ? t('upd_locked_steps') : canClick ? t('upd_goto_step', { s }) : undefined}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
               isCurrent  ? 'bg-blue-600 text-white' :
               isDone && locked ? 'bg-green-700/20 text-green-600 cursor-not-allowed' :
@@ -120,19 +137,21 @@ const Steps = ({ current, maxReached, onGoTo, locked }: {
           >
             {isDone ? '✓ ' : `${stepNum}. `}{s}
           </button>
-          {i < STEP_NAMES.length-1 && (
+          {i < STEP_KEYS.length-1 && (
             <div className={`flex-1 h-0.5 min-w-[6px] ${isDone ? 'bg-green-600' : isVisited ? 'bg-slate-600' : 'bg-white/[0.07]'}`} />
           )}
         </React.Fragment>
       )
     })}
   </div>
-)
+  )
+}
 
 // ─── Server Selector ──────────────────────────────────────────────────────────
 const ServerSelector = ({ servers, selected, onChange }: {
   servers: ServerItem[]; selected: number[]; onChange: (ids: number[]) => void
 }) => {
+  const t = useT()
   const [search, setSearch] = useState('')
   const filtered = servers.filter(s =>
     s.name.toLowerCase().includes(search.toLowerCase()) || s.ip.includes(search)
@@ -144,15 +163,15 @@ const ServerSelector = ({ servers, selected, onChange }: {
     <div className="border border-white/[0.06] rounded-xl overflow-hidden">
       <div className="bg-cyber-card/80 px-3 py-2 flex gap-2 border-b border-white/[0.06] flex-wrap items-center">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Sunucu veya IP ara..."
+          placeholder={t('upd_search_ip')}
           className="flex-1 min-w-[160px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
         <button onClick={() => onChange(filtered.map(s => s.id))}
-          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Tümü</button>
+          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('filter_all')}</button>
         <button onClick={() => onChange(filtered.filter(s => s.status === 'ONLINE').map(s => s.id))}
-          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Aktifler</button>
+          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('upd_online')}</button>
         <button onClick={() => onChange([])}
-          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">Temizle</button>
-        <span className="text-xs text-slate-500 ml-auto">{selected.length} / {servers.length} seçili</span>
+          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('pkg_clear')}</button>
+        <span className="text-xs text-slate-500 ml-auto">{t('upd_of_selected', { sel: selected.length, total: servers.length })}</span>
       </div>
       <div className="max-h-64 overflow-y-auto divide-y divide-white/[0.04]">
         {filtered.map(srv => (
@@ -180,7 +199,7 @@ const ServerSelector = ({ servers, selected, onChange }: {
                   <span className="text-slate-300 truncate max-w-[200px]">{srv.os_version}</span>
                 ) : (
                   <span className="flex items-center gap-1 text-yellow-500 text-[10px]">
-                    <AlertTriangle size={10} strokeWidth={2} /> OS bilgisi yok
+                    <AlertTriangle size={10} strokeWidth={2} /> {t('upd_no_os')}
                   </span>
                 )}
                 {srv.kernel_version && (
@@ -193,7 +212,7 @@ const ServerSelector = ({ servers, selected, onChange }: {
           </label>
         ))}
         {filtered.length === 0 && (
-          <div className="py-8 text-center text-slate-500 text-sm">Sunucu bulunamadı</div>
+          <div className="py-8 text-center text-slate-500 text-sm">{t('pkg_no_servers')}</div>
         )}
       </div>
     </div>
@@ -209,22 +228,24 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
   onCancel: (p: UpdatePlan) => void
   onRerunFailed: (p: UpdatePlan) => void
 }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const isRunning  = plan.status === 'running' || plan.status === 'ai_analyzing'
   const canResume  = ['draft', 'ai_done', 'ai_analyzing'].includes(plan.status)
   const canRun     = plan.status === 'ai_done'
-  const ut = UPDATE_TYPES.find(t => t.key === plan.update_type)
+  const ut = utypeOf(plan.update_type)
 
   return (
     <tr className="border-b border-white/[0.04] hover:bg-cyber-card/40 transition-colors">
       <td className="px-4 py-3">
         <div className="text-sm font-medium text-white">{plan.name}</div>
-        <div className="text-xs text-slate-500">{fmtDate(plan.created_at)}</div>
+        <div className="text-xs text-slate-500">{fmtDate(plan.created_at, locale)}</div>
       </td>
-      <td className="px-3 py-3 text-xs whitespace-nowrap">{ut?.label}</td>
+      <td className="px-3 py-3 text-xs whitespace-nowrap">{ut ? t(ut.labelKey) : plan.update_type}</td>
       <td className="px-3 py-3 whitespace-nowrap">
         <span className={`text-xs font-medium flex items-center gap-1 ${STATUS_COLOR[plan.status]}`}>
           {isRunning && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />}
-          {STATUS_LABEL[plan.status] || plan.status}
+          {statusT(plan.status, t)}
         </span>
       </td>
       <td className="px-3 py-3 text-center">
@@ -242,15 +263,15 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
           {['failed','partial'].includes(plan.status) && (
             <button onClick={() => onRerunFailed(plan)}
               className="px-2.5 py-1 text-xs bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/30 rounded-lg transition-colors whitespace-nowrap"
-              title="Başarısız işleri yeniden başlat">
-              ↻ Tekrar
+              title={t('upd_rerun_failed_title')}>
+              ↻ {t('upd_rerun')}
             </button>
           )}
           {/* Görüntüle — tamamlanmış planlar için */}
           {plan.status === 'completed' && (
             <button onClick={() => onResume(plan)}
               className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
-              title="Planı görüntüle">
+              title={t('upd_view_plan')}>
               ↻
             </button>
           )}
@@ -258,8 +279,8 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
           {isRunning && (
             <button onClick={() => onCancel(plan)}
               className="px-2.5 py-1 text-xs bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 rounded-lg transition-colors"
-              title="Takılı güncellemeyi iptal et">
-              ✕ İptal
+              title={t('upd_cancel_stuck')}>
+              ✕ {t('cancel')}
             </button>
           )}
           {(canResume || isRunning) && (
@@ -271,17 +292,17 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
                   ? 'bg-green-700 hover:bg-green-600 text-white'
                   : 'bg-white/[0.07] hover:bg-slate-600 text-slate-200'
               }`}>
-              {isRunning ? '● İzle' : canRun ? '▶ Çalıştır' : '↩ Devam'}
+              {isRunning ? `● ${t('upd_watch_btn')}` : canRun ? `▶ ${t('upd_run_btn')}` : `↩ ${t('continue_action')}`}
             </button>
           )}
           <button onClick={() => onView(plan)}
             className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors">
-            Detay
+            {t('detail')}
           </button>
           {!isRunning && (
             <button onClick={() => onDelete(plan.id)}
               className="px-2.5 py-1 text-xs text-red-400 hover:bg-red-700/30 rounded-lg transition-colors">
-              Sil
+              {t('delete')}
             </button>
           )}
         </div>
@@ -292,6 +313,8 @@ const PlanRow = ({ plan, onView, onDelete, onResume, onCancel, onRerunFailed }: 
 
 // ─── Plan detail modal ────────────────────────────────────────────────────────
 const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => void }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [jobs,         setJobs]         = useState<UpdateJob[]>([])
   const [sel,          setSel]          = useState<UpdateJob|null>(null)
   const [jobAnalysis,  setJobAnalysis]  = useState<Record<number,string>>({})
@@ -328,7 +351,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
           <div>
             <h2 className="text-lg font-semibold text-white">{plan.name}</h2>
             <span className={`text-xs font-medium ${STATUS_COLOR[plan.status]}`}>
-              {STATUS_LABEL[plan.status]} · {plan.completed_servers}/{plan.total_servers}
+              {statusT(plan.status, t)} · {plan.completed_servers}/{plan.total_servers}
             </span>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
@@ -338,13 +361,13 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
           <div className="w-64 border-r border-white/[0.06] overflow-y-auto flex-shrink-0">
             {plan.ai_analysis && (
               <div className="p-3 border-b border-white/[0.06] bg-cyan-500/5">
-                <div className="text-xs font-semibold text-cyan-400 mb-1">AI Analiz</div>
+                <div className="text-xs font-semibold text-cyan-400 mb-1">{t('upd_step_ai')}</div>
                 <div className="text-xs text-slate-300 line-clamp-5 leading-relaxed">{plan.ai_analysis}</div>
               </div>
             )}
             {plan.ai_summary && (
               <div className="p-3 border-b border-white/[0.06] bg-green-500/5">
-                <div className="text-xs font-semibold text-green-400 mb-1">AI Özet</div>
+                <div className="text-xs font-semibold text-green-400 mb-1">{t('upd_ai_summary')}</div>
                 <AiMarkdown text={plan.ai_summary} />
               </div>
             )}
@@ -354,14 +377,14 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                 <div className="flex items-center gap-2">
                   <span className={`text-xs ${STATUS_COLOR[j.status]}`}>
                     {(j.status==='running'||j.status==='pending') && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse mr-1" />}
-                    {STATUS_LABEL[j.status]}
+                    {statusT(j.status, t)}
                   </span>
                   {j.reboot_required && <span className="text-yellow-400 text-xs font-bold">!</span>}
                 </div>
                 <div className="text-sm font-medium text-white truncate">{j.server_name}</div>
                 <div className="text-xs text-slate-400">{j.server_ip}</div>
                 {j.os_type && <div className="text-xs text-blue-400">{j.os_type.toUpperCase()} {j.os_version}</div>}
-                {j.packages_updated.length > 0 && <div className="text-xs text-green-400">{j.packages_updated.length} paket güncellendi</div>}
+                {j.packages_updated.length > 0 && <div className="text-xs text-green-400">{t('upd_pkgs_updated_n', { n: j.packages_updated.length })}</div>}
               </button>
             ))}
           </div>
@@ -370,17 +393,17 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
             {sel ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">Başlangıç</div><div className="text-white">{fmtDate(sel.started_at)}</div></div>
-                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">Bitiş</div><div className="text-white">{fmtDate(sel.completed_at)}</div></div>
+                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">{t('pkg_started')}</div><div className="text-white">{fmtDate(sel.started_at, locale)}</div></div>
+                  <div className="bg-white/[0.07]/50 rounded-lg p-3"><div className="text-slate-400">{t('pkg_ended')}</div><div className="text-white">{fmtDate(sel.completed_at, locale)}</div></div>
                 </div>
                 {sel.reboot_required && (
                   <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                    Sistem yeniden başlatma gerekiyor
+                    {t('upd_need_reboot')}
                   </div>
                 )}
                 {sel.packages_to_update.length > 0 && (
                   <div>
-                    <div className="text-xs font-semibold text-slate-300 mb-2">Güncellenecek ({sel.packages_to_update.length})</div>
+                    <div className="text-xs font-semibold text-slate-300 mb-2">{t('upd_to_update', { n: sel.packages_to_update.length })}</div>
                     <div className="bg-cyber-deep rounded-xl p-3 max-h-40 overflow-y-auto space-y-0.5">
                       {sel.packages_to_update.slice(0,30).map((p,i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
@@ -399,20 +422,20 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                 {['completed','failed','partial'].includes(sel.status) && (
                   <button
                     onClick={async () => {
-                      if (!confirm(`"${sel.server_name}" için yeniden çalıştırılsın mı?`)) return
+                      if (!confirm(t('upd_rerun_confirm', { name: sel.server_name }))) return
                       const r = await fetch(`${API}/plans/${plan.id}/jobs/${sel.id}/rerun`, { method: 'POST' })
-                      if (r.ok) { load(); alert('↻ Yeniden başlatıldı') }
-                      else alert((await r.json()).detail || 'Hata')
+                      if (r.ok) { load(); alert(`↻ ${t('upd_restarted')}`) }
+                      else alert((await r.json()).detail || t('error_generic'))
                     }}
                     className="flex items-center gap-1.5 px-3 py-2 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center font-medium"
                   >
-                    ↻ Yeniden Çalıştır
+                    ↻ {t('upd_rerun_btn')}
                   </button>
                 )}
                 {sel.log && (
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs font-semibold text-slate-300">Çıktı</div>
+                      <div className="text-xs font-semibold text-slate-300">{t('upd_output')}</div>
                       {sel.status === 'failed' && (
                         <button
                           onClick={() => analyzeJobError(sel)}
@@ -420,8 +443,8 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                           className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-cyan-700/40 hover:bg-cyan-700/60 text-cyan-300 border border-cyan-600/30 rounded-lg transition-colors disabled:opacity-40"
                         >
                           {analyzingJob === sel.id
-                            ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />Analiz ediliyor...</>
-                            : 'Hatayı Analiz Et'}
+                            ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />{t('pkg_analyzing')}</>
+                            : t('upd_analyze_err')}
                         </button>
                       )}
                     </div>
@@ -429,24 +452,24 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                         {jobAnalysis[sel.id] && (
                       <div className="mb-3 space-y-2">
                         <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-3">
-                          <div className="text-xs font-semibold text-cyan-400 mb-2">AI Analiz</div>
+                          <div className="text-xs font-semibold text-cyan-400 mb-2">{t('upd_step_ai')}</div>
                           <AiMarkdown text={jobAnalysis[sel.id]} />
                         </div>
                         <button
                           onClick={async () => {
-                            if (!confirm('AI önerilen parametrelerle güncelleme yeniden çalıştırılacak. Devam?')) return
+                            if (!confirm(t('upd_retry_ai_confirm'))) return
                             const r = await fetch(`${API}/plans/${plan.id}/jobs/${sel.id}/retry-with-fix`, { method: 'POST' })
                             if (r.ok) {
                               const d = await r.json()
                               load()
-                              alert(`✓ Yeniden başlatıldı: ${d.fix}`)
+                              alert(`✓ ${t('upd_restarted_fix', { fix: d.fix })}`)
                             } else {
-                              alert('Hata: ' + (await r.json()).detail)
+                              alert(t('ans_err', { msg: (await r.json()).detail }))
                             }
                           }}
                           className="flex items-center gap-2 px-3 py-2 text-xs bg-green-700/30 hover:bg-green-700/50 text-green-300 border border-green-600/30 rounded-lg transition-colors w-full justify-center font-medium"
                         >
-                          AI Önerilen Çözümü Uygula & Yeniden Başlat
+                          {t('upd_apply_ai_fix')}
                         </button>
                       </div>
                     )}
@@ -455,7 +478,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                 )}
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-slate-500 text-sm">← Detay için sunucu seçin</div>
+              <div className="flex items-center justify-center h-full text-slate-500 text-sm">{t('upd_pick_server_detail')}</div>
             )}
           </div>
         </div>
@@ -466,6 +489,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
 
 // ─── Package List ─────────────────────────────────────────────────────────────
 const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId }) => {
+  const t = useT()
   const [packages, setPackages] = React.useState<any[]>(job.packages_updated || [])
   const [loading,  setLoading]  = React.useState(false)
   const [fetched,  setFetched]  = React.useState(false)
@@ -485,22 +509,22 @@ const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId
   if (packages.length === 0 && !fetched) {
     return (
       <div className="flex items-center justify-between bg-cyber-card/50 rounded-lg px-3 py-2">
-        <span className="text-xs text-slate-500">Güncellenen paket listesi yüklenmedi</span>
+        <span className="text-xs text-slate-500">{t('upd_pkg_list_missing')}</span>
         <button onClick={fetchPackages} disabled={loading}
           className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors disabled:opacity-40">
-          {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />Getiriliyor...</> : 'SSH ile Listele'}
+          {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />{t('upd_fetching')}</> : t('upd_list_ssh')}
         </button>
       </div>
     )
   }
 
   if (packages.length === 0 && fetched) {
-    return <div className="text-xs text-slate-500 italic px-1">Bu işlemde güncellenen paket bulunamadı (zaten günceldi)</div>
+    return <div className="text-xs text-slate-500 italic px-1">{t('upd_no_updated_pkgs')}</div>
   }
 
   return (
     <div>
-      <div className="text-xs font-semibold text-green-300 mb-1.5">✓ Güncellenen Paketler ({packages.length})</div>
+      <div className="text-xs font-semibold text-green-300 mb-1.5">✓ {t('upd_updated_pkgs', { n: packages.length })}</div>
       <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
         {packages.map((p: any, i: number) => (
           <span key={i} className="text-[11px] bg-green-500/10 text-green-300 border border-green-500/20 px-1.5 py-0.5 rounded font-mono">
@@ -520,6 +544,7 @@ const LiveJobLog: React.FC<{
   analyzing: boolean
   aiResult: string | null
 }> = ({ job, planId, onAnalyze, analyzing, aiResult }) => {
+  const t = useT()
   const [liveLog, setLiveLog] = React.useState(job.log || '')
   const logRef = React.useRef<HTMLPreElement>(null)
   const isActive = job.status === 'running' || job.status === 'pending'
@@ -549,13 +574,13 @@ const LiveJobLog: React.FC<{
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-          İşlem Logu
-          {isActive && <span className="flex items-center gap-1 text-green-400 font-normal"><span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />Canlı</span>}
+          {t('upd_job_log')}
+          {isActive && <span className="flex items-center gap-1 text-green-400 font-normal"><span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />{t('lm_live')}</span>}
         </div>
         {job.status === 'failed' && (
           <button onClick={onAnalyze} disabled={analyzing}
             className="flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-700/30 hover:bg-cyan-700/50 text-cyan-300 border border-cyan-600/30 rounded transition-colors disabled:opacity-40">
-            {analyzing ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />...</> : 'Hatayı Analiz Et'}
+            {analyzing ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />...</> : t('upd_analyze_err')}
           </button>
         )}
       </div>
@@ -565,18 +590,18 @@ const LiveJobLog: React.FC<{
                           {/* Çözümü Uygula butonu */}
                           <button
                             onClick={async () => {
-                              if (!confirm('AI önerilen parametrelerle güncelleme yeniden çalıştırılacak. Devam?')) return
+                              if (!confirm(t('upd_retry_ai_confirm'))) return
                               const r = await fetch(`${API}/plans/${planId}/jobs/${job.id}/retry-with-fix`, { method: 'POST' })
                               if (r.ok) {
                                 const d = await r.json()
-                                alert(`✓ Yeniden başlatıldı: ${d.fix}`)
+                                alert(`✓ ${t('upd_restarted_fix', { fix: d.fix })}`)
                               } else {
-                                alert('Hata: ' + (await r.json()).detail)
+                                alert(t('ans_err', { msg: (await r.json()).detail }))
                               }
                             }}
                             className="flex items-center gap-2 px-3 py-2 text-xs bg-green-700/30 hover:bg-green-700/50 text-green-300 border border-green-600/30 rounded-lg transition-colors w-full justify-center font-medium"
                           >
-                            AI Önerilen Çözümü Uygula & Güncellemeyi Yeniden Başlat
+                            {t('upd_apply_ai_fix_full')}
                           </button>
                         </div>
                       )}
@@ -588,7 +613,7 @@ const LiveJobLog: React.FC<{
       ) : isActive ? (
         <div className="bg-cyber-deep border border-white/[0.06]/50 rounded-lg p-4 flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-          <div className="text-xs text-slate-400">Güncelleme başlatılıyor, log bekleniyor...</div>
+          <div className="text-xs text-slate-400">{t('upd_starting_log')}</div>
         </div>
       ) : null}
     </div>
@@ -727,6 +752,8 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
 
 // ─── Reboot Panel ────────────────────────────────────────────────────────────
 const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlans }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [rebootJobs, setRebootJobs] = useState<any[]>([])
   const [rebooting,  setRebooting]  = useState(false)
   const [selected,   setSelected]   = useState<Set<number>>(new Set())
@@ -754,8 +781,8 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
   }, [])
 
   const handleReboot = async () => {
-    if (selected.size === 0) { alert('Sunucu seçin'); return }
-    if (!confirm(`${selected.size} sunucu 1 dakika sonra yeniden başlatılacak. Emin misiniz?`)) return
+    if (selected.size === 0) { alert(t('upd_pick_servers')); return }
+    if (!confirm(t('upd_reboot_confirm', { n: selected.size }))) return
     setRebooting(true)
     const serverIds = rebootJobs.filter(j => selected.has(j.id)).map(j => j.server_id)
     const r = await fetch(`${API}/reboot-servers`, {
@@ -766,7 +793,7 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
     if (r.ok) {
       const d = await r.json()
       const ok = Object.values(d.results).filter((v: any) => v.success).length
-      alert(`✓ ${ok} sunucu için reboot planlandı (1 dakika sonra)`)
+      alert(`✓ ${t('upd_reboot_planned', { n: ok })}`)
       // Listeden kaldır
       setRebootJobs(prev => prev.filter(j => !selected.has(j.id)))
       setSelected(new Set())
@@ -780,7 +807,7 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(serverIds),
     })
-    if (r.ok) alert('Reboot iptal edildi')
+    if (r.ok) alert(t('upd_reboot_cancelled'))
   }
 
   if (rebootJobs.length === 0) return null
@@ -791,18 +818,18 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
           <span className="text-sm font-semibold text-yellow-300">
-            Reboot Bekleyen Sunucular ({rebootJobs.length})
+            {t('upd_reboot_pending', { n: rebootJobs.length })}
           </span>
-          <span className="text-xs text-yellow-500">Kernel güncellemesi tamamlandı — yeniden başlatma gerekiyor</span>
+          <span className="text-xs text-yellow-500">{t('upd_kernel_reboot_hint')}</span>
         </div>
         <div className="flex gap-2">
           <button onClick={handleCancel} disabled={selected.size === 0}
             className="px-3 py-1.5 text-xs border border-slate-600 text-slate-400 hover:text-white rounded-lg transition-colors disabled:opacity-40">
-            Reboot'u İptal Et
+            {t('upd_cancel_reboot')}
           </button>
           <button onClick={handleReboot} disabled={rebooting || selected.size === 0}
             className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
-            {rebooting ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Yeniden Başlatılıyor...</> : `${selected.size > 0 ? selected.size + ' ' : ''}Seçiliyi Yeniden Başlat`}
+            {rebooting ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('upd_rebooting')}</> : (selected.size > 0 ? t('upd_reboot_n', { n: selected.size }) : t('upd_reboot_selected'))}
           </button>
         </div>
       </div>
@@ -816,13 +843,13 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
               <div className="text-sm font-medium text-white">{j.server_name}</div>
               <div className="text-xs text-slate-400">{j.server_ip} · {j.plan_name}</div>
             </div>
-            <div className="text-xs text-slate-500 flex-shrink-0">{fmtDate(j.completed_at)}</div>
+            <div className="text-xs text-slate-500 flex-shrink-0">{fmtDate(j.completed_at, locale)}</div>
           </label>
         ))}
       </div>
       <div className="flex items-start gap-1.5 px-4 py-2.5 bg-yellow-500/5 text-xs text-yellow-600">
         <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
-        <span>"Seçiliyi Yeniden Başlat" tıklayınca 1 dakika geri sayım başlar. İptal için "Reboot'u İptal Et" kullanın.</span>
+        <span>{t('upd_reboot_hint')}</span>
       </div>
     </div>
   )
@@ -830,6 +857,8 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 const SystemUpdate: React.FC = () => {
+  const t = useT()
+  const { locale } = useLocale()
   const [step, setStep]       = useState(1)
   const [maxStep, setMaxStep] = useState(1)  // ulaşılan en yüksek adım
   const [showWizard, setShowWizard] = useState(false)
@@ -970,7 +999,7 @@ const SystemUpdate: React.FC = () => {
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handleCreatePlan = async () => {
     const name = planName ||
-      `${DISTRO_LIST.find(d=>d.key===selectedDistro)?.short || 'Tüm'} — ${UPDATE_TYPES.find(t=>t.key===updateType)?.label} — ${new Date().toLocaleDateString('tr-TR')}`
+      `${distroShort(DISTRO_LIST.find(d=>d.key===selectedDistro), t)} — ${utypeOf(updateType) ? t(utypeOf(updateType)!.labelKey) : updateType} — ${new Date().toLocaleDateString(dateLoc(locale))}`
     const body: any = {
       name, update_type: updateType, server_ids: selectedServers,
       repo_id: selectedRepo || undefined,
@@ -1020,7 +1049,7 @@ const SystemUpdate: React.FC = () => {
       if (pr.ok) setCurrentPlan(await pr.json())
       if (jr.ok) setPlanJobs(await jr.json())
       setStep(9)
-      showToast('Güncelleme başlatıldı')
+      showToast(t('upd_started_toast'))
       await loadPlans()
     }
   }
@@ -1068,17 +1097,17 @@ const SystemUpdate: React.FC = () => {
   }
 
   const handleDeletePlan = async (id: number) => {
-    if (!confirm('Plan silinsin mi?')) return
+    if (!confirm(t('upd_delete_plan'))) return
     const r = await fetch(`${API}/plans/${id}`, { method: 'DELETE' })
-    if (r.ok) { showToast('Silindi'); await loadPlans() }
-    else showToast('Hata', 'err')
+    if (r.ok) { showToast(t('upd_deleted')); await loadPlans() }
+    else showToast(t('error_generic'), 'err')
   }
 
   const handleRerunFailed = async (plan: UpdatePlan) => {
     const r = await fetch(`${API}/plans/${plan.id}/rerun-failed`, { method: 'POST' })
     const data = await r.json().catch(() => ({}))
     if (r.ok) {
-      showToast(`↻ ${data.message || 'Yeniden başlatıldı'}`)
+      showToast(`↻ ${data.message || t('upd_restarted')}`)
       await loadPlans()
       // Canlı izleme için planı aç
       setCurrentPlan(plan)
@@ -1087,15 +1116,15 @@ const SystemUpdate: React.FC = () => {
       setStep(9)
       setShowWizard(true)
     } else {
-      showToast(data.detail || 'Yeniden başlatılamadı', 'err')
+      showToast(data.detail || t('upd_rerun_fail'), 'err')
     }
   }
 
   const handleCancelPlan = async (plan: UpdatePlan) => {
-    if (!confirm(`"${plan.name}" güncellemesi iptal edilsin mi?`)) return
+    if (!confirm(t('upd_cancel_plan', { name: plan.name }))) return
     const r = await fetch(`${API}/plans/${plan.id}/cancel`, { method: 'POST' })
     if (r.ok) {
-      showToast('Güncelleme iptal edildi')
+      showToast(t('upd_cancelled'))
       if (currentPlan?.id === plan.id) {
         const pr = await fetch(`${API}/plans/${plan.id}`)
         if (pr.ok) setCurrentPlan(await pr.json())
@@ -1103,7 +1132,7 @@ const SystemUpdate: React.FC = () => {
       await loadPlans()
     } else {
       const err = await r.json().catch(() => ({}))
-      showToast(err.detail || 'İptal edilemedi', 'err')
+      showToast(err.detail || t('upd_cancel_fail'), 'err')
     }
   }
 
@@ -1127,8 +1156,8 @@ const SystemUpdate: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Sistem Güncelleme</h1>
-          <p className="text-slate-400 text-sm mt-1">AI destekli — distro bazlı güvenlik, kernel ve tam sistem güncellemeleri</p>
+          <h1 className="text-2xl font-bold text-white">{t('upd_title')}</h1>
+          <p className="text-slate-400 text-sm mt-1">{t('upd_subtitle')}</p>
         </div>
         {!showWizard && (
           <div className="flex items-center gap-3">
@@ -1144,12 +1173,12 @@ const SystemUpdate: React.FC = () => {
                 className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 font-semibold text-sm rounded-xl transition-colors animate-pulse"
               >
                 <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-                {p.name.length > 25 ? p.name.slice(0, 25) + '…' : p.name} — İzle
+                {t('upd_watch_plan', { name: p.name.length > 25 ? p.name.slice(0, 25) + '…' : p.name })}
               </button>
             ))}
             <button onClick={() => setShowWizard(true)}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-              + Yeni Güncelleme
+              {t('upd_new')}
             </button>
           </div>
         )}
@@ -1181,15 +1210,15 @@ const SystemUpdate: React.FC = () => {
             <button
               onClick={() => {
                 if (currentPlan && (currentPlan.status === 'running' || currentPlan.status === 'ai_analyzing')) {
-                  if (!confirm('Güncelleme devam ediyor. Arka planda çalışmaya devam edecek. Çıkmak istiyor musunuz?')) return
+                  if (!confirm(t('upd_exit_running'))) return
                 }
                 setShowWizard(false)
               }}
               className="ml-4 flex-shrink-0 text-slate-400 hover:text-white hover:bg-white/[0.06] px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5"
-              title="Wizard'ı kapat"
+              title={t('upd_close_wizard')}
             >
               <span className="text-lg leading-none">×</span>
-              <span className="text-xs">Kapat</span>
+              <span className="text-xs">{t('close')}</span>
             </button>
           </div>
 
@@ -1197,8 +1226,8 @@ const SystemUpdate: React.FC = () => {
           {step === 1 && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-base font-semibold text-white">Dağıtımı Seçin</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Hangi Linux dağıtımını güncelleyeceksiniz?</p>
+                <h2 className="text-base font-semibold text-white">{t('upd_pick_distro')}</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{t('upd_pick_distro_hint')}</p>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -1210,18 +1239,18 @@ const SystemUpdate: React.FC = () => {
                         isSelected ? d.color + ' border-2' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500 hover:bg-white/[0.04]'
                       }`}>
                       <div className="text-xs font-bold text-slate-400 mb-1">{d.icon}</div>
-                      <div className="text-base font-bold text-white">{d.short}</div>
-                      <div className="text-xs text-slate-400 mt-0.5">{d.label}</div>
+                      <div className="text-base font-bold text-white">{distroShort(d, t)}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{distroName(d, t)}</div>
                     </button>
                   )
                 })}
               </div>
 
               <div className="flex justify-between items-center">
-                <button onClick={resetWizard} className="text-sm text-slate-400 hover:text-white transition-colors">✕ İptal</button>
+                <button onClick={resetWizard} className="text-sm text-slate-400 hover:text-white transition-colors">✕ {t('cancel')}</button>
                 <button onClick={() => setStep(2)} disabled={selectedDistro === undefined || selectedDistro === null}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-                  Sunucuları Göster →
+                  {t('upd_show_servers')}
                 </button>
               </div>
             </div>
@@ -1234,11 +1263,11 @@ const SystemUpdate: React.FC = () => {
                 <span className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</span>
                 <div>
                   <h2 className="text-base font-semibold text-white">
-                    {DISTRO_LIST.find(d=>d.key===selectedDistro)?.label} Sunucuları
+                    {t('upd_distro_servers', { label: distroName(DISTRO_LIST.find(d=>d.key===selectedDistro), t) })}
                   </h2>
                   <p className="text-xs text-slate-400">
-                    {distroServerCount} sunucu bulundu · {onlineCount} aktif
-                    {!selectedDistro && ' (tüm dağıtımlar)'}
+                    {t('upd_found_online', { n: distroServerCount, online: onlineCount })}
+                    {!selectedDistro && t('upd_all_distros_paren')}
                   </p>
                 </div>
               </div>
@@ -1247,11 +1276,11 @@ const SystemUpdate: React.FC = () => {
               {servers.some(s => !s.has_os_info) && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-xs text-yellow-300 flex items-start justify-between gap-3">
                   <div>
-                    <span className="font-medium">{servers.filter(s => !s.has_os_info).length} sunucuda OS bilgisi yok</span>
+                    <span className="font-medium">{t('upd_n_no_os', { n: servers.filter(s => !s.has_os_info).length })}</span>
                     <div className="text-slate-400 mt-0.5">
-                      Bu sunucular da listelendi. Doğru distro'ya ait olduklarını doğrulamak için
-                      <strong className="text-yellow-300 mx-1">Sunucular → OS Bilgisini Yenile</strong>
-                      yapın.
+                      {t('upd_no_os_hint')}
+                      <strong className="text-yellow-300 mx-1">{t('upd_no_os_path')}</strong>
+                      {t('upd_no_os_do')}
                     </div>
                   </div>
                 </div>
@@ -1261,15 +1290,15 @@ const SystemUpdate: React.FC = () => {
 
               {selectedServers.length > 0 && (
                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-2.5 text-sm text-blue-300">
-                  {selectedServers.length} sunucu seçildi
+                  {t('upd_n_selected', { n: selectedServers.length })}
                 </div>
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(1)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(1)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button onClick={() => setStep(3)} disabled={selectedServers.length === 0}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl disabled:opacity-40 transition-colors">
-                  Repo Seç →
+                  {t('upd_pick_repo')}
                 </button>
               </div>
             </div>
@@ -1279,9 +1308,9 @@ const SystemUpdate: React.FC = () => {
           {step === 3 && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-base font-semibold text-white">Yetkili Kullanıcı</h2>
+                <h2 className="text-base font-semibold text-white">{t('upd_step_user')}</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Sistem güncellemesi <strong>root</strong> veya <strong>sudo</strong> yetkisi gerektirir.
+                  {t('upd_priv_hint')}
                 </p>
               </div>
 
@@ -1294,11 +1323,10 @@ const SystemUpdate: React.FC = () => {
                     className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div>
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
-                      Kayıtlı Kimlik Bilgilerini Kullan
+                      {t('pkg_use_stored')}
                     </div>
                     <div className="text-xs text-slate-400 mt-1">
-                      Her sunucu için kendi connection_config veya global credentials kullanılır.
-                      <br/>Sunucularda sudo/root erişimi tanımlı olmalı.
+                      {t('upd_stored_hint')}
                     </div>
                   </div>
                 </label>
@@ -1311,41 +1339,40 @@ const SystemUpdate: React.FC = () => {
                     className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
-                      Özel Yetkili Kullanıcı Belirt
+                      {t('pkg_use_override')}
                     </div>
                     <div className="text-xs text-slate-400 mt-1 mb-3">
-                      Tüm seçili sunucularda bu kullanıcı ile bağlanılır (root veya sudo yetkili kullanıcı).
+                      {t('upd_override_hint')}
                     </div>
 
                     {credMode === 'override' && (
                       <div className="space-y-3 mt-2" onClick={e => e.stopPropagation()}>
                         <div>
-                          <label className="text-xs text-slate-400 block mb-1">Kullanıcı Adı <span className="text-red-400">*</span></label>
+                          <label className="text-xs text-slate-400 block mb-1">{t('pkg_username')} <span className="text-red-400">*</span></label>
                           <input value={overrideUser} onChange={e => setOverrideUser(e.target.value)}
-                            placeholder="root veya sudo yetkili kullanıcı"
+                            placeholder={t('pkg_username_ph')}
                             className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="text-xs text-slate-400 block mb-1">SSH Şifresi</label>
+                            <label className="text-xs text-slate-400 block mb-1">{t('pkg_ssh_password')}</label>
                             <input type="password" value={overridePass} onChange={e => setOverridePass(e.target.value)}
-                              placeholder="SSH şifresi"
+                              placeholder={t('upd_ssh_ph')}
                               className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                           </div>
                           <div>
                             <label className="text-xs text-slate-400 block mb-1">
-                              Sudo Şifresi
-                              <span className="text-slate-500 ml-1">(root ise boş bırakın)</span>
+                              {t('pkg_sudo_password')}
+                              <span className="text-slate-500 ml-1">{t('upd_sudo_root_hint')}</span>
                             </label>
                             <input type="password" value={overrideSudo} onChange={e => setOverrideSudo(e.target.value)}
-                              placeholder="sudo şifresi (boşsa SSH şifresi kullanılır)"
+                              placeholder={t('upd_sudo_ph')}
                               className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                           </div>
                         </div>
                         <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
                           <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
-                          <span>Root kullanıcı ise sudo şifresi boş bırakın.
-                          Sudo kullanıcı ise SSH şifresi = sudo şifresi olabilir.</span>
+                          <span>{t('upd_root_sudo_hint2')}</span>
                         </div>
                       </div>
                     )}
@@ -1353,17 +1380,17 @@ const SystemUpdate: React.FC = () => {
                 </label>
               </div>
 
-              {/* Yetki Yükseltme Yöntemi */}
+              {/* Privilege escalation */}
               <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4 space-y-3">
                 <div>
-                  <div className="text-sm font-semibold text-white">Yetki Yükseltme Yöntemi</div>
-                  <div className="text-xs text-slate-400 mt-0.5">Komutları hangi yöntemle root yetkisiyle çalıştıracak?</div>
+                  <div className="text-sm font-semibold text-white">{t('upd_priv_method')}</div>
+                  <div className="text-xs text-slate-400 mt-0.5">{t('upd_priv_method_hint')}</div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { key: 'sudo',   label: 'sudo',   desc: 'Standart Linux yetki yükseltme', icon: 'key' },
-                    { key: 'dzdo',   label: 'dzdo',   desc: 'Centrify DirectControl (AD)',     icon: 'org' },
-                    { key: 'direct', label: 'Direct', desc: 'Direkt root kullanıcı',           icon: 'RT' },
+                    { key: 'sudo',   label: 'sudo',   descKey: 'upd_priv_sudo_desc' as const, icon: 'key' },
+                    { key: 'dzdo',   label: 'dzdo',   descKey: 'upd_priv_dzdo_desc' as const, icon: 'org' },
+                    { key: 'direct', label: 'Direct', descKey: 'upd_priv_direct_desc' as const, icon: 'RT' },
                   ] as const).map(m => (
                     <button key={m.key} onClick={() => setPrivMethod(m.key)}
                       className={`p-3 rounded-xl border text-left transition-all ${
@@ -1377,42 +1404,42 @@ const SystemUpdate: React.FC = () => {
                           {m.label}
                         </span>
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5">{m.desc}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{t(m.descKey)}</div>
                     </button>
                   ))}
                 </div>
                 {privMethod === 'dzdo' && (
                     <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 text-xs text-blue-300">
                       <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
-                      <span><strong>dzdo</strong>: AD hesabınız dzdo ile yetkili ise AD şifrenizi SSH şifresi olarak girin.</span>
+                      <span>{t('upd_dzdo_hint')}</span>
                     </div>
                   )}
                   {privMethod === 'direct' && (
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-xs text-yellow-300">
-                      Direkt root kullanıcı — ekstra yetki yükseltme yapılmaz.
+                      {t('upd_direct_hint')}
                     </div>
                   )}
               </div>
 
               {/* Özet */}
               <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4">
-                <div className="text-xs font-semibold text-slate-300 mb-2">Özet</div>
+                <div className="text-xs font-semibold text-slate-300 mb-2">{t('upd_summary')}</div>
                 <div className="text-xs text-slate-400 space-y-0.5">
-                  <div>{selectedServers.length} sunucu seçildi</div>
+                  <div>{t('upd_n_selected', { n: selectedServers.length })}</div>
                   {credMode === 'override' && overrideUser
-                    ? <div className="text-green-400 font-medium">→ {overrideUser} ile {privMethod} kullanılacak</div>
-                    : <div>→ Kayıtlı kimlik + <span className="text-blue-300 font-medium">{privMethod}</span></div>
+                    ? <div className="text-green-400 font-medium">{t('upd_will_use', { user: overrideUser, method: privMethod })}</div>
+                    : <div>{t('upd_stored_plus', { method: privMethod })}</div>
                   }
                 </div>
               </div>
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(2)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(2)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button
                   onClick={() => setStep(4)}
                   disabled={credMode === 'override' && !overrideUser}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl disabled:opacity-40 transition-colors">
-                  Repo Seç →
+                  {t('upd_pick_repo')}
                 </button>
               </div>
             </div>
@@ -1422,8 +1449,8 @@ const SystemUpdate: React.FC = () => {
           {step === 4 && (
             <div className="space-y-4">
               <div>
-                <h2 className="text-base font-semibold text-white">Kaynak Repo</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Güncelleme kaynağını seçin. Local mirror kullanmak için seçin, yoksa sunucunun varsayılan repoları kullanılır.</p>
+                <h2 className="text-base font-semibold text-white">{t('upd_source_repo')}</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{t('upd_source_repo_hint')}</p>
               </div>
 
               <div className="space-y-2">
@@ -1434,9 +1461,9 @@ const SystemUpdate: React.FC = () => {
                   <input type="radio" checked={selectedRepo===null} onChange={() => setSelectedRepo(null)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
-                      <Globe size={14} strokeWidth={2} /> Varsayılan Repo
+                      <Globe size={14} strokeWidth={2} /> {t('upd_default_repo')}
                     </div>
-                    <div className="text-xs text-slate-400 mt-0.5">Sunucunun /etc/yum.repos.d/ veya apt sources.list kaynakları</div>
+                    <div className="text-xs text-slate-400 mt-0.5">{t('upd_default_repo_hint')}</div>
                   </div>
                 </label>
 
@@ -1450,11 +1477,11 @@ const SystemUpdate: React.FC = () => {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-white">{repo.display_name}</div>
                         <div className="text-xs text-slate-400 mt-0.5">
-                          {repo.repo_type.toUpperCase()} · Local mirror ·
+                          {repo.repo_type.toUpperCase()} · {t('upd_local_mirror')} ·
                           <span className={`ml-1 ${repo.sync_status === 'synced' ? 'text-green-400' : 'text-yellow-400'}`}>
                             {repo.sync_status === 'synced'
-                            ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} strokeWidth={2} /> Güncel</span>
-                            : <span className="inline-flex items-center gap-1"><AlertTriangle size={11} strokeWidth={2} /> Kısmi</span>}
+                            ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} strokeWidth={2} /> {t('upd_synced')}</span>
+                            : <span className="inline-flex items-center gap-1"><AlertTriangle size={11} strokeWidth={2} /> {t('upd_partial_sync')}</span>}
                           </span>
                         </div>
                       </div>
@@ -1463,17 +1490,17 @@ const SystemUpdate: React.FC = () => {
                 ) : (
                   <div className="bg-white/[0.07]/30 border border-slate-600 rounded-xl p-4 text-center text-xs text-slate-400">
                     {selectedDistro
-                      ? `${DISTRO_LIST.find(d=>d.key===selectedDistro)?.short} için senkronize local repo bulunamadı`
-                      : 'Senkronize local repo yok'} — Varsayılan repo kullanılacak
+                      ? t('upd_no_local_distro', { distro: distroShort(DISTRO_LIST.find(d=>d.key===selectedDistro), t) })
+                      : t('upd_no_local')}{t('upd_will_use_default')}
                   </div>
                 )}
               </div>
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(3)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(3)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button onClick={() => setStep(5)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-                  Snapshot →
+                  {t('upd_snapshot_next')}
                 </button>
               </div>
             </div>
@@ -1487,7 +1514,7 @@ const SystemUpdate: React.FC = () => {
                   <Camera size={16} strokeWidth={1.8} /> VM Snapshot
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Güncelleme öncesi hypervisor üzerinden sanal makine snapshot'ı alınabilir (oVirt / vCenter).
+                  {t('upd_snapshot_hint')}
                 </p>
               </div>
 
@@ -1501,8 +1528,8 @@ const SystemUpdate: React.FC = () => {
                   }`}
                 >
                   <Camera size={32} strokeWidth={1.5} className="mb-2 text-slate-300" />
-                  <div className="text-base font-bold text-white">Snapshot Al</div>
-                  <div className="text-xs text-slate-400 mt-1">Güncelleme başlamadan önce VM yedeği oluştur</div>
+                  <div className="text-base font-bold text-white">{t('upd_take_snapshot')}</div>
+                  <div className="text-xs text-slate-400 mt-1">{t('upd_take_snapshot_hint')}</div>
                 </button>
                 <button
                   onClick={() => setSnapshotMode('skip')}
@@ -1513,14 +1540,14 @@ const SystemUpdate: React.FC = () => {
                   }`}
                 >
                   <div className="text-3xl mb-2">⏭️</div>
-                  <div className="text-base font-bold text-white">Snapshot Alma</div>
-                  <div className="text-xs text-slate-400 mt-1">Doğrudan güncellemeye geç (fiziksel sunucular için)</div>
+                  <div className="text-base font-bold text-white">{t('upd_skip_snapshot')}</div>
+                  <div className="text-xs text-slate-400 mt-1">{t('upd_skip_snapshot_hint')}</div>
                 </button>
               </div>
 
               {snapshotMode === 'take' && (
                 <div className="space-y-3">
-                  <div className="text-xs font-semibold text-slate-300">Saklama Süresi</div>
+                  <div className="text-xs font-semibold text-slate-300">{t('upd_retention')}</div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {SNAPSHOT_RETENTIONS.map(r => (
                       <button
@@ -1532,8 +1559,8 @@ const SystemUpdate: React.FC = () => {
                             : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                         }`}
                       >
-                        <div className="text-sm font-semibold text-white">{r.label}</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">{r.desc}</div>
+                        <div className="text-sm font-semibold text-white">{t(r.labelKey)}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{t(r.descKey)}</div>
                       </button>
                     ))}
                   </div>
@@ -1547,13 +1574,13 @@ const SystemUpdate: React.FC = () => {
                     : 'border-yellow-500/30 bg-yellow-500/5 text-yellow-200'
                 }`}>
                   <div className="font-medium">
-                    {snapCapability.snapshot_ready}/{snapCapability.total} sunucu snapshot almaya hazır
+                    {t('upd_snap_ready', { ready: snapCapability.snapshot_ready, total: snapCapability.total })}
                   </div>
                   {snapCapability.snapshot_missing > 0 && (
                     <ul className="mt-2 space-y-1 text-xs opacity-90 max-h-32 overflow-y-auto">
                       {snapCapability.servers.filter(s => !s.can_snapshot).map(s => (
                         <li key={s.server_id}>
-                          ⊘ {s.server_name || `#${s.server_id}`}: {s.reason || 'VM bağlantısı yok'}
+                          ⊘ {s.server_name || `#${s.server_id}`}: {s.reason || t('upd_no_vm_link')}
                         </li>
                       ))}
                     </ul>
@@ -1562,10 +1589,10 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(4)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(4)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button onClick={() => setStep(6)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-                  Güncelleme Modu →
+                  {t('upd_mode_next')}
                 </button>
               </div>
             </div>
@@ -1575,19 +1602,19 @@ const SystemUpdate: React.FC = () => {
           {step === 6 && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-base font-semibold text-white">Güncelleme Modu</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Ne tür güncelleme yapılacak?</p>
+                <h2 className="text-base font-semibold text-white">{t('upd_step_mode')}</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{t('upd_mode_hint')}</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {UPDATE_TYPES.map(t => (
-                  <button key={t.key} onClick={() => setUpdateType(t.key)}
+                {UPDATE_TYPE_KEYS.map(utype => (
+                  <button key={utype.key} onClick={() => setUpdateType(utype.key)}
                     className={`p-5 rounded-xl border-2 text-left transition-all ${
-                      updateType === t.key ? t.color + ' border-2' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500 hover:bg-white/[0.04]'
+                      updateType === utype.key ? utype.color + ' border-2' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500 hover:bg-white/[0.04]'
                     }`}>
-                    <div className="text-xs font-bold text-slate-400 mb-1">{t.icon}</div>
-                    <div className="text-base font-bold text-white">{t.label}</div>
-                    <div className="text-xs text-slate-400 mt-1">{t.desc}</div>
+                    <div className="text-xs font-bold text-slate-400 mb-1">{utype.icon}</div>
+                    <div className="text-base font-bold text-white">{t(utype.labelKey)}</div>
+                    <div className="text-xs text-slate-400 mt-1">{t(utype.descKey)}</div>
                   </button>
                 ))}
               </div>
@@ -1595,29 +1622,29 @@ const SystemUpdate: React.FC = () => {
               {/* Özet + Plan adı */}
               {updateType && (
                 <div className="bg-white/[0.04] border border-slate-600 rounded-xl p-4 space-y-3">
-                  <div className="text-xs font-semibold text-slate-300 mb-2">Plan Özeti</div>
+                  <div className="text-xs font-semibold text-slate-300 mb-2">{t('upd_plan_summary')}</div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                     <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
-                      <div className="text-slate-400 mt-0.5">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.short}</div>
+                      <div className="text-slate-400 mt-0.5">{distroShort(DISTRO_LIST.find(d=>d.key===selectedDistro), t)}</div>
                     </div>
                     <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
                       <div className="text-lg font-bold text-white">{selectedServers.length}</div>
-                      <div className="text-slate-400">Sunucu</div>
+                      <div className="text-slate-400">{t('col_server')}</div>
                     </div>
                     <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
-                      <div className="text-xs font-bold text-blue-400">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
-                      <div className="text-slate-400 mt-0.5">{UPDATE_TYPES.find(t=>t.key===updateType)?.label}</div>
+                      <div className="text-xs font-bold text-blue-400">{utypeOf(updateType)?.icon}</div>
+                      <div className="text-slate-400 mt-0.5">{utypeOf(updateType) ? t(utypeOf(updateType)!.labelKey) : updateType}</div>
                     </div>
                     <div className="bg-white/[0.07]/50 rounded-lg p-2 text-center">
-                      <div className="text-xs text-white font-medium">{selectedRepo ? 'Local' : 'Varsayılan'}</div>
-                      <div className="text-slate-400">Repo</div>
+                      <div className="text-xs text-white font-medium">{selectedRepo ? t('upd_local') : t('upd_default')}</div>
+                      <div className="text-slate-400">{t('upd_step_repo')}</div>
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 block mb-1">Plan Adı (isteğe bağlı)</label>
+                    <label className="text-xs text-slate-400 block mb-1">{t('upd_plan_name')}</label>
                     <input value={planName} onChange={e => setPlanName(e.target.value)}
-                      placeholder={`${DISTRO_LIST.find(d=>d.key===selectedDistro)?.short || 'Linux'} ${UPDATE_TYPES.find(t=>t.key===updateType)?.label} — ${new Date().toLocaleDateString('tr-TR')}`}
+                      placeholder={`${distroShort(DISTRO_LIST.find(d=>d.key===selectedDistro), t) || 'Linux'} ${utypeOf(updateType) ? t(utypeOf(updateType)!.labelKey) : ''} — ${new Date().toLocaleDateString(dateLoc(locale))}`}
                       className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
                 </div>
@@ -1625,7 +1652,7 @@ const SystemUpdate: React.FC = () => {
 
               {updateType === 'kernel' && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                  Kernel güncellemesi sonrası sunucular yeniden başlatılmalıdır.
+                  {t('upd_kernel_reboot_after')}
                 </div>
               )}
 
@@ -1633,7 +1660,7 @@ const SystemUpdate: React.FC = () => {
               {updateType && (
                 <div className="border border-white/[0.06] rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-3 bg-white/[0.04] border-b border-white/[0.06]">
-                    <div className="text-sm font-semibold text-white">Mevcut Güncellemeler</div>
+                    <div className="text-sm font-semibold text-white">{t('upd_available')}</div>
                     <button
                       onClick={async () => {
                         setChecking(true)
@@ -1683,21 +1710,21 @@ const SystemUpdate: React.FC = () => {
                       className="px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
                     >
                       {checking
-                        ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kontrol ediliyor...</>
-                        : 'Sunucularda Kontrol Et'}
+                        ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('upd_checking')}</>
+                        : t('upd_check_on_servers')}
                     </button>
                   </div>
 
                   {Object.keys(checkResult).length === 0 && !checking && (
                     <div className="px-4 py-6 text-center text-slate-500 text-xs">
-                      Güncellemeleri görmek için "Sunucularda Kontrol Et" butonuna tıklayın
+                      {t('upd_check_click_hint', { btn: t('upd_check_on_servers') })}
                     </div>
                   )}
 
                   {checking && (
                     <div className="px-4 py-6 text-center">
                       <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                      <div className="text-xs text-slate-400">SSH ile sunucular kontrol ediliyor...</div>
+                      <div className="text-xs text-slate-400">{t('upd_checking_ssh')}</div>
                     </div>
                   )}
 
@@ -1718,17 +1745,17 @@ const SystemUpdate: React.FC = () => {
                               kernel: {data.kernel_count}
                             </span>
                           )}
-                          <span className="text-slate-400">{data.count} toplam</span>
+                          <span className="text-slate-400">{t('upd_n_total', { n: data.count })}</span>
                         </div>
                       </div>
                       {data.count === 0 ? (
-                        <div className="text-xs text-green-400">✓ Güncel, güncelleme yok</div>
+                        <div className="text-xs text-green-400">✓ {t('upd_already_current')}</div>
                       ) : updateType === 'custom' && data.packages?.length > 0 ? (
                         /* Custom mod: checkbox listesi */
                         <div className="space-y-1 mt-2">
                           <div className="flex items-center gap-2 mb-2">
                             <input value={pkgSearch} onChange={e => setPkgSearch(e.target.value)}
-                              placeholder="Paket ara..." className="flex-1 bg-cyber-card text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              placeholder={t('repo_search_pkg')} className="flex-1 bg-cyber-card text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                             <button onClick={() => {
                               const allNames = data.packages.map((p: any) => p.name)
                               if (allNames.every((n: string) => selectedPkgs.has(n))) {
@@ -1737,9 +1764,9 @@ const SystemUpdate: React.FC = () => {
                                 setSelectedPkgs(prev => new Set([...prev, ...allNames]))
                               }
                             }} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">
-                              Tümü
+                              {t('filter_all')}
                             </button>
-                            <span className="text-xs text-slate-500">{selectedPkgs.size} seçili</span>
+                            <span className="text-xs text-slate-500">{t('selected_n', { n: selectedPkgs.size })}</span>
                           </div>
                           <div className="max-h-72 overflow-y-auto space-y-0.5 pr-1">
                             {data.packages
@@ -1771,12 +1798,12 @@ const SystemUpdate: React.FC = () => {
                             </span>
                           ))}
                           {data.packages.length > 12 && (
-                            <span className="text-[11px] text-slate-500 px-1.5 py-0.5">+{data.packages.length - 12} daha</span>
+                            <span className="text-[11px] text-slate-500 px-1.5 py-0.5">{t('upd_n_more', { n: data.packages.length - 12 })}</span>
                           )}
                         </div>
                       ) : null}
                       {data.packages?.[0]?.error && (
-                        <div className="text-xs text-red-400 mt-1">SSH Hatası: {data.packages[0].error}</div>
+                        <div className="text-xs text-red-400 mt-1">{t('upd_ssh_err', { msg: data.packages[0].error })}</div>
                       )}
                     </div>
                   ))}
@@ -1786,15 +1813,15 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(5)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(5)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button
                   onClick={handleCreatePlan}
                   disabled={!updateType || (updateType === 'custom' && selectedPkgs.size === 0)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl disabled:opacity-40 transition-colors"
                 >
                   {updateType === 'custom'
-                    ? selectedPkgs.size > 0 ? `${selectedPkgs.size} Paket — AI Analiz →` : 'Paket Seçin'
-                    : 'AI Analiz →'}
+                    ? selectedPkgs.size > 0 ? t('upd_n_pkgs_ai', { n: selectedPkgs.size }) : t('upd_pick_pkgs')
+                    : t('upd_ai_next')}
                 </button>
               </div>
             </div>
@@ -1804,8 +1831,8 @@ const SystemUpdate: React.FC = () => {
           {step === 7 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-white">AI Ön Analiz</h2>
-                <span className="text-xs text-slate-500 italic">İsteğe bağlı — atlayabilirsiniz</span>
+                <h2 className="text-base font-semibold text-white">{t('upd_ai_pre')}</h2>
+                <span className="text-xs text-slate-500 italic">{t('upd_ai_optional')}</span>
               </div>
 
               {/* AI başlat veya yükleniyor */}
@@ -1816,28 +1843,28 @@ const SystemUpdate: React.FC = () => {
                     {analyzing ? (
                       <>
                         <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                        <div className="text-sm text-blue-300 animate-pulse">Analiz yapılıyor...</div>
-                        <div className="text-xs text-slate-500">SSH kontrol + AI değerlendirme</div>
+                        <div className="text-sm text-blue-300 animate-pulse">{t('upd_ai_running')}</div>
+                        <div className="text-xs text-slate-500">{t('upd_ai_ssh_eval')}</div>
                       </>
                     ) : (
                       <>
-                        <div className="text-sm font-medium text-white">AI Analiz Yap</div>
-                        <div className="text-xs text-slate-400">Risk değerlendirmesi, reboot tahmini, önerilen sıra</div>
+                        <div className="text-sm font-medium text-white">{t('upd_run_ai')}</div>
+                        <div className="text-xs text-slate-400">{t('upd_ai_run_hint')}</div>
                         <button onClick={handleAnalyze}
                           className="w-full py-2 bg-cyan-700 hover:bg-cyan-600 text-white font-semibold text-sm rounded-lg transition-colors">
-                          Analizi Başlat
+                          {t('upd_start_analysis')}
                         </button>
                       </>
                     )}
                   </div>
                   <div className="border border-slate-600 bg-white/[0.02] rounded-xl p-5 text-center space-y-3 flex flex-col justify-center">
                     <div className="text-3xl">⏭️</div>
-                    <div className="text-sm font-medium text-white">Analiz Olmadan Devam</div>
-                    <div className="text-xs text-slate-400">Direkt onay adımına geç</div>
+                    <div className="text-sm font-medium text-white">{t('upd_skip_ai')}</div>
+                    <div className="text-xs text-slate-400">{t('upd_skip_ai_hint')}</div>
                     <button onClick={() => { setCurrentPlan(currentPlan); setStep(8) }}
                       disabled={!currentPlan}
                       className="w-full py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold text-sm rounded-lg transition-colors disabled:opacity-40">
-                      Atla & Onayla →
+                      {t('upd_skip_confirm')}
                     </button>
                   </div>
                 </div>
@@ -1848,11 +1875,11 @@ const SystemUpdate: React.FC = () => {
                 <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-cyan-500/15 bg-cyan-500/5">
                     <div className="flex items-center gap-2 text-xs font-semibold text-cyan-400">
-                      AI Analiz Sonucu
+                      {t('upd_ai_result')}
                     </div>
                     <button onClick={() => setAiAnalysis('')}
                       className="text-slate-500 hover:text-slate-300 text-xs transition-colors">
-                      Yenile
+                      {t('refresh_action')}
                     </button>
                   </div>
                   <div className="p-4 max-h-80 overflow-y-auto">
@@ -1862,10 +1889,10 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(6)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(6)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button onClick={() => setStep(8)}
                   className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-                  {aiAnalysis ? 'İncele & Onayla →' : 'Onayla →'}
+                  {aiAnalysis ? t('upd_review_confirm') : t('upd_confirm_next')}
                 </button>
               </div>
             </div>
@@ -1874,39 +1901,39 @@ const SystemUpdate: React.FC = () => {
           {/* ── Adım 8: Onay ──────────────────────────────────────────────── */}
           {step === 8 && currentPlan && (
             <div className="space-y-5">
-              <h2 className="text-base font-semibold text-white">Güncellemeyi Onayla</h2>
+              <h2 className="text-base font-semibold text-white">{t('upd_confirm_title')}</h2>
 
               <div className="bg-white/[0.07]/50 rounded-xl p-5">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                   <div className="text-center">
                     <div className="text-xs font-bold text-slate-400">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.icon}</div>
-                    <div className="text-slate-400 text-xs">{DISTRO_LIST.find(d=>d.key===selectedDistro)?.label}</div>
+                    <div className="text-slate-400 text-xs">{distroName(DISTRO_LIST.find(d=>d.key===selectedDistro), t)}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-2xl font-bold text-white">{selectedServers.length}</div>
-                    <div className="text-slate-400 text-xs">Sunucu</div>
+                    <div className="text-slate-400 text-xs">{t('col_server')}</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xs font-bold text-blue-400">{UPDATE_TYPES.find(t=>t.key===updateType)?.icon}</div>
-                    <div className="text-slate-400 text-xs">{UPDATE_TYPES.find(t=>t.key===updateType)?.label}</div>
+                    <div className="text-xs font-bold text-blue-400">{utypeOf(updateType)?.icon}</div>
+                    <div className="text-slate-400 text-xs">{utypeOf(updateType) ? t(utypeOf(updateType)!.labelKey) : updateType}</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-sm font-medium text-white">{selectedRepo ? 'Local' : 'Varsayılan'}</div>
-                    <div className="text-slate-400 text-xs">Repo</div>
+                    <div className="text-sm font-medium text-white">{selectedRepo ? t('upd_local') : t('upd_default')}</div>
+                    <div className="text-slate-400 text-xs">{t('upd_step_repo')}</div>
                   </div>
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 text-sm font-medium text-white">
                       {snapshotMode === 'take'
-                        ? <><Camera size={12} strokeWidth={2} /> {SNAPSHOT_RETENTIONS.find(r => r.key === snapshotRetention)?.label || snapshotRetention}</>
-                        : 'Yok'}
+                        ? <><Camera size={12} strokeWidth={2} /> {(() => { const rr = SNAPSHOT_RETENTIONS.find(r => r.key === snapshotRetention); return rr ? t(rr.labelKey) : snapshotRetention })()}</>
+                        : t('none')}
                     </div>
-                    <div className="text-slate-400 text-xs">Snapshot</div>
+                    <div className="text-slate-400 text-xs">{t('upd_step_snapshot')}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">
-                      {credMode === 'override' && overrideUser ? overrideUser : 'Kayıtlı'}
+                      {credMode === 'override' && overrideUser ? overrideUser : t('upd_stored_short')}
                     </div>
-                    <div className="text-slate-400 text-xs">Kullanıcı</div>
+                    <div className="text-slate-400 text-xs">{t('upd_user_col')}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-sm font-medium text-white">
@@ -1916,7 +1943,7 @@ const SystemUpdate: React.FC = () => {
                   {updateType === 'custom' && (
                     <div className="text-center">
                       <div className="text-lg font-bold text-cyan-300">{selectedPkgs.size}</div>
-                      <div className="text-slate-400 text-xs">Seçili paket</div>
+                      <div className="text-slate-400 text-xs">{t('upd_selected_pkgs')}</div>
                     </div>
                   )}
                 </div>
@@ -1924,14 +1951,14 @@ const SystemUpdate: React.FC = () => {
 
               {updateType === 'kernel' && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
-                  Kernel güncellemesi sonrası reboot gerekecek — bunu önceden planlayın.
+                  {t('upd_kernel_reboot_plan')}
                 </div>
               )}
 
               {aiAnalysis && (
                 <details className="bg-white/[0.07]/30 border border-slate-600 rounded-xl">
                   <summary className="px-4 py-3 text-sm text-cyan-400 cursor-pointer select-none">
-                    AI Analiz Özetini Göster
+                    {t('upd_show_ai_summary')}
                   </summary>
                   <div className="px-4 pb-4 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap border-t border-slate-600 pt-3 mt-0">
                     {aiAnalysis}
@@ -1940,10 +1967,10 @@ const SystemUpdate: React.FC = () => {
               )}
 
               <div className="flex justify-between">
-                <button onClick={() => setStep(7)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? "İş devam ederken geri gidemezsiniz" : undefined}>← Geri</button>
+                <button onClick={() => setStep(7)} disabled={isJobActive} className={isJobActive ? "px-5 py-2.5 text-sm text-slate-600 cursor-not-allowed" : "px-5 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"} title={isJobActive ? t('upd_cant_go_back') : undefined}>← {t('back')}</button>
                 <button onClick={handleRun}
                   className="px-8 py-3 bg-green-700 hover:bg-green-600 text-white font-bold text-sm rounded-xl transition-colors flex items-center gap-2">
-                  ✓ Onayla ve Güncellemeyi Başlat
+                  ✓ {t('upd_confirm_start')}
                 </button>
               </div>
             </div>
@@ -1953,16 +1980,16 @@ const SystemUpdate: React.FC = () => {
           {step === 9 && currentPlan && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-white">Canlı İzleme</h2>
+                <h2 className="text-base font-semibold text-white">{t('upd_live_watch')}</h2>
                 <span className={`text-sm font-medium flex items-center gap-1.5 ${STATUS_COLOR[currentPlan.status]}`}>
                   {currentPlan.status === 'running' && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse inline-block" />}
-                  {STATUS_LABEL[currentPlan.status]}
+                  {statusT(currentPlan.status, t)}
                 </span>
               </div>
 
               <div>
                 <div className="flex justify-between text-xs text-slate-400 mb-1">
-                  <span>{currentPlan.completed_servers} / {currentPlan.total_servers} sunucu</span>
+                  <span>{t('upd_n_of_servers', { a: currentPlan.completed_servers, b: currentPlan.total_servers })}</span>
                   <span>{Math.round(currentPlan.completed_servers*100/Math.max(currentPlan.total_servers,1))}%</span>
                 </div>
                 <div className="bg-white/[0.07] rounded-full h-2.5">
@@ -1982,7 +2009,7 @@ const SystemUpdate: React.FC = () => {
                     >
                       <span className={`text-xs font-medium w-20 flex-shrink-0 ${STATUS_COLOR[j.status]}`}>
                         {(j.status==='running'||j.status==='pending') && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse mr-1" />}
-                        {STATUS_LABEL[j.status]}
+                        {statusT(j.status, t)}
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-white">{j.server_name}</div>
@@ -1992,7 +2019,7 @@ const SystemUpdate: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{j.packages_updated.length} paket</span>}
+                        {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{t('upd_n_pkgs', { n: j.packages_updated.length })}</span>}
                         {j.reboot_required && <span className="text-xs text-yellow-400">REBOOT</span>}
                         {j.snapshot?.status === 'active' && (
                           <span className="inline-flex items-center gap-1 text-xs text-cyan-400" title={j.snapshot.snapshot_name}>
@@ -2001,7 +2028,7 @@ const SystemUpdate: React.FC = () => {
                         )}
                         {j.snapshot?.status === 'failed' && (
                           <span className="inline-flex items-center gap-1 text-xs text-orange-400" title={j.snapshot.error_message || ''}>
-                            <Camera size={11} strokeWidth={2} /> Hata
+                            <Camera size={11} strokeWidth={2} /> {t('failed')}
                           </span>
                         )}
                         <span className="text-slate-500 text-xs">{expandedJob === j.id ? '▲' : '▼'}</span>
@@ -2019,7 +2046,7 @@ const SystemUpdate: React.FC = () => {
                       <button
                         onClick={async () => {
                           if (!currentPlan) return
-                          if (!confirm(`"${j.server_name}" sunucusunda güncelleme yeniden çalıştırılsın mı?`)) return
+                          if (!confirm(t('upd_rerun_on_server', { name: j.server_name }))) return
                           const r = await fetch(`${API}/plans/${currentPlan.id}/jobs/${j.id}/rerun`, { method: 'POST' })
                           if (r.ok) {
                             const [pr, jr] = await Promise.all([
@@ -2028,16 +2055,16 @@ const SystemUpdate: React.FC = () => {
                             ])
                             if (pr.ok) setCurrentPlan(await pr.json())
                             if (jr.ok) setPlanJobs(await jr.json())
-                          } else alert((await r.json()).detail || 'Hata')
+                          } else alert((await r.json()).detail || t('error_generic'))
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-colors w-full justify-center mt-1"
                       >
-                        ↻ Bu Sunucuda Yeniden Çalıştır
+                        ↻ {t('upd_rerun_this')}
                       </button>
                     )}
                         {j.packages_to_update.length > 0 && j.packages_updated.length < j.packages_to_update.length && (
                           <div className="text-xs text-slate-400">
-                            Planlanan: {j.packages_to_update.length} paket · Kurulan: {j.packages_updated.length}
+                            {t('upd_planned_installed', { plan: j.packages_to_update.length, done: j.packages_updated.length })}
                           </div>
                         )}
                     {/* Log — running job'da canlı, diğerlerinde statik */}
@@ -2064,7 +2091,7 @@ const SystemUpdate: React.FC = () => {
 
               {currentPlan.ai_summary && (
                 <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
-                  <div className="text-xs font-semibold text-green-400 mb-2">AI Güncelleme Özeti</div>
+                  <div className="text-xs font-semibold text-green-400 mb-2">{t('upd_ai_update_summary')}</div>
                   <AiMarkdown text={currentPlan.ai_summary} />
                 </div>
               )}
@@ -2072,7 +2099,7 @@ const SystemUpdate: React.FC = () => {
               {['completed','failed','partial'].includes(currentPlan.status) && (
                 <button onClick={resetWizard}
                   className="w-full py-3 bg-white/[0.07] hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition-colors">
-                  ← Plan Listesine Dön
+                  {t('upd_back_to_plans')}
                 </button>
               )}
             </div>
@@ -2087,15 +2114,15 @@ const SystemUpdate: React.FC = () => {
       {!showWizard && (
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
           <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Güncelleme Geçmişi</h2>
-            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">↻ Yenile</button>
+            <h2 className="text-sm font-semibold text-white">{t('upd_history')}</h2>
+            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">↻ {t('refresh_action')}</button>
           </div>
           {plans.length === 0 ? (
             <div className="py-16 text-center space-y-3">
-              <div className="text-slate-400 text-sm">Henüz güncelleme yapılmadı</div>
+              <div className="text-slate-400 text-sm">{t('upd_no_updates_yet')}</div>
               <button onClick={() => setShowWizard(true)}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">
-                İlk Güncellemeyi Başlat
+                {t('upd_first_update')}
               </button>
             </div>
           ) : (
@@ -2103,11 +2130,11 @@ const SystemUpdate: React.FC = () => {
             <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="bg-white/[0.07]/50 border-b border-slate-600">
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Plan</th>
-                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Mod</th>
-                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">Durum</th>
-                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">İlerleme</th>
-                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide w-[130px]">İşlem</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('upd_col_plan')}</th>
+                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('upd_col_mode')}</th>
+                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('col_status')}</th>
+                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('upd_col_progress')}</th>
+                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-300 uppercase tracking-wide w-[130px]">{t('actions')}</th>
                 </tr>
               </thead>
               <tbody>

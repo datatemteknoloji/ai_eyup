@@ -3,6 +3,8 @@ import {
   Zap, ClipboardList, AlertTriangle, Wrench, MessageSquare,
 } from 'lucide-react'
 
+import type { TranslationKey } from '../i18n/messages'
+
 export type PlatformKey = 'linux' | 'virt' | 'windows' | 'exadata' | 'openshift'
 
 export const PLATFORM_AIOPS_PREFIX: Record<PlatformKey, string> = {
@@ -58,7 +60,8 @@ function totalBadge(n: number) {
 /** Her platform modülü için AIOps alt menüsü — rozetler /ops/summary event sayılarıyla aynı */
 export function buildPlatformAiopsChildren(
   platform: PlatformKey,
-  summary?: AiopsSummary,
+  summary: AiopsSummary | undefined,
+  t: (key: TranslationKey) => string,
 ): ChildItem[] {
   const base = PLATFORM_AIOPS_PREFIX[platform]
   const critical = summary?.critical ?? 0
@@ -67,29 +70,32 @@ export function buildPlatformAiopsChildren(
   return [
     {
       path: `${base}/chat`,
-      name: 'Doğal Dil Asistanı',
+      name: t('nav_nl_assistant'),
       icon: React.createElement(MessageSquare, { size: 15 }),
     },
     {
       path: `${base}/ops`,
-      name: 'Komuta Merkezi',
+      name: t('nav_command_center'),
       icon: React.createElement(Zap, { size: 15 }),
       badge: () => critBadge(critical),
     },
     {
       path: `${base}/events`,
-      name: 'Events',
+      name: t('nav_events'),
       icon: React.createElement(ClipboardList, { size: 15 }),
-      // Uyarı rozeti; toplam actionable Events KPI "Aktif" ile totalBadge parent'ta
       badge: () => warnBadge(warning),
     },
     {
       path: `${base}/incidents`,
-      name: 'Incidents',
+      name: t('nav_incidents'),
       icon: React.createElement(AlertTriangle, { size: 15 }),
       badge: () => (openInc > 0 ? warnBadge(openInc) : null),
     },
-    { path: `${base}/analysis`, name: platform === 'openshift' ? 'Küme Analizi' : 'Analiz Araçları', icon: React.createElement(Wrench, { size: 15 }) },
+    {
+      path: `${base}/analysis`,
+      name: t(platform === 'openshift' ? 'nav_cluster_analysis' : 'nav_analysis_tools'),
+      icon: React.createElement(Wrench, { size: 15 }),
+    },
   ]
 }
 
@@ -99,10 +105,17 @@ export function aiopsTotalBadge(summary?: AiopsSummary) {
   return () => totalBadge(n)
 }
 
-export const PLATFORM_AIOPS_LABEL: Record<PlatformKey, string> = {
-  linux: 'Linux AIOps',
-  virt: 'Sanallaştırma AIOps',
-  windows: 'Windows AIOps',
-  exadata: 'Exadata AIOps',
-  openshift: 'OpenShift AIOps',
+export const PLATFORM_AIOPS_LABEL_KEY: Record<PlatformKey, TranslationKey> = {
+  linux: 'nav_aiops_linux',
+  virt: 'nav_aiops_virt',
+  windows: 'nav_aiops_windows',
+  exadata: 'nav_aiops_exadata',
+  openshift: 'nav_aiops_openshift',
+}
+
+export function platformAiopsLabel(
+  platform: PlatformKey,
+  t: (key: TranslationKey) => string,
+) {
+  return t(PLATFORM_AIOPS_LABEL_KEY[platform])
 }

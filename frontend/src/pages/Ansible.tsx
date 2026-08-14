@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
 
 interface Server {
   id: number
@@ -45,11 +46,6 @@ const inputCls = 'w-full bg-[#080d16] border border-white/[0.08] rounded-lg px-3
 
 type Tab = 'command' | 'playbook' | 'awx'
 
-const TAB_LABELS: Record<Tab, string> = {
-  command:  'Ad-Hoc Komut',
-  playbook: 'YAML Playbook',
-  awx:      'AWX Job Template',
-}
 
 const MODULES = ['shell', 'command', 'yum', 'apt', 'service', 'copy', 'file', 'ping']
 
@@ -63,6 +59,12 @@ const STATUS_COLOR: Record<string, string> = {
 
 // ── Main component ────────────────────────────────────────────────────────
 const Ansible: React.FC = () => {
+  const t = useT()
+  const tabLabels: Record<Tab, string> = {
+    command: t('ans_tab_command'),
+    playbook: t('ans_tab_playbook'),
+    awx: t('ans_tab_awx'),
+  }
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [search, setSearch]           = useState('')
   const [tab, setTab]                 = useState<Tab>('command')
@@ -143,7 +145,7 @@ const Ansible: React.FC = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ server_ids: selectedIds, playbook_content: yaml }),
         })
-        if (!res.ok) throw new Error('Playbook çalıştırılamadı')
+        if (!res.ok) throw new Error(t('ans_playbook_fail'))
         return res.json()
       }
       const res = await fetch(`${API_BASE_URL}/ansible/adhoc`, {
@@ -151,11 +153,11 @@ const Ansible: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_ids: selectedIds, module, args, become }),
       })
-      if (!res.ok) throw new Error('Ad-hoc komut başarısız')
+      if (!res.ok) throw new Error(t('ans_adhoc_fail'))
       return res.json()
     },
     onSuccess: data => setResult(data),
-    onError: (err: Error) => alert(`Hata: ${err.message}`),
+    onError: (err: Error) => alert(t('ans_err', { msg: err.message })),
   })
 
   const launchAWX = useMutation({
@@ -170,7 +172,7 @@ const Ansible: React.FC = () => {
           extra_vars: extra,
         }),
       })
-      if (!res.ok) throw new Error('AWX job başlatılamadı')
+      if (!res.ok) throw new Error(t('ans_awx_fail'))
       return res.json()
     },
     onSuccess: data => {
@@ -198,11 +200,8 @@ const Ansible: React.FC = () => {
 
       {/* Page header */}
       <div>
-        <h1 className="text-xl font-semibold text-[#e8edf5]">Ansible & AWX</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Toplu komut çalıştırma ve playbook yönetimi (yalnızca Linux/SSH sunucular — Windows sunucular için
-          Windows modülündeki Ansible/AWX sayfasını kullanın)
-        </p>
+        <h1 className="text-xl font-semibold text-[#e8edf5]">{t('ans_title')}</h1>
+        <p className="text-sm text-slate-500 mt-0.5">{t('ans_subtitle')}</p>
       </div>
 
       {/* Two-column layout */}
@@ -212,23 +211,23 @@ const Ansible: React.FC = () => {
         <div className={`${card} flex flex-col min-h-0`}>
           <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Sunucular</p>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{t('ans_servers')}</p>
               <p className="text-sm font-semibold text-[#e8edf5] mt-0.5">
                 {selectedIds.length > 0
-                  ? <span style={{ color: NEON.blue }}>{selectedIds.length} seçili</span>
-                  : <span className="text-slate-500">Seçilmedi</span>
+                  ? <span style={{ color: NEON.blue }}>{t('selected_n', { n: selectedIds.length })}</span>
+                  : <span className="text-slate-500">{t('ans_none_selected')}</span>
                 }
-                <span className="text-slate-600 font-normal"> / {sshServers.length} hazır</span>
+                <span className="text-slate-600 font-normal">{t('ans_n_ready', { n: sshServers.length })}</span>
               </p>
             </div>
             <div className="flex gap-1.5">
               <button onClick={() => setSelectedIds(filtered.map(s => s.id))}
                 className="px-2.5 py-1 text-xs rounded-lg text-blue-400 border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
-                Tümü
+                {t('filter_all')}
               </button>
               <button onClick={() => setSelectedIds([])}
                 className="px-2.5 py-1 text-xs rounded-lg text-slate-400 border border-white/[0.06] hover:bg-white/[0.04] transition-colors">
-                Temizle
+                {t('pkg_clear')}
               </button>
             </div>
           </div>
@@ -238,7 +237,7 @@ const Ansible: React.FC = () => {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Sunucu ara (isim, IP)..."
+              placeholder={t('ans_search')}
               className={inputCls}
             />
           </div>
@@ -247,7 +246,7 @@ const Ansible: React.FC = () => {
           <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-0.5 max-h-[320px] xl:max-h-none">
             {filtered.length === 0 ? (
               <div className="py-8 text-center text-slate-600 text-sm">
-                {search ? `"${search}" araması için sonuç yok` : 'SSH yapılabilen sunucu yok'}
+                {search ? t('ans_no_search', { q: search }) : t('ans_no_ssh')}
               </div>
             ) : filtered.map(s => {
               const sel = selectedIds.includes(s.id)
@@ -277,14 +276,14 @@ const Ansible: React.FC = () => {
 
           {/* Tab bar */}
           <div className={`${card} p-1 flex gap-1`}>
-            {(Object.keys(TAB_LABELS) as Tab[]).map(t => (
-              <button key={t} onClick={() => setTab(t)}
+            {(Object.keys(tabLabels) as Tab[]).map(tabKey => (
+              <button key={tabKey} onClick={() => setTab(tabKey)}
                 className={`flex-1 px-4 py-2 rounded-[8px] text-sm font-medium transition-all ${
-                  tab === t
+                  tab === tabKey
                     ? 'bg-blue-600 text-white'
                     : 'text-slate-400 hover:text-[#e8edf5] hover:bg-white/[0.03]'
                 }`}>
-                {TAB_LABELS[t]}
+                {tabLabels[tabKey]}
               </button>
             ))}
           </div>
@@ -294,18 +293,18 @@ const Ansible: React.FC = () => {
             <div className={`${card} p-5 space-y-4`}>
               <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-4">
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">Modül</label>
+                  <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">{t('ans_module')}</label>
                   <select value={module} onChange={e => setModule(e.target.value)} className={inputCls}>
                     {MODULES.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">Argümanlar</label>
+                  <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">{t('ans_args')}</label>
                   <input
                     type="text"
                     value={args}
                     onChange={e => setArgs(e.target.value)}
-                    placeholder='örn: "uptime" veya "name=vim state=present"'
+                    placeholder={t('ans_args_ph')}
                     className={`${inputCls} font-mono`}
                   />
                 </div>
@@ -314,7 +313,7 @@ const Ansible: React.FC = () => {
               <label className="flex items-center gap-2.5 text-sm text-slate-400 cursor-pointer select-none w-fit">
                 <input type="checkbox" checked={become} onChange={e => setBecome(e.target.checked)}
                   className="w-3.5 h-3.5 accent-blue-500" />
-                Sudo ile çalıştır (become)
+                {t('ans_become')}
               </label>
 
               <div className="flex items-center gap-3 pt-1">
@@ -325,10 +324,10 @@ const Ansible: React.FC = () => {
                   {runAdHoc.isPending && (
                     <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   )}
-                  {runAdHoc.isPending ? 'Çalıştırılıyor...' : 'Komutu Çalıştır'}
+                  {runAdHoc.isPending ? t('ans_running') : t('ans_run_cmd')}
                 </button>
                 {selectedIds.length === 0 && (
-                  <span className="text-xs text-slate-600">Soldan sunucu seçin</span>
+                  <span className="text-xs text-slate-600">{t('ans_pick_left')}</span>
                 )}
               </div>
             </div>
@@ -339,17 +338,17 @@ const Ansible: React.FC = () => {
             <div className={`${card} p-5 space-y-4`}>
               <div>
                 <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">
-                  Ansible Playbook (YAML)
+                  {t('ans_playbook_yaml')}
                 </label>
                 <textarea
                   value={yaml}
                   onChange={e => setYaml(e.target.value)}
                   rows={12}
                   className={`${inputCls} font-mono text-xs leading-relaxed resize-y`}
-                  placeholder={`---\n- name: Örnek Playbook\n  hosts: all\n  become: yes\n  tasks:\n    - name: Paket yükle\n      yum:\n        name: vim\n        state: present`}
+                  placeholder={t('ans_playbook_ph')}
                 />
                 <p className="text-[11px] text-slate-600 mt-1.5">
-                  "hosts: all" → seçili sunuculara uygulanır
+                  {t('ans_hosts_all')}
                 </p>
               </div>
 
@@ -361,10 +360,10 @@ const Ansible: React.FC = () => {
                   {runAdHoc.isPending && (
                     <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   )}
-                  {runAdHoc.isPending ? 'Çalıştırılıyor...' : 'Playbook Çalıştır'}
+                  {runAdHoc.isPending ? t('ans_running') : t('ans_run_playbook')}
                 </button>
                 {selectedIds.length === 0 && (
-                  <span className="text-xs text-slate-600">Soldan sunucu seçin</span>
+                  <span className="text-xs text-slate-600">{t('ans_pick_left')}</span>
                 )}
               </div>
             </div>
@@ -375,23 +374,23 @@ const Ansible: React.FC = () => {
             <div className={`${card} p-5 space-y-4`}>
               {templates.length === 0 ? (
                 <div className="py-6 text-center">
-                  <p className="text-sm text-slate-500 mb-1">AWX yapılandırılmamış veya job template yok</p>
+                  <p className="text-sm text-slate-500 mb-1">{t('ans_awx_empty')}</p>
                   <p className="text-xs text-slate-600 font-mono">AWX_URL · AWX_USERNAME · AWX_PASSWORD</p>
                 </div>
               ) : (
                 <>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">
-                      Job Template
+                      {t('ans_job_template')}
                     </label>
                     <select
                       value={templateId || ''}
                       onChange={e => setTemplateId(Number(e.target.value))}
                       className={inputCls}>
-                      <option value="">— Seçin —</option>
-                      {templates.map(t => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}{t.description ? ` — ${t.description}` : ''}
+                      <option value="">{t('ans_select')}</option>
+                      {templates.map(tmpl => (
+                        <option key={tmpl.id} value={tmpl.id}>
+                          {tmpl.name}{tmpl.description ? ` — ${tmpl.description}` : ''}
                         </option>
                       ))}
                     </select>
@@ -399,7 +398,7 @@ const Ansible: React.FC = () => {
 
                   <div>
                     <label className="block text-xs text-slate-500 mb-1.5 font-medium uppercase tracking-wider">
-                      Extra Vars <span className="normal-case font-normal">(JSON, opsiyonel)</span>
+                      {t('ans_extra_vars')} <span className="normal-case font-normal">{t('ans_json_optional')}</span>
                     </label>
                     <textarea
                       value={extraVars}
@@ -418,7 +417,7 @@ const Ansible: React.FC = () => {
                       {launchAWX.isPending && (
                         <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       )}
-                      {launchAWX.isPending ? 'Başlatılıyor...' : 'Job Başlat'}
+                      {launchAWX.isPending ? t('ans_launching') : t('ans_launch_job')}
                     </button>
                   </div>
                 </>
@@ -429,22 +428,22 @@ const Ansible: React.FC = () => {
                 <div className="border-t border-white/[0.06] pt-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                      Job #{jobId}
+                      {t('ans_job_n', { id: jobId })}
                     </p>
                     <button onClick={() => setJobId(null)}
-                      className="text-xs text-slate-600 hover:text-slate-400">Kapat</button>
+                      className="text-xs text-slate-600 hover:text-slate-400">{t('close')}</button>
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: 'Durum', value: jobStatus.status?.toUpperCase() },
-                      { label: 'İsim', value: jobStatus.name },
-                      { label: 'Süre', value: jobStatus.elapsed ? `${jobStatus.elapsed}s` : '—' },
+                      { label: t('col_status'), value: jobStatus.status?.toUpperCase(), isStatus: true },
+                      { label: t('name'), value: jobStatus.name, isStatus: false },
+                      { label: t('ans_duration'), value: jobStatus.elapsed ? `${jobStatus.elapsed}s` : '—', isStatus: false },
                     ].map(row => (
                       <div key={row.label} className="bg-[#080d16] rounded-lg p-3">
                         <p className="text-[10px] text-slate-600 uppercase tracking-wider mb-1">{row.label}</p>
                         <p className="text-sm font-medium"
-                          style={{ color: row.label === 'Durum' ? STATUS_COLOR[jobStatus.status] ?? '#e8edf5' : '#e8edf5' }}>
+                          style={{ color: row.isStatus ? STATUS_COLOR[jobStatus.status] ?? '#e8edf5' : '#e8edf5' }}>
                           {row.value}
                         </p>
                       </div>
@@ -454,7 +453,7 @@ const Ansible: React.FC = () => {
                   <button
                     onClick={() => window.open(`${API_BASE_URL}/ansible/awx/job/${jobId}/stdout`, '_blank')}
                     className="px-3 py-1.5 text-xs rounded-lg border border-white/[0.08] text-slate-400 hover:text-[#e8edf5] hover:bg-white/[0.03] transition-colors">
-                    Çıktıyı Gör →
+                    {t('ans_view_out')}
                   </button>
                 </div>
               )}
@@ -467,17 +466,17 @@ const Ansible: React.FC = () => {
               {/* Header */}
               <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <p className="text-sm font-medium text-[#e8edf5]">Çıktılar</p>
+                  <p className="text-sm font-medium text-[#e8edf5]">{t('ans_outputs')}</p>
                   {successCount > 0 && (
                     <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                       style={{ background: `rgba(${rgb(NEON.green)},0.12)`, color: NEON.green, border: `1px solid rgba(${rgb(NEON.green)},0.25)` }}>
-                      {successCount} başarılı
+                      {t('ans_n_ok', { n: successCount })}
                     </span>
                   )}
                   {failCount > 0 && (
                     <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                       style={{ background: `rgba(${rgb(NEON.red)},0.12)`, color: NEON.red, border: `1px solid rgba(${rgb(NEON.red)},0.25)` }}>
-                      {failCount} hata
+                      {t('ans_n_err', { n: failCount })}
                     </span>
                   )}
                 </div>
@@ -498,7 +497,7 @@ const Ansible: React.FC = () => {
                       </span>
                     </div>
                     <pre className="text-[11px] font-mono text-slate-400 whitespace-pre-wrap bg-[#080d16] rounded-lg p-3 leading-relaxed">
-                      {res.stdout || res.stderr || '(çıktı yok)'}
+                      {res.stdout || res.stderr || t('ans_no_out')}
                     </pre>
                   </div>
                 ))}
@@ -508,7 +507,7 @@ const Ansible: React.FC = () => {
               {result.stdout && (
                 <details className="border-t border-white/[0.06]">
                   <summary className="px-5 py-2.5 text-xs text-slate-600 cursor-pointer hover:text-slate-400 select-none">
-                    Ham çıktı
+                    {t('ans_raw')}
                   </summary>
                   <pre className="px-5 pb-4 text-[11px] font-mono text-slate-400 whitespace-pre-wrap">
                     {result.stdout}

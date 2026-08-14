@@ -4,12 +4,13 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Square, RotateCcw, Copy, Trash2, Camera, HardDrive, Network, MoreHorizontal, X, RefreshCw,
 } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
+import { useT } from '../../i18n/LocaleProvider'
 
 type Vm = { name: string; namespace: string; phase?: string; printable_status?: string }
 
@@ -35,6 +36,7 @@ const MENU_W = 192
 const MENU_H = 220
 
 export default function OcpVmAdminActions({ clusterId, vm }: Props) {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const qc = useQueryClient()
@@ -51,6 +53,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
   const [size, setSize] = useState('20Gi')
   const [nad, setNad] = useState('')
   const [pvcName, setPvcName] = useState(`${vm.name}-pvc`)
+  const [storageClass, setStorageClass] = useState('')
 
   const placeMenu = () => {
     const el = moreRef.current
@@ -95,10 +98,26 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
     }
   }, [menu])
 
+  const { data: storage } = useQuery({
+    queryKey: ['openshift-storage', clusterId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/storage`)
+      if (!r.ok) return { storage_classes: [] as { name: string; default?: boolean }[] }
+      return r.json()
+    },
+    enabled: isAdmin && (panel === 'disk' || panel === 'pvc'),
+  })
+  const classes: { name: string; default?: boolean }[] = storage?.storage_classes || []
+
   if (!isAdmin) return null
 
   const base = `/openshift/clusters/${clusterId}/kubevirt/vms/${encodeURIComponent(vm.namespace)}/${encodeURIComponent(vm.name)}`
-  const refresh = () => qc.invalidateQueries({ queryKey: ['openshift-kubevirt-vms', clusterId] })
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['openshift-kubevirt-vms', clusterId] })
+    qc.invalidateQueries({ queryKey: ['openshift-vm-detail', clusterId, vm.namespace, vm.name] })
+    qc.invalidateQueries({ queryKey: ['openshift-vm-snapshots', clusterId, vm.namespace, vm.name] })
+    qc.invalidateQueries({ queryKey: ['openshift-vm-clones', clusterId, vm.namespace, vm.name] })
+  }
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -110,7 +129,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       setMenu(false)
       setMenuPos(null)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'İşlem başarısız')
+      setErr(e instanceof Error ? e.message : t('ocp_action_fail'))
     } finally {
       setBusy(false)
     }
@@ -128,29 +147,29 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
   const menuItems = (
     <>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('clone')}>
-        <Copy size={11} /> Klonla
+        <Copy size={11} /> {t('ocp_clone')}
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('snapshot')}>
-        <Camera size={11} /> Snapshot
+        <Camera size={11} /> {t('ocp_snapshot')}
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('disk')}>
-        <HardDrive size={11} /> Disk ekle
+        <HardDrive size={11} /> {t('ocp_add_disk')}
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('network')}>
-        <Network size={11} /> Ağ (Multus)
+        <Network size={11} /> {t('ocp_net_multus')}
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('pvc')}>
-        <HardDrive size={11} /> PVC oluştur
+        <HardDrive size={11} /> {t('ocp_create_pvc')}
       </button>
       <button
         type="button"
         className="w-full px-3 py-1.5 text-left text-red-300 hover:bg-red-500/10 inline-flex items-center gap-2"
         onClick={() => {
-          if (!window.confirm(`'${vm.namespace}/${vm.name}' KALICI olarak silinsin mi?`)) return
+          if (!window.confirm(t('ocp_delete_vm_confirm', { ns: vm.namespace, name: vm.name }))) return
           run(() => api(base, { method: 'DELETE' }))
         }}
       >
-        <Trash2 size={11} /> VM sil
+        <Trash2 size={11} /> {t('ocp_delete_vm')}
       </button>
     </>
   )
@@ -159,7 +178,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
     <div className="inline-flex items-center gap-1">
       <button
         type="button"
-        title="Başlat"
+        title={t('start')}
         disabled={busy || running}
         onClick={() => run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'start' }) }))}
         className="p-1 rounded text-emerald-400/90 hover:bg-emerald-500/10 disabled:opacity-30"
@@ -168,10 +187,10 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       </button>
       <button
         type="button"
-        title="Durdur"
+        title={t('stop')}
         disabled={busy || !running}
         onClick={() => {
-          if (!window.confirm(`${vm.name} durdurulsun mu?`)) return
+          if (!window.confirm(t('ocp_stop_confirm', { name: vm.name }))) return
           run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'stop' }) }))
         }}
         className="p-1 rounded text-amber-300/90 hover:bg-amber-500/10 disabled:opacity-30"
@@ -180,10 +199,10 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       </button>
       <button
         type="button"
-        title="Yeniden başlat"
+        title={t('restart')}
         disabled={busy || !running}
         onClick={() => {
-          if (!window.confirm(`${vm.name} yeniden başlatılsın mı?`)) return
+          if (!window.confirm(t('ocp_restart_vm_confirm', { name: vm.name }))) return
           run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'restart' }) }))
         }}
         className="p-1 rounded text-cyan-300/90 hover:bg-cyan-500/10 disabled:opacity-30"
@@ -193,7 +212,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       <button
         ref={moreRef}
         type="button"
-        title="Diğer işlemler"
+        title={t('ocp_more')}
         onClick={toggleMenu}
         className="p-1 rounded text-slate-400 hover:bg-white/[0.06]"
       >
@@ -223,34 +242,46 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
           <div className="bg-cyber-card border border-white/[0.08] rounded-xl w-full max-w-sm p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="text-sm text-white font-medium">
-                {panel === 'clone' && 'VM klonla'}
-                {panel === 'snapshot' && 'Snapshot al'}
-                {panel === 'disk' && 'Disk (DataVolume) ekle'}
-                {panel === 'network' && 'Multus ağ bağla'}
-                {panel === 'pvc' && 'PVC oluştur'}
+                {panel === 'clone' && t('ocp_clone_title')}
+                {panel === 'snapshot' && t('ocp_snap_title')}
+                {panel === 'disk' && t('ocp_disk_dv')}
+                {panel === 'network' && t('ocp_attach_nad')}
+                {panel === 'pvc' && t('ocp_create_pvc')}
               </div>
               <button type="button" onClick={() => setPanel(null)} className="text-slate-400"><X size={16} /></button>
             </div>
             <p className="text-[11px] text-slate-500">{vm.namespace}/{vm.name}</p>
             {panel === 'clone' && (
-              <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Hedef VM adı" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t('ocp_target_vm')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
             )}
             {panel === 'snapshot' && (
-              <input value={snapName} onChange={(e) => setSnapName(e.target.value)} placeholder="Snapshot adı (opsiyonel)" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              <input value={snapName} onChange={(e) => setSnapName(e.target.value)} placeholder={t('ocp_snap_name')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
             )}
             {panel === 'disk' && (
               <>
-                <input value={diskName} onChange={(e) => setDiskName(e.target.value)} placeholder="Disk adı" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
-                <input value={size} onChange={(e) => setSize(e.target.value)} placeholder="Boyut (20Gi)" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <input value={diskName} onChange={(e) => setDiskName(e.target.value)} placeholder={t('ocp_disk_name')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <input value={size} onChange={(e) => setSize(e.target.value)} placeholder={t('ocp_size_20')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <select value={storageClass} onChange={(e) => setStorageClass(e.target.value)} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white">
+                  <option value="">{t('ocp_sc_cluster_default')}</option>
+                  {classes.map((sc) => (
+                    <option key={sc.name} value={sc.name}>{sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}</option>
+                  ))}
+                </select>
               </>
             )}
             {panel === 'network' && (
-              <input value={nad} onChange={(e) => setNad(e.target.value)} placeholder="NAD adı (ns/name veya name)" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              <input value={nad} onChange={(e) => setNad(e.target.value)} placeholder={t('ocp_nad_name')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
             )}
             {panel === 'pvc' && (
               <>
-                <input value={pvcName} onChange={(e) => setPvcName(e.target.value)} placeholder="PVC adı" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
-                <input value={size} onChange={(e) => setSize(e.target.value)} placeholder="Boyut (10Gi)" className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <input value={pvcName} onChange={(e) => setPvcName(e.target.value)} placeholder={t('ocp_pvc_name')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <input value={size} onChange={(e) => setSize(e.target.value)} placeholder={t('ocp_size_10')} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                <select value={storageClass} onChange={(e) => setStorageClass(e.target.value)} className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white">
+                  <option value="">{t('ocp_sc_cluster_default')}</option>
+                  {classes.map((sc) => (
+                    <option key={sc.name} value={sc.name}>{sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}</option>
+                  ))}
+                </select>
               </>
             )}
             {err && <div className="text-xs text-red-400">{err}</div>}
@@ -260,22 +291,24 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
               className="w-full py-2 rounded-lg bg-rose-600 text-white text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
               onClick={() => {
                 if (panel === 'clone') {
+                  if (!window.confirm(t('ocp_clone_confirm', { from: vm.name, to: target }))) return
                   run(() => api(`${base}/clone`, { method: 'POST', body: JSON.stringify({ target_name: target }) }))
                 } else if (panel === 'snapshot') {
                   run(() => api(`${base}/snapshots`, { method: 'POST', body: JSON.stringify({ snapshot_name: snapName || undefined }) }))
                 } else if (panel === 'disk') {
-                  run(() => api(`${base}/disk`, { method: 'POST', body: JSON.stringify({ disk_name: diskName, size }) }))
+                  if (!window.confirm(t('ocp_disk_add_confirm', { name: diskName }))) return
+                  run(() => api(`${base}/disk`, { method: 'POST', body: JSON.stringify({ disk_name: diskName, size, storage_class: storageClass || undefined }) }))
                 } else if (panel === 'network') {
                   run(() => api(`${base}/network`, { method: 'POST', body: JSON.stringify({ nad_name: nad }) }))
                 } else if (panel === 'pvc') {
                   run(() => api(`/openshift/clusters/${clusterId}/kubevirt/pvc`, {
                     method: 'POST',
-                    body: JSON.stringify({ namespace: vm.namespace, name: pvcName, size }),
+                    body: JSON.stringify({ namespace: vm.namespace, name: pvcName, size, storage_class: storageClass || undefined }),
                   }))
                 }
               }}
             >
-              {busy && <RefreshCw size={12} className="animate-spin" />} Uygula
+              {busy && <RefreshCw size={12} className="animate-spin" />} {t('apply')}
             </button>
           </div>
         </div>,

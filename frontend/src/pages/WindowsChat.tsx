@@ -23,6 +23,7 @@ import {
   persistSessionId,
 } from '../lib/chatStreamStore'
 import { useChatStickToBottom } from '../lib/chatScroll'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 function _cleanCell(raw: string): string {
   return raw
@@ -125,6 +126,7 @@ const ConfirmDialog: React.FC<{
   onConfirm: () => void
   onCancel: () => void
 }> = ({ open, message, onConfirm, onCancel }) => {
+  const t = useT()
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -133,11 +135,11 @@ const ConfirmDialog: React.FC<{
         <div className="flex gap-3 justify-center">
           <button onClick={onCancel}
             className="flex-1 px-4 py-2 rounded-lg text-sm bg-white/[0.07] hover:bg-white/[0.12] text-slate-300 transition-colors">
-            İptal
+            {t('cancel')}
           </button>
           <button onClick={() => { onConfirm(); onCancel() }}
             className="flex-1 px-4 py-2 rounded-lg text-sm bg-red-600 hover:bg-red-500 text-white font-medium transition-colors">
-            Sil
+            {t('delete')}
           </button>
         </div>
       </div>
@@ -150,6 +152,8 @@ const WindowsChat: React.FC<{
   initialQuestion?: string | null
   onInitialQuestionUsed?: () => void
 }> = ({ embedded, initialQuestion = null, onInitialQuestionUsed }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const streamChannel = 'windows'
   const stream = useChatStream(streamChannel)
   const isLoading = stream.isLoading
@@ -247,7 +251,7 @@ const WindowsChat: React.FC<{
           reachable: false,
           models: [],
           default: 'llama3.2:3b',
-          error: e instanceof Error ? e.message : 'bağlantı hatası',
+          error: e instanceof Error ? e.message : t('chat_conn_err'),
         }
       }
     },
@@ -403,7 +407,7 @@ const WindowsChat: React.FC<{
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
-    return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString(locale === 'en' ? 'en-GB' : 'tr-TR', { hour: '2-digit', minute: '2-digit' })
   }
 
   const aiReadyWindowsServers = servers.filter(s => s.ai_ready && isWindowsServer(s))
@@ -414,9 +418,9 @@ const WindowsChat: React.FC<{
   })
 
   const thinkingLabel =
-    thinkingPhase === 'context' ? 'Bağlam hazırlanıyor (WinRM / Event Log / RAG)...' :
-    thinkingPhase === 'tools' ? 'Tanı araçları çalışıyor...' :
-    thinkingPhase === 'streaming' ? 'Yanıt üretiliyor...' : ''
+    thinkingPhase === 'context' ? t('chat_think_ctx_win') :
+    thinkingPhase === 'tools' ? t('chat_think_tools') :
+    thinkingPhase === 'streaming' ? t('chat_think_stream') : ''
 
   return (
     <>
@@ -434,12 +438,12 @@ const WindowsChat: React.FC<{
           onNew={() => createSessionMutation.mutate()}
           onDelete={id => setConfirmDialog({
             open: true,
-            message: 'Bu chat silinecek?',
+            message: t('chat_del_one'),
             onConfirm: () => deleteSessionMutation.mutate(id),
           })}
           onClearAll={() => setConfirmDialog({
             open: true,
-            message: 'Tüm chat geçmişi silinecek. Devam edilsin mi?',
+            message: t('chat_del_all'),
             onConfirm: () => clearAllSessionsMutation.mutate(),
           })}
         />
@@ -450,13 +454,13 @@ const WindowsChat: React.FC<{
                 type="button"
                 onClick={() => exportChatMessagesToPrintWindow(messages, {
                   title: 'Windows AI Asistan',
-                  subtitle: new Date().toLocaleString('tr-TR'),
+                  subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
                   filename: `windows_ai_${new Date().toISOString().slice(0, 10)}`,
                 })}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-                title="Sohbeti PDF olarak kaydet"
+                title={t('chat_pdf_title')}
               >
-                <FileDown size={13} /> Sohbeti PDF
+                <FileDown size={13} /> {t('chat_pdf_chat')}
               </button>
             )}
             <NlModelSelect
@@ -480,7 +484,7 @@ const WindowsChat: React.FC<{
                 className="flex items-center gap-2 px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-left min-w-[240px] hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
               >
                 <span className="text-slate-300 text-sm">
-                  {selectedServers.length === 0 ? 'Hedef (opsiyonel)' : `${selectedServers.length} sunucu`}
+                  {selectedServers.length === 0 ? t('chat_target_opt') : t('chat_n_servers', { n: selectedServers.length })}
                 </span>
                 <span className="ml-auto text-slate-500">{serverDropdownOpen ? '▲' : '▼'}</span>
               </button>
@@ -502,21 +506,21 @@ const WindowsChat: React.FC<{
                       type="text"
                       value={serverSearch}
                       onChange={e => setServerSearch(e.target.value)}
-                      placeholder="Sunucu ara..."
+                      placeholder={t('win_search')}
                       autoFocus
                       className="w-full bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                   </div>
                   <div className="flex items-center gap-2 p-2 border-b border-slate-700/50 shrink-0">
                     <button type="button" onClick={() => setSelectedServers(filteredServers.map(s => s.id))}
-                      className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">Tümünü seç</button>
+                      className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded">{t('chat_select_all')}</button>
                     <button type="button" onClick={() => setSelectedServers([])}
-                      className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">Temizle</button>
-                    <span className="text-xs text-slate-500 ml-auto">{filteredServers.length} sunucu</span>
+                      className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded">{t('chat_clear')}</button>
+                    <span className="text-xs text-slate-500 ml-auto">{t('chat_n_servers', { n: filteredServers.length })}</span>
                   </div>
                   <div className="overflow-y-auto flex-1 min-h-0">
                     {filteredServers.length === 0 ? (
-                      <div className="p-4 text-center text-slate-500 text-sm">AI Ready Windows sunucu yok</div>
+                      <div className="p-4 text-center text-slate-500 text-sm">{t('chat_no_ai_ready')}</div>
                     ) : filteredServers.map(s => (
                       <label key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700/40 cursor-pointer">
                         <input
@@ -549,7 +553,7 @@ const WindowsChat: React.FC<{
             {messages.length === 0 && !streamBelongsHere ? (
               <NlEmptyState
                 icon={<Shield size={24} className="text-white" />}
-                description="Windows sunucu durumu, servis, event log ve güncelleme sorularını doğal dilde sorun."
+                description={t('chat_empty_win')}
               />
             ) : (
               <div className="max-w-3xl mx-auto space-y-4">
@@ -571,8 +575,8 @@ const WindowsChat: React.FC<{
                               <button
                                 type="button"
                                 onClick={() => exportMarkdownToPrintWindow(msg.content, {
-                                  title: 'Windows AI Asistan Yanıtı',
-                                  subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString('tr-TR') : undefined,
+                                  title: t('chat_pdf_win'),
+                                  subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') : undefined,
                                   filename: `windows_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
                                 })}
                                 className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1"
@@ -587,14 +591,14 @@ const WindowsChat: React.FC<{
                                   onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
                                   className="text-xs px-2 py-1.5 rounded bg-slate-700/70 hover:bg-slate-700 text-slate-200 border border-slate-600/50 flex items-center gap-1"
                                 >
-                                  CSV İndir
+                                  {t('chat_csv')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
                                   className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1"
                                 >
-                                  Excel İndir
+                                  {t('chat_xlsx')}
                                 </button>
                               </>
                             )}
@@ -660,7 +664,7 @@ const WindowsChat: React.FC<{
                         <div>
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
                             <div className="w-2.5 h-2.5 border-2 border-green-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                            <span>Yanıt üretiliyor...</span>
+                            <span>{t('chat_generating')}</span>
                           </div>
                           <StreamingText text={streamingText} />
                         </div>
@@ -681,10 +685,10 @@ const WindowsChat: React.FC<{
             onSubmit={handleSubmit}
             onAbort={handleAbort}
             loading={isLoading}
-            placeholder="Windows sunucunuz hakkında sorun… (Enter ile gönder)"
+            placeholder={t('chat_ph_win')}
             extra={selectedServers.length > 0 ? (
               <div className="mb-2 flex items-center flex-wrap gap-2">
-                <span className="text-xs text-slate-400">Seçili sunucular:</span>
+                <span className="text-xs text-slate-400">{t('chat_selected')}</span>
                 {selectedServers.map(serverId => {
                   const server = aiReadyWindowsServers.find(s => s.id === serverId)
                   return server ? (

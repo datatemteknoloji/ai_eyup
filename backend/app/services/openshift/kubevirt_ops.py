@@ -201,6 +201,33 @@ def delete_snapshot(
     return {"ok": True}
 
 
+def list_clones(client: KubeVirtClient, namespace: str, vm_name: str) -> list:
+    r = client.session.get(
+        f"{client.api_url}{CLONE}/namespaces/{namespace}/virtualmachineclones",
+        timeout=client.timeout,
+    )
+    if r.status_code == 404:
+        return []
+    _raise_http(r, "Klon listesi")
+    out = []
+    for item in (r.json() or {}).get("items") or []:
+        spec = item.get("spec") or {}
+        src = ((spec.get("source") or {}).get("name"))
+        tgt = ((spec.get("target") or {}).get("name"))
+        if src and src != vm_name:
+            continue
+        st = item.get("status") or {}
+        out.append({
+            "name": (item.get("metadata") or {}).get("name"),
+            "target": tgt,
+            "phase": st.get("phase"),
+            "ready": st.get("ready"),
+            "created": (item.get("metadata") or {}).get("creationTimestamp"),
+        })
+    out.sort(key=lambda x: x.get("created") or "", reverse=True)
+    return out
+
+
 def list_snapshots(client: KubeVirtClient, namespace: str, vm_name: str) -> list:
     r = client.session.get(
         f"{client.api_url}{SNAP}/namespaces/{namespace}/virtualmachinesnapshots",

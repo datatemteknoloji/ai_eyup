@@ -6,10 +6,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Loader2, Monitor, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import RFB from '@novnc/novnc'
+import { useT } from '../i18n/LocaleProvider'
 
 type Status = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 const OpenShiftVmConsolePage: React.FC = () => {
+  const t = useT()
   const { clusterId, namespace, name } = useParams<{
     clusterId: string
     namespace: string
@@ -24,8 +26,8 @@ const OpenShiftVmConsolePage: React.FC = () => {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    document.title = `Konsol — ${title}`
-  }, [title])
+    document.title = t('ocp_console_title', { title })
+  }, [title, t])
 
   const connect = useCallback(() => {
     if (!screenRef.current || !clusterId || !namespace || !name) return
@@ -54,19 +56,19 @@ const OpenShiftVmConsolePage: React.FC = () => {
         setStatus('disconnected')
         const detail = (e as CustomEvent)?.detail
         if (detail && !detail.clean) {
-          setError('Bağlantı kapandı — VM Running mi? VNC yetkisi (subresource) var mı?')
+          setError(t('ocp_console_disconnect'))
         }
       })
       rfb.addEventListener('securityfailure', () => {
         setStatus('error')
-        setError('Kimlik doğrulama başarısız — küme token / VNC RBAC kontrol edin')
+        setError(t('ocp_console_auth_fail'))
       })
       rfbRef.current = rfb
     } catch {
       setStatus('error')
-      setError('Konsol başlatılamadı')
+      setError(t('ocp_console_start_fail'))
     }
-  }, [clusterId, namespace, name])
+  }, [clusterId, namespace, name, t])
 
   useEffect(() => {
     connect()
@@ -82,17 +84,17 @@ const OpenShiftVmConsolePage: React.FC = () => {
   }, [connect])
 
   const statusMeta = {
-    connecting: { icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, label: 'Bağlanıyor', cls: 'text-amber-400' },
-    connected: { icon: <Wifi className="w-3.5 h-3.5" />, label: 'Bağlı (VNC)', cls: 'text-emerald-400' },
-    disconnected: { icon: <WifiOff className="w-3.5 h-3.5" />, label: 'Kesildi', cls: 'text-slate-400' },
-    error: { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: 'Hata', cls: 'text-red-400' },
+    connecting: { icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, label: t('ocp_connecting'), cls: 'text-amber-400' },
+    connected: { icon: <Wifi className="w-3.5 h-3.5" />, label: t('ocp_connected_vnc'), cls: 'text-emerald-400' },
+    disconnected: { icon: <WifiOff className="w-3.5 h-3.5" />, label: t('ocp_disconnected'), cls: 'text-slate-400' },
+    error: { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: t('error_generic'), cls: 'text-red-400' },
   }[status]
 
   return (
     <div className="fixed inset-0 bg-[#0a0f1a] flex flex-col">
       <div className="h-12 flex items-center gap-3 px-4 border-b border-white/10 bg-[#161b22] flex-shrink-0">
         <Monitor className="w-4 h-4 text-violet-400" />
-        <span className="text-sm font-semibold text-slate-200">KubeVirt Konsol</span>
+        <span className="text-sm font-semibold text-slate-200">{t('ocp_kubevirt_console')}</span>
         <span className="text-xs text-slate-500 font-mono truncate">{title}</span>
         <span className={`flex items-center gap-1.5 text-xs ${statusMeta.cls}`}>
           {statusMeta.icon} {statusMeta.label}
@@ -110,7 +112,7 @@ const OpenShiftVmConsolePage: React.FC = () => {
               }}
               className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
             >
-              Ctrl+Alt+Del
+              {t('ocp_ctrl_alt_del')}
             </button>
           )}
           <button
@@ -118,14 +120,14 @@ const OpenShiftVmConsolePage: React.FC = () => {
             onClick={() => connect()}
             className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5 inline-flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Yeniden bağlan
+            <RefreshCw className="w-3.5 h-3.5" /> {t('ocp_reconnect')}
           </button>
           <button
             type="button"
             onClick={() => window.close()}
             className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
           >
-            Kapat
+            {t('close')}
           </button>
         </div>
       </div>
@@ -136,13 +138,13 @@ const OpenShiftVmConsolePage: React.FC = () => {
           <div className="absolute inset-0 flex items-center justify-center bg-[#0a0f1a]/80">
             <div className="rounded-xl border border-white/10 bg-[#161b22] p-6 max-w-md text-center shadow-xl">
               <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-red-400" />
-              <p className="text-sm text-slate-300">{error || 'Konsol bağlantısı kapandı'}</p>
+              <p className="text-sm text-slate-300">{error || t('ocp_console_closed')}</p>
               <button
                 type="button"
                 onClick={() => connect()}
                 className="mt-4 text-xs px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white"
               >
-                Yeniden dene
+                {t('ocp_retry')}
               </button>
             </div>
           </div>

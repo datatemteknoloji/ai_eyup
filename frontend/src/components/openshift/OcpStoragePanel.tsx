@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { HardDrive, Network, RefreshCw, Database, ChevronRight, ChevronDown } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
+import { useT } from '../../i18n/LocaleProvider'
 
 const PHASE: Record<string, string> = {
   Bound: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
@@ -14,6 +15,7 @@ const PHASE: Record<string, string> = {
 }
 
 export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
+  const t = useT()
   const [openSc, setOpenSc] = useState<string | null>(null)
 
   const { data: st, isLoading, isFetching, refetch } = useQuery({
@@ -45,7 +47,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
   if (isLoading && !st) {
     return (
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-8 text-center text-slate-500 text-sm">
-        Yükleniyor…
+        {t('loading')}
       </div>
     )
   }
@@ -53,7 +55,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
   if (!st) {
     return (
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-8 text-center text-slate-500 text-sm">
-        Depolama verisi yok
+        {t('ocp_no_storage')}
       </div>
     )
   }
@@ -68,13 +70,13 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
           onClick={() => refetch()}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
         </button>
       </div>
 
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
         <h3 className="text-sm font-semibold text-slate-100 mb-2 flex items-center gap-2">
-          <Database size={16} className="text-violet-400" /> Storage Class’lar
+          <Database size={16} className="text-violet-400" /> {t('ocp_sc_list')}
           <span className="text-xs text-slate-500">({(st.storage_classes || []).length})</span>
         </h3>
         <div className="space-y-1">
@@ -88,14 +90,14 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
                 {openSc === sc.name ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
                 <span className="text-slate-100 font-medium">{sc.name}</span>
                 {sc.default && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300">varsayılan</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300">{t('ocp_sc_default')}</span>
                 )}
                 <span className="text-slate-500 ml-auto truncate">{sc.provisioner}</span>
               </button>
               {openSc === sc.name && (
                 <div className="border-t border-white/[0.06] px-3 py-2 text-xs grid grid-cols-2 gap-x-6 gap-y-1 text-slate-400">
-                  <span>Geri kazanım: <span className="text-slate-200">{sc.reclaim || '—'}</span></span>
-                  <span>Bağlama: <span className="text-slate-200">{sc.binding || '—'}</span></span>
+                  <span>{t('ocp_reclaim')}: <span className="text-slate-200">{sc.reclaim || '—'}</span></span>
+                  <span>{t('ocp_binding')}: <span className="text-slate-200">{sc.binding || '—'}</span></span>
                 </div>
               )}
             </div>
@@ -109,7 +111,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
             <HardDrive size={16} className="text-sky-400" /> PVC
             <span className="text-xs text-slate-500">({(st.persistent_volume_claims || []).length})</span>
             {st.summary?.pvcs_pending > 0 && (
-              <span className="text-[10px] text-amber-300">{st.summary.pvcs_pending} pending</span>
+              <span className="text-[10px] text-amber-300">{t('ocp_pending_n', { n: st.summary.pvcs_pending })}</span>
             )}
           </h3>
           <div className="space-y-1 max-h-96 overflow-y-auto">
@@ -147,7 +149,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
                   </span>
                 </div>
                 <div className="text-[10px] text-slate-600 mt-0.5">
-                  {p.storage_class || '—'}{p.claim ? ` · claim ${p.claim}` : ''}
+                  {p.storage_class || '—'}{p.claim ? ` · ${t('ocp_claim', { name: p.claim })}` : ''}
                 </div>
               </div>
             ))}
@@ -157,12 +159,12 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
 
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
         <h3 className="text-sm font-semibold text-slate-100 mb-2 flex items-center gap-2">
-          <Network size={16} className="text-emerald-400" /> Multus ağ tanımları
+          <Network size={16} className="text-emerald-400" /> {t('ocp_multus_nads')}
         </h3>
         {nads == null ? (
-          <p className="text-xs text-slate-600">Multus yok veya yetki yok</p>
+          <p className="text-xs text-slate-600">{t('ocp_no_multus_perm')}</p>
         ) : nads.length === 0 ? (
-          <p className="text-xs text-slate-600">Ek NAD yok</p>
+          <p className="text-xs text-slate-600">{t('ocp_no_extra_nad')}</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {nads.map((n: any) => (

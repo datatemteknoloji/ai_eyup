@@ -7,6 +7,7 @@ import { useBranding } from '../branding/BrandingContext'
 import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
 import { PlatformStatusTab } from '../components/PlatformStatusTab'
 import SecuritySettings from './SecuritySettings'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 interface Credential {
   id: number
@@ -37,7 +38,9 @@ const isWindowsServer = (s: Server) => {
 
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
-}) => (
+}) => {
+  const t = useT()
+  return (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
@@ -45,17 +48,18 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
           <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
-          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm font-semibold text-white mb-1">{t('confirm_title')}</div>
           <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
-        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">{t('cancel')}</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">{t('confirm_ok')}</button>
       </div>
     </div>
   </div>
-)
+  )
+}
 
 interface RagStatus {
   runbook: number
@@ -113,6 +117,9 @@ interface GeneralSettings {
 }
 
 const RagTab: React.FC = () => {
+  const t = useT()
+  const { locale } = useLocale()
+  const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfTitle, setPdfTitle] = useState('')
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -135,79 +142,79 @@ const RagTab: React.FC = () => {
   })
   const uploadPdf = useMutation({
     mutationFn: async () => {
-      if (!pdfFile) throw new Error('PDF seçin')
+      if (!pdfFile) throw new Error(t('set_pdf_required'))
       const form = new FormData()
       form.append('file', pdfFile)
       if (pdfTitle.trim()) form.append('title', pdfTitle.trim())
       const res = await fetch(`${API_BASE_URL}/rag/runbook/ingest-pdf`, { method: 'POST', body: form })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Yükleme hatası')
+      if (!res.ok) throw new Error(r.detail || t('set_upload_err'))
       return r
     },
-    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); setPdfFile(null); setPdfTitle(''); alert(`PDF eklendi: ${d.chunks_added} chunk.`) },
-    onError: (e) => alert(e instanceof Error ? e.message : 'PDF yükleme hatası')
+    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); setPdfFile(null); setPdfTitle(''); alert(t('set_pdf_added', { n: d.chunks_added })) },
+    onError: (e) => alert(e instanceof Error ? e.message : t('set_pdf_upload_err'))
   })
   const seedMetrics = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/metrics/seed`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Metrik yükleme hatası')
-      if (!r.chunks_added) throw new Error('0 chunk eklendi — Ollama embedding çalışıyor mu?')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('set_metrics_err'))
+      if (!r.chunks_added) throw new Error(t('set_zero_chunk'))
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Metrik açıklamaları eklendi: ${d.chunks_added} chunk.`) },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onSuccess: (d) => { refetchStatus(); alert(t('set_metrics_added', { n: d.chunks_added })) },
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const reindexIncidents = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/incidents/reindex`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('error_generic'))
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Incident'lar indexlendi: ${d.chunks_added} kayıt.`) },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onSuccess: (d) => { refetchStatus(); alert(t('set_inc_indexed', { n: d.chunks_added })) },
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const reindexEvents = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/events/reindex`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('error_generic'))
       return r
     },
-    onSuccess: (d) => { refetchStatus(); alert(`Event'ler eklendi: ${d.chunks_added} kayıt.`) },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onSuccess: (d) => { refetchStatus(); alert(t('set_evt_added', { n: d.chunks_added })) },
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const reindexKnowledge = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/knowledge/reindex`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Hata')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('error_generic'))
       return r
     },
     onSuccess: (d) => {
       refetchStatus()
       if (!d.chunks_added) {
-        alert('Bilgi Bankası boş: learned_facts ve linux_inventory kaynağı yok. Önce envanter toplama / Chat SSH çalıştırın.')
+        alert(t('set_kb_empty'))
       } else {
-        alert(`Bilgi Bankası indexlendi: ${d.chunks_added} chunk.`)
+        alert(t('set_kb_indexed', { n: d.chunks_added }))
       }
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const reindexAll = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE_URL}/rag/reindex-all`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Toplu reindex hatası')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('set_reindex_err'))
       return r
     },
     onSuccess: (d) => {
       refetchStatus()
       const c = d.chunks || {}
-      alert(`RAG yenilendi — metrik ${c.metrics ?? 0}, incident ${c.incidents ?? 0}, event ${c.events ?? 0}, bilgi ${c.knowledge ?? 0} (toplam ${d.total ?? 0})`)
+      alert(t('set_rag_refreshed', { metrics: c.metrics ?? 0, incidents: c.incidents ?? 0, events: c.events ?? 0, knowledge: c.knowledge ?? 0, total: d.total ?? 0 }))
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const { data: runbookDocsData, refetch: refetchRunbookDocs } = useQuery<{ success: boolean; documents: RunbookDocument[] }>({
     queryKey: ['rag-runbook-documents'],
@@ -224,11 +231,11 @@ const RagTab: React.FC = () => {
     mutationFn: async (title: string) => {
       const res = await fetch(`${API_BASE_URL}/rag/runbook/documents?title=${encodeURIComponent(title)}`, { method: 'DELETE' })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Silinemedi')
+      if (!res.ok) throw new Error(r.detail || t('delete_failed'))
       return r
     },
-    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); alert(`"${d.title}" silindi (${d.deleted_chunks} chunk).`) },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası')
+    onSuccess: (d) => { refetchStatus(); refetchRunbookDocs(); alert(t('set_doc_deleted', { title: d.title, n: d.deleted_chunks })) },
+    onError: (e) => alert(e instanceof Error ? e.message : t('set_del_err'))
   })
   type RunbookCandidateRow = {
     id: number
@@ -251,54 +258,50 @@ const RagTab: React.FC = () => {
     mutationFn: async (id: number) => {
       const res = await fetch(`${API_BASE_URL}/rag/runbook/candidates/${id}/approve`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Onay başarısız')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('set_approve_fail'))
       return r
     },
     onSuccess: (d) => {
       refetchCandidates()
       refetchRunbookDocs()
       refetchStatus()
-      alert(`Runbook'a eklendi: ${d.chunks_added ?? 0} chunk`)
+      alert(t('set_rb_added', { n: d.chunks_added ?? 0 }))
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const rejectCandidate = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API_BASE_URL}/rag/runbook/candidates/${id}/reject`, { method: 'POST' })
       const r = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Red başarısız')
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('set_reject_fail'))
       return r
     },
     onSuccess: () => refetchCandidates(),
-    onError: (e) => alert(e instanceof Error ? e.message : 'Hata'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('error_generic')),
   })
   const candidates = candidatesData?.candidates ?? []
   const runbookDocs = runbookDocsData?.documents ?? []
   const src = status?.sources
   return (
     <div>
-      <h2 className="text-xl font-semibold text-white mb-2">RAG (Bilgi Tabanı)</h2>
-      <p className="text-slate-400 text-sm mb-6">
-        Chat, runbook PDF’leri, Bilgi Bankası ve geçmiş olayları arka planda kullanır.
-        Incident / event / bilgi bankası otomatik indekslenir; PDF yükleme ve acil yenileme buradan yapılır.
-      </p>
+      <h2 className="text-xl font-semibold text-white mb-2">{t('set_rag_title')}</h2>
+      <p className="text-slate-400 text-sm mb-6">{t('set_rag_intro')}</p>
 
       {(statusError || statusIsError) && (
         <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
-          RAG durumu okunamadı: {statusError || (statusQueryError as Error)?.message || 'bilinmeyen hata'}.
-          Oturum süresi dolmuş olabilir — yeniden giriş yapıp sayfayı yenileyin.
+          {t('set_rag_status_fail', { msg: statusError || (statusQueryError as Error)?.message || t('unknown_err_lc') })}
         </div>
       )}
 
       {/* PDF Ekle - en üstte, belirgin */}
       <div className="mb-6 p-5 bg-cyber-deep/70 rounded-xl border-2 border-emerald-500/40">
         <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
-          Runbook&apos;a PDF Ekle
+          {t('set_pdf_add')}
         </h3>
-        <p className="text-slate-400 text-xs mb-4">PDF yükleyin; metin çıkarılıp RAG&apos;e eklenir. Chat&apos;te sorularınıza yanıt verirken kullanılır.</p>
+        <p className="text-slate-400 text-xs mb-4">{t('set_pdf_hint')}</p>
         <div className="flex flex-wrap items-end gap-4">
           <div className="min-w-[200px]">
-            <label className="block text-xs font-medium text-slate-400 mb-1">PDF dosyası</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1">{t('set_pdf_file')}</label>
             <input
               type="file"
               accept=".pdf"
@@ -307,12 +310,12 @@ const RagTab: React.FC = () => {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">Başlık (opsiyonel)</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1">{t('set_title_opt')}</label>
             <input
               type="text"
               value={pdfTitle}
               onChange={(e) => setPdfTitle(e.target.value)}
-              placeholder="Dosya adı kullanılır"
+              placeholder={t('set_filename_used')}
               className="w-52 bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500"
             />
           </div>
@@ -321,24 +324,22 @@ const RagTab: React.FC = () => {
             disabled={!pdfFile || uploadPdf.isPending}
             className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-lg shadow-emerald-500/20"
           >
-            {uploadPdf.isPending ? 'Ekleniyor (büyük PDF uzun sürebilir)...' : 'PDF\'i RAG\'e Ekle'}
+            {uploadPdf.isPending ? t('set_adding_pdf') : t('set_add_pdf_rag')}
           </button>
         </div>
-        {pdfFile && <p className="text-emerald-400 text-xs mt-2">Seçili: {pdfFile.name}</p>}
+        {pdfFile && <p className="text-emerald-400 text-xs mt-2">{t('set_selected_file', { name: pdfFile.name })}</p>}
         {uploadPdf.isPending && (
-          <p className="text-amber-400/90 text-xs mt-2">
-            Embedding Ollama üzerinden yapılıyor; çok sayfalı PDF&apos;lerde birkaç dakika sürebilir. Sayfayı yenilemeyin.
-          </p>
+          <p className="text-amber-400/90 text-xs mt-2">{t('set_embed_wait')}</p>
         )}
       </div>
 
       {/* Eklenen runbook dokümanları */}
       <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-white/[0.06]">
         <h3 className="text-base font-semibold text-white mb-3 flex items-center gap-2">
-          Eklenen Runbook Dokümanları
+          {t('set_rb_docs')}
         </h3>
         {runbookDocs.length === 0 ? (
-          <p className="text-slate-500 text-sm">Henüz runbook dokümanı yok. Yukarıdan PDF ekleyebilirsiniz.</p>
+          <p className="text-slate-500 text-sm">{t('set_rb_none')}</p>
         ) : (
           <ul className="space-y-2">
             {runbookDocs.map((doc) => (
@@ -350,11 +351,11 @@ const RagTab: React.FC = () => {
                 <span className="text-slate-400 text-sm whitespace-nowrap">{doc.chunk_count} chunk</span>
                 <button
                   type="button"
-                  onClick={async () => { if (await showConfirm(`"${doc.title}" silinsin mi?`)) deleteRunbookDoc.mutate(doc.title) }}
+                  onClick={async () => { if (await showConfirm(t('set_del_quoted', { name: doc.title }))) deleteRunbookDoc.mutate(doc.title) }}
                   disabled={deleteRunbookDoc.isPending}
                   className="ml-3 px-3 py-1.5 text-xs bg-red-600/20 text-red-400 border border-red-500/40 rounded-lg hover:bg-red-600/30 disabled:opacity-50"
                 >
-                  Sil
+                  {t('delete')}
                 </button>
               </li>
             ))}
@@ -364,12 +365,10 @@ const RagTab: React.FC = () => {
 
       {/* Runbook adayları (resolved incident → admin onayı) */}
       <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-amber-500/25">
-        <h3 className="text-base font-semibold text-white mb-1">Runbook Adayları</h3>
-        <p className="text-slate-500 text-xs mb-3">
-          Çözülen incident&apos;lardan otomatik oluşur. Onaylanınca Chroma runbook&apos;a yazılır; reddedilirse yazılmaz.
-        </p>
+        <h3 className="text-base font-semibold text-white mb-1">{t('set_rb_cands')}</h3>
+        <p className="text-slate-500 text-xs mb-3">{t('set_rb_cands_hint')}</p>
         {candidates.length === 0 ? (
-          <p className="text-slate-500 text-sm">Bekleyen aday yok.</p>
+          <p className="text-slate-500 text-sm">{t('set_no_cands')}</p>
         ) : (
           <ul className="space-y-3">
             {candidates.map((c) => (
@@ -378,7 +377,7 @@ const RagTab: React.FC = () => {
                   <div className="min-w-0 flex-1">
                     <div className="text-white text-sm font-medium truncate">{c.title}</div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      Incident #{c.incident_id ?? '—'} · {c.created_at ? new Date(c.created_at).toLocaleString('tr-TR') : ''}
+                      {t('set_incident_n', { id: c.incident_id ?? '—' })} · {c.created_at ? new Date(c.created_at).toLocaleString(dateLoc) : ''}
                     </div>
                     <pre className="mt-2 text-[11px] text-slate-400 whitespace-pre-wrap max-h-28 overflow-y-auto font-mono">
                       {(c.content || '').slice(0, 600)}
@@ -392,7 +391,7 @@ const RagTab: React.FC = () => {
                       onClick={() => approveCandidate.mutate(c.id)}
                       className="px-3 py-1.5 text-xs bg-emerald-600/80 hover:bg-emerald-500 text-white rounded-lg disabled:opacity-50"
                     >
-                      Onayla
+                      {t('confirm_ok')}
                     </button>
                     <button
                       type="button"
@@ -400,7 +399,7 @@ const RagTab: React.FC = () => {
                       onClick={() => rejectCandidate.mutate(c.id)}
                       className="px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-slate-300 rounded-lg border border-white/[0.08] disabled:opacity-50"
                     >
-                      Reddet
+                      {t('reject')}
                     </button>
                   </div>
                 </div>
@@ -417,28 +416,28 @@ const RagTab: React.FC = () => {
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
           <p className="text-slate-400 text-sm">Incidents / Events</p>
-          <p className="text-2xl font-semibold text-white">{status?.incidents ?? '—'} <span className="text-sm font-normal text-slate-500">kayıt</span></p>
+          <p className="text-2xl font-semibold text-white">{status?.incidents ?? '—'} <span className="text-sm font-normal text-slate-500">{t('records')}</span></p>
           {src && <p className="text-[10px] text-slate-500 mt-1">DB: {src.incidents_db ?? 0} inc · {src.events_db ?? 0} evt</p>}
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
-          <p className="text-slate-400 text-sm">Metrik Açıklamaları</p>
-          <p className="text-2xl font-semibold text-white">{status?.metrics ?? '—'} <span className="text-sm font-normal text-slate-500">metrik</span></p>
-          {src && <p className="text-[10px] text-slate-500 mt-1">varsayılan liste: {src.default_metrics ?? 0}</p>}
+          <p className="text-slate-400 text-sm">{t('set_metrics_desc')}</p>
+          <p className="text-2xl font-semibold text-white">{status?.metrics ?? '—'} <span className="text-sm font-normal text-slate-500">{t('set_metrics_unit')}</span></p>
+          {src && <p className="text-[10px] text-slate-500 mt-1">{t('set_default_list', { n: src.default_metrics ?? 0 })}</p>}
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
-          <p className="text-slate-400 text-sm">Bilgi Bankası</p>
+          <p className="text-slate-400 text-sm">{t('set_kb')}</p>
           <p className="text-2xl font-semibold text-white">{status?.knowledge ?? '—'} <span className="text-sm font-normal text-slate-500">chunk</span></p>
           {src && <p className="text-[10px] text-slate-500 mt-1">facts {src.learned_facts_db ?? 0} · inv {src.linux_inventory_db ?? 0}</p>}
         </div>
       </div>
       {status?.embedding && !status.embedding.ok && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100/90">
-          <p className="font-medium text-rose-200">Embedding servisi erişilemiyor</p>
+          <p className="font-medium text-rose-200">{t('set_embed_down')}</p>
           <p className="text-xs text-rose-100/80 mt-1 break-words">
-            {status.embedding.error || 'Ollama / embedding endpoint yanıt vermiyor.'}
+            {status.embedding.error || t('set_embed_noresp')}
           </p>
           <p className="text-xs text-rose-100/60 mt-2">
-            Hedef: <code className="bg-cyber-card px-1 rounded">{status.embedding.base_url}</code>
+            {t('set_target')} <code className="bg-cyber-card px-1 rounded">{status.embedding.base_url}</code>
             {' · '}model: <code className="bg-cyber-card px-1 rounded">{status.embedding.model}</code>
           </p>
           {status.embedding.hint && (
@@ -448,69 +447,64 @@ const RagTab: React.FC = () => {
       )}
       {status?.embedding?.ok && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-sky-500/10 border border-sky-500/25 text-sm text-sky-100/90">
-          <p className="font-medium text-sky-200">Embedding hazır</p>
+          <p className="font-medium text-sky-200">{t('set_embed_ok')}</p>
           <p className="text-xs text-sky-200/70 mt-1">
             {status.embedding.base_url} · {status.embedding.model}
             {status.embedding.dim ? ` · ${status.embedding.dim} dim` : ''}
-            {status.embedding.model_present === false ? ' · uyarı: model tags listesinde yok, pull gerekebilir' : ''}
+            {status.embedding.model_present === false ? t('set_model_missing') : ''}
           </p>
         </div>
       )}
       <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-sm text-emerald-100/90">
-        <p className="font-medium text-emerald-200">Otomatik senkron açık</p>
-        <p className="text-xs text-emerald-200/70 mt-1">
-          Incident, event ve Bilgi Bankası arka planda yaklaşık her 30 dakikada RAG’e eklenir
-          (ilk çalıştırma ~5 dk sonra). Bilgi Bankası kaydı değişince de otomatik yenilenir.
-          Aşağıdaki butonlar yalnızca <span className="text-emerald-100">hemen zorla yenilemek</span> veya
-          ilk kurulum / PDF için.
-        </p>
+        <p className="font-medium text-emerald-200">{t('set_autosync')}</p>
+        <p className="text-xs text-emerald-200/70 mt-1">{t('set_autosync_hint')}</p>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-3">
         <button onClick={() => reindexAll.mutate()} disabled={reindexAll.isPending}
           className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
-          {reindexAll.isPending ? 'Yenileniyor (birkaç dk sürebilir)...' : 'Şimdi tümünü yenile'}
+          {reindexAll.isPending ? t('set_refreshing_long') : t('set_refresh_all')}
         </button>
         {(status?.metrics ?? 0) === 0 && (
           <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-            {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik açıklamalarını ilk kez yükle'}
+            {seedMetrics.isPending ? t('set_adding') : t('set_seed_first')}
           </button>
         )}
       </div>
 
       <details className="mb-6 group">
         <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 list-none flex items-center gap-2">
-          <span className="underline-offset-2 group-open:underline">Gelişmiş — tek kaynaklı manuel index</span>
-          <span className="text-slate-600">(genelde gerekmez)</span>
+          <span className="underline-offset-2 group-open:underline">{t('set_adv_index')}</span>
+          <span className="text-slate-600">{t('set_usually_unneeded')}</span>
         </summary>
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => seedMetrics.mutate()} disabled={seedMetrics.isPending}
             className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
-            {seedMetrics.isPending ? 'Ekleniyor...' : 'Metrik açıklamaları'}
+            {seedMetrics.isPending ? t('set_adding') : t('set_metrics_desc')}
           </button>
           <button onClick={() => reindexIncidents.mutate()} disabled={reindexIncidents.isPending}
             className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
-            {reindexIncidents.isPending ? 'Indexleniyor...' : "Incident'lar"}
+            {reindexIncidents.isPending ? t('indexing') : t('set_incidents')}
           </button>
           <button onClick={() => reindexEvents.mutate()} disabled={reindexEvents.isPending}
             className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
-            {reindexEvents.isPending ? 'Indexleniyor...' : "Event'ler"}
+            {reindexEvents.isPending ? t('indexing') : t('set_events')}
           </button>
           <button onClick={() => reindexKnowledge.mutate()} disabled={reindexKnowledge.isPending}
             className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-xs">
-            {reindexKnowledge.isPending ? 'Indexleniyor...' : 'Bilgi Bankası'}
+            {reindexKnowledge.isPending ? t('indexing') : t('set_kb')}
           </button>
         </div>
       </details>
 
       <div className="mt-2 bg-cyber-deep/30 rounded-[10px] border border-white/[0.06] p-4">
-        <h4 className="text-sm font-medium text-slate-300 mb-2">Ne otomatik, ne manuel?</h4>
+        <h4 className="text-sm font-medium text-slate-300 mb-2">{t('set_auto_manual')}</h4>
         <ul className="text-xs text-slate-500 space-y-1">
-          <li>• <strong>Otomatik:</strong> Incident / event / Bilgi Bankası → arka plan görevi (~30 dk).</li>
-          <li>• <strong>Manuel (üstteki PDF kutusu):</strong> Runbook PDF yükleme — dosya sizden gelir.</li>
-          <li>• <strong>Manuel (nadiren):</strong> Metrik açıklamaları ilk kurulum; “Şimdi yenile” beklemek istemezseniz.</li>
-          <li>• Embedding için Ollama&apos;da <code className="bg-cyber-card px-1 rounded">nomic-embed-text</code> gerekir.</li>
+          <li>• <strong>{t('set_auto')}</strong> {t('set_auto_body')}</li>
+          <li>• <strong>{t('set_manual_pdf')}</strong> {t('set_manual_pdf_body')}</li>
+          <li>• <strong>{t('set_manual_rare')}</strong> {t('set_manual_rare_body')}</li>
+          <li>• {t('set_embed_need')}</li>
         </ul>
       </div>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
@@ -535,6 +529,7 @@ const WIPE_CONFIRM_PHRASE = 'TÜM VERİLERİ SİL'
 
 /** Eski ortam → yeni ortam yapılandırma taşıma */
 const ConfigBackupTab: React.FC = () => {
+  const t = useT()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -563,7 +558,7 @@ const ConfigBackupTab: React.FC = () => {
       setMsg(`Yedek indirildi (${Object.keys(body.app_settings || {}).length} ayar, ${(body.credentials || []).length} credential).`)
       if (body.env_hints) setEnvHints(body.env_hints)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Yedek alınamadı')
+      setErr(e instanceof Error ? e.message : t('set_backup_fail'))
     } finally {
       setBusy(false)
     }
@@ -587,14 +582,14 @@ const ConfigBackupTab: React.FC = () => {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
-      setMsg(body.message || 'Geri yükleme tamam')
+      setMsg(body.message || t('set_restore_done'))
       if (body.env_hints && Object.keys(body.env_hints).length) setEnvHints(body.env_hints)
       else if (payload.env_hints) setEnvHints(payload.env_hints)
       if (body.stats?.warnings?.length) {
-        setErr(`Uyarılar: ${(body.stats.warnings as string[]).slice(0, 8).join(' · ')}`)
+        setErr(t('set_warnings', { msg: (body.stats.warnings as string[]).slice(0, 8).join(' · ') }))
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Geri yükleme başarısız')
+      setErr(e instanceof Error ? e.message : t('set_restore_fail'))
     } finally {
       setBusy(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -603,53 +598,48 @@ const ConfigBackupTab: React.FC = () => {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-white mb-2">Yapılandırma Yedek / Taşıma</h2>
-      <p className="text-sm text-slate-400 mb-6 max-w-3xl">
-        Eski ortamdan yedek alıp yeni ortama dönün. Credential ve Remote LLM anahtarları yedekte
-        açık metin olarak gider; hedef ortam kendi <code className="text-slate-300">SECRET_KEY</code> ile
-        yeniden şifreler. <strong className="text-slate-300">SECRET_KEY</strong> ve{' '}
-        <strong className="text-slate-300">POSTGRES_PASSWORD</strong> yedekte yoktur.
-      </p>
+      <h2 className="text-xl font-semibold text-white mb-2">{t('set_cfg_backup')}</h2>
+      <p className="text-sm text-slate-400 mb-6 max-w-3xl">{t('set_cfg_intro')}</p>
 
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
-          <h3 className="text-sm font-semibold text-cyan-300 mb-3">1. Eski ortamda — Yedek al</h3>
+          <h3 className="text-sm font-semibold text-cyan-300 mb-3">{t('set_old_env')}</h3>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
             <input type="checkbox" checked={includeSecrets} onChange={e => setIncludeSecrets(e.target.checked)}
               className="rounded border-slate-600" />
-            Credential / API anahtarlarını dahil et (yeni ortama taşımak için gerekli)
+            {t('set_include_keys')}
           </label>
           <button type="button" disabled={busy} onClick={downloadBackup}
             className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-            {busy ? 'Hazırlanıyor…' : 'JSON yedek indir'}
+            {busy ? t('set_preparing') : t('set_dl_json')}
           </button>
         </div>
 
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
-          <h3 className="text-sm font-semibold text-amber-300 mb-3">2. Yeni ortamda — Geri yükle</h3>
+          <h3 className="text-sm font-semibold text-amber-300 mb-3">{t('set_new_env')}</h3>
           <div className="space-y-2 text-xs text-slate-400 mb-4">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={applySettings} onChange={e => setApplySettings(e.target.checked)} />
-              App settings (AI, monitoring, gelişmiş, branding…)
+              {t('set_app_settings')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={applyCredentials} onChange={e => setApplyCredentials(e.target.checked)} />
-              SSH credential’lar
+              {t('set_ssh_creds')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={applyModules} onChange={e => setApplyModules(e.target.checked)} />
-              Kullanıcı modül atamaları
+              {t('set_user_mods')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={forceHostKeys} onChange={e => setForceHostKeys(e.target.checked)} />
-              Host-özel alanları da yaz (management_server_ip)
+              {t('set_host_fields')}
             </label>
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) restoreFromFile(f) }} />
           <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}
             className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-            {busy ? 'Yükleniyor…' : 'JSON yedek seç ve uygula'}
+            {busy ? t('loading') : t('set_pick_json')}
           </button>
         </div>
       </div>
@@ -663,10 +653,8 @@ const ConfigBackupTab: React.FC = () => {
 
       {envHints && (
         <div className="bg-cyber-deep/40 rounded-[10px] border border-white/[0.06] p-4">
-          <h4 className="text-sm font-medium text-slate-300 mb-2">.env birleştirme notları (otomatik uygulanmaz)</h4>
-          <p className="text-xs text-slate-500 mb-3">
-            Yeni sunucunun <code className="text-slate-400">.env</code> dosyasına elle ekleyip backend’i yeniden başlatın.
-          </p>
+          <h4 className="text-sm font-medium text-slate-300 mb-2">{t('set_env_notes')}</h4>
+          <p className="text-xs text-slate-500 mb-3">{t('set_env_hint')}</p>
           <pre className="text-[11px] text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono bg-black/30 rounded-lg p-3">
 {Object.entries(envHints)
   .filter(([k]) => !k.startsWith('_'))
@@ -677,10 +665,10 @@ const ConfigBackupTab: React.FC = () => {
       )}
 
       <ul className="mt-6 text-xs text-slate-500 space-y-1 list-disc list-inside">
-        <li>Sunucu / hypervisor / OpenShift envanteri bu JSON yedekte yoktur — aşağıdaki «Veritabanı yedeği»ni kullanın.</li>
-        <li>Hedefte aynı kullanıcı adları yoksa modül atamaları atlanır (uyarı gösterilir).</li>
-        <li>Platform paket güncellemesi için «Platform Güncelleme» sekmesini kullanın.</li>
-        <li>Tam DB taşıma + SECRET_KEY: hedefte aynı SECRET_KEY gerekir (docs/migration-and-secrets.md).</li>
+        <li>{t('set_no_inv_json')}</li>
+        <li>{t('set_mod_skip')}</li>
+        <li>{t('set_use_plat_upd')}</li>
+        <li>{t('set_db_secret')}</li>
       </ul>
 
       <div className="my-8 border-t border-white/[0.08]" />
@@ -692,6 +680,7 @@ const ConfigBackupTab: React.FC = () => {
 
 /** Tam PostgreSQL dump (ainew + Dropt) — Settings üzerinden taşıma */
 const DbBackupSection: React.FC = () => {
+  const t = useT()
   const [busy, setBusy] = useState(false)
   const [busyPhase, setBusyPhase] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
@@ -713,7 +702,7 @@ const DbBackupSection: React.FC = () => {
     queryKey: ['db-backup-capability'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/settings/db-backup/capability`)
-      if (!r.ok) throw new Error('Yetenek bilgisi alınamadı')
+      if (!r.ok) throw new Error(t('set_cap_fail'))
       return r.json()
     },
   })
@@ -722,20 +711,20 @@ const DbBackupSection: React.FC = () => {
     queryKey: ['db-backup-migration-secrets'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/settings/db-backup/migration-secrets`)
-      if (!r.ok) throw new Error('Secret özeti alınamadı')
+      if (!r.ok) throw new Error(t('set_secret_sum_fail'))
       return r.json()
     },
   })
 
   const downloadDb = async () => {
-    setBusy(true); setBusyPhase('Veritabanı yedeği hazırlanıyor…'); setErr(null); setMsg(null)
+    setBusy(true); setBusyPhase(t('set_db_prep')); setErr(null); setMsg(null)
     try {
       const r = await fetch(`${API_BASE_URL}/settings/db-backup/export?include_dropt=${includeDropt ? 'true' : 'false'}&include_migration_secrets=${includeSecretsInZip ? 'true' : 'false'}`)
       if (!r.ok) {
         const body = await r.json().catch(() => ({}))
         throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       }
-      setBusyPhase('İndiriliyor…')
+      setBusyPhase(t('set_downloading'))
       const blob = await r.blob()
       const cd = r.headers.get('Content-Disposition') || ''
       const m = /filename="?([^";]+)"?/i.exec(cd)
@@ -746,16 +735,16 @@ const DbBackupSection: React.FC = () => {
       a.download = name
       a.click()
       URL.revokeObjectURL(url)
-      setMsg(`Veritabanı yedeği indirildi (${name}).`)
+      setMsg(t('set_db_dl', { name }))
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Yedek alınamadı')
+      setErr(e instanceof Error ? e.message : t('set_backup_fail'))
     } finally {
       setBusy(false); setBusyPhase(null)
     }
   }
 
   const downloadMigrationSecrets = async () => {
-    setBusy(true); setBusyPhase('Taşıma secret dosyası hazırlanıyor…'); setErr(null); setMsg(null)
+    setBusy(true); setBusyPhase(t('set_mig_prep')); setErr(null); setMsg(null)
     try {
       const phrase = migSecrets?.export_confirm_phrase || 'TASIMA SIRLARINI INDIR'
       const q = new URLSearchParams({
@@ -777,18 +766,18 @@ const DbBackupSection: React.FC = () => {
       a.download = name
       a.click()
       URL.revokeObjectURL(url)
-      setMsg(`Taşıma secret dosyası indirildi (${name}). Hedefte ilgili .env satırlarına yapıştırın; docker restart yetmez — recreate edin.`)
+      setMsg(t('set_mig_dl', { name }))
       setSecretExportConfirm('')
       refetchMigSecrets()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Secret export başarısız')
+      setErr(e instanceof Error ? e.message : t('set_secret_export_fail'))
     } finally {
       setBusy(false); setBusyPhase(null)
     }
   }
 
   const validateFile = async (file: File) => {
-    setBusy(true); setBusyPhase('Yedek doğrulanıyor…'); setErr(null); setMsg(null); setPreview(null)
+    setBusy(true); setBusyPhase(t('set_validating')); setErr(null); setMsg(null); setPreview(null)
     try {
       const fd = new FormData()
       fd.append('file', file)
@@ -797,10 +786,10 @@ const DbBackupSection: React.FC = () => {
       if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       setPreview(body)
       setPendingFile(file)
-      setMsg(`Yedek doğrulandı (${file.name}). Onay metnini yazıp «Geri yükle»ye basın — dosyayı yeniden seçmeniz gerekmez.`)
+      setMsg(t('set_validated', { name: file.name }))
     } catch (e) {
       setPendingFile(null)
-      setErr(e instanceof Error ? e.message : 'Doğrulama başarısız')
+      setErr(e instanceof Error ? e.message : t('set_validate_fail'))
     } finally {
       setBusy(false); setBusyPhase(null)
       if (fileRef.current) fileRef.current.value = ''
@@ -810,18 +799,18 @@ const DbBackupSection: React.FC = () => {
   const runRestore = async (file?: File | null) => {
     const f = file ?? pendingFile
     if (!f) {
-      setErr('Önce «Dosya seç & doğrula» ile yedek seçin.')
+      setErr(t('set_pick_first'))
       return
     }
     if (confirm !== phrase) {
-      setErr(`Onay metnini tam yazın: ${phrase}`)
+      setErr(t('set_type_confirm', { phrase }))
       return
     }
     setBusy(true)
     setBusyPhase(
       applySecrets
-        ? 'Geri yükleme başladı — secret’lar yazılıyor, ardından veritabanı…'
-        : 'Geri yükleme başladı — veritabanı yazılıyor (birkaç dakika sürebilir)…',
+        ? t('set_restore_secrets')
+        : t('set_restore_db'),
     )
     setErr(null); setMsg(null)
     try {
@@ -835,13 +824,13 @@ const DbBackupSection: React.FC = () => {
       const r = await fetch(`${API_BASE_URL}/settings/db-backup/restore`, { method: 'POST', body: fd })
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${r.status}`)
-      setBusyPhase('Tamamlandı')
-      setMsg(body.message || 'Geri yükleme tamam')
+      setBusyPhase(t('set_done_phase'))
+      setMsg(body.message || t('set_restore_done'))
       setPreview(null)
       setPendingFile(null)
       setConfirm('')
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Geri yükleme başarısız')
+      setErr(e instanceof Error ? e.message : t('set_restore_fail'))
     } finally {
       setBusy(false); setBusyPhase(null)
     }
@@ -853,35 +842,27 @@ const DbBackupSection: React.FC = () => {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-white mb-2">Veritabanı yedeği (tam taşıma)</h2>
-      <p className="text-sm text-slate-400 mb-4 max-w-3xl">
-        Bağımsız kurulumda kayıtların (sunucular, vCenter, OpenShift, audit, ayarlar, Level 1 Dropt DB …)
-        geri gelmesi için PostgreSQL dump. Settings → bu dosyayı indirin → yeni ortamda aynı yerden yükleyin.
-        Disk dosyaları (Chroma, RPM mirror, uploads) dahil değildir.
-      </p>
+      <h2 className="text-xl font-semibold text-white mb-2">{t('set_db_title')}</h2>
+      <p className="text-sm text-slate-400 mb-4 max-w-3xl">{t('set_db_intro')}</p>
 
       {cap && !cap.available && (
         <div className="mb-4 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          Yedek şu an kullanılamıyor: {(cap.reasons || []).join(' · ') || 'bilinmeyen neden'}
+          {t('set_backup_unavail', { reasons: (cap.reasons || []).join(' · ') || t('unknown_reason') })}
         </div>
       )}
 
       <div className="mb-4 rounded-[10px] border border-violet-500/25 bg-violet-500/5 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
           <div>
-            <h3 className="text-sm font-semibold text-violet-200">Taşıma secret’ları</h3>
-            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-              Zip dışa aktarımında varsayılan olarak <code className="text-slate-400">migration-secrets.env</code> da paketlenir;
-              içe aktarımda hedef <code className="text-slate-400">.env</code> / <code className="text-slate-400">dropt/.env</code> güncellenir.
-              Aşağıdaki tablo yalnızca bu ortamın fingerprint özeti; ayrı indirme yedek / acil durum içindir.
-            </p>
+            <h3 className="text-sm font-semibold text-violet-200">{t('set_mig_secrets')}</h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">{t('set_mig_hint')}</p>
           </div>
           <button
             type="button"
             onClick={() => refetchMigSecrets()}
             className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04]"
           >
-            Yenile
+            {t('refresh_action')}
           </button>
         </div>
 
@@ -889,19 +870,19 @@ const DbBackupSection: React.FC = () => {
           <>
             <div className="flex flex-wrap gap-2 mb-3 text-[11px]">
               <span className={`px-2 py-1 rounded border ${migSecrets.ready_for_full_migrate ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-200 bg-amber-500/10'}`}>
-                {migSecrets.ready_for_full_migrate ? 'Tam taşıma için hazır' : 'Eksik zorunlu anahtar var'}
+                {migSecrets.ready_for_full_migrate ? t('set_ready_migrate') : t('set_missing_req')}
               </span>
               <span className={`px-2 py-1 rounded border ${migSecrets.bridge_match ? 'border-emerald-500/30 text-emerald-300/90' : 'border-amber-500/30 text-amber-200'}`}>
-                Bridge {migSecrets.bridge_match ? 'eşleşiyor' : 'uyumsuz / eksik'}
+                {migSecrets.bridge_match ? t('set_bridge_ok') : t('set_bridge_bad')}
               </span>
             </div>
             <div className="overflow-x-auto mb-3">
               <table className="w-full text-[11px] text-left text-slate-300">
                 <thead className="text-slate-500 border-b border-white/[0.06]">
                   <tr>
-                    <th className="py-1.5 pr-3 font-medium">Anahtar</th>
-                    <th className="py-1.5 pr-3 font-medium">Hedef dosya</th>
-                    <th className="py-1.5 pr-3 font-medium">Durum</th>
+                    <th className="py-1.5 pr-3 font-medium">{t('set_col_key')}</th>
+                    <th className="py-1.5 pr-3 font-medium">{t('set_col_target')}</th>
+                    <th className="py-1.5 pr-3 font-medium">{t('set_col_st')}</th>
                     <th className="py-1.5 font-medium font-mono">Fingerprint</th>
                   </tr>
                 </thead>
@@ -915,8 +896,8 @@ const DbBackupSection: React.FC = () => {
                       <td className="py-1.5 pr-3 text-slate-400 font-mono">{row.target_file}</td>
                       <td className="py-1.5 pr-3">
                         {row.present
-                          ? <span className="text-emerald-400">var</span>
-                          : <span className="text-amber-300">yok</span>}
+                          ? <span className="text-emerald-400">{t('set_present')}</span>
+                          : <span className="text-amber-300">{t('set_absent')}</span>}
                       </td>
                       <td className="py-1.5 font-mono text-slate-400">{row.fingerprint}</td>
                     </tr>
@@ -926,20 +907,17 @@ const DbBackupSection: React.FC = () => {
             </div>
             {(migSecrets.missing_required || []).length > 0 && (
               <p className="text-[11px] text-amber-200/90 mb-3">
-                Eksik: {(migSecrets.missing_required || []).join(' · ')}
+                {t('set_missing', { list: (migSecrets.missing_required || []).join(' · ') })}
               </p>
             )}
-            <p className="text-[11px] text-slate-500 mb-3">
-              Kopyalamayın: {(migSecrets.do_not_copy || []).join(', ')}.
-              Recreate: <code className="text-slate-400">docker compose up -d --force-recreate backend worker</code>
-            </p>
+            <p className="text-[11px] text-slate-500 mb-3">{t('set_do_not_copy', { list: (migSecrets.do_not_copy || []).join(', ') })}</p>
           </>
         )}
 
         <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
           <input type="checkbox" checked={includeDbPasswords} onChange={e => setIncludeDbPasswords(e.target.checked)}
             className="rounded border-slate-600" />
-          DB parolalarını da dahil et (POSTGRES / DROPT_POSTGRES)
+          {t('set_incl_db_pw')}
         </label>
         <input
           value={secretExportConfirm}
@@ -953,43 +931,38 @@ const DbBackupSection: React.FC = () => {
           onClick={downloadMigrationSecrets}
           className="px-4 py-2 rounded-lg text-sm bg-violet-600/80 hover:bg-violet-600 text-white disabled:opacity-40"
         >
-          {busy ? 'Hazırlanıyor…' : 'Taşıma .env indir'}
+          {busy ? t('set_preparing') : t('set_dl_mig_env')}
         </button>
-        <p className="text-[10px] text-slate-600 mt-2">
-          Onay: <code className="text-slate-500">{secretPhrase}</code> — indirme audit log’a yazılır.
-        </p>
+        <p className="text-[10px] text-slate-600 mt-2">{t('set_confirm_audit', { phrase: secretPhrase })}</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-4 mb-4">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
-          <h3 className="text-sm font-semibold text-cyan-300 mb-3">Dışa aktar</h3>
+          <h3 className="text-sm font-semibold text-cyan-300 mb-3">{t('set_export')}</h3>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
             <input type="checkbox" checked={includeDropt} onChange={e => setIncludeDropt(e.target.checked)}
               className="rounded border-slate-600" disabled={!cap?.dropt_db_present} />
-            Level 1 (Dropt) veritabanını dahil et
-            {!cap?.dropt_db_present && <span className="text-slate-600">(container yok)</span>}
+            {t('set_incl_dropt')}
+            {!cap?.dropt_db_present && <span className="text-slate-600">{t('set_no_container')}</span>}
           </label>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
             <input type="checkbox" checked={includeSecretsInZip} onChange={e => setIncludeSecretsInZip(e.target.checked)}
               className="rounded border-slate-600" />
-            Taşıma secret’larını zip’e ekle (SECRET_KEY, bridge, FERNET, DB parolaları)
+            {t('set_incl_secrets_zip')}
           </label>
           <button type="button" disabled={busy || !cap?.available} onClick={downloadDb}
             className="px-4 py-2 rounded-lg text-sm bg-gradient-to-r from-blue-600 to-blue-700 text-white disabled:opacity-50">
-            {busy ? 'Hazırlanıyor…' : 'Zip indir'}
+            {busy ? t('set_preparing') : t('set_dl_zip')}
           </button>
           <p className="text-[11px] text-slate-500 mt-3">
-            Parmak izi: <code className="text-slate-400 font-mono">{cap?.secret_key_fingerprint || migSecrets?.secret_key_fingerprint || '—'}</code>
-            {' · '}sürüm {cap?.app_version || '—'}
+            {t('set_fingerprint')} <code className="text-slate-400 font-mono">{cap?.secret_key_fingerprint || migSecrets?.secret_key_fingerprint || '—'}</code>
+            {' · '}{t('set_version', { v: cap?.app_version || '—' })}
           </p>
         </div>
 
         <div className="bg-cyber-deep/50 rounded-[10px] border border-rose-500/20 p-5">
-          <h3 className="text-sm font-semibold text-rose-300 mb-2">İçe aktar (üzerine yazar)</h3>
-          <p className="text-xs text-slate-500 mb-3">
-            Hedef DB üzerine yazar. Zip’te secret varsa bunları hedef .env’e yazıp ardından
-            container recreate edin. Fingerprint uyumsuzsa secret uygula seçiliyken restore devam eder.
-          </p>
+          <h3 className="text-sm font-semibold text-rose-300 mb-2">{t('set_import')}</h3>
+          <p className="text-xs text-slate-500 mb-3">{t('set_import_hint')}</p>
           <div className="flex flex-wrap gap-3 mb-3 text-xs text-slate-400">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={restoreAinew} onChange={e => setRestoreAinew(e.target.checked)} /> ainew DB
@@ -998,10 +971,10 @@ const DbBackupSection: React.FC = () => {
               <input type="checkbox" checked={restoreDropt} onChange={e => setRestoreDropt(e.target.checked)} /> Dropt DB
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={applySecrets} onChange={e => setApplySecrets(e.target.checked)} /> Secret’ları .env’e yaz
+              <input type="checkbox" checked={applySecrets} onChange={e => setApplySecrets(e.target.checked)} /> {t('set_write_secrets')}
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={requireFp} onChange={e => setRequireFp(e.target.checked)} /> SECRET_KEY eşleşmesi zorunlu
+              <input type="checkbox" checked={requireFp} onChange={e => setRequireFp(e.target.checked)} /> {t('set_require_fp')}
             </label>
           </div>
           <input
@@ -1014,7 +987,7 @@ const DbBackupSection: React.FC = () => {
             <button type="button" disabled={busy}
               onClick={() => fileRef.current?.click()}
               className="px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 disabled:opacity-50">
-              Dosya seç & doğrula
+              {t('set_pick_validate')}
             </button>
             <button
               type="button"
@@ -1025,15 +998,14 @@ const DbBackupSection: React.FC = () => {
                   ? 'bg-rose-600/30 border-rose-500/40 text-rose-100 hover:bg-rose-600/40'
                   : 'opacity-40 border-white/[0.06] text-slate-500'
               }`}
-              title={!pendingFile ? 'Önce dosya seçip doğrulayın' : confirm !== phrase ? `Onay: ${phrase}` : 'Geri yüklemeyi başlat'}
+              title={!pendingFile ? t('set_pick_file_first') : confirm !== phrase ? t('set_confirm_colon', { phrase }) : t('set_start_restore')}
             >
-              Geri yükle
+              {t('set_restore')}
             </button>
           </div>
           {pendingFile && (
             <p className="text-[11px] text-slate-500 mt-2">
-              Seçili dosya: <code className="text-slate-400">{pendingFile.name}</code>
-              {' '}({(pendingFile.size / (1024 * 1024)).toFixed(1)} MB)
+              {t('set_selected_file_name', { name: pendingFile.name, size: (pendingFile.size / (1024 * 1024)).toFixed(1) })}
             </p>
           )}
           <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden"
@@ -1057,26 +1029,26 @@ const DbBackupSection: React.FC = () => {
           </div>
           <style>{`@keyframes ainewRestoreBar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }`}</style>
           <p className="text-[11px] text-slate-500 mt-2">
-            Büyük dump’larda birkaç dakika sürebilir — sayfayı kapatmayın.
+            {t('set_large_dump')}
           </p>
         </div>
       )}
 
       {preview && (
         <div className="mb-3 rounded-[10px] border border-white/[0.08] bg-cyber-deep/40 p-4 text-xs text-slate-300 space-y-1">
-          <div>Kaynak sürüm: <span className="text-white">{preview.manifest?.app_version}</span> · {preview.manifest?.exported_at}</div>
+          <div>{t('set_src_ver')} <span className="text-white">{preview.manifest?.app_version}</span> · {preview.manifest?.exported_at}</div>
           <div>SECRET_KEY: {preview.fingerprint_match
-            ? <span className="text-emerald-400">eşleşiyor</span>
-            : <span className="text-amber-300">farklı (risk)</span>}
+            ? <span className="text-emerald-400">{t('set_fp_match')}</span>
+            : <span className="text-amber-300">{t('set_fp_diff')}</span>}
             {' '}({preview.zip_secret_key_fingerprint || preview.manifest?.secret_key_fingerprint} → {preview.current_fingerprint})
           </div>
           <div>
             Taşıma secret’ları:{' '}
             {preview.has_migration_secrets
-              ? <span className="text-emerald-400">zip içinde var (restore’da .env’e yazılabilir)</span>
-              : <span className="text-amber-300">yok — elle SECRET_KEY/FERNET eşitleyin</span>}
+              ? <span className="text-emerald-400">{t('set_mig_in_zip')}</span>
+              : <span className="text-amber-300">{t('set_mig_missing')}</span>}
           </div>
-          <div>ainew: {(preview.ainew_size_bytes / 1024).toFixed(1)} KB · Dropt: {preview.has_dropt ? `${(preview.dropt_size_bytes / 1024).toFixed(1)} KB` : 'yok'}</div>
+          <div>{t('set_ainew_dropt_size', { a: (preview.ainew_size_bytes / 1024).toFixed(1), d: preview.has_dropt ? `${(preview.dropt_size_bytes / 1024).toFixed(1)} KB` : t('set_absent') })}</div>
         </div>
       )}
 
@@ -1087,6 +1059,7 @@ const DbBackupSection: React.FC = () => {
 }
 
 const DangerZoneTab: React.FC = () => {
+  const t = useT()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmText, setConfirmText] = useState('')
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
@@ -1096,7 +1069,7 @@ const DangerZoneTab: React.FC = () => {
     queryKey: ['wipe-all-data-preview'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/settings/wipe-all-data/preview`)
-      if (!r.ok) throw new Error('Önizleme alınamadı')
+      if (!r.ok) throw new Error(t('set_preview_fail'))
       return r.json()
     }
   })
@@ -1130,11 +1103,11 @@ const DangerZoneTab: React.FC = () => {
         body: JSON.stringify({ confirm: confirmText, categories: Array.from(selected) }),
       })
       const d = await r.json()
-      if (!r.ok) throw new Error(d.detail || 'Silme başarısız')
+      if (!r.ok) throw new Error(d.detail || t('set_wipe_fail'))
       return d
     },
     onSuccess: (d) => {
-      setResult({ success: true, message: `${d.message} Sayfa yenileniyor...` })
+      setResult({ success: true, message: t('set_reloading', { msg: d.message }) })
       setConfirmText('')
       setSelected(new Set())
       refetch()
@@ -1144,17 +1117,15 @@ const DangerZoneTab: React.FC = () => {
       // invalidateQueries sadece o an mount olan sorguları tazeler.
       setTimeout(() => window.location.reload(), 1200)
     },
-    onError: (e) => setResult({ success: false, message: e instanceof Error ? e.message : 'Hata' }),
+    onError: (e) => setResult({ success: false, message: e instanceof Error ? e.message : t('error_generic') }),
   })
 
   const canConfirm = confirmText.trim() === WIPE_CONFIRM_PHRASE && selected.size > 0
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-white mb-2">Tehlikeli Bölge</h2>
-      <p className="text-slate-400 text-sm mb-6">
-        Bu bölümdeki işlemler geri alınamaz. Silmek istediğiniz veri kategorilerini işaretleyin.
-      </p>
+      <h2 className="text-xl font-semibold text-white mb-2">{t('set_danger_title')}</h2>
+      <p className="text-slate-400 text-sm mb-6">{t('set_danger_intro')}</p>
 
       <div className="bg-red-500/5 border-2 border-red-500/30 rounded-xl p-6">
         <div className="flex items-start gap-3 mb-4">
@@ -1162,17 +1133,15 @@ const DangerZoneTab: React.FC = () => {
             <AlertTriangle size={20} strokeWidth={2} className="text-red-400" />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-white">Veri Sil</h3>
-            <p className="text-slate-400 text-sm mt-1">
-              Kategori bazında seçim yapabilirsiniz — sadece işaretlediğiniz veriler silinir, diğerlerine dokunulmaz.
-            </p>
+            <h3 className="text-base font-semibold text-white">{t('set_wipe_data')}</h3>
+            <p className="text-slate-400 text-sm mt-1">{t('set_wipe_hint')}</p>
           </div>
         </div>
 
         {isLoading ? (
-          <p className="text-slate-500 text-sm py-4">Yükleniyor...</p>
+          <p className="text-slate-500 text-sm py-4">{t('loading')}</p>
         ) : nonEmptyCategories.length === 0 ? (
-          <p className="text-slate-500 text-sm py-4">Silinecek veri bulunmuyor — ortam zaten temiz.</p>
+          <p className="text-slate-500 text-sm py-4">{t('set_wipe_empty')}</p>
         ) : (
           <>
             <div className="mb-4 rounded-lg border border-white/[0.06] overflow-hidden">
@@ -1184,9 +1153,9 @@ const DangerZoneTab: React.FC = () => {
                     onChange={toggleAll}
                     className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded"
                   />
-                  Tümünü Seç
+                  {t('select_all')}
                 </label>
-                <span className="text-xs text-slate-500">{nonEmptyCategories.length} kategori</span>
+                <span className="text-xs text-slate-500">{t('set_n_cats', { n: nonEmptyCategories.length })}</span>
               </div>
               <div className="divide-y divide-white/[0.04] max-h-80 overflow-y-auto">
                 {nonEmptyCategories.map(cat => (
@@ -1203,24 +1172,22 @@ const DangerZoneTab: React.FC = () => {
                       />
                       <span className="text-sm text-white">{cat.label}</span>
                     </span>
-                    <span className="text-xs text-slate-400 font-mono">{cat.total_rows} kayıt</span>
+                    <span className="text-xs text-slate-400 font-mono">{cat.total_rows} {t('records')}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             <div className="mb-4 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-              <p className="text-xs text-blue-300">
-                <strong>Her durumda korunacaklar:</strong> Kullanıcı hesapları, modül/rol yetkileri, global credential'lar (SSH/WinRM) ve sistem ayarları (AI modeli, saklama süresi vb.)
-              </p>
+              <p className="text-xs text-blue-300">{t('set_preserved')}</p>
             </div>
 
             <div className="border-t border-red-500/20 pt-4">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm text-slate-300">
-                  Devam etmek için <code className="bg-cyber-deep px-1.5 py-0.5 rounded text-red-400 font-mono">{WIPE_CONFIRM_PHRASE}</code> yazın
+                  {t('set_type_to_continue', { phrase: WIPE_CONFIRM_PHRASE })}
                 </label>
-                <span className="text-sm font-semibold text-red-400">{selectedTotal} kayıt silinecek</span>
+                <span className="text-sm font-semibold text-red-400">{t('set_will_del', { n: selectedTotal })}</span>
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -1235,11 +1202,11 @@ const DangerZoneTab: React.FC = () => {
                   disabled={!canConfirm || wipeMutation.isPending}
                   className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-500 hover:to-red-600 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm whitespace-nowrap"
                 >
-                  {wipeMutation.isPending ? 'Siliniyor...' : `Seçilenleri Sil (${selected.size})`}
+                  {wipeMutation.isPending ? t('deleting') : t('set_del_selected', { n: selected.size })}
                 </button>
               </div>
               {selected.size === 0 && (
-                <p className="text-xs text-slate-500 mt-2">Silmek için en az bir kategori seçin.</p>
+                <p className="text-xs text-slate-500 mt-2">{t('set_pick_cat')}</p>
               )}
             </div>
 
@@ -1281,6 +1248,7 @@ interface AdvancedGroup {
 }
 
 const AdvancedSettingsTab: React.FC = () => {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const queryClient = useQueryClient()
@@ -1297,7 +1265,7 @@ const AdvancedSettingsTab: React.FC = () => {
           const j = await res.json()
           detail = typeof j?.detail === 'string' ? j.detail : ''
         } catch { /* ignore */ }
-        throw new Error(detail || `Gelişmiş ayarlar yüklenemedi (HTTP ${res.status})`)
+        throw new Error(detail || t('set_adv_load_fail', { status: res.status }))
       }
       return res.json()
     },
@@ -1320,15 +1288,15 @@ const AdvancedSettingsTab: React.FC = () => {
         body: JSON.stringify({ settings }),
       })
       if (!res.ok) {
-        const t = await res.text()
-        throw new Error(t || 'Kayıt başarısız')
+        const bodyText = await res.text()
+        throw new Error(bodyText || t('set_save_fail'))
       }
       return res.json()
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({ queryKey: ['advanced-settings'] })
       const restart = Array.isArray(r?.restart_needed) && r.restart_needed.length > 0
-      setSaveMsg(r.message || (restart ? 'Kaydedildi — recreate gerekir' : 'Kaydedildi'))
+      setSaveMsg(r.message || (restart ? t('set_saved_recreate') : t('saved')))
       setTimeout(() => setSaveMsg(null), restart ? 12000 : 4000)
     },
   })
@@ -1362,22 +1330,18 @@ const AdvancedSettingsTab: React.FC = () => {
   }
 
   if (isLoading) {
-    return <div className="text-slate-400 text-sm">Gelişmiş ayarlar yükleniyor...</div>
+    return <div className="text-slate-400 text-sm">{t('set_adv_loading')}</div>
   }
   if (error) {
-    return <div className="text-red-400 text-sm">Yükleme hatası: {(error as Error).message}</div>
+    return <div className="text-red-400 text-sm">{t('set_load_err', { msg: (error as Error).message })}</div>
   }
 
   return (
     <div>
       <div className="flex flex-wrap items-start gap-3 mb-6">
         <div className="flex-1 min-w-0">
-          <h2 className="text-xl font-semibold text-white">Gelişmiş Ayarlar</h2>
-          <p className="text-slate-400 text-sm mt-1">
-            Timeout, health checker, worker ve arka plan interval değerleri. Çoğu kayıt sonrası restart gerekmez (≈15 sn).
-            <span className="text-amber-300/90"> Celery concurrency / Uvicorn workers</span> için container recreate gerekir.
-            Nginx proxy timeout için conf güncellemesi / yeniden deploy gerekir.
-          </p>
+          <h2 className="text-xl font-semibold text-white">{t('set_tab_advanced')}</h2>
+          <p className="text-slate-400 text-sm mt-1">{t('set_adv_intro')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {isAdmin && (
@@ -1387,7 +1351,7 @@ const AdvancedSettingsTab: React.FC = () => {
                 onClick={resetDefaults}
                 className="px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
               >
-                Varsayılanlara al
+                {t('set_reset_defaults')}
               </button>
               <button
                 type="button"
@@ -1395,7 +1359,7 @@ const AdvancedSettingsTab: React.FC = () => {
                 disabled={saveMutation.isPending}
                 className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
               >
-                {saveMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                {saveMutation.isPending ? t('saving') : t('save')}
               </button>
             </>
           )}
@@ -1404,7 +1368,7 @@ const AdvancedSettingsTab: React.FC = () => {
 
       {!isAdmin && (
         <div className="mb-4 p-3 rounded-lg text-sm bg-amber-500/10 border border-amber-500/30 text-amber-300">
-          Gelişmiş ayarları değiştirmek için admin yetkisi gerekir (salt okunur).
+          {t('set_adv_readonly')}
         </div>
       )}
 
@@ -1441,8 +1405,8 @@ const AdvancedSettingsTab: React.FC = () => {
                       onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
                       className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
                     >
-                      <option value="true">Açık</option>
-                      <option value="false">Kapalı</option>
+                      <option value="true">{t('enabled')}</option>
+                      <option value="false">{t('disabled')}</option>
                     </select>
                   ) : s.type === 'str' && s.choices && s.choices.length > 0 ? (
                     <select
@@ -1491,6 +1455,7 @@ const AdvancedSettingsTab: React.FC = () => {
 }
 
 const Settings: React.FC = () => {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const [activeTab, setActiveTab] = useState('credentials')
@@ -1552,7 +1517,7 @@ const Settings: React.FC = () => {
     queryKey: ['general-settings'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/settings/`)
-      if (!res.ok) throw new Error('Ayarlar alınamadı')
+      if (!res.ok) throw new Error(t('set_settings_fail'))
       return res.json()
     },
     staleTime: 60000,
@@ -1613,13 +1578,13 @@ const Settings: React.FC = () => {
       })
       if (!r.ok) {
         const err = await r.json().catch(() => ({}))
-        throw new Error(err.detail || 'Kayıt başarısız')
+        throw new Error(err.detail || t('set_save_fail'))
       }
       setPromSaved(true)
       queryClient.invalidateQueries({ queryKey: ['general-settings'] })
       setTimeout(() => setPromSaved(false), 3000)
     } catch (e: any) {
-      setPromError(e?.message || 'Kayıt başarısız')
+      setPromError(e?.message || t('set_save_fail'))
     } finally {
       setPromSaving(false)
     }
@@ -1719,12 +1684,12 @@ const Settings: React.FC = () => {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const detail = typeof data.detail === 'string' ? data.detail : 'Test başarısız'
+        const detail = typeof data.detail === 'string' ? data.detail : t('set_test_fail')
         throw new Error(detail)
       }
-      setRemoteLlmTestMsg({ ok: Boolean(data.ok), text: data.message || (data.ok ? 'OK' : 'Başarısız') })
+      setRemoteLlmTestMsg({ ok: Boolean(data.ok), text: data.message || (data.ok ? 'OK' : t('audit_st_failed')) })
     } catch (e: any) {
-      setRemoteLlmTestMsg({ ok: false, text: e.message || 'Test başarısız' })
+      setRemoteLlmTestMsg({ ok: false, text: e.message || t('set_test_fail') })
     } finally {
       setRemoteLlmTesting(false)
     }
@@ -1770,11 +1735,11 @@ const Settings: React.FC = () => {
       form.append('file', logoFile)
       const res = await fetch(`${API_BASE_URL}/settings/branding/logo`, { method: 'POST', body: form })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Logo yüklenemedi')
+      if (!res.ok) throw new Error(data.detail || t('set_logo_fail'))
       setLogoFile(null)
       await refreshBranding()
     } catch (e: any) {
-      setBrandingError(e.message || 'Logo yüklenemedi')
+      setBrandingError(e.message || t('set_logo_fail'))
     } finally {
       setLogoUploading(false)
     }
@@ -1786,11 +1751,11 @@ const Settings: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/settings/branding/logo`, { method: 'DELETE' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data.detail || 'Logo kaldırılamadı')
+        throw new Error(data.detail || t('set_logo_rm_fail'))
       }
       await refreshBranding()
     } catch (e: any) {
-      setBrandingError(e.message || 'Logo kaldırılamadı')
+      setBrandingError(e.message || t('set_logo_rm_fail'))
     }
   }
 
@@ -1830,7 +1795,7 @@ const Settings: React.FC = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      if (!res.ok) throw new Error(r.detail || t('error_generic'))
       return r
     },
     onSuccess: () => {
@@ -1868,7 +1833,7 @@ const Settings: React.FC = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      if (!res.ok) throw new Error(r.detail || t('error_generic'))
       return r
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['credentials'] }); resetForm() }
@@ -1880,7 +1845,7 @@ const Settings: React.FC = () => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Hata')
+      if (!res.ok) throw new Error(r.detail || t('error_generic'))
       return r
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['credentials'] }); resetForm() }
@@ -1889,7 +1854,7 @@ const Settings: React.FC = () => {
   const deleteCred = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API_BASE_URL}/settings/credentials/${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Silinemedi')
+      if (!res.ok) throw new Error(t('delete_failed'))
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['credentials'] })
   })
@@ -1897,7 +1862,7 @@ const Settings: React.FC = () => {
   const setDefault = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API_BASE_URL}/settings/credentials/${id}/set-default`, { method: 'POST' })
-      if (!res.ok) throw new Error('Hata')
+      if (!res.ok) throw new Error(t('error_generic'))
       return res.json()
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['credentials'] })
@@ -1916,13 +1881,13 @@ const Settings: React.FC = () => {
       } catch {
         throw new Error(
           res.status === 504 || res.status === 502
-            ? 'İstek zaman aşımına uğradı (proxy). Credential yazımı arka planda sürebilir — sayfayı yenileyin.'
-            : `Sunucu HTML/beklenmeyen cevap döndü (HTTP ${res.status}).`
+            ? t('set_proxy_timeout')
+            : t('set_html_resp', { status: res.status })
         )
       }
       if (!res.ok) {
         const detail = r?.detail
-        throw new Error(typeof detail === 'string' ? detail : (detail?.[0]?.msg || 'Hata'))
+        throw new Error(typeof detail === 'string' ? detail : (detail?.[0]?.msg || t('error_generic')))
       }
       return r
     },
@@ -1944,7 +1909,7 @@ const Settings: React.FC = () => {
       successful: 0,
       failed: 0,
       skipped: 0,
-      message: 'SSH testi başlatılıyor…',
+      message: t('set_ssh_starting'),
       currentServer: null,
       error: null,
     })
@@ -1960,13 +1925,13 @@ const Settings: React.FC = () => {
       } catch {
         throw new Error(
           res.status === 504 || res.status === 502
-            ? 'SSH test zaman aşımı. Backend loglarını kontrol edin.'
-            : `Sunucu HTML/beklenmeyen cevap döndü (HTTP ${res.status}).`
+            ? t('set_ssh_timeout')
+            : t('set_html_resp', { status: res.status })
         )
       }
-      if (!res.ok) throw new Error(typeof r?.detail === 'string' ? r.detail : 'SSH test başlatılamadı')
+      if (!res.ok) throw new Error(typeof r?.detail === 'string' ? r.detail : t('set_ssh_start_fail'))
 
-      if (!r?.job_id) throw new Error('Job ID alınamadı')
+      if (!r?.job_id) throw new Error(t('set_no_job'))
       setSshTest({
         jobId: r.job_id,
         status: r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running',
@@ -1977,17 +1942,17 @@ const Settings: React.FC = () => {
         failed: r.failed || 0,
         skipped: r.skipped || 0,
         currentServer: r.current_server,
-        message: r.message || 'Test ediliyor…',
+        message: r.message || t('set_testing'),
         error: r.error || null,
       })
       if (r.status === 'done' && r.result) {
         queryClient.invalidateQueries({ queryKey: ['servers'] })
-        alert(`SSH Test tamamlandı!\n\nBaşarılı: ${r.result.successful}\nBaşarısız: ${r.result.failed}\n\n${r.result.message}`)
+        alert(t('set_ssh_done', { ok: r.result.successful, fail: r.result.failed, msg: r.result.message }))
       } else if (r.status === 'error') {
-        alert(r.error || r.message || 'SSH test hatası')
+        alert(r.error || r.message || t('set_ssh_err'))
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'SSH test hatası'
+      const msg = e instanceof Error ? e.message : t('set_ssh_err')
       setSshTest(prev => ({ ...prev, status: 'error', error: msg, message: msg }))
       alert(msg)
     }
@@ -2007,8 +1972,8 @@ const Settings: React.FC = () => {
             setSshTest(prev => ({
               ...prev,
               status: 'error',
-              error: 'Job bulunamadı',
-              message: 'SSH test job bulunamadı veya süresi doldu',
+              error: t('set_job_missing'),
+              message: t('set_ssh_job_gone'),
             }))
           }
           return
@@ -2036,9 +2001,9 @@ const Settings: React.FC = () => {
             const ok = result?.successful ?? r.successful ?? 0
             const fail = result?.failed ?? r.failed ?? 0
             const msg = result?.message || r.message || ''
-            alert(`SSH Test tamamlandı!\n\nBaşarılı: ${ok}\nBaşarısız: ${fail}\n\n${msg}`)
+            alert(t('set_ssh_done', { ok, fail, msg }))
           } else {
-            alert(r.error || r.message || 'SSH test hatası')
+            alert(r.error || r.message || t('set_ssh_err'))
           }
         }
       } catch {
@@ -2046,10 +2011,10 @@ const Settings: React.FC = () => {
       }
     }
     poll()
-    const t = window.setInterval(poll, 1000)
+    const timer = window.setInterval(poll, 1000)
     return () => {
       cancelled = true
-      window.clearInterval(t)
+      window.clearInterval(timer)
     }
   }, [sshTest.jobId, sshTest.status, queryClient])
 
@@ -2061,16 +2026,16 @@ const Settings: React.FC = () => {
         body: JSON.stringify({ days })
       })
       const r = await res.json()
-      if (!res.ok) throw new Error(r.detail || 'Metrik saklama süresi güncellenemedi')
+      if (!res.ok) throw new Error(r.detail || t('set_ret_fail'))
       return r
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['general-settings'] })
       setRetentionSaved(true)
       setTimeout(() => setRetentionSaved(false), 3000)
-      alert(`Metrik saklama süresi ${data.metric_retention_days} gün olarak güncellendi. ${data.deleted_rows ?? 0} eski kayıt silindi.`)
+      alert(t('set_ret_ok', { days: data.metric_retention_days, n: data.deleted_rows ?? 0 }))
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Kaydetme hatası')
+    onError: (e) => alert(e instanceof Error ? e.message : t('set_save_err'))
   })
 
   const resetForm = () => {
@@ -2090,20 +2055,20 @@ const Settings: React.FC = () => {
   }
 
   const tabs = [
-    { id: 'credentials', name: 'Linux (SSH)' },
-    { id: 'winrm', name: 'Windows (WinRM)' },
-    { id: 'ai', name: 'AI Ayarları' },
-    { id: 'branding', name: 'Kurumsal Kimlik' },
-    { id: 'rag', name: 'RAG (Bilgi Tabanı)' },
-    { id: 'monitoring', name: 'Monitoring' },
-    { id: 'security', name: 'Güvenlik' },
-    { id: 'advanced', name: 'Gelişmiş Ayarlar' },
-    { id: 'about', name: 'Hakkında' },
+    { id: 'credentials', name: t('set_tab_linux_ssh') },
+    { id: 'winrm', name: t('set_tab_winrm') },
+    { id: 'ai', name: t('set_tab_ai') },
+    { id: 'branding', name: t('set_tab_branding') },
+    { id: 'rag', name: t('set_tab_rag') },
+    { id: 'monitoring', name: t('set_tab_monitoring') },
+    { id: 'security', name: t('set_tab_security') },
+    { id: 'advanced', name: t('set_tab_advanced') },
+    { id: 'about', name: t('set_tab_about') },
     ...(isAdmin ? [
-      { id: 'platform-status', name: 'Platform Durumu' },
-      { id: 'config-backup', name: 'Yedek / Taşıma' },
-      { id: 'platform-update', name: 'Platform Güncelleme' },
-      { id: 'danger', name: 'Tehlikeli Bölge' },
+      { id: 'platform-status', name: t('set_tab_platform') },
+      { id: 'config-backup', name: t('set_tab_backup') },
+      { id: 'platform-update', name: t('set_tab_update') },
+      { id: 'danger', name: t('set_tab_danger') },
     ] : []),
   ]
 
@@ -2112,7 +2077,7 @@ const Settings: React.FC = () => {
       {/* Sol Menu */}
       <div className="w-64 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden flex-shrink-0">
         <div className="p-4 border-b border-white/[0.06]">
-          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Ayarlar</h2>
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">{t('set_title')}</h2>
         </div>
         <nav className="p-3">
           {tabs.map(tab => (
@@ -2129,26 +2094,30 @@ const Settings: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden min-w-0">
-        <div className="p-6 h-full overflow-y-auto overflow-x-hidden">
+      <div className="flex-1 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden min-w-0 min-h-0">
+        <div className={`p-6 h-full min-h-0 ${
+          activeTab === 'platform-status'
+            ? 'overflow-hidden flex flex-col'
+            : 'overflow-y-auto overflow-x-hidden'
+        }`}>
 
           {/* ═══ Credentials ═══ */}
           {activeTab === 'credentials' && (
             <div>
               <div className="flex flex-wrap items-start gap-3 mb-6">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-xl font-semibold text-white">Linux SSH Credentials</h2>
-                  <p className="text-slate-400 text-sm mt-1">SSH kimlik bilgilerini tanımlayın — yalnızca Linux sunuculara uygulanır (Windows için WinRM sekmesi)</p>
+                  <h2 className="text-xl font-semibold text-white">{t('set_linux_ssh_title')}</h2>
+                  <p className="text-slate-400 text-sm mt-1">{t('set_linux_ssh_hint')}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={startSshTest}
                     disabled={sshTestRunning}
                     className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
-                    {sshTestRunning ? 'Test Ediliyor...' : 'SSH Test & Update'}
+                    {sshTestRunning ? t('set_testing_btn') : t('set_ssh_test_upd')}
                   </button>
                   <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
                     className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
-                    {showForm ? '✕ İptal' : '+ Yeni Credential'}
+                    {showForm ? t('set_cancel_x') : t('set_new_cred')}
                   </button>
                 </div>
               </div>
@@ -2157,7 +2126,7 @@ const Settings: React.FC = () => {
                 <div className="mb-6 rounded-[10px] border border-emerald-500/30 bg-emerald-500/5 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <div className="text-sm text-white font-medium">
-                      {sshTestRunning ? 'SSH Test & Update çalışıyor' : sshTest.status === 'error' ? 'SSH Test hatası' : 'SSH Test tamamlandı'}
+                      {sshTestRunning ? t('set_ssh_running') : sshTest.status === 'error' ? t('set_ssh_err_short') : t('set_ssh_done_short')}
                     </div>
                     <div className="text-xs text-emerald-300/90 font-mono">
                       {sshTest.done}/{sshTest.total || '—'} · %{sshTest.percent}
@@ -2174,9 +2143,9 @@ const Settings: React.FC = () => {
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
                     <span className="inline-flex items-center gap-1"><CheckCircle2 size={12} strokeWidth={2} className="text-green-400" /> {sshTest.successful}</span>
                     <span className="inline-flex items-center gap-1"><XCircle size={12} strokeWidth={2} className="text-red-400" /> {sshTest.failed}</span>
-                    {sshTest.skipped > 0 && <span>{sshTest.skipped} atlandı</span>}
+                    {sshTest.skipped > 0 && <span>{t('skipped_n', { n: sshTest.skipped })}</span>}
                     {sshTest.currentServer && sshTestRunning && (
-                      <span className="text-slate-300 truncate">Son: {sshTest.currentServer}</span>
+                      <span className="text-slate-300 truncate">{t('set_last_srv', { name: sshTest.currentServer })}</span>
                     )}
                   </div>
                   {sshTest.message && (
@@ -2189,40 +2158,40 @@ const Settings: React.FC = () => {
               {(showForm || editingCred) && (
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 mb-6">
                   <h3 className="text-lg font-medium text-white mb-4">
-                    {editingCred ? `"${editingCred.name}" Düzenle` : 'Yeni Credential Ekle'}
+                    {editingCred ? t('set_edit_named', { name: editingCred.name }) : t('set_add_cred')}
                   </h3>
                   <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-3 gap-4">
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">İsim *</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('name_star')}</label>
                         <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="örn: Production SSH" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder={t('set_name_ph')} />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">Kullanıcı Adı *</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('username_star')}</label>
                         <input type="text" required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="root" />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">SSH Port</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('set_ssh_port')}</label>
                         <input type="number" value={form.port} onChange={e => setForm({ ...form, port: parseInt(e.target.value) || 22 })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">Şifre {editingCred ? '(boş = değiştirme)' : '*'}</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{editingCred ? `${t('password_label')} ${t('empty_keep')}` : t('password_star')}</label>
                         <input type="password" required={!editingCred} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">Sudo Şifresi (opsiyonel)</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('set_sudo_opt')}</label>
                         <input type="password" value={form.sudo_password} onChange={e => setForm({ ...form, sudo_password: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="opsiyonel" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder={t('optional')} />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-sm text-slate-300 mb-1.5">Private Key (opsiyonel)</label>
+                      <label className="block text-sm text-slate-300 mb-1.5">{t('set_pk_opt')}</label>
                       <textarea value={form.private_key} onChange={e => setForm({ ...form, private_key: e.target.value })}
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" rows={3} />
@@ -2232,10 +2201,10 @@ const Settings: React.FC = () => {
                         <p className="text-red-400 text-sm">{(createCred.error || updateCred.error)?.message}</p>
                       )}
                       <div className="flex gap-3 ml-auto">
-                        <button type="button" onClick={resetForm} className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                        <button type="button" onClick={resetForm} className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
                         <button type="submit" disabled={createCred.isPending || updateCred.isPending}
                           className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
-                          {(createCred.isPending || updateCred.isPending) ? 'Kaydediliyor...' : 'Kaydet'}
+                          {(createCred.isPending || updateCred.isPending) ? t('saving') : t('save')}
                         </button>
                       </div>
                     </div>
@@ -2249,8 +2218,8 @@ const Settings: React.FC = () => {
               ) : credentials.length === 0 ? (
                 <div className="text-center py-12 bg-cyber-deep/30 rounded-xl border border-dashed border-white/[0.06]">
                   <span className="text-2xl font-bold text-blue-400 block mb-4">KEY</span>
-                  <p className="text-slate-400 mb-2">Henüz credential eklenmemiş</p>
-                  <p className="text-slate-500 text-sm">Yeni credential ekleyip Linux sunuculara toplu uygulayabilirsiniz</p>
+                  <p className="text-slate-400 mb-2">{t('set_no_creds')}</p>
+                  <p className="text-slate-500 text-sm">{t('set_no_creds_hint')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2265,29 +2234,29 @@ const Settings: React.FC = () => {
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-white font-medium truncate max-w-[200px]">{cred.name}</p>
                               {cred.is_default && (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium whitespace-nowrap">VARSAYILAN</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium whitespace-nowrap">{t('default_badge')}</span>
                               )}
                             </div>
                             <p className="text-slate-400 text-sm font-mono mt-0.5 truncate">
                               {cred.username}@:{cred.port}
-                              {cred.has_password && <span className="text-green-400 ml-2">● şifre</span>}
-                              {cred.has_private_key && <span className="text-blue-400 ml-2">● key</span>}
+                              {cred.has_password && <span className="text-green-400 ml-2">{t('set_pw_dot')}</span>}
+                              {cred.has_private_key && <span className="text-blue-400 ml-2">{t('set_key_dot')}</span>}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <button onClick={() => { setApplyModal({ open: true, credId: cred.id, credName: cred.name }); setApplyMode('all'); setSelectedServerIds([]) }}
                             className="px-3 py-1.5 text-xs bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/20 font-medium">
-                            Uygula
+                            {t('apply')}
                           </button>
                           {!cred.is_default && (
                             <button onClick={() => setDefault.mutate(cred.id)}
-                              className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20" title="Varsayılan Yap"><Star size={12} strokeWidth={2} /></button>
+                              className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/20" title={t('set_make_default')}><Star size={12} strokeWidth={2} /></button>
                           )}
                           <button onClick={() => openEdit(cred)}
-                            className="px-3 py-1.5 text-xs bg-white/[0.07] text-slate-300 rounded-lg hover:bg-slate-600" title="Düzenle">✎</button>
-                          <button onClick={async () => { if (await showConfirm(`"${cred.name}" silinsin mi?`)) deleteCred.mutate(cred.id) }}
-                            className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20" title="Sil">✕</button>
+                            className="px-3 py-1.5 text-xs bg-white/[0.07] text-slate-300 rounded-lg hover:bg-slate-600" title={t('edit')}>✎</button>
+                          <button onClick={async () => { if (await showConfirm(t('set_del_quoted', { name: cred.name }))) deleteCred.mutate(cred.id) }}
+                            className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20" title={t('delete')}>✕</button>
                         </div>
                       </div>
                     </div>
@@ -2301,13 +2270,13 @@ const Settings: React.FC = () => {
           {/* ═══ AI ═══ */}
           {activeTab === 'ai' && (
             <div>
-              <h2 className="text-xl font-semibold text-white mb-6">AI Ayarları</h2>
+              <h2 className="text-xl font-semibold text-white mb-6">{t('set_ai_title')}</h2>
               <div className="space-y-6">
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
-                  <h3 className="text-lg font-medium text-white mb-4">Ollama Model Seçimi</h3>
+                  <h3 className="text-lg font-medium text-white mb-4">{t('set_ollama_pick')}</h3>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm text-slate-300 mb-2">Varsayılan Model</label>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_default_model')}</label>
                       <select
                         value={selectedModel}
                         onChange={e => setSelectedModel(e.target.value)}
@@ -2322,7 +2291,7 @@ const Settings: React.FC = () => {
                           </option>
                         ))}
                       </select>
-                      <p className="text-xs text-slate-500 mt-1">Chat ve Event analizi için varsayılan model (Ollama üzerinden)</p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_model_hint')}</p>
                     </div>
                     <div className="flex items-center gap-3 mt-4">
                       <button
@@ -2337,11 +2306,11 @@ const Settings: React.FC = () => {
                           setTimeout(() => setModelSaved(false), 3000)
                         }}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-                        Kaydet
+                        {t('save')}
                       </button>
                       {modelSaved && (
                         <span className="text-green-400 text-sm flex items-center gap-1">
-                          Model kaydedildi
+                          {t('set_model_saved')}
                         </span>
                       )}
                     </div>
@@ -2352,7 +2321,7 @@ const Settings: React.FC = () => {
 
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-lg font-medium text-white">Uzak AI Sağlayıcı (OpenAI-uyumlu Gateway)</h3>
+                    <h3 className="text-lg font-medium text-white">{t('set_remote_ai')}</h3>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
@@ -2363,13 +2332,10 @@ const Settings: React.FC = () => {
                       <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
                     </label>
                   </div>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Aktif edilirse tüm chat/agent/analiz çağrıları (Linux, Windows, Unified AI, AI Agent, RCA vb.)
-                    yerel Ollama yerine buradaki OpenAI-uyumlu <code>/v1/chat/completions</code> endpoint'ine gider (örn. Bifrost).
-                  </p>
+                  <p className="text-xs text-slate-500 mb-4">{t('set_remote_hint')}</p>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm text-slate-300 mb-2">Gateway URL</label>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_gw_url')}</label>
                       <input
                         type="text"
                         value={remoteLlmForm.url}
@@ -2377,7 +2343,7 @@ const Settings: React.FC = () => {
                         placeholder="https://llm-gateway.ornek-sirket.com"
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">Kök URL — sonuna otomatik <code>/v1/chat/completions</code> eklenir.</p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_root_url')}</p>
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">Model</label>
@@ -2391,7 +2357,7 @@ const Settings: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">
-                        Virtual Key <span className="text-slate-500 font-normal">(Bifrost — önerilen)</span>
+                        Virtual Key <span className="text-slate-500 font-normal">{t('set_vk_rec')}</span>
                       </label>
                       <input
                         type="password"
@@ -2399,15 +2365,12 @@ const Settings: React.FC = () => {
                         onChange={e => setRemoteLlmForm(f => ({ ...f, virtual_key: e.target.value, clear_virtual_key: false }))}
                         placeholder={
                           generalSettings?.remote_llm?.virtual_key_set
-                            ? `Kayıtlı: ${generalSettings.remote_llm.virtual_key_masked || '••••'} (değiştirmek için yeni değer girin)`
+                            ? t('set_stored_change', { masked: generalSettings.remote_llm.virtual_key_masked || '••••' })
                             : 'sk-bf-… → x-bf-vk'
                         }
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">
-                        Bifrost sıkı / VK-only: bu alana <code>sk-bf-…</code> yazın, API Key&apos;i boş bırakın
-                        (curl ile aynı: yalnızca <code>x-bf-vk</code>).
-                      </p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_vk_hint')}</p>
                       {generalSettings?.remote_llm?.virtual_key_set && (
                         <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
                           <input
@@ -2420,30 +2383,27 @@ const Settings: React.FC = () => {
                             }))}
                             className="rounded border-slate-600"
                           />
-                          Kayıtlı virtual key&apos;i kaldır
+                          {t('set_clear_vk')}
                         </label>
                       )}
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">
-                        API Key <span className="text-slate-500 font-normal">(eski Authorization yolu)</span>
+                        API Key <span className="text-slate-500 font-normal">{t('set_api_old')}</span>
                       </label>
                       <input
                         type="password"
                         value={remoteLlmForm.api_key}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, api_key: e.target.value }))}
-                        placeholder={generalSettings?.remote_llm?.api_key_set ? `Kayıtlı: ${generalSettings.remote_llm.api_key_masked} (değiştirmek için yeni değer girin)` : 'Authorization — Bearer yok'}
+                        placeholder={generalSettings?.remote_llm?.api_key_set ? t('set_stored_change', { masked: generalSettings.remote_llm.api_key_masked }) : t('set_auth_no_bearer')}
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">
-                        Gateway anahtarı <code>Authorization</code> ile bekliyorsa buraya yazın (Bearer öneki yok).
-                        İki alan birden doluysa her iki header da gönderilir.
-                      </p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_gw_key_hint')}</p>
                     </div>
 
                     <div className="border-t border-white/[0.06] pt-4">
                       <div className="flex items-center justify-between mb-1">
-                        <label className="block text-sm text-slate-300">SSL Sertifika Doğrulaması</label>
+                        <label className="block text-sm text-slate-300">{t('set_ssl_verify')}</label>
                         <label className="relative inline-flex items-center cursor-pointer">
                           <input
                             type="checkbox"
@@ -2454,12 +2414,8 @@ const Settings: React.FC = () => {
                           <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
                         </label>
                       </div>
-                      <p className="text-xs text-slate-500 mb-3">
-                        Kapatırsanız gateway'in sertifikası (self-signed dahil) hiç doğrulanmaz — sadece güvendiğiniz
-                        bir iç ağ/gateway için kabul edilebilir. <code>[SSL: CERTIFICATE_VERIFY_FAILED]</code> hatası
-                        alıyorsanız, kapatmak yerine aşağıya CA sertifikası yolu vermeniz daha güvenlidir.
-                      </p>
-                      <label className="block text-sm text-slate-300 mb-2">CA Sertifikası Yolu (opsiyonel)</label>
+                      <p className="text-xs text-slate-500 mb-3">{t('set_ssl_hint')}</p>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_ca_path')}</label>
                       <input
                         type="text"
                         value={remoteLlmForm.ca_bundle}
@@ -2467,12 +2423,7 @@ const Settings: React.FC = () => {
                         placeholder="/app/certs/remote-llm-ca.pem"
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">
-                        Gateway'in self-signed sertifikasını (veya onu imzalayan kurumsal CA'yı) PEM olarak
-                        sunucudaki <code>/data/data/certs/</code> (veya $DATA_DIR/certs) dizinine koyup buraya container
-                        içi yolunu (<code>/app/certs/&lt;dosya&gt;.pem</code>) yazın — doğrulama açık kalır, sadece
-                        bu ek sertifikaya da güvenilir. Doluysa yukarıdaki doğrulama anahtarından önceliklidir.
-                      </p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_ca_hint')}</p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 mt-4">
@@ -2480,15 +2431,15 @@ const Settings: React.FC = () => {
                         onClick={testRemoteLlm}
                         disabled={remoteLlmTesting || remoteLlmSaving || !remoteLlmForm.url.trim() || !remoteLlmForm.model.trim()}
                         className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors border border-slate-500/50">
-                        {remoteLlmTesting ? 'Test ediliyor…' : 'Bağlantıyı test et'}
+                        {remoteLlmTesting ? t('set_testing') : t('set_test_conn')}
                       </button>
                       <button
                         onClick={saveRemoteLlm}
                         disabled={remoteLlmSaving || remoteLlmTesting}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-                        {remoteLlmSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                        {remoteLlmSaving ? t('saving') : t('save')}
                       </button>
-                      {remoteLlmSaved && <span className="text-green-400 text-sm">Kaydedildi</span>}
+                      {remoteLlmSaved && <span className="text-green-400 text-sm">{t('saved')}</span>}
                       {remoteLlmError && <span className="text-red-400 text-sm">{remoteLlmError}</span>}
                       {remoteLlmTestMsg && (
                         <span className={`text-sm ${remoteLlmTestMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
@@ -2502,12 +2453,12 @@ const Settings: React.FC = () => {
                 {generalSettings?.remote_llm?.enabled ? (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 flex items-center space-x-3">
                     <span className="text-sm font-semibold text-blue-400">OK</span>
-                    <div><p className="text-blue-400 font-medium">AI Servisi Aktif — Uzak Gateway</p><p className="text-blue-400/70 text-sm">Tüm AI çağrıları {generalSettings.remote_llm.model} modeli üzerinden uzak sağlayıcıya gidiyor</p></div>
+                    <div><p className="text-blue-400 font-medium">{t('set_ai_remote')}</p><p className="text-blue-400/70 text-sm">{t('set_ai_remote_sub', { model: generalSettings.remote_llm.model })}</p></div>
                   </div>
                 ) : (
                   <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center space-x-3">
                     <span className="text-sm font-semibold text-green-400">OK</span>
-                    <div><p className="text-green-400 font-medium">AI Servisi Aktif — Tam Lokal</p><p className="text-green-400/70 text-sm">Tüm veriler sunucuda kalır, dışarı çıkmaz</p></div>
+                    <div><p className="text-green-400 font-medium">{t('set_ai_local')}</p><p className="text-green-400/70 text-sm">{t('set_ai_local_sub')}</p></div>
                   </div>
                 )}
               </div>
@@ -2517,14 +2468,12 @@ const Settings: React.FC = () => {
           {/* ═══ Kurumsal Kimlik ═══ */}
           {activeTab === 'branding' && (
             <div>
-              <h2 className="text-xl font-semibold text-white mb-1">Kurumsal Kimlik</h2>
-              <p className="text-slate-400 text-sm mb-6">
-                Giriş ekranında, sol menüde ve uygulama sekmesinde görünen isim ve logoyu özelleştirin.
-              </p>
+              <h2 className="text-xl font-semibold text-white mb-1">{t('set_tab_branding')}</h2>
+              <p className="text-slate-400 text-sm mb-6">{t('set_brand_intro')}</p>
               <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 max-w-2xl">
                 <div className="space-y-5">
                   <div>
-                    <label className="block text-sm text-slate-300 mb-2">Uygulama / Şirket Adı</label>
+                    <label className="block text-sm text-slate-300 mb-2">{t('set_app_name')}</label>
                     <div className="flex items-center gap-3">
                       <input
                         type="text"
@@ -2538,20 +2487,20 @@ const Settings: React.FC = () => {
                         onClick={saveBrandingName}
                         disabled={brandingNameSaving || !brandingName.trim()}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
-                        {brandingNameSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                        {brandingNameSaving ? t('saving') : t('save')}
                       </button>
                     </div>
-                    {brandingNameSaved && <p className="text-green-400 text-sm mt-2">Kaydedildi</p>}
+                    {brandingNameSaved && <p className="text-green-400 text-sm mt-2">{t('saved')}</p>}
                   </div>
 
                   <div>
-                    <label className="block text-sm text-slate-300 mb-2">Şirket Logosu</label>
+                    <label className="block text-sm text-slate-300 mb-2">{t('set_logo')}</label>
                     <div className="flex items-center gap-4">
                       <div className="w-28 h-28 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden flex-shrink-0 p-2">
                         {logoUrl ? (
                           <img src={logoUrl} alt={appName} className="w-full h-full object-contain" />
                         ) : (
-                          <span className="text-slate-500 text-xs">Logo yok</span>
+                          <span className="text-slate-500 text-xs">{t('set_no_logo')}</span>
                         )}
                       </div>
                       <div className="flex-1 min-w-0 space-y-2">
@@ -2566,17 +2515,17 @@ const Settings: React.FC = () => {
                             onClick={uploadLogo}
                             disabled={!logoFile || logoUploading}
                             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-                            {logoUploading ? 'Yükleniyor...' : 'Yükle'}
+                            {logoUploading ? t('uploading') : t('upload')}
                           </button>
                           {logoUrl && (
                             <button
                               onClick={removeLogo}
                               className="px-4 py-2 bg-white/[0.07] hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors">
-                              Kaldır
+                              {t('remove')}
                             </button>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500">PNG, JPG, SVG veya WEBP — en fazla 2MB.</p>
+                        <p className="text-xs text-slate-500">{t('set_logo_types')}</p>
                       </div>
                     </div>
                   </div>
@@ -2591,8 +2540,8 @@ const Settings: React.FC = () => {
             <div>
               <div className="flex flex-wrap items-start gap-3 mb-6">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-xl font-semibold text-white">Windows (WinRM) Credentials</h2>
-                  <p className="text-slate-400 text-sm mt-1">WinRM kimlik bilgilerini tanımlayın ve Windows sunuculara toplu uygulayın</p>
+                  <h2 className="text-xl font-semibold text-white">{t('set_winrm_title')}</h2>
+                  <p className="text-slate-400 text-sm mt-1">{t('set_winrm_hint')}</p>
                 </div>
                 {!winrmEditing && (
                   <div className="flex gap-2">
@@ -2601,7 +2550,7 @@ const Settings: React.FC = () => {
                         onClick={() => applyWinrm.mutate()}
                         disabled={applyWinrm.isPending}
                         className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
-                        {applyWinrm.isPending ? 'Uygulanıyor...' : <span className="inline-flex items-center gap-1.5"><Monitor size={14} strokeWidth={2} /> Tümüne Uygula</span>}
+                        {applyWinrm.isPending ? t('applying') : <span className="inline-flex items-center gap-1.5"><Monitor size={14} strokeWidth={2} /> {t('set_apply_all')}</span>}
                       </button>
                     )}
                     <button
@@ -2611,7 +2560,7 @@ const Settings: React.FC = () => {
                         setWinrmApplyResult(null)
                       }}
                       className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
-                      {winrmCred?.configured ? '✏ Düzenle' : '+ Credential Ekle'}
+                      {winrmCred?.configured ? t('set_edit_pencil') : t('set_add_cred_plus')}
                     </button>
                   </div>
                 )}
@@ -2621,26 +2570,26 @@ const Settings: React.FC = () => {
               {winrmEditing && (
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 mb-6">
                   <h3 className="text-lg font-medium text-white mb-4">
-                    {winrmCred?.configured ? 'Global WinRM Credential Düzenle' : 'Global WinRM Credential Ekle'}
+                    {winrmCred?.configured ? t('set_winrm_edit') : t('set_winrm_add')}
                   </h3>
                   <div className="space-y-4">
                     <div className="grid grid-cols-3 gap-4">
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">Kullanıcı Adı *</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('username_star')}</label>
                         <input type="text" required value={winrmForm.username}
                           onChange={e => setWinrmForm({ ...winrmForm, username: e.target.value })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Administrator veya DOMAIN\\kullanici" />
+                          placeholder={t('set_winrm_user_ph')} />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">Şifre {winrmCred?.configured ? '(boş = değiştirme)' : '*'}</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{winrmCred?.configured ? `${t('password_label')} ${t('empty_keep')}` : t('password_star')}</label>
                         <input type="password" value={winrmForm.password}
                           onChange={e => setWinrmForm({ ...winrmForm, password: e.target.value })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="••••••••" />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1.5">WinRM Port</label>
+                        <label className="block text-sm text-slate-300 mb-1.5">{t('set_winrm_port')}</label>
                         <input type="number" value={winrmForm.port}
                           onChange={e => setWinrmForm({ ...winrmForm, port: parseInt(e.target.value) || 5985 })}
                           className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -2651,7 +2600,7 @@ const Settings: React.FC = () => {
                         onChange={e => setWinrmForm({ ...winrmForm, use_https: e.target.checked })}
                         className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
                       <label htmlFor="winrm-https" className="text-sm text-slate-300 cursor-pointer">
-                        HTTPS kullan <span className="text-slate-500">(port 5986, SSL sertifikası gerekir)</span>
+                        {t('set_use_https')} <span className="text-slate-500">{t('set_https_need')}</span>
                       </label>
                     </div>
                     <div className="flex justify-between items-center pt-2">
@@ -2660,12 +2609,12 @@ const Settings: React.FC = () => {
                       )}
                       <div className="flex gap-3 ml-auto">
                         <button type="button" onClick={() => setWinrmEditing(false)}
-                          className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                          className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
                         <button
                           onClick={() => saveWinrm.mutate(winrmForm)}
                           disabled={saveWinrm.isPending || !winrmForm.username || (!winrmForm.password && !winrmCred?.configured)}
                           className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
-                          {saveWinrm.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                          {saveWinrm.isPending ? t('saving') : t('save')}
                         </button>
                       </div>
                     </div>
@@ -2677,7 +2626,7 @@ const Settings: React.FC = () => {
               {winrmApplyResult && (
                 <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-sm text-green-300">
                   <p className="font-medium mb-1">
-                    ✓ {winrmApplyResult.message || `${winrmApplyResult.applied_to} Windows sunucuya uygulandı`}
+                    ✓ {winrmApplyResult.message || t('set_win_applied', { n: winrmApplyResult.applied_to })}
                   </p>
                   {winrmApplyResult.servers.length > 0 && (
                     <p className="text-green-400/70 text-xs">{winrmApplyResult.servers.join(', ')}</p>
@@ -2689,8 +2638,8 @@ const Settings: React.FC = () => {
               {!winrmCred?.configured && !winrmEditing ? (
                 <div className="text-center py-12 bg-cyber-deep/30 rounded-xl border border-dashed border-white/[0.06]">
                   <span className="text-2xl font-bold text-blue-400 block mb-4">WIN</span>
-                  <p className="text-slate-400 mb-2">Henüz WinRM credential eklenmemiş</p>
-                  <p className="text-slate-500 text-sm">Global credential ekleyerek tüm Windows sunuculara toplu uygulayabilirsiniz</p>
+                  <p className="text-slate-400 mb-2">{t('set_no_winrm')}</p>
+                  <p className="text-slate-500 text-sm">{t('set_no_winrm_hint')}</p>
                 </div>
               ) : winrmCred?.configured && !winrmEditing && (
                 <div className="space-y-3">
@@ -2702,12 +2651,12 @@ const Settings: React.FC = () => {
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-white font-medium">Global WinRM Credential</p>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium">VARSAYILAN</span>
+                            <p className="text-white font-medium">{t('set_winrm_global')}</p>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-medium">{t('default_badge')}</span>
                           </div>
                           <p className="text-slate-400 text-sm font-mono mt-0.5">
                             {winrmCred.username}@:{winrmCred.port}
-                            {winrmCred.has_password && <span className="text-green-400 ml-2">● şifre</span>}
+                            {winrmCred.has_password && <span className="text-green-400 ml-2">{t('set_pw_dot')}</span>}
                             <span className={`ml-2 text-xs ${winrmCred.use_https ? 'text-green-400' : 'text-slate-500'}`}>
                               {winrmCred.use_https ? 'HTTPS' : 'HTTP'}
                             </span>
@@ -2719,7 +2668,7 @@ const Settings: React.FC = () => {
                           onClick={() => applyWinrm.mutate()}
                           disabled={applyWinrm.isPending}
                           className="px-3 py-1.5 text-xs bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/20 font-medium disabled:opacity-50">
-                          {applyWinrm.isPending ? 'Uygulanıyor...' : 'Tümüne Uygula'}
+                          {applyWinrm.isPending ? t('applying') : t('set_apply_all')}
                         </button>
                         <button
                           onClick={() => {
@@ -2731,19 +2680,16 @@ const Settings: React.FC = () => {
                         </button>
                         <button
                           onClick={async () => {
-                            const ok = await showConfirm('Global WinRM credential silinecek. Devam edilsin mi?')
+                            const ok = await showConfirm(t('set_del_winrm'))
                             if (ok) deleteWinrm.mutate()
                           }}
                           className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/20">
-                          Sil
+                          {t('delete')}
                         </button>
                       </div>
                     </div>
                   </div>
-                  <p className="text-slate-500 text-xs px-1">
-                    Bu credential, kendi özel WinRM ayarı olmayan tüm Windows sunucularda otomatik olarak kullanılır.
-                    "Tümüne Uygula" ile mevcut Windows sunuculara da kalıcı olarak yazılabilir.
-                  </p>
+                  <p className="text-slate-500 text-xs px-1">{t('set_winrm_auto')}</p>
                 </div>
               )}
             </div>
@@ -2757,18 +2703,14 @@ const Settings: React.FC = () => {
           {/* ═══ Monitoring ═══ */}
           {activeTab === 'monitoring' && (
             <div>
-              <h2 className="text-xl font-semibold text-white mb-6">Monitoring Ayarları</h2>
+              <h2 className="text-xl font-semibold text-white mb-6">{t('set_mon_title')}</h2>
               <div className="space-y-6">
                 <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                   <h3 className="text-lg font-medium text-white mb-1">Prometheus</h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Canlı metrikler, grafikler ve AIOps bu adrese sorgu atar. Müşteri ortamında halihazırda
-                    Prometheus varsa buraya onun adresini yazın (ör. <code className="text-slate-400">http://10.x.x.x:9090</code>).
-                    Kaydet sonrası restart gerekmez.
-                  </p>
+                  <p className="text-xs text-slate-500 mb-4">{t('set_prom_hint')}</p>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm text-slate-300 mb-2">Prometheus URL</label>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_prom_url')}</label>
                       <input
                         type="text"
                         value={promForm.prometheus_url}
@@ -2780,7 +2722,7 @@ const Settings: React.FC = () => {
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">
                         Pushgateway URL
-                        <span className="text-xs text-slate-500 ml-2">— opsiyonel, şu an kullanılmıyor</span>
+                        <span className="text-xs text-slate-500 ml-2">{t('set_optional_unused')}</span>
                       </label>
                       <input
                         type="text"
@@ -2789,15 +2731,13 @@ const Settings: React.FC = () => {
                         placeholder="http://pushgateway:9091"
                         className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">
-                        Kısa ömürlü iş metrikleri için push hedefi. Uygulama şu an push etmiyor; boş bırakılabilir.
-                      </p>
+                      <p className="text-xs text-slate-500 mt-1">{t('set_pg_hint')}</p>
                     </div>
 
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">
-                        Linux job adları
-                        <span className="text-xs text-slate-500 ml-2">— birden fazla eklenebilir (örn. node-exporter, prometheus)</span>
+                        {t('set_linux_jobs')}
+                        <span className="text-xs text-slate-500 ml-2">{t('set_jobs_multi')}</span>
                       </label>
                       <div className="flex flex-wrap gap-2 mb-2">
                         {promForm.linux_jobs.map((job) => (
@@ -2813,7 +2753,7 @@ const Settings: React.FC = () => {
                                 linux_jobs: f.linux_jobs.filter(j => j !== job),
                               }))}
                               className="text-blue-300/80 hover:text-white"
-                              title="Kaldır"
+                              title={t('remove')}
                             >
                               ×
                             </button>
@@ -2838,7 +2778,7 @@ const Settings: React.FC = () => {
                               }
                             }
                           }}
-                          placeholder="job adı ekle (Enter)"
+                          placeholder={t('set_job_ph')}
                           className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                         />
                         <button
@@ -2855,15 +2795,15 @@ const Settings: React.FC = () => {
                           }}
                           className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
                         >
-                          Ekle
+                          {t('add')}
                         </button>
                       </div>
                     </div>
 
                     <div>
                       <label className="block text-sm text-slate-300 mb-2">
-                        Windows job adları
-                        <span className="text-xs text-slate-500 ml-2">— birden fazla eklenebilir</span>
+                        {t('set_win_jobs')}
+                        <span className="text-xs text-slate-500 ml-2">{t('set_jobs_multi_short')}</span>
                       </label>
                       <div className="flex flex-wrap gap-2 mb-2">
                         {promForm.windows_jobs.map((job) => (
@@ -2879,7 +2819,7 @@ const Settings: React.FC = () => {
                                 windows_jobs: f.windows_jobs.filter(j => j !== job),
                               }))}
                               className="text-emerald-300/80 hover:text-white"
-                              title="Kaldır"
+                              title={t('remove')}
                             >
                               ×
                             </button>
@@ -2904,7 +2844,7 @@ const Settings: React.FC = () => {
                               }
                             }
                           }}
-                          placeholder="job adı ekle (Enter)"
+                          placeholder={t('set_job_ph')}
                           className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
                         />
                         <button
@@ -2921,7 +2861,7 @@ const Settings: React.FC = () => {
                           }}
                           className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
                         >
-                          Ekle
+                          {t('add')}
                         </button>
                       </div>
                     </div>
@@ -2932,22 +2872,22 @@ const Settings: React.FC = () => {
                         disabled={promSaving || !promForm.prometheus_url.trim() || promForm.linux_jobs.length === 0}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
                       >
-                        {promSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                        {promSaving ? t('saving') : t('save')}
                       </button>
-                      {promSaved && <span className="text-green-400 text-sm">Kaydedildi</span>}
+                      {promSaved && <span className="text-green-400 text-sm">{t('saved')}</span>}
                       {promError && <span className="text-red-400 text-sm">{promError}</span>}
                     </div>
 
                     {/* Yönetim Sunucu IP */}
                     <div className="border-t border-white/[0.06] pt-4">
                       <label className="block text-sm text-slate-300 mb-1">
-                        Yönetim Sunucusu IP
-                        <span className="text-xs text-slate-500 ml-2">— Local repo & SSH için</span>
+                        {t('set_mgmt_ip')}
+                        <span className="text-xs text-slate-500 ml-2">{t('set_mgmt_for')}</span>
                       </label>
                       <p className="text-xs text-slate-500 mb-2">
-                        Sunucuların bu uygulamaya erişmek için kullandığı IP. Local repo .repo dosyasında kullanılır.
+                        {t('set_mgmt_hint')}
                         {generalSettings?.detected_management_ip && (
-                          <span className="text-blue-400 ml-1">(Otomatik tespit: {generalSettings.detected_management_ip})</span>
+                          <span className="text-blue-400 ml-1">{t('set_auto_detect', { ip: generalSettings.detected_management_ip })}</span>
                         )}
                       </p>
                       <div className="flex items-center gap-3">
@@ -2962,66 +2902,64 @@ const Settings: React.FC = () => {
                           onClick={async () => {
                             const val = (document.getElementById('mgmt-ip-input') as HTMLInputElement).value.trim()
                             const ip = val || generalSettings?.detected_management_ip || ''
-                            if (!ip) { alert('IP girin'); return }
+                            if (!ip) { alert(t('set_enter_ip')); return }
                             const r = await fetch('/api/v1/settings/management-server-ip', {
                               method: 'PUT', headers: {'Content-Type':'application/json'},
                               body: JSON.stringify({ip})
                             })
-                            if (r.ok) alert(`✓ Yönetim IP kaydedildi: ${ip}`)
-                            else alert('Hata')
+                            if (r.ok) alert(t('set_mgmt_saved', { ip }))
+                            else alert(t('error_generic'))
                           }}
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium"
                         >
-                          Kaydet
+                          {t('save')}
                         </button>
                       </div>
                     </div>
 
                     <div className="border-t border-white/[0.06] pt-4">
-                      <label className="block text-sm text-slate-300 mb-2">Metrik Saklama Süresi (gün)</label>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_ret_days')}</label>
                       <div className="flex items-center gap-3">
                         <select
                           value={metricRetentionDays}
                           onChange={e => setMetricRetentionDays(Number(e.target.value))}
                           className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
                         >
-                          <option value={7}>7 gün</option>
-                          <option value={15}>15 gün</option>
-                          <option value={30}>30 gün</option>
-                          <option value={60}>60 gün</option>
-                          <option value={90}>90 gün</option>
-                          <option value={180}>180 gün</option>
-                          <option value={365}>365 gün</option>
+                          <option value={7}>{t('days_n', { n: 7 })}</option>
+                          <option value={15}>{t('days_n', { n: 15 })}</option>
+                          <option value={30}>{t('days_n', { n: 30 })}</option>
+                          <option value={60}>{t('days_n', { n: 60 })}</option>
+                          <option value={90}>{t('days_n', { n: 90 })}</option>
+                          <option value={180}>{t('days_n', { n: 180 })}</option>
+                          <option value={365}>{t('days_n', { n: 365 })}</option>
                         </select>
                         <button
                           onClick={async () => {
                             const currentDays = generalSettings?.metric_retention_days ?? 30
                             const isDecrease = metricRetentionDays < currentDays
                             const message = isDecrease
-                              ? `Saklama süresi ${currentDays} günden ${metricRetentionDays} güne düşürülecek.\n${metricRetentionDays} günden eski metrik kayıtları silinecek.\n\nDevam etmek istiyor musunuz?`
-                              : `Metrik saklama süresi ${metricRetentionDays} gün olarak güncellensin mi?`
+                              ? t('set_ret_down', { from: currentDays, to: metricRetentionDays })
+                              : t('set_ret_set', { n: metricRetentionDays })
                             if (!await showConfirm(message)) return
                             saveMetricRetention.mutate(metricRetentionDays)
                           }}
                           disabled={saveMetricRetention.isPending}
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium"
                         >
-                          {saveMetricRetention.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                          {saveMetricRetention.isPending ? t('saving') : t('save')}
                         </button>
-                        {retentionSaved && <span className="text-green-400 text-sm font-medium">Kaydedildi</span>}
+                        {retentionSaved && <span className="text-green-400 text-sm font-medium">{t('saved')}</span>}
                       </div>
-                      <p className="text-xs text-slate-500 mt-2">
-                        Süre düşürülürse (ör. 30 → 15), 15 günden eski metrik kayıtları hemen silinir.
-                      </p>
+                      <p className="text-xs text-slate-500 mt-2">{t('set_ret_drop_hint')}</p>
                     </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <a href={`${window.location.protocol}//${window.location.hostname}:9090`} target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
-                    <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">Metrics & Queries</p></div>
+                    <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">{t('set_metrics_queries')}</p></div>
                   </a>
                   <a href={`${window.location.protocol}//${window.location.hostname}:9091`} target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
-                    <BarChart3 size={24} strokeWidth={1.8} className="text-slate-300" /><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">Push Metrics</p></div>
+                    <BarChart3 size={24} strokeWidth={1.8} className="text-slate-300" /><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">{t('set_push_metrics')}</p></div>
                   </a>
                 </div>
               </div>
@@ -3054,7 +2992,7 @@ const Settings: React.FC = () => {
           {/* ═══ About ═══ */}
           {activeTab === 'about' && (
             <div>
-              <h2 className="text-xl font-semibold text-white mb-6">Hakkında</h2>
+              <h2 className="text-xl font-semibold text-white mb-6">{t('set_about')}</h2>
               <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6">
                 <div className="flex items-center space-x-4 mb-6">
                   {logoUrl ? (
@@ -3067,7 +3005,7 @@ const Settings: React.FC = () => {
                   <div>
                     <h3 className="text-2xl font-bold text-white">{appName}</h3>
                     <p className="text-slate-400">
-                      {version ? `v${version}` : '—'} — AI Infrastructure Management
+                      {version ? `v${version}` : '—'} — {t('set_ai_infra')}
                     </p>
                   </div>
                 </div>
@@ -3094,13 +3032,13 @@ const Settings: React.FC = () => {
           <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold text-white">Credential Uygula</h2>
+                <h2 className="text-xl font-semibold text-white">{t('set_apply_cred')}</h2>
                 <p className="text-sm text-slate-400 mt-1">
-                  <span className="text-blue-400 font-medium">"{applyModal.credName}"</span> SSH credential'ını yalnızca <span className="text-green-400">Linux</span> sunuculara uygula
+                  {t('set_apply_linux_only', { name: applyModal.credName })}
                 </p>
                 {windowsServers.length > 0 && (
                   <p className="text-xs text-slate-500 mt-1">
-                    {windowsServers.length} Windows sunucu atlanır — WinRM için Windows (WinRM) sekmesini kullanın.
+                    {t('set_win_skipped', { n: windowsServers.length })}
                   </p>
                 )}
               </div>
@@ -3110,11 +3048,11 @@ const Settings: React.FC = () => {
             <div className="flex gap-3 mb-4">
               <button onClick={() => setApplyMode('all')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'all' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
-                Tüm Linux ({linuxServers.length})
+                {t('set_all_linux', { n: linuxServers.length })}
               </button>
               <button onClick={() => setApplyMode('select')}
                 className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${applyMode === 'select' ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500/50' : 'bg-white/[0.07] text-slate-400 border-2 border-transparent hover:bg-slate-600'}`}>
-                Seçili Linux ({selectedServerIds.length})
+                {t('set_sel_linux', { n: selectedServerIds.length })}
               </button>
             </div>
 
@@ -3131,7 +3069,7 @@ const Settings: React.FC = () => {
                   </label>
                 ))}
                 {linuxServers.length === 0 && (
-                  <p className="px-4 py-6 text-sm text-slate-500 text-center">Linux sunucu bulunamadı</p>
+                  <p className="px-4 py-6 text-sm text-slate-500 text-center">{t('set_no_linux')}</p>
                 )}
               </div>
             )}
@@ -3139,19 +3077,18 @@ const Settings: React.FC = () => {
             <div className="flex items-center gap-2 mb-2">
               <input type="checkbox" checked={setAiReady} onChange={e => setSetAiReady(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
-              <span className="text-sm text-slate-300">Linux sunucuları <strong className="text-blue-400">AI Ready</strong> olarak işaretle (SSH test)</span>
+              <span className="text-sm text-slate-300">{t('set_mark_ai')}</span>
             </div>
             {setAiReady && (
               <p className="text-xs text-amber-400/90 mb-4 leading-relaxed">
-                Uyarı: Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa toplu SSH denemesi
-                AD/PAM hesap kilitlemesine yol açabilir. User hazır olduktan sonra işaretleyin.
+                {t('set_lockout_warn')}
               </p>
             )}
             {!setAiReady && <div className="mb-4" />}
 
             <div className="flex justify-end gap-3 pt-3 border-t border-white/[0.06]">
               <button onClick={() => setApplyModal({ open: false, credId: 0, credName: '' })}
-                className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+                className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
               <button onClick={() => applyCred.mutate({
                 credId: applyModal.credId,
                 serverIds: applyMode === 'all' ? linuxServers.map(s => s.id) : selectedServerIds,
@@ -3159,13 +3096,13 @@ const Settings: React.FC = () => {
               })}
                 disabled={applyCred.isPending || linuxServers.length === 0 || (applyMode === 'select' && selectedServerIds.length === 0)}
                 className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 font-medium text-sm">
-                {applyCred.isPending ? 'Uygulanıyor...' : `${applyMode === 'all' ? linuxServers.length : selectedServerIds.length} Linux Sunucuya Uygula`}
+                {applyCred.isPending ? t('applying') : t('set_apply_n_linux', { n: applyMode === 'all' ? linuxServers.length : selectedServerIds.length })}
               </button>
             </div>
 
             {applyCred.isError && (
               <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
-                {applyCred.error?.message || 'Hata'}
+                {applyCred.error?.message || t('error_generic')}
               </div>
             )}
           </div>

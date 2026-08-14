@@ -11,6 +11,8 @@ import {
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { OpsRefreshCountdown, OpsShell } from '../components/ops/OpsShell'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 interface PlatformCard {
   id: number; name: string; type: string; platform: string
@@ -75,14 +77,14 @@ const PLATFORM_COLOR: Record<string, string> = {
   proxmox: 'from-red-600/20 to-orange-600/10 border-red-500/30',
 }
 
-function relTime(iso: string | null): string {
+function relTime(iso: string | null, t: (key: TranslationKey, vars?: Record<string, string | number>) => string): string {
   if (!iso) return '—'
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (m < 1) return 'şimdi'
-  if (m < 60) return `${m}dk`
+  if (m < 1) return t('virt_rel_now')
+  if (m < 60) return t('virt_rel_min', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}s`
-  return `${Math.floor(h / 24)}g`
+  if (h < 24) return t('virt_rel_hour', { n: h })
+  return t('virt_rel_day', { n: Math.floor(h / 24) })
 }
 
 function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: React.ReactNode }) {
@@ -102,6 +104,7 @@ function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: R
 }
 
 function PlatformManagerCard({ p }: { p: PlatformCard }) {
+  const t = useT()
   const style = PLATFORM_COLOR[p.type] || 'from-slate-600/20 to-slate-700/10 border-slate-600/30'
   return (
     <div className={`rounded-xl border bg-gradient-to-br p-4 w-[min(100%,320px)] min-w-[280px] flex-shrink-0 ${style}`}>
@@ -126,20 +129,20 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
         </div>
         <div className="bg-slate-900/40 rounded-lg py-2 px-1">
           <div className="text-lg font-bold text-green-400">{p.vm_running}</div>
-          <div className="text-[10px] text-slate-500">VM Aktif</div>
+          <div className="text-[10px] text-slate-500">{t('virt_vm_active')}</div>
         </div>
         <div className="bg-slate-900/40 rounded-lg py-2 px-1">
           <div className="text-lg font-bold text-slate-400">{p.vm_offline}</div>
-          <div className="text-[10px] text-slate-500">VM Kapalı</div>
+          <div className="text-[10px] text-slate-500">{t('virt_vm_off')}</div>
         </div>
       </div>
       <div className="space-y-2.5">
         <ResourceBar label="CPU" pct={p.avg_cpu_pct} icon={<Cpu size={11} />} />
-        <ResourceBar label="RAM" pct={p.avg_mem_pct} icon={<MemoryStick size={11} />} />
+        <ResourceBar label="Memory" pct={p.avg_mem_pct} icon={<MemoryStick size={11} />} />
         <ResourceBar label="Disk" pct={p.avg_disk_pct} icon={<HardDrive size={11} />} />
       </div>
       {p.last_metric_at && (
-        <div className="text-[10px] text-slate-500 mt-2">Son metrik: {relTime(p.last_metric_at)} önce</div>
+        <div className="text-[10px] text-slate-500 mt-2">{t('virt_last_metric', { time: relTime(p.last_metric_at, t) })}</div>
       )}
       {p.issues.length > 0 && (
         <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
@@ -157,6 +160,7 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
 function HostAlertCard({ host, onSelect, selected }: {
   host: HostAlert; onSelect: () => void; selected: boolean
 }) {
+  const t = useT()
   const sev = host.max_severity
   const isPlatform = host.alert_type === 'platform'
   return (
@@ -175,7 +179,7 @@ function HostAlertCard({ host, onSelect, selected }: {
             </span>
             {isPlatform ? (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                Yönetim Platformu
+                {t('virt_mgmt_platform')}
               </span>
             ) : (
               <span className="text-[10px] text-slate-500">{host.platform}</span>
@@ -195,7 +199,7 @@ function HostAlertCard({ host, onSelect, selected }: {
       {!isPlatform && (
         <div className="grid grid-cols-3 gap-3 mt-3">
           <ResourceBar label="CPU" pct={host.cpu_usage_pct} icon={<Cpu size={11} />} />
-          <ResourceBar label="RAM" pct={host.mem_usage_pct} icon={<MemoryStick size={11} />} />
+          <ResourceBar label="Memory" pct={host.mem_usage_pct} icon={<MemoryStick size={11} />} />
           <ResourceBar label="Disk" pct={host.ds_usage_pct} icon={<HardDrive size={11} />} />
         </div>
       )}
@@ -211,10 +215,11 @@ function HostAlertCard({ host, onSelect, selected }: {
 }
 
 function LogTimeline({ logs }: { logs: PlatformLog[] }) {
+  const t = useT()
   if (logs.length === 0) {
     return (
       <div className="text-center py-12 text-slate-500 text-sm">
-        Son 24 saatte platform log kaydı yok
+        {t('virt_no_logs')}
       </div>
     )
   }
@@ -232,14 +237,14 @@ function LogTimeline({ logs }: { logs: PlatformLog[] }) {
               <span>{
                 log.source_label
                 || (log.source === 'audit' ? 'Audit'
-                  : log.source === 'resource_monitor' ? 'Kaynak Mon.'
+                  : log.source === 'resource_monitor' ? t('virt_source_monitor')
                   : log.source?.startsWith('vcenter_') ? 'vCenter'
                   : log.source)
               }</span>
               {log.platform && <span>{log.platform}</span>}
               {log.host_name && <span>{log.host_name}</span>}
               {log.actor && <span>{log.actor}</span>}
-              <span>{relTime(log.timestamp)}</span>
+              <span>{relTime(log.timestamp, t)}</span>
             </div>
           </div>
         </div>
@@ -249,6 +254,7 @@ function LogTimeline({ logs }: { logs: PlatformLog[] }) {
 }
 
 export default function VirtOpsCenter() {
+  const t = useT()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning'>('all')
@@ -258,7 +264,7 @@ export default function VirtOpsCenter() {
     queryKey: ['virt-ops-center'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/ops/command-center`)
-      if (!r.ok) throw new Error('Komuta merkezi verisi alınamadı')
+      if (!r.ok) throw new Error(t('virt_fetch_fail'))
       return r.json()
     },
     refetchInterval: 30_000,
@@ -308,30 +314,30 @@ export default function VirtOpsCenter() {
       <OpsShell
         platform="virt"
         loading={isLoading}
-        loadingLabel="Sanallaştırma durumu yükleniyor…"
+        loadingLabel={t('virt_loading')}
         health={data?.health ? { score: data.health.score, label: data.health.label } : null}
-        healthSubtitle="Sanallaştırma sağlığı"
+        healthSubtitle={t('virt_health_sub')}
         kpi={{
           critical: data?.critical_count ?? 0,
           warning: data?.warning_count ?? 0,
           tertiaryValue: data?.totals.vm_running ?? 0,
-          tertiaryLabel: 'VM Aktif',
+          tertiaryLabel: t('virt_vm_active'),
         }}
         metaRow={data ? (
           <div className="flex gap-3 text-xs text-slate-400 flex-wrap">
-            <span><Database size={12} className="inline mr-1" />{data.totals.hypervisor_count} manager</span>
-            <span><Server size={12} className="inline mr-1" />{data.totals.host_count} host</span>
-            <span><Cpu size={12} className="inline mr-1" />CPU %{data.totals.avg_cpu_pct}</span>
-            <span><MemoryStick size={12} className="inline mr-1" />RAM %{data.totals.avg_mem_pct}</span>
+            <span><Database size={12} className="inline mr-1" />{t('virt_managers', { n: data.totals.hypervisor_count })}</span>
+            <span><Server size={12} className="inline mr-1" />{t('virt_hosts', { n: data.totals.host_count })}</span>
+            <span><Cpu size={12} className="inline mr-1" />{t('virt_cpu_pct', { n: data.totals.avg_cpu_pct })}</span>
+            <span><MemoryStick size={12} className="inline mr-1" />{t('virt_mem_pct', { n: data.totals.avg_mem_pct })}</span>
           </div>
         ) : null}
         headerActions={(
           <>
             <Link to="/hypervisors" className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-1">
-              <Layers size={12} /> Dashboard
+              <Layers size={12} /> {t('nav_dashboard')}
             </Link>
             <Link to="/infra-reports" className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-1">
-              <Activity size={12} /> Altyapı Raporları
+              <Activity size={12} /> {t('nav_infra_reports')}
             </Link>
             <button
               type="button"
@@ -342,14 +348,14 @@ export default function VirtOpsCenter() {
                   await refetch()
                   invalidate()
                 } catch (e) {
-                  alert('vCenter event sync hatası: ' + e)
+                  alert(t('virt_sync_fail', { err: String(e) }))
                 }
               }}
               disabled={isFetching}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
             >
               <ScrollText size={12} />
-              vCenter Sync
+              {t('virt_vcenter_sync')}
             </button>
             <OpsRefreshCountdown onRefresh={() => { refetch(); invalidate() }} interval={30} />
           </>
@@ -361,7 +367,7 @@ export default function VirtOpsCenter() {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Host, platform veya log ara…"
+                placeholder={t('virt_search')}
                 className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
               />
               {search && (
@@ -379,7 +385,7 @@ export default function VirtOpsCenter() {
                   sevFilter === s ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-500 hover:text-slate-300'
                 }`}
               >
-                {s === 'all' ? 'Tümü' : s === 'critical' ? 'Kritik' : 'Uyarı'}
+                {s === 'all' ? t('filter_all') : s === 'critical' ? t('status_critical') : t('status_warning')}
               </button>
             ))}
           </>
@@ -388,7 +394,7 @@ export default function VirtOpsCenter() {
           <div className="h-full min-h-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/95 py-2 -mt-2 z-10">
               <ScrollText size={13} className="flex-shrink-0" />
-              <span className="truncate">Platform Logları (24s)</span>
+              <span className="truncate">{t('virt_logs_24h')}</span>
             </h2>
             <LogTimeline logs={filteredLogs} />
           </div>
@@ -397,7 +403,7 @@ export default function VirtOpsCenter() {
         {data && data.platforms.length > 0 && (
           <section>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-              <Cloud size={13} /> Yönetim Platformları
+              <Cloud size={13} /> {t('virt_platforms')}
             </h2>
             <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
               {data.platforms.map(p => <PlatformManagerCard key={p.id} p={p} />)}
@@ -408,13 +414,13 @@ export default function VirtOpsCenter() {
         {allOk && !search && sevFilter === 'all' ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <CheckCircle2 size={48} className="text-green-400 mb-4" />
-            <h3 className="text-lg font-semibold text-green-400">Sanallaştırma katmanı sağlıklı</h3>
-            <p className="text-sm text-slate-400 mt-2">Host kaynak ve platform uyarısı yok.</p>
+            <h3 className="text-lg font-semibold text-green-400">{t('virt_healthy_title')}</h3>
+            <p className="text-sm text-slate-400 mt-2">{t('virt_healthy_hint')}</p>
           </div>
         ) : (
           <>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Server size={13} /> Aktif Uyarılar ({filteredHosts.length})
+              <Server size={13} /> {t('virt_active_alerts', { n: filteredHosts.length })}
             </h2>
             <div className="space-y-3 max-w-4xl">
               {filteredHosts.map(h => (
@@ -435,7 +441,7 @@ export default function VirtOpsCenter() {
                 />
               ))}
               {filteredHosts.length === 0 && (
-                <p className="text-sm text-slate-500 text-center py-8">Filtreye uygun host uyarısı yok</p>
+                <p className="text-sm text-slate-500 text-center py-8">{t('virt_no_host_alert')}</p>
               )}
             </div>
           </>
@@ -443,7 +449,7 @@ export default function VirtOpsCenter() {
 
         {selectedHost && (
           <div className="mt-2 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 max-w-4xl">
-            <h3 className="text-sm font-semibold text-cyan-300 mb-3 truncate">{selectedHost.host_name} — Detay</h3>
+            <h3 className="text-sm font-semibold text-cyan-300 mb-3 truncate">{t('virt_detail', { name: selectedHost.host_name })}</h3>
             <div className="space-y-2 mb-4">
               {selectedHost.issues.map((i, idx) => (
                 <div key={idx} className="flex items-center gap-2 text-sm min-w-0">
@@ -452,7 +458,7 @@ export default function VirtOpsCenter() {
                 </div>
               ))}
             </div>
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Önerilen Aksiyonlar</div>
+            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">{t('virt_suggested')}</div>
             <ul className="space-y-1">
               {selectedHost.suggested_actions.map((a, i) => (
                 <li key={i} className="text-xs text-slate-400 flex gap-2">

@@ -5,6 +5,7 @@ import {
   AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
   ucmdb: <FileUp size={22} />,
@@ -15,6 +16,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
 }
 
 export default function IntegrationsHub() {
+  const t = useT()
   const qc = useQueryClient()
 
   const { data, isLoading, refetch } = useQuery({
@@ -56,16 +58,14 @@ export default function IntegrationsHub() {
     <div className="p-6 space-y-6 max-w-6xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">Envanter Merkezi</h1>
-          <p className="text-slate-400 text-sm mt-1">
-            UCMDB, vCenter/OLVM, fiziksel host, Exadata ve OpenShift envanterini tek noktadan yönetin — mükerrer kayıtları tekilleştirin
-          </p>
+          <h1 className="text-2xl font-bold text-white">{t('int_title')}</h1>
+          <p className="text-slate-400 text-sm mt-1">{t('int_sub')}</p>
         </div>
         <button
           onClick={() => refetch()}
           className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-slate-700 text-slate-400 hover:text-white"
         >
-          <RefreshCw size={14} /> Yenile
+          <RefreshCw size={14} /> {t('refresh_action')}
         </button>
       </div>
 
@@ -73,10 +73,10 @@ export default function IntegrationsHub() {
       {!isLoading && inv && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Toplam Kayıt', value: inv.total_servers, color: 'text-blue-400' },
-            { label: 'Sanal Makine', value: inv.virtual_machines, color: 'text-sky-400' },
-            { label: 'Fiziksel Host', value: inv.physical_hosts, color: 'text-green-400' },
-            { label: 'Mükerrer Grup', value: inv.duplicate_groups, color: inv.duplicate_groups > 0 ? 'text-amber-400' : 'text-slate-500' },
+            { label: t('int_kpi_total'), value: inv.total_servers, color: 'text-blue-400' },
+            { label: t('int_kpi_vm'), value: inv.virtual_machines, color: 'text-sky-400' },
+            { label: t('int_kpi_phys'), value: inv.physical_hosts, color: 'text-green-400' },
+            { label: t('int_kpi_dups'), value: inv.duplicate_groups, color: inv.duplicate_groups > 0 ? 'text-amber-400' : 'text-slate-500' },
           ].map(k => (
             <div key={k.label} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
               <div className={`text-2xl font-bold ${k.color}`}>{k.value}</div>
@@ -88,7 +88,7 @@ export default function IntegrationsHub() {
 
       {/* Kaynak kartları */}
       <div>
-        <h2 className="text-sm font-semibold text-slate-300 mb-3">Envanter Kaynakları</h2>
+        <h2 className="text-sm font-semibold text-slate-300 mb-3">{t('int_sources')}</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sources.map((src: any) => (
             <Link
@@ -106,11 +106,11 @@ export default function IntegrationsHub() {
                 </div>
                 <p className="text-xs text-slate-500 mt-1">{src.description}</p>
                 <div className="flex gap-3 mt-2 text-xs">
-                  <span className="text-slate-400">Kayıt: <strong className="text-white">{src.count ?? 0}</strong></span>
+                  <span className="text-slate-400">{t('int_records')} <strong className="text-white">{src.count ?? 0}</strong></span>
                   {src.vm_count != null && <span className="text-slate-400">VM: <strong className="text-white">{src.vm_count}</strong></span>}
                   {src.rack_count != null && <span className="text-slate-400">Rack: <strong className="text-white">{src.rack_count}</strong></span>}
                   {src.node_count != null && <span className="text-slate-400">Node: <strong className="text-white">{src.node_count}</strong></span>}
-                  {src.project_count != null && <span className="text-slate-400">Proje: <strong className="text-white">{src.project_count}</strong></span>}
+                  {src.project_count != null && <span className="text-slate-400">{t('int_project')} <strong className="text-white">{src.project_count}</strong></span>}
                 </div>
               </div>
             </Link>
@@ -122,29 +122,26 @@ export default function IntegrationsHub() {
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-5">
         <div className="flex items-center gap-2 mb-3">
           <Merge size={18} className="text-amber-400" />
-          <h2 className="text-sm font-semibold text-white">Envanter Tekilleştirme</h2>
+          <h2 className="text-sm font-semibold text-white">{t('int_dedup_title')}</h2>
         </div>
-        <p className="text-xs text-slate-500 mb-4">
-          Aynı IP veya hostname ile birden fazla tanımlanan kayıtlar tek envanter satırında birleştirilir.
-          Kaynak etiketleri korunur (UCMDB, vCenter, Exadata vb.).
-        </p>
+        <p className="text-xs text-slate-500 mb-4">{t('int_dedup_hint')}</p>
 
         {dupGroups.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-green-400">
-            <CheckCircle2 size={16} /> Mükerrer kayıt grubu bulunamadı
+            <CheckCircle2 size={16} /> {t('int_no_dups')}
           </div>
         ) : (
           <>
             <div className="flex items-center gap-2 text-sm text-amber-300 mb-3">
               <AlertTriangle size={16} />
-              {dupGroups.length} mükerrer grup ({inv?.duplicate_records ?? 0} kayıt)
+              {t('int_dup_groups', { n: dupGroups.length, r: inv?.duplicate_records ?? 0 })}
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
               {dupGroups.slice(0, 8).map((g: any) => (
                 <div key={`${g.match_type}-${g.match_key}`} className="text-xs px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700/40">
                   <span className="text-slate-400 uppercase">{g.match_type}:</span>{' '}
                   <span className="text-white font-mono">{g.match_key}</span>
-                  <span className="text-slate-500 ml-2">({g.count} kayıt)</span>
+                  <span className="text-slate-500 ml-2">{t('int_n_records', { n: g.count })}</span>
                   <div className="text-slate-500 mt-1 truncate">
                     {g.servers.map((s: any) => s.name).join(' · ')}
                   </div>
@@ -157,18 +154,18 @@ export default function IntegrationsHub() {
                 disabled={dedupMut.isPending}
                 className="text-xs px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-50"
               >
-                Önizle (dry-run)
+                {t('int_preview_dry')}
               </button>
               <button
                 onClick={() => {
-                  if (window.confirm(`${dupGroups.length} gruptaki mükerrer kayıtlar birleştirilecek. Devam?`)) {
+                  if (window.confirm(t('int_dedup_confirm', { n: dupGroups.length }))) {
                     dedupMut.mutate(false)
                   }
                 }}
                 disabled={dedupMut.isPending}
                 className="text-xs px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
               >
-                Tekilleştir
+                {t('int_dedup')}
               </button>
             </div>
             {dedupMut.data && (

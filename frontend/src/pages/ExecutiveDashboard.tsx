@@ -16,6 +16,7 @@ import {
   BrainCircuit, HardDrive, Trophy, Sparkles, Radar,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,10 +83,10 @@ const SEV_STRIPE: Record<string, string> = {
   warning: 'border-l-amber-500', info: 'border-l-blue-500',
 }
 
-const PLATFORM_META: Record<string, { label: string; icon: React.ReactNode; badge: string; hex: string; glow: string }> = {
-  linux:          { label: 'Linux',         icon: <Server size={12} />, badge: 'bg-green-500/15 text-green-300 border-green-500/30',   hex: '#4ade80', glow: 'from-green-500/10' },
-  windows:        { label: 'Windows',       icon: <Shield size={12} />, badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',      hex: '#60a5fa', glow: 'from-blue-500/10' },
-  virtualization: { label: 'Sanallaştırma', icon: <Cloud size={12} />,  badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30', hex: '#818cf8', glow: 'from-indigo-500/10' },
+const PLATFORM_META: Record<string, { icon: React.ReactNode; badge: string; hex: string; glow: string }> = {
+  linux:          { icon: <Server size={12} />, badge: 'bg-green-500/15 text-green-300 border-green-500/30',   hex: '#4ade80', glow: 'from-green-500/10' },
+  windows:        { icon: <Shield size={12} />, badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',      hex: '#60a5fa', glow: 'from-blue-500/10' },
+  virtualization: { icon: <Cloud size={12} />,  badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30', hex: '#818cf8', glow: 'from-indigo-500/10' },
 }
 
 const MEDAL_COLOR: Record<number, string> = { 0: '#facc15', 1: '#cbd5e1', 2: '#d97706' }
@@ -191,12 +192,20 @@ function KpiCard({ icon, label, value, tone, pulse }: {
   )
 }
 
+function platformLabel(key: string, t: ReturnType<typeof useT>) {
+  if (key === 'virtualization') return t('exec_virt')
+  if (key === 'linux') return 'Linux'
+  if (key === 'windows') return 'Windows'
+  return key
+}
+
 function PlatformPanel({ platformKey, stat, link, linkLabel }: {
   platformKey: 'linux' | 'windows' | 'virtualization'
   stat: PlatformStat
   link: string
   linkLabel: string
 }) {
+  const t = useT()
   const meta = PLATFORM_META[platformKey]
   return (
     <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col gap-4 overflow-hidden hover:border-slate-600/80 transition-all group">
@@ -205,11 +214,11 @@ function PlatformPanel({ platformKey, stat, link, linkLabel }: {
         <div className="flex items-center gap-2">
           <div className={`w-9 h-9 rounded-lg border flex items-center justify-center ${meta.badge}`}>{meta.icon}</div>
           <div>
-            <h3 className="text-white font-semibold text-sm">{meta.label}</h3>
+            <h3 className="text-white font-semibold text-sm">{platformLabel(platformKey, t)}</h3>
             <p className="text-slate-500 text-[11px]">
               {platformKey === 'virtualization'
-                ? `${stat.hypervisor_count ?? 0} hypervisor · ${stat.vm_running_count ?? 0}/${stat.vm_count ?? 0} VM çalışıyor`
-                : `${stat.server_count ?? 0} sunucu`}
+                ? t('exec_hv_vms', { hv: stat.hypervisor_count ?? 0, running: stat.vm_running_count ?? 0, total: stat.vm_count ?? 0 })
+                : t('exec_servers_n', { n: stat.server_count ?? 0 })}
             </p>
           </div>
         </div>
@@ -219,20 +228,22 @@ function PlatformPanel({ platformKey, stat, link, linkLabel }: {
       <div className="grid grid-cols-2 gap-2 relative">
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
           <div className="text-lg font-bold text-red-300 tabular-nums">{stat.critical}</div>
-          <div className="text-[10px] text-red-400/80">Kritik Alarm</div>
+          <div className="text-[10px] text-red-400/80">{t('exec_crit_alarm')}</div>
         </div>
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
           <div className="text-lg font-bold text-amber-300 tabular-nums">{stat.warning}</div>
-          <div className="text-[10px] text-amber-400/80">Uyarı</div>
+          <div className="text-[10px] text-amber-400/80">{t('status_warning')}</div>
         </div>
       </div>
 
       {platformKey !== 'virtualization' && (
         <div className="flex items-center gap-3 text-[11px] text-slate-400 relative">
-          <span className="flex items-center gap-1"><BrainCircuit size={11} /> AI Ready: {stat.ai_ready_count ?? 0}</span>
+          <span className="flex items-center gap-1"><BrainCircuit size={11} /> {t('exec_ai_ready_n', { n: stat.ai_ready_count ?? 0 })}</span>
           <span className="flex items-center gap-1">
             <HeartPulse size={11} />
-            {platformKey === 'linux' ? `node_exporter: ${stat.node_exporter_running ?? 0}` : `windows_exporter: ${stat.windows_exporter_running ?? 0}`}
+            {platformKey === 'linux'
+              ? t('exec_node_exp', { n: stat.node_exporter_running ?? 0 })
+              : t('exec_win_exp', { n: stat.windows_exporter_running ?? 0 })}
           </span>
         </div>
       )}
@@ -252,7 +263,7 @@ function CustomBarTooltip({ active, payload, label }: any) {
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center gap-2" style={{ color: p.fill }}>
           <span className="w-2 h-2 rounded-full" style={{ background: p.fill }} />
-          {p.dataKey}: <span className="font-semibold">{p.value}</span>
+          {p.name}: <span className="font-semibold">{p.value}</span>
         </div>
       ))}
     </div>
@@ -272,6 +283,9 @@ function CustomPieTooltip({ active, payload }: any) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ExecutiveDashboard() {
+  const t = useT()
+  const { locale } = useLocale()
+  const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<ExecSummary>({
     queryKey: ['executive-summary'],
     queryFn: async () => {
@@ -285,29 +299,29 @@ export default function ExecutiveDashboard() {
   if (isLoading) {
     return (
       <div className="p-6 flex items-center justify-center h-64 text-slate-400 text-sm gap-2">
-        <RefreshCw size={16} className="animate-spin" /> Yönetici özeti yükleniyor...
+        <RefreshCw size={16} className="animate-spin" /> {t('exec_loading')}
       </div>
     )
   }
 
   if (!data) {
     return (
-      <div className="p-6 text-center text-slate-500 text-sm">Veri alınamadı. Lütfen tekrar deneyin.</div>
+      <div className="p-6 text-center text-slate-500 text-sm">{t('exec_no_data')}</div>
     )
   }
 
   const { overall, platforms, top_alerts } = data
 
   const comparisonData = [
-    { name: 'Linux', Kritik: platforms.linux.critical, Uyarı: platforms.linux.warning },
-    { name: 'Windows', Kritik: platforms.windows.critical, Uyarı: platforms.windows.warning },
-    { name: 'Sanallaştırma', Kritik: platforms.virtualization.critical, Uyarı: platforms.virtualization.warning },
+    { name: 'Linux', critical: platforms.linux.critical, warning: platforms.linux.warning },
+    { name: 'Windows', critical: platforms.windows.critical, warning: platforms.windows.warning },
+    { name: t('exec_virt'), critical: platforms.virtualization.critical, warning: platforms.virtualization.warning },
   ]
 
   const assetData = [
-    { name: 'Linux Sunucu', value: platforms.linux.server_count ?? 0, fill: PLATFORM_META.linux.hex },
-    { name: 'Windows Sunucu', value: platforms.windows.server_count ?? 0, fill: PLATFORM_META.windows.hex },
-    { name: 'Sanallaştırma VM', value: platforms.virtualization.vm_count ?? 0, fill: PLATFORM_META.virtualization.hex },
+    { name: t('exec_linux_srv'), value: platforms.linux.server_count ?? 0, fill: PLATFORM_META.linux.hex },
+    { name: t('exec_win_srv'), value: platforms.windows.server_count ?? 0, fill: PLATFORM_META.windows.hex },
+    { name: t('exec_virt_vm'), value: platforms.virtualization.vm_count ?? 0, fill: PLATFORM_META.virtualization.hex },
   ].filter(d => d.value > 0)
 
   // Riskli varlıklar için tekilleştirilmiş liderlik tablosu (ilk 5 farklı sunucu)
@@ -333,29 +347,29 @@ export default function ExecutiveDashboard() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                Yönetici Ekranı
+                {t('nav_executive')}
                 <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2 py-0.5">
                   <span className="relative flex h-1.5 w-1.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
                   </span>
-                  CANLI
+                  {t('exec_live')}
                 </span>
               </h1>
-              <p className="text-slate-400 text-sm mt-0.5">Linux, Windows ve Sanallaştırma ortamlarının tek ekranda özeti</p>
+              <p className="text-slate-400 text-sm mt-0.5">{t('exec_subtitle')}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-slate-500 flex items-center gap-1.5">
               <Clock size={12} />
-              Son güncelleme: {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('tr-TR') : '-'}
+              {t('exec_updated', { time: dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString(dateLoc) : '-' })}
             </span>
             <button
               onClick={() => refetch()}
               disabled={isFetching}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-all disabled:opacity-50"
             >
-              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
             </button>
           </div>
         </div>
@@ -369,14 +383,14 @@ export default function ExecutiveDashboard() {
           <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${GRADE_COLOR[overall.grade] || GRADE_COLOR.C}`}>
             {overall.grade} · {overall.label}
           </span>
-          <span className="text-[11px] text-slate-500">Genel Altyapı Sağlık Skoru</span>
+          <span className="text-[11px] text-slate-500">{t('exec_health_score')}</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KpiCard icon={<Siren size={18} className="text-red-300" />} label="Toplam Kritik Alarm" value={overall.critical_total} tone="bg-red-500/15" pulse />
-          <KpiCard icon={<AlertTriangle size={18} className="text-amber-300" />} label="Toplam Uyarı" value={overall.warning_total} tone="bg-amber-500/15" />
-          <KpiCard icon={<BellRing size={18} className="text-orange-300" />} label="Açık Olay (Incident)" value={overall.open_incidents} tone="bg-orange-500/15" />
-          <KpiCard icon={<HardDrive size={18} className="text-cyan-300" />} label="Toplam Sunucu" value={overall.total_servers} tone="bg-cyan-500/15" />
+          <KpiCard icon={<Siren size={18} className="text-red-300" />} label={t('exec_total_crit')} value={overall.critical_total} tone="bg-red-500/15" pulse />
+          <KpiCard icon={<AlertTriangle size={18} className="text-amber-300" />} label={t('exec_total_warn')} value={overall.warning_total} tone="bg-amber-500/15" />
+          <KpiCard icon={<BellRing size={18} className="text-orange-300" />} label={t('exec_open_inc')} value={overall.open_incidents} tone="bg-orange-500/15" />
+          <KpiCard icon={<HardDrive size={18} className="text-cyan-300" />} label={t('exec_total_srv')} value={overall.total_servers} tone="bg-cyan-500/15" />
         </div>
       </div>
 
@@ -384,7 +398,7 @@ export default function ExecutiveDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
           <h2 className="text-slate-300 text-sm font-medium mb-4 flex items-center gap-2">
-            <Radar size={14} className="text-blue-400" /> Ortamlar Arası Alarm Karşılaştırması
+            <Radar size={14} className="text-blue-400" /> {t('exec_compare')}
           </h2>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={comparisonData} barGap={6}>
@@ -393,18 +407,18 @@ export default function ExecutiveDashboard() {
               <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip content={<CustomBarTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
               <Legend wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
-              <Bar dataKey="Kritik" fill="#f87171" radius={[6, 6, 0, 0]} maxBarSize={42} />
-              <Bar dataKey="Uyarı" fill="#fbbf24" radius={[6, 6, 0, 0]} maxBarSize={42} />
+              <Bar dataKey="critical" name={t('status_critical')} fill="#f87171" radius={[6, 6, 0, 0]} maxBarSize={42} />
+              <Bar dataKey="warning" name={t('status_warning')} fill="#fbbf24" radius={[6, 6, 0, 0]} maxBarSize={42} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
         <div className="lg:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
           <h2 className="text-slate-300 text-sm font-medium mb-2 flex items-center gap-2">
-            <Sparkles size={14} className="text-indigo-400" /> Envanter Dağılımı
+            <Sparkles size={14} className="text-indigo-400" /> {t('exec_inv')}
           </h2>
           {assetData.length === 0 ? (
-            <div className="h-[190px] flex items-center justify-center text-slate-600 text-xs">Envanter verisi yok</div>
+            <div className="h-[190px] flex items-center justify-center text-slate-600 text-xs">{t('exec_no_inv')}</div>
           ) : (
             <ResponsiveContainer width="100%" height={190}>
               <PieChart>
@@ -417,18 +431,18 @@ export default function ExecutiveDashboard() {
             </ResponsiveContainer>
           )}
           <p className="text-[10px] text-slate-600 mt-1 leading-relaxed">
-            Not: VM sayısı, guest OS'e göre Linux/Windows sunucu sayımlarıyla örtüşebilir.
+            {t('exec_vm_note')}
           </p>
         </div>
       </div>
 
       {/* Platform panelleri */}
       <div>
-        <h2 className="text-slate-300 text-sm font-medium mb-3">Ortamlar</h2>
+        <h2 className="text-slate-300 text-sm font-medium mb-3">{t('exec_envs')}</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <PlatformPanel platformKey="linux" stat={platforms.linux} link="/linux/ops" linkLabel="Linux Komuta Merkezi" />
-          <PlatformPanel platformKey="windows" stat={platforms.windows} link="/windows/aiops/ops" linkLabel="Windows Komuta Merkezi" />
-          <PlatformPanel platformKey="virtualization" stat={platforms.virtualization} link="/virt/ops" linkLabel="Sanallaştırma Komuta Merkezi" />
+          <PlatformPanel platformKey="linux" stat={platforms.linux} link="/linux/ops" linkLabel={t('exec_linux_cc')} />
+          <PlatformPanel platformKey="windows" stat={platforms.windows} link="/windows/aiops/ops" linkLabel={t('exec_win_cc')} />
+          <PlatformPanel platformKey="virtualization" stat={platforms.virtualization} link="/virt/ops" linkLabel={t('exec_virt_cc')} />
         </div>
       </div>
 
@@ -436,11 +450,11 @@ export default function ExecutiveDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
           <h2 className="text-slate-300 text-sm font-medium mb-4 flex items-center gap-2">
-            <Trophy size={14} className="text-amber-400" /> Risk Liderlik Tablosu
+            <Trophy size={14} className="text-amber-400" /> {t('exec_risk')}
           </h2>
           {leaderboard.length === 0 ? (
             <div className="flex items-center justify-center gap-2 text-slate-500 text-sm py-8">
-              <CheckCircle2 size={16} className="text-green-400" /> Aktif risk yok
+              <CheckCircle2 size={16} className="text-green-400" /> {t('exec_no_risk')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -457,7 +471,7 @@ export default function ExecutiveDashboard() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-white text-sm font-medium truncate">{a.server_name}</span>
                         <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${meta?.badge || ''}`}>
-                          {meta?.icon} {meta?.label}
+                          {meta?.icon} {platformLabel(a.platform, t)}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 truncate" title={a.title}>{a.title}</p>
@@ -473,21 +487,21 @@ export default function ExecutiveDashboard() {
         </div>
 
         <div className="lg:col-span-3">
-          <h2 className="text-slate-300 text-sm font-medium mb-3">En Kritik Olaylar (Tüm Ortamlar)</h2>
+          <h2 className="text-slate-300 text-sm font-medium mb-3">{t('exec_top_events')}</h2>
           <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl overflow-hidden">
             {top_alerts.length === 0 ? (
               <div className="flex items-center justify-center gap-2 text-slate-500 text-sm py-10">
-                <CheckCircle2 size={16} className="text-green-400" /> Aktif kritik/uyarı olayı yok
+                <CheckCircle2 size={16} className="text-green-400" /> {t('exec_no_alerts')}
               </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700/50 text-xs text-slate-500">
-                    <th className="text-left px-4 py-2">Ortam</th>
-                    <th className="text-left px-4 py-2">Sunucu / Kaynak</th>
-                    <th className="text-left px-4 py-2">Olay</th>
-                    <th className="text-left px-4 py-2">Önem</th>
-                    <th className="text-left px-4 py-2">Son Görülme</th>
+                    <th className="text-left px-4 py-2">{t('exec_col_env')}</th>
+                    <th className="text-left px-4 py-2">{t('exec_col_server')}</th>
+                    <th className="text-left px-4 py-2">{t('exec_col_event')}</th>
+                    <th className="text-left px-4 py-2">{t('exec_col_sev')}</th>
+                    <th className="text-left px-4 py-2">{t('exec_col_seen')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -497,7 +511,7 @@ export default function ExecutiveDashboard() {
                       <tr key={a.event_id} className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors">
                         <td className="px-4 py-2.5">
                           <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${meta?.badge || ''}`}>
-                            {meta?.icon} {meta?.label || a.platform}
+                            {meta?.icon} {platformLabel(a.platform, t) || a.platform}
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-white">{a.server_name}</td>
@@ -508,7 +522,7 @@ export default function ExecutiveDashboard() {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-slate-500 text-xs">
-                          {a.last_seen ? new Date(a.last_seen).toLocaleString('tr-TR') : '-'}
+                          {a.last_seen ? new Date(a.last_seen).toLocaleString(dateLoc) : '-'}
                         </td>
                       </tr>
                     )

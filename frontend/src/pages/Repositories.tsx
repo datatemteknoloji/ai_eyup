@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { CheckCircle2, XCircle } from 'lucide-react'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface RepoSource {
@@ -81,9 +83,10 @@ interface ProductTemplate {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const API = '/api/v1/repos'
-const fmtDate = (s: string | null) => s ? new Date(s).toLocaleString('tr-TR') : '—'
+const dateLoc = (locale: string) => locale === 'en' ? 'en-GB' : 'tr-TR'
+const fmtDate = (s: string | null, locale: string) => s ? new Date(s).toLocaleString(dateLoc(locale)) : '—'
 const fmtSize = (mb: number) => mb > 1024 ? `${(mb/1024).toFixed(1)} GB` : `${mb} MB`
-const fmtPkg  = (n: number) => n.toLocaleString('tr-TR')
+const fmtPkg  = (n: number, locale: string) => n.toLocaleString(dateLoc(locale))
 
 const SYNC_COLOR: Record<string, string> = {
   never:     'text-slate-400',
@@ -93,13 +96,13 @@ const SYNC_COLOR: Record<string, string> = {
   partial:   'text-orange-400',
   cancelled: 'text-yellow-400',
 }
-const SYNC_LABEL: Record<string, string> = {
-  never:     'Hiç sync edilmedi',
-  syncing:   'Sync ediliyor...',
-  synced:    'Güncel',
-  failed:    'Hata',
-  partial:   'Kısmi',
-  cancelled: 'İptal edildi',
+const SYNC_KEYS: Record<string, TranslationKey> = {
+  never:     'repo_sync_never',
+  syncing:   'repo_syncing',
+  synced:    'repo_sync_ok',
+  failed:    'repo_sync_fail',
+  partial:   'repo_sync_partial',
+  cancelled: 'repo_sync_cancelled',
 }
 
 const TYPE_BADGE: Record<string, string> = {
@@ -145,6 +148,7 @@ interface AddRepoModalProps {
 }
 
 const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreated }) => {
+  const t = useT()
   const [mode, setMode] = useState<'product' | 'custom'>('product')
   const [selectedProduct, setSelectedProduct] = useState<ProductTemplate | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<string>('')
@@ -205,7 +209,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
   const saveBatch = async () => {
     if (!selectedProduct) return
-    if (selectedChannels.size === 0) { setError('En az bir kanal seçin'); return }
+    if (selectedChannels.size === 0) { setError(t('repo_pick_channel')); return }
     setSaving(true); setError('')
     try {
       const channels = selectedProduct.channels
@@ -240,7 +244,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Hata')
+      if (!r.ok) throw new Error((await r.json()).detail || t('error_generic'))
       const d = await r.json()
       onCreated(d.created.length)
     } catch (e: any) {
@@ -252,7 +256,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
   const saveCustom = async () => {
     if (!customForm.name || !customForm.display_name || !customForm.base_url) {
-      setError('Ad, görünen ad ve URL zorunludur'); return
+      setError(t('repo_custom_required')); return
     }
     setSaving(true); setError('')
     try {
@@ -260,7 +264,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(customForm),
       })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Hata')
+      if (!r.ok) throw new Error((await r.json()).detail || t('error_generic'))
       onCreated(1)
     } catch (e: any) {
       setError(e.message)
@@ -274,17 +278,17 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
-          <h2 className="text-lg font-semibold text-white">Repo Ekle</h2>
+          <h2 className="text-lg font-semibold text-white">{t('repo_add')}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
         </div>
 
         {/* Mode tabs */}
         <div className="px-6 pt-4 flex gap-2">
           <button onClick={() => setMode('product')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'product' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/[0.06]'}`}>
-            Ürün Seç
+            {t('repo_pick_product')}
           </button>
           <button onClick={() => setMode('custom')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'custom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/[0.06]'}`}>
-            Özel URL
+            {t('repo_custom_url')}
           </button>
         </div>
 
@@ -303,7 +307,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
                     {/* RPM */}
                     <div>
-                      <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-2">RPM Tabanlı</div>
+                      <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-2">{t('repo_rpm_based')}</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {rpm.map(p => (
                           <button
@@ -323,7 +327,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                               </div>
                             </div>
                             {p.auth_type !== 'none' && (
-                              <div className="mt-1.5 text-xs text-orange-400">Kimlik gerekli</div>
+                              <div className="mt-1.5 text-xs text-orange-400">{t('repo_auth_needed')}</div>
                             )}
                           </button>
                         ))}
@@ -333,7 +337,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                     {/* APT (Debian/Ubuntu) */}
                     {apt.length > 0 && (
                       <div>
-                        <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-2">APT Tabanlı (Metadata)</div>
+                        <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-2">{t('repo_apt_based')}</div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                           {apt.map(p => (
                             <button
@@ -352,7 +356,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                                   <div className="text-xs text-slate-400 mt-0.5">{p.arch}</div>
                                 </div>
                               </div>
-                              <div className="mt-1.5 text-xs text-blue-400">Sadece katalog</div>
+                              <div className="mt-1.5 text-xs text-blue-400">{t('repo_catalog_only')}</div>
                             </button>
                           ))}
                         </div>
@@ -369,11 +373,11 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   {/* Version selector */}
                   <div>
                     <label className="text-xs text-slate-400 block mb-2">
-                      Versiyon
+                      {t('repo_version')}
                       {selectedProduct.repo_type === 'rhel' || selectedProduct.repo_type === 'rocky' || selectedProduct.repo_type === 'alma' ? (
-                        <span className="ml-2 text-slate-500">— Sunucunuzun minor sürümüyle eşleştirin (ör. RHEL 9.4 → 9.4 seçin)</span>
+                        <span className="ml-2 text-slate-500">{t('repo_match_minor')}</span>
                       ) : selectedProduct.url_versioned === false ? (
-                        <span className="ml-2 text-yellow-400">— URL sabit (rolling), versiyon sadece etikette gösterilir</span>
+                        <span className="ml-2 text-yellow-400">{t('repo_url_fixed')}</span>
                       ) : null}
                     </label>
                     <div className="flex flex-wrap gap-2">
@@ -410,9 +414,9 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div>
                     <div className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
                       <span>{TYPE_ICON[selectedProduct.repo_type] || 'PKG'}</span>
-                      {selectedProduct.product} {selectedVersion !== 'latest' ? selectedVersion : ''} — Kanallar
+                      {selectedProduct.product} {selectedVersion !== 'latest' ? selectedVersion : ''} — {t('repo_channels')}
                       <span className="text-xs text-slate-400 font-normal ml-1">
-                        ({selectedChannels.size} seçili)
+                        {t('repo_n_selected', { n: selectedChannels.size })}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -441,20 +445,18 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div className="bg-white/[0.04] border border-slate-600 rounded-xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-sm font-semibold text-white">Snapshot Etiketi</div>
-                        <div className="text-xs text-slate-400 mt-0.5">
-                          Aynı repo'yu farklı tarihlerde sync edebilmek için isimde kullanılır
-                        </div>
+                        <div className="text-sm font-semibold text-white">{t('repo_snapshot_label')}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">{t('repo_snapshot_hint')}</div>
                       </div>
                     </div>
 
                     {/* Mode seçici */}
                     <div className="flex gap-2 flex-wrap">
                       {([
-                        { key: 'date',    label: 'Günlük',  example: today.toISOString().slice(0,10) },
-                        { key: 'monthly', label: 'Aylık',   example: `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}` },
-                        { key: 'custom',  label: 'Özel',    example: '' },
-                        { key: 'none',    label: 'Etiket yok', example: '' },
+                        { key: 'date',    label: t('repo_daily'),  example: today.toISOString().slice(0,10) },
+                        { key: 'monthly', label: t('repo_monthly'),   example: `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}` },
+                        { key: 'custom',  label: t('repo_custom'),    example: '' },
+                        { key: 'none',    label: t('repo_no_label'), example: '' },
                       ] as const).map(m => (
                         <button
                           key={m.key}
@@ -484,14 +486,14 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                         />
                         {snapshotLabel && (
                           <div className="text-xs text-slate-400 whitespace-nowrap">
-                            örnek: <span className="text-blue-300 font-mono">oel-9-9_5-baseos-{snapshotLabel}</span>
+                            {t('repo_example')} <span className="text-blue-300 font-mono">oel-9-9_5-baseos-{snapshotLabel}</span>
                           </div>
                         )}
                       </div>
                     )}
                     {snapshotMode === 'none' && (
                       <div className="text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
-                        Dikkat: Etiket olmadan aynı ürün tekrar eklenirse çakışma hatası alırsınız
+                        {t('repo_no_label_warn')}
                       </div>
                     )}
                   </div>
@@ -499,8 +501,8 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   {/* Ubuntu/apt uyarısı */}
                   {selectedProduct.format_note === 'apt' && (
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-xs text-yellow-300 space-y-1">
-                      <div className="font-semibold">apt Repo Formatı</div>
-                      <div>Ubuntu depo metadata kaydı oluşturulur ancak paket indirme (sync) özelliği şu an sadece RPM (repomd.xml) formatını desteklemektedir. apt desteği yakında eklenecek.</div>
+                      <div className="font-semibold">{t('repo_apt_format')}</div>
+                      <div>{t('repo_apt_note')}</div>
                     </div>
                   )}
 
@@ -508,12 +510,11 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   {selectedProduct.auth_type !== 'none' && (
                     <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-4 space-y-3">
                       <p className="text-xs text-orange-300">
-                        <strong>{selectedProduct.product}</strong> erişimi için Red Hat hesabı gereklidir.
-                        Kullanıcı adı/şifre girildiğinde RHSM sertifikası otomatik alınır.
+                        {t('repo_rh_needed', { product: selectedProduct.product })}
                       </p>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="text-xs text-slate-400 block mb-1">Red Hat Kullanıcı Adı</label>
+                          <label className="text-xs text-slate-400 block mb-1">{t('repo_rh_user')}</label>
                           <input
                             value={credentials.username}
                             onChange={e => setCredentials(p => ({...p, username: e.target.value}))}
@@ -522,7 +523,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-slate-400 block mb-1">Şifre</label>
+                          <label className="text-xs text-slate-400 block mb-1">{t('repo_password')}</label>
                           <input
                             type="password"
                             value={credentials.password}
@@ -544,8 +545,8 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                     className="w-full py-3 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-500 text-white transition-all disabled:opacity-40 flex items-center justify-center gap-2"
                   >
                     {saving
-                      ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Ekleniyor...</>
-                      : `${selectedChannels.size} Kanal Ekle`
+                      ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('repo_adding')}</>
+                      : t('repo_add_n_ch', { n: selectedChannels.size })
                     }
                   </button>
                 </div>
@@ -558,27 +559,27 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Slug (benzersiz)</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('repo_slug')}</label>
                   <input value={customForm.name}
                     onChange={e => setCustomForm(p => ({...p, name: e.target.value.toLowerCase().replace(/\s+/g,'-')}))}
                     placeholder="custom-repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Görünen Ad</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('repo_display_name')}</label>
                   <input value={customForm.display_name}
                     onChange={e => setCustomForm(p => ({...p, display_name: e.target.value}))}
                     placeholder="Custom Repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
               </div>
               <div>
-                <label className="text-xs text-slate-400 block mb-1">Base URL</label>
+                <label className="text-xs text-slate-400 block mb-1">{t('repo_base_url')}</label>
                 <input value={customForm.base_url}
                   onChange={e => setCustomForm(p => ({...p, base_url: e.target.value}))}
                   placeholder="https://..." className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Tip</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('col_type')}</label>
                   <select value={customForm.repo_type} onChange={e => setCustomForm(p => ({...p, repo_type: e.target.value}))}
                     className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
                     {['oel','rhel','rocky','alma','centos','custom'].map(t => (
@@ -587,29 +588,29 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">OS Ver.</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('repo_os_ver')}</label>
                   <input value={customForm.os_version} onChange={e => setCustomForm(p => ({...p, os_version: e.target.value}))}
                     placeholder="9" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Auth</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('repo_auth')}</label>
                   <select value={customForm.auth_type} onChange={e => setCustomForm(p => ({...p, auth_type: e.target.value}))}
                     className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
-                    <option value="none">Yok</option>
+                    <option value="none">{t('none')}</option>
                     <option value="basic">Basic</option>
-                    <option value="ssl_cert">SSL Cert</option>
+                    <option value="ssl_cert">{t('repo_ssl_cert')}</option>
                   </select>
                 </div>
               </div>
               {customForm.auth_type === 'basic' && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-slate-400 block mb-1">Kullanıcı</label>
+                    <label className="text-xs text-slate-400 block mb-1">{t('repo_user')}</label>
                     <input value={customForm.username} onChange={e => setCustomForm(p => ({...p, username: e.target.value}))}
                       className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 block mb-1">Şifre</label>
+                    <label className="text-xs text-slate-400 block mb-1">{t('repo_password')}</label>
                     <input type="password" value={customForm.password} onChange={e => setCustomForm(p => ({...p, password: e.target.value}))}
                       className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
                   </div>
@@ -618,7 +619,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
               {error && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
               <button onClick={saveCustom} disabled={saving}
                 className="w-full py-3 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-500 text-white transition-all disabled:opacity-40 flex items-center justify-center gap-2">
-                {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kaydediliyor...</> : 'Ekle'}
+                {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('saving')}</> : t('add')}
               </button>
             </div>
           )}
@@ -631,6 +632,8 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
 
 // ─── Package Browser Modal ────────────────────────────────────────────────────
 const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ repo, onClose }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [search, setSearch] = useState('')
   const [arch, setArch] = useState('')
   const [downloaded, setDownloaded] = useState<'all' | 'yes' | 'no'>('all')
@@ -669,7 +672,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-white">{repo.display_name}</h2>
-            <p className="text-xs text-slate-400">{total.toLocaleString('tr-TR')} paket</p>
+            <p className="text-xs text-slate-400">{t('repo_n_pkgs', { n: total.toLocaleString(dateLoc(locale)) })}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
@@ -677,14 +680,14 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
         {/* Filters */}
         <div className="px-6 py-3 border-b border-white/[0.06] flex flex-wrap gap-3 flex-shrink-0">
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(0) }}
-            placeholder="Paket ara..." className="flex-1 min-w-[180px] bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder={t('repo_search_pkg')} className="flex-1 min-w-[180px] bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
           <input value={arch} onChange={e => { setArch(e.target.value); setPage(0) }}
-            placeholder="arch (x86_64)" className="w-32 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder={t('repo_arch_ph')} className="w-32 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
           <select value={downloaded} onChange={e => { setDownloaded(e.target.value as any); setPage(0) }}
             className="bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
-            <option value="all">Tümü</option>
-            <option value="yes">İndirilmiş</option>
-            <option value="no">İndirilmemiş</option>
+            <option value="all">{t('filter_all')}</option>
+            <option value="yes">{t('repo_downloaded')}</option>
+            <option value="no">{t('repo_not_downloaded')}</option>
           </select>
         </div>
 
@@ -695,16 +698,16 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : packages.length === 0 ? (
-            <div className="text-center py-12 text-slate-500">Paket bulunamadı</div>
+            <div className="text-center py-12 text-slate-500">{t('repo_no_pkgs')}</div>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-white/[0.07]/50 sticky top-0">
                 <tr>
-                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">Paket</th>
-                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">Versiyon</th>
+                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">{t('repo_pkg_col')}</th>
+                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium">{t('repo_ver_col')}</th>
                   <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-20">Arch</th>
-                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-24">Boyut</th>
-                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-24">Durum</th>
+                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-24">{t('repo_size_col')}</th>
+                  <th className="text-left px-4 py-2 text-xs text-slate-400 font-medium w-24">{t('col_status')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.05]/30">
@@ -719,7 +722,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
                     <td className="px-4 py-2 text-slate-400 text-xs">{p.size_bytes > 0 ? (p.size_bytes/1024/1024).toFixed(1)+' MB' : '—'}</td>
                     <td className="px-4 py-2">
                       <span className={`text-xs px-2 py-0.5 rounded-full border ${p.downloaded ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-slate-400 bg-white/[0.07]/50 border-slate-600'}`}>
-                        {p.downloaded ? '✓ Yerel' : 'Metadata'}
+                        {p.downloaded ? t('repo_local') : t('repo_metadata')}
                       </span>
                     </td>
                   </tr>
@@ -732,12 +735,12 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
         {/* Pagination */}
         {total > limit && (
           <div className="px-6 py-3 border-t border-white/[0.06] flex items-center justify-between flex-shrink-0">
-            <span className="text-xs text-slate-400">{page * limit + 1}–{Math.min((page+1)*limit, total)} / {total}</span>
+            <span className="text-xs text-slate-400">{t('repo_page_range', { a: page * limit + 1, b: Math.min((page+1)*limit, total), total })}</span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}
-                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">← Önceki</button>
+                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">{t('page_prev')}</button>
               <button onClick={() => setPage(p => p+1)} disabled={(page+1)*limit >= total}
-                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">Sonraki →</button>
+                className="px-3 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg disabled:opacity-40">{t('page_next')}</button>
             </div>
           </div>
         )}
@@ -748,6 +751,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
 
 // ─── Client Config Modal ──────────────────────────────────────────────────────
 const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ repo, onClose }) => {
+  const t = useT()
   const [serverIp, setServerIp] = useState('')
   const [port, setPort] = useState('8000')
   const [repoContent, setRepoContent] = useState('')
@@ -786,30 +790,30 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
-          <h2 className="text-lg font-semibold text-white">İstemci Yapılandırması — {repo.display_name}</h2>
+          <h2 className="text-lg font-semibold text-white">{t('repo_client_cfg', { name: repo.display_name })}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
 
         <div className="p-6 space-y-5">
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-xs text-blue-300">
-            Sunucular bu repo'yu <code>/etc/yum.repos.d/{repo.name}.repo</code> dosyası ile kullanır.
+            {t('repo_client_hint', { path: `/etc/yum.repos.d/${repo.name}.repo` })}
           </div>
 
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="text-xs text-slate-400 block mb-1">Yönetim Sunucusu IP</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('repo_mgmt_ip')}</label>
               <input value={serverIp} onChange={e => setServerIp(e.target.value)}
                 placeholder="192.168.1.100" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
             </div>
             <div className="w-24">
-              <label className="text-xs text-slate-400 block mb-1">Port</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('repo_port')}</label>
               <input value={port} onChange={e => setPort(e.target.value)}
                 className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-end">
               <button onClick={generateConfig}
                 className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white text-sm rounded-lg transition-colors">
-                Oluştur
+                {t('repo_generate')}
               </button>
             </div>
           </div>
@@ -817,18 +821,18 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
           {repoContent && (
             <>
               <div>
-                <label className="text-xs text-slate-400 block mb-1">.repo dosyası içeriği</label>
+                <label className="text-xs text-slate-400 block mb-1">{t('repo_file_content')}</label>
                 <pre className="bg-cyber-deep text-green-300 text-xs p-4 rounded-xl font-mono whitespace-pre overflow-x-auto border border-white/[0.06]">{repoContent}</pre>
                 <button
                   onClick={() => navigator.clipboard.writeText(repoContent)}
                   className="mt-2 text-xs text-blue-400 hover:text-blue-300"
                 >
-                  Kopyala
+                  {t('repo_copy')}
                 </button>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 block mb-2">SSH ile sunuculara gönder</label>
+                <label className="text-xs text-slate-400 block mb-2">{t('repo_push_ssh')}</label>
                 <div className="max-h-40 overflow-y-auto border border-white/[0.06] rounded-xl divide-y divide-white/[0.04]">
                   {servers.map((srv: any) => (
                     <label key={srv.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-white/[0.03] ${selectedServers.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
@@ -844,7 +848,7 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
 
                 <button onClick={pushConfig} disabled={pushing || selectedServers.length === 0}
                   className="mt-3 w-full py-2.5 bg-green-700 hover:bg-green-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-40 flex items-center justify-center gap-2">
-                  {pushing ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Gönderiliyor...</> : `${selectedServers.length} Sunucuya Gönder`}
+                  {pushing ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('repo_pushing')}</> : t('repo_push_n', { n: selectedServers.length })}
                 </button>
 
                 {Object.keys(pushResults).length > 0 && (
@@ -869,6 +873,8 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
 
 // ─── Sync Log Modal ───────────────────────────────────────────────────────────
 const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ repo, onClose }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [jobs, setJobs] = useState<SyncJob[]>([])
   const [selectedJob, setSelectedJob] = useState<SyncJob | null>(null)
   const [loading, setLoading] = useState(true)
@@ -914,7 +920,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
-          <h2 className="text-lg font-semibold text-white">Sync Geçmişi — {repo.display_name}</h2>
+          <h2 className="text-lg font-semibold text-white">{t('repo_sync_history', { name: repo.display_name })}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
 
@@ -924,7 +930,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
             {loading ? (
               <div className="p-6 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
             ) : jobs.length === 0 ? (
-              <div className="p-6 text-center text-slate-500 text-sm">Henüz sync yapılmadı</div>
+              <div className="p-6 text-center text-slate-500 text-sm">{t('repo_never_synced')}</div>
             ) : (
               jobs.map(j => (
                 <button key={j.id} onClick={() => setSelectedJob(j)}
@@ -933,8 +939,8 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                     <span className={`text-xs px-2 py-0.5 rounded-full border ${JOB_STATUS_COLOR[j.status]}`}>{j.status}</span>
                     {(j.status === 'running' || j.status === 'pending') && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
                   </div>
-                  <div className="text-xs text-slate-400 mt-1">{fmtDate(j.started_at ?? j.created_at ?? null)}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{j.synced_packages}/{j.total_packages} paket</div>
+                  <div className="text-xs text-slate-400 mt-1">{fmtDate(j.started_at ?? j.created_at ?? null, locale)}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{t('repo_n_pkgs_short', { a: j.synced_packages, b: j.total_packages })}</div>
                 </button>
               ))
             )}
@@ -947,19 +953,19 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                 {/* Stat kartları */}
                 <div className="grid grid-cols-4 gap-2 text-xs">
                   <div className="bg-white/[0.07]/50 rounded-lg p-3 text-center">
-                    <div className="text-slate-400 mb-0.5">Toplam</div>
+                    <div className="text-slate-400 mb-0.5">{t('total')}</div>
                     <div className="text-white font-bold text-base">
-                      {(liveProgress?.total_packages || selectedJob.total_packages || 0).toLocaleString('tr-TR')}
+                      {(liveProgress?.total_packages || selectedJob.total_packages || 0).toLocaleString(dateLoc(locale))}
                     </div>
                   </div>
                   <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-center">
-                    <div className="text-slate-400 mb-0.5">Disk'te</div>
+                    <div className="text-slate-400 mb-0.5">{t('repo_on_disk')}</div>
                     <div className="text-green-300 font-bold text-base">
-                      {(liveProgress?.rpm_on_disk || selectedJob.synced_packages || 0).toLocaleString('tr-TR')}
+                      {(liveProgress?.rpm_on_disk || selectedJob.synced_packages || 0).toLocaleString(dateLoc(locale))}
                     </div>
                   </div>
                   <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-center">
-                    <div className="text-slate-400 mb-0.5">Boyut</div>
+                    <div className="text-slate-400 mb-0.5">{t('repo_size')}</div>
                     <div className="text-blue-300 font-bold text-base">
                       {liveProgress?.disk_mb
                         ? liveProgress.disk_mb >= 1024
@@ -969,7 +975,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                     </div>
                   </div>
                   <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-center">
-                    <div className="text-slate-400 mb-0.5">Hatalı</div>
+                    <div className="text-slate-400 mb-0.5">{t('repo_failed_n')}</div>
                     <div className="text-red-300 font-bold text-base">{selectedJob.failed_packages || 0}</div>
                   </div>
                 </div>
@@ -980,7 +986,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                     <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
                       <span className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />
-                        Sync devam ediyor...
+                        {t('repo_sync_running')}
                       </span>
                       <span>
                         {(() => {
@@ -1006,11 +1012,11 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                 {/* Canlı log */}
                 <div>
                   <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-                    <span>İşlem Logu</span>
+                    <span>{t('upd_job_log')}</span>
                     {(selectedJob.status === 'running' || selectedJob.status === 'pending') && (
                       <span className="flex items-center gap-1 text-green-400">
                         <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                        Canlı
+                        {t('repo_live')}
                       </span>
                     )}
                   </div>
@@ -1023,13 +1029,13 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                     <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 flex items-center gap-3">
                       <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                       <div>
-                        <div className="text-xs text-blue-300">Sync başlatılıyor...</div>
-                        <div className="text-xs text-slate-500 mt-0.5">Log birkaç saniye içinde görünecek</div>
+                        <div className="text-xs text-blue-300">{t('repo_sync_starting')}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{t('repo_log_soon')}</div>
                       </div>
                     </div>
                   ) : (
                     <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs text-slate-500 text-center italic">
-                      Log kaydı yok
+                      {t('repo_no_log')}
                     </div>
                   )}
                 </div>
@@ -1039,11 +1045,11 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                 {jobs.some(j => j.status === 'running' || j.status === 'pending') ? (
                   <div className="text-center">
                     <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                    <div className="text-sm text-slate-300">Sync devam ediyor</div>
-                    <div className="text-xs text-slate-500 mt-1">Sol panelden işi seçin</div>
+                    <div className="text-sm text-slate-300">{t('repo_sync_running_short')}</div>
+                    <div className="text-xs text-slate-500 mt-1">{t('repo_pick_job_left')}</div>
                   </div>
                 ) : (
-                  <div className="text-slate-500 text-sm">← Detay için bir iş seçin</div>
+                  <div className="text-slate-500 text-sm">{t('repo_pick_job')}</div>
                 )}
               </div>
             )}
@@ -1056,6 +1062,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
 
 // ─── RHSM Sync Settings Modal ────────────────────────────────────────────────
 const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSaved: () => void }> = ({ repo, onClose, onSaved }) => {
+  const t = useT()
   const [form, setForm] = useState({
     rhsm_repo_id:         repo.rhsm_repo_id || '',
     mirror_host:          repo.mirror_host || '127.0.0.1',
@@ -1085,7 +1092,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
           mirror_download_path: form.mirror_download_path,
         }),
       })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Hata')
+      if (!r.ok) throw new Error((await r.json()).detail || t('error_generic'))
       onSaved()
     } catch (e: any) {
       setError(e.message)
@@ -1127,7 +1134,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
           <div>
-            <h2 className="text-lg font-semibold text-white">RHSM Sync Ayarları</h2>
+            <h2 className="text-lg font-semibold text-white">{t('repo_rhsm_title')}</h2>
             <p className="text-xs text-slate-400 mt-0.5">{repo.display_name}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
@@ -1136,15 +1143,15 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
         <div className="p-6 space-y-5">
           {/* Açıklama */}
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-xs text-blue-300 space-y-1.5">
-            <div className="font-semibold text-sm">subscription-manager + reposync</div>
-            <div>Bu mod, belirtilen mirror host'a SSH bağlanır ve <code>subscription-manager</code> + <code>reposync</code> komutlarını çalıştırır.</div>
-            <div>Mirror host varsayılan olarak <strong>127.0.0.1</strong> (bu yönetim sunucusu). Host RHEL/OEL ise subscription-manager kurulu olmalıdır.</div>
+            <div className="font-semibold text-sm">{t('repo_rhsm_sub')}</div>
+            <div>{t('repo_rhsm_hint')}</div>
+            <div>{t('repo_rhsm_hint2')}</div>
           </div>
 
           {/* RHSM Repo ID */}
           <div>
             <label className="text-xs text-slate-400 block mb-1">
-              RHSM Repo ID <span className="text-slate-500">(subscription-manager repos --list ile bulunabilir)</span>
+              {t('repo_rhsm_id')} <span className="text-slate-500">{t('repo_rhsm_id_hint')}</span>
             </label>
             <input
               value={form.rhsm_repo_id}
@@ -1157,7 +1164,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
           {/* Mirror Host */}
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="text-xs text-slate-400 block mb-1">Mirror Host (SSH)</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('repo_mirror_host')}</label>
               <input
                 value={form.mirror_host}
                 onChange={e => setForm(p => ({...p, mirror_host: e.target.value}))}
@@ -1166,7 +1173,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               />
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Port</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('repo_port')}</label>
               <input
                 value={form.mirror_port}
                 onChange={e => setForm(p => ({...p, mirror_port: e.target.value}))}
@@ -1177,7 +1184,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-slate-400 block mb-1">SSH Kullanıcı</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('repo_ssh_user')}</label>
               <input
                 value={form.mirror_username}
                 onChange={e => setForm(p => ({...p, mirror_username: e.target.value}))}
@@ -1186,12 +1193,12 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               />
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">SSH Şifre</label>
+              <label className="text-xs text-slate-400 block mb-1">{t('pkg_ssh_password')}</label>
               <input
                 type="password"
                 value={form.mirror_password}
                 onChange={e => setForm(p => ({...p, mirror_password: e.target.value}))}
-                placeholder="(değiştirmek için girin)"
+                placeholder={t('repo_ssh_pass_ph')}
                 className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -1199,8 +1206,8 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
 
           <div>
             <label className="text-xs text-slate-400 block mb-1">
-              İndirme Dizini (host'ta)
-              <span className="text-slate-500 ml-1">— container bu dizini /app/repos olarak görür</span>
+              {t('repo_download_dir')}
+              <span className="text-slate-500 ml-1">{t('repo_download_dir_hint')}</span>
             </label>
             <input
               value={form.mirror_download_path}
@@ -1214,11 +1221,11 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
           <div className="flex gap-2 flex-wrap">
             <button onClick={testConnection} disabled={testing}
               className="px-4 py-2 text-sm bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
-              {testing ? "..." : "Bağlantıyı Test Et"}
+              {testing ? '...' : t('repo_test_conn')}
             </button>
             <button onClick={listRepos} disabled={testing}
               className="px-4 py-2 text-sm bg-white/[0.07] hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-40">
-              {testing ? '...' : 'Mevcut Repoları Listele'}
+              {testing ? '...' : t('repo_list_repos')}
             </button>
           </div>
 
@@ -1227,7 +1234,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
             <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 text-xs font-mono">
               {'repos' in testResult ? (
                 <div className="space-y-1 max-h-52 overflow-y-auto">
-                  <div className="text-slate-400 mb-2">{testResult.total} repo bulundu:</div>
+                  <div className="text-slate-400 mb-2">{t('repo_n_found', { n: testResult.total })}</div>
                   {testResult.repos.map((r: any) => (
                     <div key={r.id} className={`flex items-center gap-2 ${r.enabled ? 'text-green-300' : 'text-slate-400'}`}>
                       <span>{r.enabled ? '●' : '○'}</span>
@@ -1241,7 +1248,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                   <div className={`font-semibold mb-1 ${testResult.registered ? 'text-green-300' : 'text-red-300'}`}>
                     <span className="inline-flex items-center gap-1.5">
                       {testResult.registered ? <CheckCircle2 size={14} strokeWidth={2} /> : <XCircle size={14} strokeWidth={2} />}
-                      {testResult.registered ? 'Abonelik aktif' : 'Kayıtlı değil / Erişilemiyor'}
+                      {testResult.registered ? t('repo_sub_active') : t('repo_not_registered')}
                     </span>
                   </div>
                   <pre className="text-slate-300 whitespace-pre-wrap">{testResult.status}</pre>
@@ -1254,7 +1261,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
 
           <button onClick={save} disabled={saving}
             className="w-full py-3 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-500 text-white transition-all disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Kaydediliyor...</> : 'Kaydet'}
+            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('saving')}</> : t('save')}
           </button>
         </div>
       </div>
@@ -1285,6 +1292,8 @@ const RepoRow: React.FC<{
   onFetchCerts: (id: number) => void
   onRhsmSettings: (repo: RepoSource) => void
 }> = ({ repo, progress, onSync, onSyncRhsm, onCancel, onDelete, onPackages, onConfig, onLogs, onFetchCerts, onRhsmSettings }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const syncing = repo.sync_status === 'syncing'
 
   return (
@@ -1317,7 +1326,7 @@ const RepoRow: React.FC<{
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-blue-300 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />
-                    {progress.rpm_on_disk.toLocaleString('tr-TR')} / {progress.total_packages.toLocaleString('tr-TR')} RPM
+                    {progress.rpm_on_disk.toLocaleString(dateLoc(locale))} / {progress.total_packages.toLocaleString(dateLoc(locale))} RPM
                   </span>
                   <span className="text-slate-400">
                     {Math.round(progress.rpm_on_disk * 100 / progress.total_packages)}%
@@ -1329,22 +1338,22 @@ const RepoRow: React.FC<{
                     style={{ width: `${Math.min(Math.round(progress.rpm_on_disk * 100 / progress.total_packages), 100)}%` }}
                   />
                 </div>
-                <div className="text-xs text-slate-400">{progress.disk_mb >= 1024 ? `${(progress.disk_mb/1024).toFixed(1)} GB` : `${progress.disk_mb} MB`} indirildi</div>
+                <div className="text-xs text-slate-400">{t('repo_downloaded_size', { size: progress.disk_mb >= 1024 ? `${(progress.disk_mb/1024).toFixed(1)} GB` : `${progress.disk_mb} MB` })}</div>
               </>
             ) : (
               <span className="text-xs text-blue-400 flex items-center gap-1 animate-pulse">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse inline-block" />
-                Metadata çekiliyor...
+                {t('repo_meta_fetch')}
               </span>
             )}
           </div>
         ) : (
           <div className="flex flex-col gap-0.5">
             <span className={`text-xs font-medium flex items-center gap-1 ${SYNC_COLOR[repo.sync_status] || 'text-slate-400'}`}>
-              {SYNC_LABEL[repo.sync_status] || repo.sync_status}
+              {SYNC_KEYS[repo.sync_status] ? t(SYNC_KEYS[repo.sync_status]) : repo.sync_status}
             </span>
             {repo.last_sync && (
-              <span className="text-xs text-slate-500">{fmtDate(repo.last_sync)}</span>
+              <span className="text-xs text-slate-500">{fmtDate(repo.last_sync, locale)}</span>
             )}
           </div>
         )}
@@ -1352,7 +1361,7 @@ const RepoRow: React.FC<{
 
       {/* Paket / Boyut */}
       <td className="px-3 py-3 whitespace-nowrap text-center">
-        <div className="text-sm font-medium text-white">{fmtPkg(repo.package_count)}</div>
+        <div className="text-sm font-medium text-white">{fmtPkg(repo.package_count, locale)}</div>
         <div className="text-xs text-slate-500">{repo.total_size_mb > 0 ? fmtSize(repo.total_size_mb) : '—'}</div>
       </td>
 
@@ -1360,15 +1369,15 @@ const RepoRow: React.FC<{
       <td className="px-3 py-3 whitespace-nowrap">
         {repo.repo_type === 'rhel' ? (
           repo.has_ssl_cert ? (
-            <span className="text-xs text-green-400 flex items-center gap-1">✓ Sertifikalı</span>
+            <span className="text-xs text-green-400 flex items-center gap-1">{t('repo_certified')}</span>
           ) : (
             <button onClick={() => onFetchCerts(repo.id)}
               className="text-xs text-orange-300 bg-orange-500/10 border border-orange-500/30 px-2 py-1 rounded-lg hover:bg-orange-500/20 transition-colors whitespace-nowrap">
-              Sertifika Al
+              {t('repo_get_cert')}
             </button>
           )
         ) : (
-          <span className="text-xs text-green-400">Açık</span>
+          <span className="text-xs text-green-400">{t('repo_open')}</span>
         )}
       </td>
 
@@ -1376,12 +1385,12 @@ const RepoRow: React.FC<{
       <td className="px-3 py-3">
         <div className="flex items-center gap-1 flex-wrap">
 
-          {/* Sync / Durdur */}
+          {/* Sync / {t('stop')} */}
           {syncing ? (
             <button onClick={() => onCancel(repo.id)}
               className="px-2.5 py-1 text-xs font-semibold bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center gap-1">
               <span className="w-1.5 h-1.5 bg-red-300 rounded-full animate-pulse flex-shrink-0" />
-              Durdur
+              {t('stop')}
             </button>
           ) : repo.sync_method === 'rhsm' ? (
             <button onClick={() => onSyncRhsm(repo.id)}
@@ -1407,10 +1416,10 @@ const RepoRow: React.FC<{
             Log
           </button>
 
-          {/* Paketler */}
+          {/* {t('repo_pkgs')} */}
           <button onClick={() => onPackages(repo)} disabled={repo.package_count === 0}
             className="px-2.5 py-1 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-30">
-            Paketler
+            {t('repo_pkgs')}
           </button>
 
           {/* .repo */}
@@ -1430,7 +1439,7 @@ const RepoRow: React.FC<{
           {/* Sil */}
           <button onClick={() => onDelete(repo.id)}
             className="px-2.5 py-1 text-xs text-red-400 hover:text-white hover:bg-red-700 rounded-lg transition-colors">
-            Sil
+            {t('delete')}
           </button>
 
         </div>
@@ -1441,6 +1450,8 @@ const RepoRow: React.FC<{
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 const Repositories: React.FC = () => {
+  const t = useT()
+  const { locale } = useLocale()
   const [repos, setRepos]           = useState<RepoSource[]>([])
   const [products, setProducts]     = useState<ProductTemplate[]>([])
   const [loading, setLoading]       = useState(true)
@@ -1513,32 +1524,32 @@ const Repositories: React.FC = () => {
   const handleSync = async (repoId: number, metaOnly: boolean) => {
     const url = metaOnly ? `${API}/${repoId}/sync-metadata` : `${API}/${repoId}/sync`
     const r = await fetch(url, { method: 'POST' })
-    if (r.ok) { showToast(metaOnly ? 'Metadata sync başlatıldı' : 'Tam sync başlatıldı'); await loadRepos() }
-    else showToast((await r.json()).detail || 'Hata', 'err')
+    if (r.ok) { showToast(metaOnly ? t('repo_meta_started') : t('repo_full_started')); await loadRepos() }
+    else showToast((await r.json()).detail || t('error_generic'), 'err')
   }
 
   const handleCancel = async (repoId: number) => {
     const r = await fetch(`${API}/${repoId}/cancel-sync`, { method: 'POST' })
-    if (r.ok) { showToast('Sync durduruldu'); await loadRepos() }
-    else showToast((await r.json()).detail || 'Hata', 'err')
+    if (r.ok) { showToast(t('repo_sync_stopped')); await loadRepos() }
+    else showToast((await r.json()).detail || t('error_generic'), 'err')
   }
 
   const handleSyncRhsm = async (repoId: number) => {
     const r = await fetch(`${API}/${repoId}/sync-rhsm`, { method: 'POST' })
-    if (r.ok) { showToast('RHSM sync başlatıldı'); await loadRepos() }
-    else showToast((await r.json()).detail || 'Hata', 'err')
+    if (r.ok) { showToast(t('repo_rhsm_started')); await loadRepos() }
+    else showToast((await r.json()).detail || t('error_generic'), 'err')
   }
 
   const handleFetchCerts = async (repoId: number) => {
-    showToast('RHSM API\'ye bağlanılıyor, lütfen bekleyin...')
+    showToast(t('repo_rhsm_wait'))
     try {
       const r = await fetch(`${API}/${repoId}/fetch-rhsm-certs`, { method: 'POST' })
       const d = await r.json()
-      if (!r.ok) throw new Error(d.detail || 'Hata')
+      if (!r.ok) throw new Error(d.detail || t('error_generic'))
       showToast(`✓ ${d.message}`)
       await loadRepos()
     } catch (e: any) {
-      showToast(e.message || 'RHSM sertifikası alınamadı', 'err')
+      showToast(e.message || t('repo_rhsm_cert_fail'), 'err')
     }
   }
 
@@ -1546,13 +1557,13 @@ const Repositories: React.FC = () => {
     const repo = repos.find(r => r.id === repoId)
     const isSyncing = repo?.sync_status === 'syncing'
     const msg = isSyncing
-      ? 'Sync devam ediyor! Durdurulup silinecek. Emin misiniz?'
-      : 'Bu repo ve tüm yerel dosyaları silinecek. Emin misiniz?'
+      ? t('repo_del_syncing')
+      : t('repo_del_confirm')
     if (!confirm(msg)) return
     const url = isSyncing ? `${API}/${repoId}?force=true` : `${API}/${repoId}`
     const r = await fetch(url, { method: 'DELETE' })
-    if (r.ok) { showToast('Repo silindi'); await loadRepos() }
-    else showToast((await r.json()).detail || 'Silinemedi', 'err')
+    if (r.ok) { showToast(t('repo_deleted')); await loadRepos() }
+    else showToast((await r.json()).detail || t('repo_del_fail'), 'err')
   }
 
   const totalPackages = repos.reduce((s, r) => s + r.package_count, 0)
@@ -1565,14 +1576,12 @@ const Repositories: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Local Repository Yönetimi</h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Satellite/Foreman gibi — RHEL, OEL, Rocky için local mirror yönetimi
-          </p>
+          <h1 className="text-2xl font-bold text-white">{t('repo_title')}</h1>
+          <p className="text-slate-400 text-sm mt-1">{t('repo_subtitle')}</p>
         </div>
         <button onClick={() => setShowAdd(true)}
           className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-          + Repo Ekle
+          {t('repo_add')}
         </button>
       </div>
 
@@ -1591,34 +1600,34 @@ const Repositories: React.FC = () => {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard
-          label="Toplam Repo"
+          label={t('repo_stat_total')}
           value={String(aggStats?.total_repos ?? repos.length)}
-          sub={`${aggStats?.synced_repos ?? syncedCount} güncel`}
+          sub={t('repo_n_current', { n: aggStats?.synced_repos ?? syncedCount })}
         />
         <StatCard
-          label="Yerel RPM"
-          value={aggStats ? fmtPkg(aggStats.total_rpm) : fmtPkg(totalPackages)}
-          sub={aggStats ? 'disk\'te mevcut' : 'tüm repolar'}
+          label={t('repo_local_rpm')}
+          value={aggStats ? fmtPkg(aggStats.total_rpm, locale) : fmtPkg(totalPackages, locale)}
+          sub={aggStats ? t('repo_on_disk_sub') : t('repo_all_repos')}
         />
         <StatCard
-          label="Disk Kullanımı"
+          label={t('repo_disk_use')}
           value={aggStats
             ? (aggStats.disk_gb >= 1 ? `${aggStats.disk_gb.toFixed(1)} GB` : `${aggStats.disk_mb} MB`)
             : fmtSize(totalSize)
           }
-          sub="yerel depo"
+          sub={t('repo_local_store')}
         />
         <StatCard
-          label="Sync Durumu"
+          label={t('repo_sync_status')}
           value={
             aggStats?.syncing_repos > 0
-              ? `${aggStats.syncing_repos} aktif`
-              : (syncingCount > 0 ? `${syncingCount} aktif` : 'Boşta')
+              ? t('repo_n_active', { n: aggStats.syncing_repos })
+              : (syncingCount > 0 ? t('repo_n_active', { n: syncingCount }) : t('repo_idle'))
           }
           sub={
             aggStats && aggStats.active_total_packages > 0
-              ? `${fmtPkg(aggStats.active_synced_packages)} / ${fmtPkg(aggStats.active_total_packages)} paket`
-              : (syncingCount > 0 ? 'işlem devam ediyor' : 'tümü hazır')
+              ? t('repo_n_of_pkgs', { a: fmtPkg(aggStats.active_synced_packages, locale), b: fmtPkg(aggStats.active_total_packages, locale) })
+              : (syncingCount > 0 ? t('repo_in_progress') : t('repo_all_ready'))
           }
         /></div>
 
@@ -1630,11 +1639,11 @@ const Repositories: React.FC = () => {
       ) : repos.length === 0 ? (
         <div className="bg-cyber-card border border-white/[0.06] rounded-2xl p-16 text-center">
           <div className="text-3xl font-bold text-blue-400 mb-4">PKG</div>
-          <h3 className="text-lg font-semibold text-white">Henüz repo yok</h3>
-          <p className="text-slate-400 text-sm mt-2">OEL, RHEL veya Rocky Linux mirror'ı ekleyin</p>
+          <h3 className="text-lg font-semibold text-white">{t('repo_empty')}</h3>
+          <p className="text-slate-400 text-sm mt-2">{t('repo_empty_hint')}</p>
           <button onClick={() => setShowAdd(true)}
             className="mt-4 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl transition-colors">
-            İlk Repo'yu Ekle
+            {t('repo_add_first')}
           </button>
         </div>
       ) : (
@@ -1642,12 +1651,12 @@ const Repositories: React.FC = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-white/[0.05] border-b border-slate-600">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Repo</th>
-                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Tip</th>
-                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Durum</th>
-                <th className="text-center px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Paket / Boyut</th>
-                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">Auth</th>
-                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">İşlemler</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('repo_col_repo')}</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('col_type')}</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('col_status')}</th>
+                <th className="text-center px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('repo_col_pkg_size')}</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('repo_auth')}</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-slate-300 uppercase tracking-wide">{t('actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1673,7 +1682,7 @@ const Repositories: React.FC = () => {
       {/* Modals */}
       {showAdd && (
         <AddRepoModal products={products} onClose={() => setShowAdd(false)}
-          onCreated={(count) => { setShowAdd(false); loadRepos(); showToast(`${count} repo eklendi`) }} />
+          onCreated={(count) => { setShowAdd(false); loadRepos(); showToast(t('repo_n_added', { n: count })) }} />
       )}
       {packageBrowserRepo && (
         <PackageBrowser repo={packageBrowserRepo} onClose={() => setPackageBrowserRepo(null)} />
@@ -1688,7 +1697,7 @@ const Repositories: React.FC = () => {
         <RhsmSettingsModal
           repo={rhsmSettingsRepo}
           onClose={() => setRhsmSettingsRepo(null)}
-          onSaved={() => { setRhsmSettingsRepo(null); loadRepos(); showToast('RHSM ayarları kaydedildi') }}
+          onSaved={() => { setRhsmSettingsRepo(null); loadRepos(); showToast(t('repo_rhsm_saved')) }}
         />
       )}
     </div>

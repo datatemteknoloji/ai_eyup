@@ -2,8 +2,10 @@
 import {
   Server, HardDrive, Network, ShieldCheck, AlertTriangle, CheckCircle2, XCircle,
 } from 'lucide-react'
+import { useT } from '../../i18n/LocaleProvider'
 
 function ClusterCapacity({ cap }: { cap: any }) {
+  const t = useT()
   const cpuPct = cap.cpu_cores && cap.cpu_used_cores != null
     ? (cap.cpu_used_cores / cap.cpu_cores) * 100 : null
   const memPct = cap.memory_gb && cap.memory_used_gb != null
@@ -43,7 +45,7 @@ function ClusterCapacity({ cap }: { cap: any }) {
     <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
         <Donut pct={cpuPct} label="CPU" used={cap.cpu_used_cores} total={cap.cpu_cores} unit="core" />
-        <Donut pct={memPct} label="Bellek" used={cap.memory_used_gb} total={cap.memory_gb} unit="GB" />
+        <Donut pct={memPct} label={t('memory')} used={cap.memory_used_gb} total={cap.memory_gb} unit="GB" />
         <div className="text-xs space-y-1">
           <div className="text-slate-500">Nodes</div>
           <div className="text-lg text-white font-semibold">
@@ -58,7 +60,7 @@ function ClusterCapacity({ cap }: { cap: any }) {
             <span className="text-xs text-slate-500 font-normal ml-1">running</span>
           </div>
           {cap.metrics_available === false && (
-            <div className="text-[10px] text-amber-400/80">metrics.k8s.io yok — request kapasitesi</div>
+            <div className="text-[10px] text-amber-400/80">{t('ocp_metrics_req')}</div>
           )}
         </div>
       </div>
@@ -73,6 +75,7 @@ export default function OcpOverviewPanel({
   overview: any
   onGoMtv?: () => void
 }) {
+  const t = useT()
   const ov = overview
   const nodes = ov.nodes || []
   const scs = ov.storage_classes || []
@@ -88,23 +91,22 @@ export default function OcpOverviewPanel({
       }`}>
         <div className="flex items-center gap-2 mb-2">
           <ShieldCheck size={16} className={ov.migration_ready ? 'text-emerald-400' : 'text-amber-400'} />
-          <h3 className="text-sm font-semibold text-slate-100">VM Taşıma Hazırlığı (MTV)</h3>
+          <h3 className="text-sm font-semibold text-slate-100">{t('ocp_mtv_ready')}</h3>
           {onGoMtv && (
             <button type="button" onClick={onGoMtv} className="ml-auto text-[11px] text-rose-300 hover:underline">
-              Taşıma’ya git
+              {t('ocp_go_mtv')}
             </button>
           )}
         </div>
         {ov.migration_ready ? (
           <p className="text-xs text-emerald-300/90">
-            Küme taşımaya hazır — gerekli operatörler kurulu.
+            {t('ocp_mtv_ok')}
           </p>
         ) : (
           <p className="text-xs text-amber-200/90 flex items-start gap-1.5">
             <AlertTriangle size={14} className="mt-px flex-shrink-0" />
             <span>
-              Eksik: <b>{missing.length ? missing.join(', ') : 'bilinmiyor'}</b>.
-              OperatorHub’dan kurulunca burada güncellenir.
+              {t('ocp_mtv_missing', { list: missing.length ? missing.join(', ') : t('ocp_unknown_missing') })}
             </span>
           </p>
         )}
@@ -129,7 +131,7 @@ export default function OcpOverviewPanel({
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
           <h3 className="text-sm font-semibold text-slate-100 mb-2 flex items-center gap-2">
-            <Server size={16} className="text-sky-400" /> Node’lar
+            <Server size={16} className="text-sky-400" /> {t('ocp_nodes')}
             <span className="text-xs text-slate-500">({nodes.length})</span>
           </h3>
           <div className="space-y-1.5">
@@ -151,7 +153,7 @@ export default function OcpOverviewPanel({
                 n.internal_ip && `InternalIP: ${n.internal_ip}`,
                 n.external_ip && `ExternalIP: ${n.external_ip}`,
                 n.hostname && n.hostname !== n.name && `Hostname: ${n.hostname}`,
-                !n.internal_ip && !n.external_ip && 'IP bilgisi yok',
+                !n.internal_ip && !n.external_ip && t('ocp_ip_none'),
               ].filter(Boolean)
               const tip = tipParts.join('\n')
               return (
@@ -167,16 +169,16 @@ export default function OcpOverviewPanel({
                       className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400 flex-shrink-0 cursor-default"
                       title={tip}
                     >
-                      {(n.roles || []).join('/') || 'worker'}
+                      {(n.roles || []).join('/') || t('ocp_worker')}
                     </span>
                     {/* Hover kart — native title + görünür ipucu */}
                     <div className="pointer-events-none absolute left-2 top-full z-20 mt-1 hidden min-w-[12rem] rounded-lg border border-white/[0.1] bg-cyber-card px-2.5 py-2 text-[11px] text-slate-200 shadow-xl group-hover:block">
                       <div className="font-medium text-slate-100 mb-1">{n.name}</div>
-                      <div className="text-slate-400">{(n.roles || []).join('/') || 'worker'}</div>
+                      <div className="text-slate-400">{(n.roles || []).join('/') || t('ocp_worker')}</div>
                       {n.internal_ip ? (
                         <div className="mt-1 font-mono text-cyan-300/90">IP {n.internal_ip}</div>
                       ) : (
-                        <div className="mt-1 text-slate-500">IP yok</div>
+                        <div className="mt-1 text-slate-500">{t('ocp_no_ip')}</div>
                       )}
                       {n.external_ip && (
                         <div className="font-mono text-slate-400">Ext {n.external_ip}</div>
@@ -192,8 +194,8 @@ export default function OcpOverviewPanel({
                   {(cpuPct != null || memPct != null) && (
                     <div className="grid grid-cols-2 gap-3 mt-2">
                       {[
-                        ['CPU', cpuPct, cpuUsed != null ? `${cpuUsed} / ${n.cpu} çekirdek` : `req %${Math.round(cpuPct || 0)}`],
-                        ['RAM', memPct, n.usage?.memory_gb != null ? `${n.usage.memory_gb} / ${n.memory_gb} GB` : `req %${Math.round(memPct || 0)}`],
+                        ['CPU', cpuPct, cpuUsed != null ? t('ocp_cores_used', { used: cpuUsed, total: n.cpu }) : t('ocp_req_cpu', { n: Math.round(cpuPct || 0) })],
+                        ['Memory', memPct, n.usage?.memory_gb != null ? t('ocp_mem_used', { used: n.usage.memory_gb, total: n.memory_gb }) : t('ocp_req_cpu', { n: Math.round(memPct || 0) })],
                       ].map(([lbl, pct, sub]: any) => (
                         <div key={lbl}>
                           <div className="flex justify-between text-[10px] mb-0.5">
@@ -216,7 +218,7 @@ export default function OcpOverviewPanel({
           </div>
           {ov.kubevirt_vms != null && (
             <p className="text-xs text-slate-500 mt-2">
-              KubeVirt VM: <b className="text-slate-300">{ov.kubevirt_vms}</b>
+              {t('ocp_kubevirt_vm_n', { n: ov.kubevirt_vms })}
             </p>
           )}
         </div>
@@ -224,7 +226,7 @@ export default function OcpOverviewPanel({
         <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-100 mb-2 flex items-center gap-2">
-              <HardDrive size={16} className="text-violet-400" /> Storage Class’lar
+              <HardDrive size={16} className="text-violet-400" /> {t('ocp_sc_list')}
               <span className="text-xs text-slate-500">({scs.length})</span>
             </h3>
             <div className="flex flex-wrap gap-1.5">
@@ -238,20 +240,20 @@ export default function OcpOverviewPanel({
                       : 'border-white/[0.08] bg-cyber-deep text-slate-400'
                   }`}
                 >
-                  {sc.name}{sc.default ? ' (varsayılan)' : ''}
+                  {sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}
                 </span>
               ))}
-              {scs.length === 0 && <span className="text-xs text-slate-600">Tanımlı storage class yok</span>}
+              {scs.length === 0 && <span className="text-xs text-slate-600">{t('ocp_no_sc')}</span>}
             </div>
           </div>
           <div>
             <h3 className="text-sm font-semibold text-slate-100 mb-2 flex items-center gap-2">
-              <Network size={16} className="text-emerald-400" /> Ağ Tanımları (Multus)
+              <Network size={16} className="text-emerald-400" /> {t('ocp_nads')}
             </h3>
             {nads === null || nads === undefined ? (
-              <p className="text-xs text-slate-600">Multus CRD yok veya erişim yok — pod ağı kullanılabilir.</p>
+              <p className="text-xs text-slate-600">{t('ocp_no_multus')}</p>
             ) : nads.length === 0 ? (
-              <p className="text-xs text-slate-600">Ek ağ tanımı yok</p>
+              <p className="text-xs text-slate-600">{t('ocp_no_nad')}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {nads.map((n: any) => (
@@ -269,9 +271,9 @@ export default function OcpOverviewPanel({
           </div>
           {ov.namespaces && (
             <p className="text-xs text-slate-500 pt-1 border-t border-white/[0.06]">
-              Namespace: <b className="text-slate-300">{ov.namespaces.total ?? '—'}</b> toplam
+              {t('ocp_ns_line', { n: ov.namespaces.total ?? '—' })}
               {ov.namespaces.user?.length > 0 && (
-                <> · kullanıcı: {ov.namespaces.user.slice(0, 6).join(', ')}{ov.namespaces.user.length > 6 && '…'}</>
+                <> · {t('ocp_user_ns', { list: ov.namespaces.user.slice(0, 6).join(', ') + (ov.namespaces.user.length > 6 ? '…' : '') })}</>
               )}
             </p>
           )}

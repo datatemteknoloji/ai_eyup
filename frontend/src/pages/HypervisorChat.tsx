@@ -16,6 +16,8 @@ import {
   NlModelUnavailableBanner, NlChatInput,
 } from '../components/nlChatUi'
 import { useChatStickToBottom } from '../lib/chatScroll'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,21 +62,22 @@ interface HypervisorChatProps {
 
 // ── Intent badge ──────────────────────────────────────────────────────────────
 
-const INTENT_LABELS: Record<string, { label: string; color: string }> = {
-  count_hosts:   { label: 'Host sayısı',   color: 'bg-blue-500/20 text-blue-300' },
-  vm_per_host:   { label: 'VM dağılımı',   color: 'bg-sky-500/20 text-sky-300' },
-  capacity:      { label: 'Kapasite',       color: 'bg-amber-500/20 text-amber-300' },
-  compare_vms:   { label: 'Karşılaştırma', color: 'bg-green-500/20 text-green-300' },
-  tools_status:  { label: 'VMware Tools',  color: 'bg-sky-500/20 text-sky-300' },
-  os_filter:     { label: 'OS filtresi',   color: 'bg-rose-500/20 text-rose-300' },
-  powered_off:   { label: 'Kapalı VM',     color: 'bg-red-500/20 text-red-300' },
-  assessment:    { label: 'Değerlendirme', color: 'bg-teal-500/20 text-teal-300' },
-  network:       { label: 'Network',       color: 'bg-indigo-500/20 text-indigo-300' },
-  report:        { label: 'Rapor',         color: 'bg-emerald-500/20 text-emerald-300' },
-  general:       { label: 'Genel',         color: 'bg-slate-500/20 text-slate-300' },
+const INTENT_KEYS: Record<string, { key: TranslationKey | null; fallback: string; color: string }> = {
+  count_hosts:   { key: 'chat_intent_hosts', fallback: 'Host count', color: 'bg-blue-500/20 text-blue-300' },
+  vm_per_host:   { key: 'chat_intent_vm_dist', fallback: 'VM distribution', color: 'bg-sky-500/20 text-sky-300' },
+  capacity:      { key: 'chat_intent_capacity', fallback: 'Capacity', color: 'bg-amber-500/20 text-amber-300' },
+  compare_vms:   { key: 'chat_intent_compare', fallback: 'Comparison', color: 'bg-green-500/20 text-green-300' },
+  tools_status:  { key: null, fallback: 'VMware Tools', color: 'bg-sky-500/20 text-sky-300' },
+  os_filter:     { key: 'chat_intent_os', fallback: 'OS filter', color: 'bg-rose-500/20 text-rose-300' },
+  powered_off:   { key: 'chat_intent_off', fallback: 'Powered-off VM', color: 'bg-red-500/20 text-red-300' },
+  assessment:    { key: 'chat_intent_assess', fallback: 'Assessment', color: 'bg-teal-500/20 text-teal-300' },
+  network:       { key: null, fallback: 'Network', color: 'bg-indigo-500/20 text-indigo-300' },
+  report:        { key: 'chat_intent_report', fallback: 'Report', color: 'bg-emerald-500/20 text-emerald-300' },
+  general:       { key: 'chat_intent_general', fallback: 'General', color: 'bg-slate-500/20 text-slate-300' },
 }
 
 function IntentBadges({ intents, reportType }: { intents?: string[]; reportType?: string }) {
+  const t = useT()
   const items = [...(intents || [])]
   if (reportType && !items.includes(reportType)) items.push('report')
   if (items.length === 0) return null
@@ -86,10 +89,10 @@ function IntentBadges({ intents, reportType }: { intents?: string[]; reportType?
         </span>
       )}
       {items.filter(i => i !== reportType).map(intent => {
-        const cfg = INTENT_LABELS[intent] || { label: intent, color: 'bg-slate-700 text-slate-300' }
+        const cfg = INTENT_KEYS[intent] || { key: null, fallback: intent, color: 'bg-slate-700 text-slate-300' }
         return (
           <span key={intent} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${cfg.color}`}>
-            {cfg.label}
+            {cfg.key ? t(cfg.key) : cfg.fallback}
           </span>
         )
       })}
@@ -108,6 +111,7 @@ interface QuickStats {
 }
 
 function QuickStatsBar() {
+  const t = useT()
   const { data } = useQuery<QuickStats>({
     queryKey: ['hv-quick-stats'],
     queryFn: async () => {
@@ -124,9 +128,9 @@ function QuickStatsBar() {
   const stats = [
     { icon: <Server size={14} />, label: 'Host', value: data.host_count },
     { icon: <Cpu size={14} />, label: 'VM', value: data.vm_count },
-    { icon: <Zap size={14} />, label: 'Çalışan', value: data.vms_powered_on },
-    { icon: <Cpu size={14} />, label: 'Ort. CPU', value: `%${data.avg_cpu_pct?.toFixed(0)}` },
-    { icon: <MemoryStick size={14} />, label: 'Ort. RAM', value: `%${data.avg_mem_pct?.toFixed(0)}` },
+    { icon: <Zap size={14} />, label: t('chat_stat_running'), value: data.vms_powered_on },
+    { icon: <Cpu size={14} />, label: t('chat_stat_avg_cpu'), value: `%${data.avg_cpu_pct?.toFixed(0)}` },
+    { icon: <MemoryStick size={14} />, label: t('chat_stat_avg_mem'), value: `%${data.avg_mem_pct?.toFixed(0)}` },
   ]
 
   return (
@@ -153,6 +157,7 @@ function SuggestionChips({
   reportSuggestions?: string[]
   onSelect: (q: string) => void
 }) {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const all = [...(reportSuggestions || []).slice(0, 4), ...suggestions]
   const shown = expanded ? all : all.slice(0, 6)
@@ -163,7 +168,7 @@ function SuggestionChips({
         <div>
           <div className="flex items-center gap-2 text-xs text-emerald-500 mb-2">
             <BarChart3 size={12} />
-            <span>Rapor soruları</span>
+            <span>{t('chat_report_qs')}</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {reportSuggestions.slice(0, expanded ? undefined : 4).map(s => (
@@ -181,7 +186,7 @@ function SuggestionChips({
       <div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
           <Lightbulb size={12} />
-          <span>Örnek sorular</span>
+          <span>{t('chat_sample_qs')}</span>
         </div>
         <div className="flex flex-wrap gap-2">
           {shown.filter(s => !reportSuggestions?.includes(s)).map(s => (
@@ -199,7 +204,7 @@ function SuggestionChips({
               className="text-xs px-3 py-1.5 rounded-full bg-blue-900/30 text-blue-400 hover:text-blue-300 border border-blue-500/30 flex items-center gap-1 transition-all"
             >
               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              {expanded ? 'Daha az' : `+${all.length - 6} daha`}
+              {expanded ? t('chat_less') : t('chat_more_n', { n: all.length - 6 })}
             </button>
           )}
         </div>
@@ -211,6 +216,8 @@ function SuggestionChips({
 // ── Message bubble ────────────────────────────────────────────────────────────
 
 function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
+  const t = useT()
+  const { locale } = useLocale()
   const isUser = msg.role === 'user'
 
   return (
@@ -264,8 +271,8 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
           {!isUser && msg.content && msg.content.length > 50 && (
             <button
               onClick={() => exportMarkdownToPrintWindow(msg.content, {
-                title: msg.report_title || 'Hypervisor Asistan Yanıtı',
-                subtitle: msg.timestamp.toLocaleString('tr-TR'),
+                title: msg.report_title || t('chat_pdf_hv'),
+                subtitle: msg.timestamp.toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
                 filename: `hypervisor_analiz_${msg.timestamp.toISOString().split('T')[0]}`,
               })}
               className="ml-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-red-400 transition-colors"
@@ -296,6 +303,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
 }
 
 function TypingIndicator() {
+  const t = useT()
   return (
     <div className="flex justify-start mb-4">
       <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mr-2 mt-1">
@@ -304,7 +312,7 @@ function TypingIndicator() {
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3">
         <div className="flex items-center gap-1.5">
           <Loader2 size={14} className="text-blue-400 animate-spin" />
-          <span className="text-xs text-slate-400">Altyapı analiz ediliyor...</span>
+          <span className="text-xs text-slate-400">{t('chat_analyzing_infra')}</span>
         </div>
       </div>
     </div>
@@ -318,6 +326,8 @@ export default function HypervisorChat({
   initialQuestion = null,
   onInitialQuestionUsed,
 }: HypervisorChatProps) {
+  const t = useT()
+  const { locale } = useLocale()
   const queryClient = useQueryClient()
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -358,7 +368,7 @@ export default function HypervisorChat({
           reachable: false,
           models: [],
           default: 'llama3.2:3b',
-          error: e instanceof Error ? e.message : 'bağlantı hatası',
+          error: e instanceof Error ? e.message : t('chat_conn_err'),
         }
       }
     },
@@ -517,7 +527,7 @@ export default function HypervisorChat({
         setMessages(prev => [...prev, {
           id: `tmp-${Date.now() + 1}`,
           role: 'assistant',
-          content: data?.detail || `İstek başarısız oldu (HTTP ${res.status}).`,
+          content: data?.detail || t('chat_req_fail', { n: res.status }),
           error: 'http_error',
           timestamp: new Date(),
         }])
@@ -535,7 +545,7 @@ export default function HypervisorChat({
       setMessages(prev => [...prev, {
         id: `tmp-${Date.now() + 1}`,
         role: 'assistant',
-        content: 'Bağlantı hatası. Lütfen tekrar deneyin.',
+        content: t('chat_retry_hint'),
         error: 'connection_error',
         timestamp: new Date(),
       }])
@@ -567,8 +577,8 @@ export default function HypervisorChat({
               <HardDrive size={18} className="text-white" />
             </div>
             <div>
-              <h1 className="text-white font-semibold text-sm leading-tight">Hypervisor Asistanı</h1>
-              <p className="text-slate-400 text-[11px]">Altyapı sorguları ve rapor üretimi</p>
+              <h1 className="text-white font-semibold text-sm leading-tight">{t('chat_hv_title')}</h1>
+              <p className="text-slate-400 text-[11px]">{t('chat_hv_sub')}</p>
             </div>
           </div>
         )}
@@ -582,14 +592,14 @@ export default function HypervisorChat({
                 created_at: m.timestamp?.toISOString?.() || undefined,
               })),
               {
-                title: 'Sanallaştırma AI Asistan',
-                subtitle: new Date().toLocaleString('tr-TR'),
+                title: t('chat_pdf_virt'),
+                subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
                 filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
               },
             )}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
           >
-            <FileDown size={13} /> Sohbeti PDF
+            <FileDown size={13} /> {t('chat_pdf_chat')}
           </button>
         )}
         <NlModelSelect
@@ -611,9 +621,9 @@ export default function HypervisorChat({
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center mx-auto shadow-xl shadow-blue-500/20">
                 <HardDrive size={24} className="text-white" />
               </div>
-              <h2 className="text-lg font-semibold text-white">Altyapınızı Sorgulayın</h2>
+              <h2 className="text-lg font-semibold text-white">{t('chat_hv_empty_title')}</h2>
               <p className="text-slate-400 text-sm max-w-md mx-auto">
-                ESX hostlar, VM envanteri, kapasite durumu ve raporlar hakkında Türkçe sorular sorun.
+                {t('chat_hv_empty')}
               </p>
             </div>
             {suggestions && (
@@ -665,8 +675,8 @@ export default function HypervisorChat({
         onChange={setInput}
         onSubmit={() => sendQuestion(input)}
         loading={loading}
-        placeholder="Sorunuzu yazın… (ör: Kapasite raporu oluştur, Kaç ESX hostum var?)"
-        hint="Enter ile gönder · Shift+Enter yeni satır · Rapor soruları desteklenir"
+        placeholder={t('chat_hv_ph')}
+        hint={t('chat_hv_hint')}
       />
     </NlChatPanel>
   )
@@ -682,7 +692,7 @@ export default function HypervisorChat({
         onNew={startNewChat}
         onDelete={id => deleteSessionMutation.mutate(id)}
         onClearAll={() => {
-          if (window.confirm('Tüm sohbet geçmişi silinecek. Emin misiniz?')) {
+          if (window.confirm(t('chat_hv_clear_confirm'))) {
             clearAllMutation.mutate()
           }
         }}

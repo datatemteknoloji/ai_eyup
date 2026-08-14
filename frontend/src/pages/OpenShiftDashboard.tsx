@@ -10,6 +10,9 @@ import {
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
 import { useAuth } from '../auth/AuthContext'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
+import OcpVmDetailDrawer from '../components/openshift/OcpVmDetailDrawer'
 
 type DashTab = 'overview' | 'clusters' | 'vms' | 'nodes' | 'projects' | 'workloads' | 'risks' | 'storage' | 'resources'
 
@@ -24,6 +27,7 @@ function parseTab(raw: string | null | undefined): DashTab | null {
 
 /** Bağlantı / token alma alternatifleri — bastion üzerinde `oc` ile. */
 function OpenShiftConnectHelp({ compact = false, align = 'right' }: { compact?: boolean; align?: 'left' | 'right' }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   return (
     <div
@@ -33,7 +37,7 @@ function OpenShiftConnectHelp({ compact = false, align = 'right' }: { compact?: 
     >
       <button
         type="button"
-        aria-label="OpenShift bağlantı yardımı"
+        aria-label={t('ocp_connect_help_aria')}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         onBlur={(e) => {
@@ -52,42 +56,33 @@ function OpenShiftConnectHelp({ compact = false, align = 'right' }: { compact?: 
             align === 'left' ? 'left-0' : 'right-0'
           }`}
         >
-          <div className="text-sm font-medium text-white mb-2">Cluster nasıl bağlanır?</div>
+          <div className="text-sm font-medium text-white mb-2">{t('ocp_how_connect')}</div>
           <div className="space-y-3 text-[11px] text-slate-300 leading-relaxed">
             <div>
-              <div className="text-rose-300/90 font-medium mb-1">1) API Server URL</div>
-              <p className="text-slate-400 mb-1">
-                Konsol adresi (<code className="text-slate-300">console-openshift-console.apps…</code>) değil;
-                Kubernetes API adresi kullanın:
-              </p>
+              <div className="text-rose-300/90 font-medium mb-1">{t('ocp_help_api_title')}</div>
+              <p className="text-slate-400 mb-1">{t('ocp_help_api_body')}</p>
               <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto whitespace-pre-wrap">{`https://api.<cluster>:6443
 # DNS yoksa:
 https://<api-ip>:6443`}</pre>
             </div>
             <div>
-              <div className="text-rose-300/90 font-medium mb-1">2) Önerilen: Service Account token (uzun ömürlü)</div>
-              <p className="text-slate-400 mb-1">Bastion / jump host’ta <code className="text-slate-300">oc</code> ile:</p>
+              <div className="text-rose-300/90 font-medium mb-1">{t('ocp_help_sa_title')}</div>
+              <p className="text-slate-400 mb-1">{t('ocp_help_sa_body')}</p>
               <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto whitespace-pre-wrap">{`oc create sa ainew-viewer -n default
 oc adm policy add-cluster-role-to-user cluster-reader -z ainew-viewer -n default
 oc create token ainew-viewer -n default --duration=8760h`}</pre>
-              <p className="text-slate-500 mt-1">Çıkan token’ı “Bearer Token” alanına yapıştırın. Salt-okuma için <code className="text-slate-400">cluster-reader</code> yeterlidir.</p>
+              <p className="text-slate-500 mt-1">{t('ocp_help_sa_hint')}</p>
             </div>
             <div>
-              <div className="text-rose-300/90 font-medium mb-1">3) Alternatif: kullanıcı token’ı</div>
+              <div className="text-rose-300/90 font-medium mb-1">{t('ocp_help_user_title')}</div>
               <pre className="bg-black/40 rounded-lg px-2.5 py-2 text-[10px] text-cyan-200/90 overflow-x-auto">{`oc login … && oc whoami -t`}</pre>
-              <p className="text-slate-500 mt-1">Kısa ömürlü olabilir; üretim için SA token tercih edin.</p>
+              <p className="text-slate-500 mt-1">{t('ocp_help_user_hint')}</p>
             </div>
             <div>
-              <div className="text-rose-300/90 font-medium mb-1">4) Kullanıcı adı / şifre</div>
-              <p className="text-slate-400">
-                OAuth ile token alınır (<code className="text-slate-300">oc login -u/-p</code> akışı). Bu sunucunun
-                <code className="text-slate-300"> oauth-openshift.apps.…</code> DNS’ini çözmesi ve ingress’e
-                erişmesi gerekir. DNS yoksa token yöntemini kullanın.
-              </p>
+              <div className="text-rose-300/90 font-medium mb-1">{t('ocp_help_cred_title')}</div>
+              <p className="text-slate-400">{t('ocp_help_cred_body')}</p>
             </div>
-            <p className="text-slate-500 border-t border-white/[0.06] pt-2">
-              Sertifika self-signed ise “Sertifika doğrula” kapalı kalsın.
-            </p>
+            <p className="text-slate-500 border-t border-white/[0.06] pt-2">{t('ocp_help_ssl')}</p>
           </div>
         </div>
       )}
@@ -146,16 +141,16 @@ interface TopologyData {
   summary: { routes: number; services: number; deployments: number; pods: number }
 }
 
-function relTime(iso: string | null | undefined): string {
+function relTime(iso: string | null | undefined, tr: (key: TranslationKey, vars?: Record<string, string | number>) => string): string {
   if (!iso) return '—'
-  const t = new Date(iso).getTime()
-  if (Number.isNaN(t)) return '—'
-  const m = Math.floor((Date.now() - t) / 60000)
-  if (m < 1) return 'şimdi'
-  if (m < 60) return `${m}dk önce`
+  const ts = new Date(iso).getTime()
+  if (Number.isNaN(ts)) return '—'
+  const m = Math.floor((Date.now() - ts) / 60000)
+  if (m < 1) return tr('ocp_rel_now')
+  if (m < 60) return tr('ocp_rel_min_ago', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}s önce`
-  return `${Math.floor(h / 24)}g önce`
+  if (h < 24) return tr('ocp_rel_hour_ago', { n: h })
+  return tr('ocp_rel_day_ago', { n: Math.floor(h / 24) })
 }
 
 function statusColor(status?: string) {
@@ -192,12 +187,13 @@ function CapacityBar({ pct, label }: { pct?: number | null; label: string }) {
 function PodDetailDrawer({
   clusterId, namespace, pod, onClose,
 }: { clusterId: number; namespace: string; pod: string; onClose: () => void }) {
+  const t = useT()
   const [prev, setPrev] = useState(false)
   const { data: detail, isLoading } = useQuery({
     queryKey: ['ocp-pod-detail', clusterId, namespace, pod],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}`)
-      if (!r.ok) throw new Error((await r.json()).detail || 'Pod detayı alınamadı')
+      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_pod_detail_fail'))
       return r.json()
     },
   })
@@ -206,7 +202,7 @@ function PodDetailDrawer({
     queryFn: async () => {
       const params = new URLSearchParams({ tail: '400', previous: String(prev) })
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?${params}`)
-      if (!r.ok) throw new Error('Log alınamadı')
+      if (!r.ok) throw new Error(t('ocp_log_fail'))
       return r.json()
     },
   })
@@ -217,12 +213,12 @@ function PodDetailDrawer({
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
           <div>
             <div className="text-white font-medium">{namespace} / {pod}</div>
-            <div className="text-xs text-slate-500">Pod detay · log · olaylar</div>
+            <div className="text-xs text-slate-500">{t('ocp_pod_detail_sub')}</div>
           </div>
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
-          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Yükleniyor…</div>}
+          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('loading')}</div>}
           {detail && (
             <>
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -244,7 +240,7 @@ function PodDetailDrawer({
                         <span className="text-white">{c.name}</span>
                         <span className={statusColor(c.reason || c.state)}>{c.reason || c.state}</span>
                       </div>
-                      <div className="text-slate-500 mt-0.5 truncate">restart {c.restart_count} · {c.image}</div>
+                      <div className="text-slate-500 mt-0.5 truncate">{t('ocp_restart_n', { n: c.restart_count })} · {c.image}</div>
                     </div>
                   ))}
                 </div>
@@ -270,16 +266,16 @@ function PodDetailDrawer({
               <div className="flex items-center gap-2">
                 <label className="text-[11px] text-slate-400 flex items-center gap-1">
                   <input type="checkbox" checked={prev} onChange={e => setPrev(e.target.checked)} />
-                  previous
+                  {t('ocp_previous')}
                 </label>
                 <button type="button" onClick={() => refetchLogs()} className="text-[11px] text-rose-300 flex items-center gap-1">
-                  <RefreshCw size={11} className={logsLoading ? 'animate-spin' : ''} /> Yenile
+                  <RefreshCw size={11} className={logsLoading ? 'animate-spin' : ''} /> {t('refresh_action')}
                 </button>
               </div>
             </div>
             {logs?.error && <div className="text-xs text-amber-400 mb-2">{logs.error}</div>}
             <pre className="bg-black/40 rounded-lg p-3 text-[10px] text-cyan-100/90 overflow-auto max-h-80 whitespace-pre-wrap font-mono">
-              {logsLoading ? '…' : (logs?.logs || '(boş)')}
+              {logsLoading ? '…' : (logs?.logs || t('ocp_empty_paren'))}
             </pre>
           </div>
         </div>
@@ -291,11 +287,12 @@ function PodDetailDrawer({
 function TopologyDrawer({
   clusterId, project, onClose,
 }: { clusterId: number; project: string; onClose: () => void }) {
+  const t = useT()
   const { data, isLoading, error } = useQuery<TopologyData>({
     queryKey: ['openshift-topology', clusterId, project],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/topology?project=${encodeURIComponent(project)}`)
-      if (!r.ok) throw new Error((await r.json()).detail || 'Topology alınamadı')
+      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_topo_fail'))
       return r.json()
     },
   })
@@ -324,8 +321,8 @@ function TopologyDrawer({
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-5">
-          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Canlı topology yükleniyor…</div>}
-          {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : 'Hata'}</div>}
+          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('ocp_topo_loading')}</div>}
+          {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : t('error_generic')}</div>}
           {grouped.map(g => (
             <div key={g.kind}>
               <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">{g.kind} ({g.items.length})</div>
@@ -338,7 +335,7 @@ function TopologyDrawer({
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5 truncate">
                       {n.host || n.node_name || n.ready || ''}
-                      {n.restart_count != null && n.restart_count > 0 ? ` · restart ${n.restart_count}` : ''}
+                      {n.restart_count != null && n.restart_count > 0 ? ` · ${t('ocp_restart_n', { n: n.restart_count })}` : ''}
                     </div>
                   </div>
                 ))}
@@ -347,7 +344,7 @@ function TopologyDrawer({
           ))}
           {data && (data.edges || []).length > 0 && (
             <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">İlişkiler ({(data.edges || []).length})</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">{t('ocp_relations', { n: (data.edges || []).length })}</div>
               <div className="max-h-48 overflow-y-auto space-y-1 text-[11px] font-mono text-slate-400">
                 {(data.edges || []).slice(0, 80).map((e, i) => (
                   <div key={i}>{e.from} —{e.rel}→ {e.to}</div>
@@ -368,159 +365,21 @@ function openVmConsole(clusterId: number, namespace: string, name: string) {
   window.open(url, `ocp-console-${namespace}-${name}`, 'width=1100,height=720')
 }
 
-function VmDetailDrawer({
-  clusterId, namespace, name, onClose, onYaml,
-}: {
-  clusterId: number; namespace: string; name: string
-  onClose: () => void
-  onYaml: (yaml: string) => void
-}) {
-  const { data: detail, isLoading, error } = useQuery({
-    queryKey: ['openshift-vm-detail', clusterId, namespace, name],
-    queryFn: async () => {
-      const r = await fetch(
-        `${API_BASE_URL}/openshift/clusters/${clusterId}/kubevirt/vms/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
-      )
-      if (!r.ok) throw new Error((await r.json()).detail || 'VM detayı alınamadı')
-      return r.json()
-    },
-  })
-
-  const phase = (detail?.phase || detail?.vm_power_state || '').toLowerCase()
-  const canConsole = phase === 'running'
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-2xl h-full bg-cyber-card border-l border-white/[0.08] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
-          <div>
-            <div className="text-white font-medium">{namespace} / {name}</div>
-            <div className="text-xs text-slate-500">KubeVirt VM · proje · worker · PVC/PV</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={!canConsole && !!detail}
-              title={canConsole ? 'Konsol (noVNC)' : 'VM Running olmalı'}
-              className="text-xs text-violet-300 px-2 py-1 rounded border border-violet-500/30 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
-              onClick={() => openVmConsole(clusterId, namespace, name)}
-            >
-              <Monitor size={12} /> Console
-            </button>
-            <button
-              type="button"
-              className="text-xs text-rose-300 px-2 py-1 rounded border border-white/[0.08] hover:bg-white/[0.04]"
-              onClick={async () => {
-                const params = new URLSearchParams({ kind: 'virtualmachines', name, namespace })
-                const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/resource-yaml?${params}`)
-                const d = await r.json()
-                onYaml(d.yaml || d.error || '—')
-              }}
-            >
-              YAML
-            </button>
-            <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
-          </div>
-        </div>
-        <div className="p-5 space-y-4">
-          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Yükleniyor…</div>}
-          {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : 'Hata'}</div>}
-          {detail && (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                {[
-                  ['Phase', detail.phase || detail.vm_power_state],
-                  ['Proje', detail.namespace],
-                  ['Worker', detail.node_name || '—'],
-                  ['CPU', `${detail.cpu_cores ?? detail.vm_cpu_count ?? '—'} core`],
-                  ['Memory', detail.memory_gb != null ? `${detail.memory_gb} GB` : `${detail.vm_memory_mb || '—'} MB`],
-                  ['IP', detail.ip_address || detail.vm_guest_ip || '—'],
-                  ['Guest OS', detail.guest_os || detail.os_type || '—'],
-                  ['Machine', detail.machine_type || '—'],
-                  ['Launcher', detail.launcher_pod || '—'],
-                ].map(([l, v]) => (
-                  <div key={String(l)} className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
-                    <div className="text-slate-500">{l}</div>
-                    <div className={`font-medium truncate ${l === 'Phase' ? statusColor(String(v)) : 'text-white'}`}>{String(v)}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div>
-                <div className="text-xs uppercase text-slate-500 mb-2">Diskler → PVC → PV</div>
-                {(detail.disks || []).length === 0 && <div className="text-xs text-slate-500">Disk yok</div>}
-                <div className="space-y-2">
-                  {(detail.disks || []).map((d: any) => (
-                    <div key={d.name} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs space-y-1">
-                      <div className="flex justify-between gap-2">
-                        <span className="text-white font-medium">{d.name}</span>
-                        <span className="text-slate-500">{d.source || '—'}{d.bus ? ` · ${d.bus}` : ''}</span>
-                      </div>
-                      {d.image && <div className="text-slate-500 truncate">image: {d.image}</div>}
-                      {d.pvc && !d.pvc.error && (
-                        <div className="text-slate-300">
-                          PVC <span className="text-white">{d.pvc.namespace}/{d.pvc.name}</span>
-                          {' · '}<span className={statusColor(d.pvc.phase)}>{d.pvc.phase}</span>
-                          {d.pvc.capacity_gb != null ? ` · ${d.pvc.capacity_gb} GB` : ''}
-                          {d.pvc.storage_class ? ` · ${d.pvc.storage_class}` : ''}
-                        </div>
-                      )}
-                      {d.pv && !d.pv.error && (
-                        <div className="text-slate-400">
-                          PV <span className="text-white">{d.pv.name}</span>
-                          {' · '}<span className={statusColor(d.pv.phase)}>{d.pv.phase}</span>
-                          {d.pv.reclaim ? ` · reclaim ${d.pv.reclaim}` : ''}
-                          {d.pv.capacity_gb != null ? ` · ${d.pv.capacity_gb} GB` : ''}
-                        </div>
-                      )}
-                      {(d.pvc?.error || d.pv?.error) && (
-                        <div className="text-amber-400">{d.pvc?.error || d.pv?.error}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs uppercase text-slate-500 mb-2">Ağ (NIC)</div>
-                {(detail.nics || detail.vm_network_info || []).length === 0 && (
-                  <div className="text-xs text-slate-500">NIC yok</div>
-                )}
-                <div className="space-y-1.5">
-                  {(detail.nics || detail.vm_network_info || []).map((n: any, i: number) => (
-                    <div key={n.name || i} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs flex flex-wrap justify-between gap-2">
-                      <span className="text-white">{n.name || 'nic'}</span>
-                      <span className="text-slate-400">
-                        {n.ip_address || n.ips?.[0]?.address || '—'}
-                        {n.mac ? ` · ${n.mac}` : ''}
-                        {n.binding ? ` · ${n.binding}` : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function ClusterOverviewPanel({ overview }: { overview: any }) {
+  const t = useT()
   if (!overview) return null
   const cap = overview.capacity || {}
   return (
     <div className="mt-4 pt-4 border-t border-white/[0.06] space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-slate-400">
-          Canlı config · Kubernetes <span className="text-white">{overview.version || '—'}</span>
+          {t('ocp_live_config', { v: overview.version || '—' })}
           {overview.migration_ready ? (
-            <span className="ml-2 text-emerald-400">· göç hazır</span>
+            <span className="ml-2 text-emerald-400">· {t('ocp_mig_ready')}</span>
           ) : null}
         </div>
         {overview.migration_missing?.length > 0 && (
-          <div className="text-[11px] text-amber-400">Eksik: {overview.migration_missing.join(', ')}</div>
+          <div className="text-[11px] text-amber-400">{t('ocp_missing', { list: overview.migration_missing.join(', ') })}</div>
         )}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -556,7 +415,7 @@ function ClusterOverviewPanel({ overview }: { overview: any }) {
           <div className="flex flex-wrap gap-1.5">
             {(overview.storage_classes || []).map((sc: any) => (
               <span key={sc.name} className="text-[10px] px-2 py-0.5 rounded border border-white/[0.08] text-slate-300">
-                {sc.name}{sc.default ? ' · default' : ''}
+                {sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}
               </span>
             ))}
           </div>
@@ -564,8 +423,8 @@ function ClusterOverviewPanel({ overview }: { overview: any }) {
       )}
       {overview.namespaces && (
         <div className="text-[11px] text-slate-500">
-          Namespace: {overview.namespaces.total ?? '—'} toplam
-          {overview.namespaces.user?.length != null ? ` · ${overview.namespaces.user.length} kullanıcı projesi` : ''}
+          {t('ocp_ns_total', { n: overview.namespaces.total ?? '—'})}
+          {overview.namespaces.user?.length != null ? ` · ${t('ocp_ns_user', { n: overview.namespaces.user.length })}` : ''}
         </div>
       )}
     </div>
@@ -583,6 +442,7 @@ function EditClusterModal({
   onSave: (data: Record<string, unknown>) => void
   saving?: boolean
 }) {
+  const t = useT()
   const [form, setForm] = useState({
     name: cluster.name,
     api_url: cluster.api_url,
@@ -615,17 +475,17 @@ function EditClusterModal({
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Token / Bağlantı Güncelle</h2>
+          <h2 className="text-lg font-semibold text-white">{t('ocp_edit_token')}</h2>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Adı</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('name')}</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">API URL</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_api_url')}</label>
             <input value={form.api_url} onChange={(e) => setForm({ ...form, api_url: e.target.value })}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
           </div>
@@ -636,32 +496,32 @@ function EditClusterModal({
             </button>
             <button type="button" onClick={() => setAuthMethod('credentials')}
               className={`py-1.5 rounded-md text-sm ${authMethod === 'credentials' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}>
-              Kullanıcı / Şifre
+              {t('ocp_user_pass_short')}
             </button>
           </div>
           {authMethod === 'token' ? (
             <div>
-              <label className="block text-xs text-slate-400 mb-1.5">Yeni Bearer Token <span className="text-slate-600">(boş = mevcut kalır)</span></label>
+              <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_new_token')} <span className="text-slate-600">{t('ocp_token_keep')}</span></label>
               <textarea rows={3} value={form.token} onChange={(e) => setForm({ ...form, token: e.target.value })}
                 className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
             </div>
           ) : (
             <>
-              <input placeholder="Kullanıcı" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })}
+              <input placeholder={t('ocp_username')} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })}
                 className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
-              <input type="password" placeholder="Şifre" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+              <input type="password" placeholder={t('ocp_password_ph')} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
                 className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
             </>
           )}
           <label className="flex items-center gap-2 text-xs text-slate-400">
             <input type="checkbox" checked={form.verify_ssl} onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })} />
-            SSL doğrula
+            {t('ocp_ssl_verify')}
           </label>
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">İptal</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">{t('cancel')}</button>
             <button type="submit" disabled={saving}
               className="flex-1 px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
-              Kaydet
+              {t('save')}
             </button>
           </div>
         </form>
@@ -671,6 +531,7 @@ function EditClusterModal({
 }
 
 function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) {
+  const t = useT()
   const [form, setForm] = useState({ name: '', api_url: '', token: '', username: '', password: '', verify_ssl: false })
   const [authMethod, setAuthMethod] = useState<'token' | 'credentials'>('token')
   const [testing, setTesting] = useState(false)
@@ -699,7 +560,7 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
       const data = await r.json()
       setTestResult({ success: data.success, message: data.message })
     } catch {
-      setTestResult({ success: false, message: 'Bağlantı hatası' })
+      setTestResult({ success: false, message: t('conn_error') })
     } finally {
       setTesting(false)
     }
@@ -717,19 +578,19 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <h2 className="text-lg font-semibold text-white">OpenShift Cluster Ekle</h2>
+            <h2 className="text-lg font-semibold text-white">{t('ocp_add_cluster_title')}</h2>
             <OpenShiftConnectHelp compact />
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Adı *</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_name_req')}</label>
             <input type="text" required value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); setTestResult(null) }}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="Production OCP" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Kimlik Doğrulama Yöntemi</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_auth_method')}</label>
             <div className="grid grid-cols-2 gap-2 p-1 bg-cyber-deep border border-white/[0.06] rounded-lg">
               <button type="button" onClick={() => { setAuthMethod('token'); setTestResult(null) }}
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors ${authMethod === 'token' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'}`}>
@@ -737,43 +598,43 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
               </button>
               <button type="button" onClick={() => { setAuthMethod('credentials'); setTestResult(null) }}
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors ${authMethod === 'credentials' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                Kullanıcı Adı / Şifre
+                {t('ocp_user_pass')}
               </button>
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">API Server URL *</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_api_url_req')}</label>
             <input type="text" required value={form.api_url} onChange={e => { setForm({ ...form, api_url: e.target.value }); setTestResult(null) }}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="https://api.cluster.example.com:6443 veya https://IP:6443" />
-            <p className="text-[11px] text-slate-500 mt-1">Konsol URL’si değil; API :6443. Yardım için üstteki (i) ikonuna bakın.</p>
+            <p className="text-[11px] text-slate-500 mt-1">{t('ocp_api_hint')}</p>
           </div>
           {authMethod === 'token' ? (
             <div>
-              <label className="block text-xs text-slate-400 mb-1.5">Bearer Token *</label>
+              <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_bearer_req')}</label>
               <textarea required rows={3} value={form.token} onChange={e => { setForm({ ...form, token: e.target.value }); setTestResult(null) }}
                 className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50 font-mono" placeholder="oc create token … veya oc whoami -t" />
             </div>
           ) : (
             <>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_username_req')}</label>
                 <input type="text" required value={form.username} onChange={e => { setForm({ ...form, username: e.target.value }); setTestResult(null) }}
                   className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="kubeadmin" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_password')}</label>
                 <input type="password" required value={form.password} onChange={e => { setForm({ ...form, password: e.target.value }); setTestResult(null) }}
                   className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" />
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Kullanıcı adı/şifre, cluster'ın OAuth sunucusu üzerinden ("oc login" ile aynı akış) bir erişim token'ına çevrilir.
+                {t('ocp_oauth_hint')}
               </p>
             </>
           )}
 
           <button type="button" onClick={testConnection} disabled={testing || !canTest}
             className="w-full py-2.5 bg-rose-600/20 text-rose-400 border border-rose-500/30 rounded-lg hover:bg-rose-600/30 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2">
-            {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> Test Ediliyor...</> : 'Bağlantıyı Test Et'}
+            {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> {t('ocp_testing')}</> : t('ocp_test_conn')}
           </button>
 
           {testResult && (
@@ -786,10 +647,10 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           )}
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
             <button type="submit" disabled={!testResult?.success}
               className="flex-1 px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg hover:from-rose-500 hover:to-red-600 disabled:opacity-50 text-sm font-medium">
-              Ekle
+              {t('add')}
             </button>
           </div>
         </form>
@@ -805,6 +666,7 @@ export default function OpenShiftDashboard({
   allowInventoryEdit?: boolean
   initialTab?: DashTab
 }) {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   /** Entegrasyonlar sayfası: bağlantı + cluster + node/kapasite. Envanter: iş yükü/VM/risk. */
@@ -971,7 +833,7 @@ export default function OpenShiftDashboard({
     queryKey: ['openshift-kubevirt-vms', primaryClusterId],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${primaryClusterId}/kubevirt/vms`)
-      if (!r.ok) throw new Error((await r.json()).detail || 'VM listesi alınamadı')
+      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_vm_list_fail'))
       return r.json()
     },
     enabled: !!primaryClusterId && !isIntegration && tab === 'vms',
@@ -1007,7 +869,7 @@ export default function OpenShiftDashboard({
         headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(data),
       })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Ekleme hatası')
+      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_add_fail'))
       return r.json()
     },
     onSuccess: async (created) => {
@@ -1016,7 +878,7 @@ export default function OpenShiftDashboard({
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
       qc.invalidateQueries({ queryKey: ['openshift-health-board'] })
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Ekleme hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('ocp_add_fail')),
   })
 
   const deleteMutation = useMutation({
@@ -1024,7 +886,7 @@ export default function OpenShiftDashboard({
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${id}`, { method: 'DELETE', headers: inventoryHeaders() })
       if (!r.ok) {
         const data = await r.json().catch(() => ({}))
-        throw new Error(data.detail || 'Silme hatası')
+        throw new Error(data.detail || t('ocp_delete_fail'))
       }
     },
     onSuccess: () => {
@@ -1032,7 +894,7 @@ export default function OpenShiftDashboard({
         qc.invalidateQueries({ queryKey: [k] }),
       )
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Silme hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('ocp_delete_fail')),
   })
 
   const updateMutation = useMutation({
@@ -1043,20 +905,20 @@ export default function OpenShiftDashboard({
         body: JSON.stringify(data),
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body.detail || 'Güncelleme hatası')
+      if (!r.ok) throw new Error(body.detail || t('ocp_update_fail'))
       return body
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['openshift-clusters'] })
       setEditCluster(null)
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Güncelleme hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('ocp_update_fail')),
   })
 
   const syncMutation = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${id}/sync?background=true`, { method: 'POST', headers: inventoryHeaders() })
-      if (!r.ok) throw new Error('Sync hatası')
+      if (!r.ok) throw new Error(t('ocp_sync_fail'))
       return r.json()
     },
     onSuccess: () => {
@@ -1067,14 +929,14 @@ export default function OpenShiftDashboard({
         )
       }, 5000)
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Sync hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('ocp_sync_fail')),
   })
 
-  const switchTab = (t: DashTab) => {
-    setTab(t)
+  const switchTab = (next: DashTab) => {
+    setTab(next)
     setPage(1)
-    if (t === 'overview') setSearchParams({}, { replace: true })
-    else setSearchParams({ tab: t }, { replace: true })
+    if (next === 'overview') setSearchParams({}, { replace: true })
+    else setSearchParams({ tab: next }, { replace: true })
   }
 
   if (clustersLoading) {
@@ -1110,18 +972,18 @@ export default function OpenShiftDashboard({
 
   const tabLabels: { id: DashTab; label: string }[] = isIntegration
     ? [
-        { id: 'overview', label: 'Özet' },
-        { id: 'clusters', label: 'Cluster\'lar' },
-        { id: 'nodes', label: 'Node / Kapasite' },
+        { id: 'overview', label: t('ocp_tab_summary') },
+        { id: 'clusters', label: t('ocp_tab_clusters') },
+        { id: 'nodes', label: t('ocp_tab_nodes') },
       ]
     : [
-        { id: 'overview', label: 'Overview' },
-        { id: 'vms', label: 'Virtual Machines' },
-        { id: 'projects', label: 'Projeler' },
-        { id: 'workloads', label: 'Workload\'lar' },
-        { id: 'risks', label: `Riskler${risks.length ? ` (${risks.length})` : ''}` },
-        { id: 'storage', label: 'Storage' },
-        { id: 'resources', label: 'Kaynaklar' },
+        { id: 'overview', label: t('ocp_tab_summary') },
+        { id: 'vms', label: t('nav_virtual_machines') },
+        { id: 'projects', label: t('ocp_projects') },
+        { id: 'workloads', label: t('ocp_tab_workloads') },
+        { id: 'risks', label: risks.length ? t('ocp_tab_risks_n', { n: risks.length }) : t('ocp_tab_risks') },
+        { id: 'storage', label: t('ocp_nav_storage') },
+        { id: 'resources', label: t('ocp_tab_resources') },
       ]
 
   return (
@@ -1147,7 +1009,7 @@ export default function OpenShiftDashboard({
         />
       )}
       {vmView && (
-        <VmDetailDrawer
+        <OcpVmDetailDrawer
           clusterId={vmView.clusterId}
           namespace={vmView.namespace}
           name={vmView.name}
@@ -1171,13 +1033,13 @@ export default function OpenShiftDashboard({
         <div>
           <h1 className="text-xl font-semibold text-white flex items-center gap-2">
             <Boxes className="text-rose-400" size={22} />
-            {isIntegration ? 'OpenShift Entegrasyon' : 'OpenShift Envanter'}
+            {isIntegration ? t('ocp_int_title') : t('ocp_inv_title')}
             <OpenShiftConnectHelp align="left" />
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             {isIntegration
-              ? 'Bağlı kümeler · node / kapasite · bağlantı yönetimi'
-              : 'Proje · workload · VM · risk · storage'}
+              ? t('ocp_int_sub')
+              : t('ocp_inv_sub')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1187,15 +1049,15 @@ export default function OpenShiftDashboard({
                 to="/openshift"
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 border border-white/[0.08] hover:bg-white/[0.04]"
               >
-                Envanter’e git <ChevronRight size={14} />
+                {t('ocp_go_inventory')} <ChevronRight size={14} />
               </Link>
               {canManageClusters ? (
                 <button onClick={() => setShowAddModal(true)}
                   className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium hover:from-rose-500 hover:to-red-600">
-                  <Plus size={16} /> Cluster Ekle
+                  <Plus size={16} /> {t('ocp_add_cluster')}
                 </button>
               ) : (
-                <span className="text-[11px] text-slate-500">Küme ekleme/silme yalnızca admin</span>
+                <span className="text-[11px] text-slate-500">{t('ocp_admin_only')}</span>
               )}
             </>
           ) : (
@@ -1203,7 +1065,7 @@ export default function OpenShiftDashboard({
               to="/integrations/openshift"
               className="text-xs text-slate-500 hover:text-rose-300"
             >
-              Bağlantı yönetimi → Entegrasyonlar
+              {t('ocp_conn_mgmt')}
             </Link>
           )}
         </div>
@@ -1217,7 +1079,7 @@ export default function OpenShiftDashboard({
             ['Master', nodeRoleCounts.master],
             ['Worker', nodeRoleCounts.worker],
             ['Namespace', nsTotal ?? totals?.projects ?? '—'],
-            ['Proje (user)', userProjects ?? '—'],
+            [t('ocp_kpi_user_proj'), userProjects ?? '—'],
           ].map(([label, val]) => (
             <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-cyber-card p-3">
               <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
@@ -1228,7 +1090,7 @@ export default function OpenShiftDashboard({
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
           {[
-            ['Proje', totals?.projects ?? 0],
+            [t('ocp_project'), totals?.projects ?? 0],
             ['Pod', totals?.pods ?? 0],
             ['Risk', totals?.risk_pods ?? risks.length, true],
             ['Deploy', totals?.deployments ?? 0],
@@ -1258,7 +1120,7 @@ export default function OpenShiftDashboard({
         <div className="space-y-4">
           {clusters.length === 0 && (
             <div className="text-center py-12 text-slate-500 text-sm">
-              Henüz cluster yok — “Cluster Ekle” ile bağlayın.
+              {t('ocp_no_cluster_add')}
             </div>
           )}
           {clusters.map(c => {
@@ -1276,12 +1138,12 @@ export default function OpenShiftDashboard({
                     <div className="text-xs text-slate-500 mt-1 truncate">{c.api_url}</div>
                     <div className="text-xs text-slate-500 mt-1">
                       {syncing ? (
-                        <span className="text-cyan-400">{c.sync_job?.message || 'Senkronize…'}</span>
+                        <span className="text-cyan-400">{c.sync_job?.message || t('ocp_syncing')}</span>
                       ) : (
-                        <>Son sync: {relTime(c.last_sync)}</>
+                        <>{t('ocp_last_sync', { time: relTime(c.last_sync, t) })}</>
                       )}
                       {hb && (
-                        <> · {hb.nodes_ready}/{hb.node_count} node ready · {hb.project_count} proje</>
+                        <> · {t('ocp_nodes_projects', { ready: hb.nodes_ready, total: hb.node_count, n: hb.project_count })}</>
                       )}
                     </div>
                   </div>
@@ -1291,7 +1153,7 @@ export default function OpenShiftDashboard({
                       onClick={() => { setExpandedClusterId(c.id); switchTab('clusters') }}
                       className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:text-white"
                     >
-                      Cluster detay
+                      {t('ocp_cluster_detail')}
                     </button>
                     <button
                       type="button"
@@ -1336,7 +1198,7 @@ export default function OpenShiftDashboard({
             )
           })}
           {(totals?.nodes_not_ready || 0) > 0 && (
-            <div className="text-xs text-red-300">NotReady node: {totals?.nodes_not_ready}</div>
+            <div className="text-xs text-red-300">{t('ocp_notready_n', { n: totals?.nodes_not_ready ?? 0 })}</div>
           )}
         </div>
       )}
@@ -1346,9 +1208,9 @@ export default function OpenShiftDashboard({
           {liveOverview && (
             <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-white font-medium">Canlı küme özeti · {liveOverview.version || '—'}</div>
+                <div className="text-sm text-white font-medium">{t('ocp_live_summary', { v: liveOverview.version || '—' })}</div>
                 <div className="text-xs text-slate-500">
-                  {liveOverview.capacity?.metrics_available ? 'metrics.k8s.io aktif' : 'metrics yok (request kapasite kullanılıyor)'}
+                  {liveOverview.capacity?.metrics_available ? t('ocp_metrics_on') : t('ocp_metrics_off')}
                 </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -1379,8 +1241,8 @@ export default function OpenShiftDashboard({
                 <span className={`text-xs uppercase ${statusColor(opHealth.overall)}`}>{opHealth.overall}</span>
               </div>
               <div className="text-xs text-slate-400 mb-2">
-                Sürüm {opHealth.version || '—'}
-                {opHealth.updating ? ` · güncelleniyor: ${opHealth.update_message || ''}` : ''}
+                {t('ocp_version', { v: opHealth.version || '—' })}
+                {opHealth.updating ? ` · ${t('ocp_updating', { msg: opHealth.update_message || '' })}` : ''}
               </div>
               {(opHealth.operators?.degraded || []).length > 0 && (
                 <div className="space-y-1 mb-2">
@@ -1395,7 +1257,7 @@ export default function OpenShiftDashboard({
           {(health?.clusters || []).length === 0 && (
             <div className="text-center py-12 text-slate-500">
               <Boxes size={32} className="mx-auto mb-3 opacity-40" />
-              <p className="text-sm">Henüz cluster yok — <Link to="/integrations/openshift" className="text-rose-300 hover:underline">Entegrasyonlar</Link> üzerinden ekleyin.</p>
+              <p className="text-sm">{t('ocp_no_cluster_int')}</p>
             </div>
           )}
           {(health?.clusters || []).map(c => (
@@ -1408,8 +1270,8 @@ export default function OpenShiftDashboard({
                     <span className="text-xs text-slate-500">{c.version || ''}</span>
                   </div>
                   <div className="text-xs text-slate-500 mt-1">
-                    {c.nodes_ready}/{c.node_count} node ready · {c.project_count} proje · {c.pod_count} pod · risk {c.risk_pod_count}
-                    {' · '}sync {relTime(c.last_sync)}
+                    {t('ocp_cluster_stats', { ready: c.nodes_ready, nodes: c.node_count, proj: c.project_count, pods: c.pod_count, risk: c.risk_pod_count })}
+                    {' · '}{t('ocp_sync_rel', { time: relTime(c.last_sync, t) })}
                   </div>
                 </div>
                 <div className="flex gap-4">
@@ -1425,13 +1287,13 @@ export default function OpenShiftDashboard({
               {c.top_risks?.length > 0 && (
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] text-slate-500 uppercase">Öne çıkan riskler</div>
+                    <div className="text-[11px] text-slate-500 uppercase">{t('ocp_top_risks')}</div>
                     <button
                       type="button"
                       onClick={() => switchTab('risks')}
                       className="text-[11px] text-rose-300 hover:underline"
                     >
-                      Tüm riskler ({c.risk_pod_count}) →
+                      {t('ocp_all_risks', { n: c.risk_pod_count })}
                     </button>
                   </div>
                   <div className="grid sm:grid-cols-2 gap-2">
@@ -1446,7 +1308,7 @@ export default function OpenShiftDashboard({
                           <span className="text-white truncate">{r.project}/{r.name}</span>
                           <span className={statusColor(r.severity)}>{r.status}</span>
                         </div>
-                        <div className="text-slate-500 mt-0.5">restart {r.restart_count} · {r.severity}</div>
+                        <div className="text-slate-500 mt-0.5">{t('ocp_restart_n', { n: r.restart_count })} · {r.severity}</div>
                       </button>
                     ))}
                   </div>
@@ -1458,7 +1320,7 @@ export default function OpenShiftDashboard({
                   onClick={() => switchTab('risks')}
                   className="mt-3 text-xs text-rose-300 hover:underline"
                 >
-                  {c.risk_pod_count} risk pod → Riskler sekmesi
+                  {t('ocp_risk_tab', { n: c.risk_pod_count })}
                 </button>
               )}
             </div>
@@ -1469,7 +1331,7 @@ export default function OpenShiftDashboard({
       {tab === 'clusters' && isIntegration && (
         <div className="space-y-3">
           {clusters.length === 0 && (
-            <div className="text-center py-12 text-slate-500 text-sm">Henüz cluster yok.</div>
+            <div className="text-center py-12 text-slate-500 text-sm">{t('ocp_no_cluster_short')}</div>
           )}
           {clusters.map(c => {
             const syncing = c.sync_job?.status === 'running'
@@ -1492,12 +1354,12 @@ export default function OpenShiftDashboard({
                       </div>
                       <div className="text-xs text-slate-500 truncate">{c.api_url}</div>
                       <div className="text-xs text-slate-500">
-                        Sürüm {c.version || 'bilinmiyor'}
+                        {t('ocp_ver_unknown', { v: c.version || t('ocp_unknown_ver') })}
                         {' · '}
                         {syncing ? (
-                          <span className="text-cyan-400">{c.sync_job?.message || 'Senkronize ediliyor...'}</span>
+                          <span className="text-cyan-400">{c.sync_job?.message || t('ocp_syncing_long')}</span>
                         ) : (
-                          <>Son sync: {relTime(c.last_sync)}</>
+                          <>{t('ocp_last_sync', { time: relTime(c.last_sync, t) })}</>
                         )}
                       </div>
                     </div>
@@ -1510,12 +1372,12 @@ export default function OpenShiftDashboard({
                         expanded ? 'border-rose-500/40 text-rose-300' : 'border-white/[0.08] text-slate-400 hover:text-white'
                       }`}
                     >
-                      {expanded ? 'Detay açık' : 'Detay'}
+                      {expanded ? t('ocp_detail_open') : t('detail')}
                     </button>
                     {allowInventoryEdit && (
                       <button onClick={() => syncMutation.mutate(c.id)} disabled={syncing}
                         className="p-2 rounded-lg bg-white/[0.05] text-slate-300 hover:bg-white/[0.1] disabled:opacity-50"
-                        title="Senkronize et">
+                        title={t('exa_sync_title')}>
                         <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
                       </button>
                     )}
@@ -1525,13 +1387,13 @@ export default function OpenShiftDashboard({
                           type="button"
                           onClick={() => setEditCluster(c)}
                           className="p-2 rounded-lg bg-white/[0.05] text-cyan-300 hover:bg-white/[0.1]"
-                          title="Token / bağlantı güncelle"
+                          title={t('ocp_token_title')}
                         >
                           <KeyRound size={15} />
                         </button>
-                        <button onClick={() => { if (confirm(`'${c.name}' silinsin mi?`)) deleteMutation.mutate(c.id) }}
+                        <button onClick={() => { if (confirm(t('ocp_delete_confirm', { name: c.name }))) deleteMutation.mutate(c.id) }}
                           className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20"
-                          title="Bağlantıyı sil">
+                          title={t('ocp_delete_conn')}>
                           <Trash2 size={15} />
                         </button>
                       </>
@@ -1542,7 +1404,7 @@ export default function OpenShiftDashboard({
                   <>
                     {clusterDetailLoading && detailClusterId === c.id && (
                       <div className="mt-3 text-xs text-slate-400 flex items-center gap-2">
-                        <RefreshCw size={12} className="animate-spin" /> Canlı küme detayı yükleniyor…
+                        <RefreshCw size={12} className="animate-spin" /> {t('ocp_live_detail_loading')}
                       </div>
                     )}
                     {detailClusterId === c.id && (
@@ -1558,15 +1420,15 @@ export default function OpenShiftDashboard({
 
       {tab === 'vms' && !isIntegration && (
         <div className="space-y-3">
-          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          {!primaryClusterId && <div className="text-sm text-slate-500">{t('ocp_add_cluster_first')}</div>}
           {vmsLoading && (
             <div className="text-xs text-slate-400 flex items-center gap-2">
-              <RefreshCw size={12} className="animate-spin" /> KubeVirt VM’ler yükleniyor…
+              <RefreshCw size={12} className="animate-spin" /> {t('ocp_vms_loading')}
             </div>
           )}
           {kubevirtVms && kubevirtVms.installed === false && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-              KubeVirt kurulu değil veya erişilemiyor: {kubevirtVms.message || '—'}
+              {t('ocp_kubevirt_missing', { msg: kubevirtVms.message || '—'})}
             </div>
           )}
           {kubevirtVms?.installed !== false && (
@@ -1575,17 +1437,17 @@ export default function OpenShiftDashboard({
                 <span className="flex items-center gap-1.5">
                   <Monitor size={14} /> {kubevirtVms?.total ?? 0} VirtualMachine
                 </span>
-                <span>Canlı API · tıklayınca PVC/PV detayı</span>
+                <span>{t('ocp_live_api')}</span>
               </div>
               <div className="rounded-xl border border-white/[0.06] overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-white/[0.03] text-xs text-slate-500">
                     <tr>
-                      <th className="text-left px-4 py-2">Ad</th>
-                      <th className="text-left px-4 py-2">Proje</th>
-                      <th className="text-left px-4 py-2">Durum</th>
-                      <th className="text-left px-4 py-2">Worker</th>
-                      <th className="text-left px-4 py-2">CPU / Mem</th>
+                      <th className="text-left px-4 py-2">{t('name')}</th>
+                      <th className="text-left px-4 py-2">{t('ocp_col_project')}</th>
+                      <th className="text-left px-4 py-2">{t('col_status')}</th>
+                      <th className="text-left px-4 py-2">{t('ocp_col_worker')}</th>
+                      <th className="text-left px-4 py-2">{t('ocp_col_cpu_mem')}</th>
                       <th className="text-left px-4 py-2">IP</th>
                       <th className="text-left px-4 py-2"></th>
                     </tr>
@@ -1613,7 +1475,7 @@ export default function OpenShiftDashboard({
                           <button
                             type="button"
                             disabled={(vm.phase || '').toLowerCase() !== 'running'}
-                            title={(vm.phase || '').toLowerCase() === 'running' ? 'Konsol (noVNC)' : 'VM Running olmalı'}
+                            title={(vm.phase || '').toLowerCase() === 'running' ? t('ocp_console_novnc') : t('ocp_vm_must_running')}
                             className="text-xs text-violet-300 disabled:opacity-30 inline-flex items-center gap-1"
                             onClick={(e) => {
                               e.stopPropagation()
@@ -1628,7 +1490,7 @@ export default function OpenShiftDashboard({
                     {!vmsLoading && (kubevirtVms?.vms || []).length === 0 && kubevirtVms?.installed !== false && (
                       <tr>
                         <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
-                          Bu kümede VirtualMachine bulunamadı.
+                          {t('ocp_no_vm')}
                         </td>
                       </tr>
                     )}
@@ -1648,7 +1510,7 @@ export default function OpenShiftDashboard({
               const tip = [
                 n.internal_ip && `InternalIP: ${n.internal_ip}`,
                 n.external_ip && `ExternalIP: ${n.external_ip}`,
-                !n.internal_ip && !n.external_ip && 'IP bilgisi yok — küme sync çalıştırın',
+                !n.internal_ip && !n.external_ip && t('ocp_no_ip_sync'),
               ].filter(Boolean).join('\n')
               return (
                 <div
@@ -1662,7 +1524,7 @@ export default function OpenShiftDashboard({
                     {n.internal_ip || n.ip_address ? (
                       <div className="mt-1 font-mono text-cyan-300/90">IP {n.internal_ip || n.ip_address}</div>
                     ) : (
-                      <div className="mt-1 text-slate-500">IP yok</div>
+                      <div className="mt-1 text-slate-500">{t('ocp_no_ip')}</div>
                     )}
                   </div>
                   <div className="flex items-start justify-between gap-2">
@@ -1670,7 +1532,7 @@ export default function OpenShiftDashboard({
                       <div className="text-white font-medium truncate flex items-center gap-1.5">
                         <Server size={14} className="text-slate-500 shrink-0" /> {n.name}
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5 capitalize">{n.role} · {n.pod_count ?? 0} pod</div>
+                      <div className="text-xs text-slate-500 mt-0.5 capitalize">{n.role} · {t('ocp_n_pod', { n: n.pod_count ?? 0 })}</div>
                     </div>
                     <span className={`text-xs font-medium ${statusColor(n.status)}`}>{n.status}</span>
                   </div>
@@ -1686,8 +1548,8 @@ export default function OpenShiftDashboard({
               )
             })}
           </div>
-          {nodes.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">Node yok — sync çalıştırın.</div>}
-          <p className="text-[11px] text-slate-500">Kapasite çubukları pod resource request toplamına göredir (anlık usage değil).</p>
+          {nodes.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">{t('ocp_no_node')}</div>}
+          <p className="text-[11px] text-slate-500">{t('ocp_cap_hint')}</p>
         </div>
       )}
 
@@ -1696,15 +1558,15 @@ export default function OpenShiftDashboard({
           <input
             value={q}
             onChange={e => { setQ(e.target.value); setPage(1) }}
-            placeholder="Proje ara…"
+            placeholder={t('ocp_search_project')}
             className="w-full max-w-sm bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
           />
           <div className="rounded-xl border border-white/[0.06] overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-white/[0.03] text-slate-500 text-xs">
                 <tr>
-                  <th className="text-left px-4 py-2.5">Proje</th>
-                  <th className="text-left px-4 py-2.5">Durum</th>
+                  <th className="text-left px-4 py-2.5">{t('ocp_col_project')}</th>
+                  <th className="text-left px-4 py-2.5">{t('col_status')}</th>
                   <th className="text-left px-4 py-2.5">Pod</th>
                   <th className="text-left px-4 py-2.5">Deploy</th>
                   <th className="text-left px-4 py-2.5">Route</th>
@@ -1734,7 +1596,7 @@ export default function OpenShiftDashboard({
                   </tr>
                 ))}
                 {projects.length === 0 && (
-                  <tr><td colSpan={6} className="text-center py-8 text-slate-500">Proje bulunamadı</td></tr>
+                  <tr><td colSpan={6} className="text-center py-8 text-slate-500">{t('ocp_no_project')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -1749,7 +1611,7 @@ export default function OpenShiftDashboard({
             <input
               value={q}
               onChange={e => { setQ(e.target.value); setPage(1) }}
-              placeholder="Ad / proje ara…"
+              placeholder={t('ocp_search_wl')}
               className="flex-1 min-w-[12rem] max-w-sm bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
             />
             <select
@@ -1764,10 +1626,10 @@ export default function OpenShiftDashboard({
             <table className="w-full text-sm">
               <thead className="bg-white/[0.03] text-slate-500 text-xs">
                 <tr>
-                  <th className="text-left px-4 py-2.5">Tür</th>
-                  <th className="text-left px-4 py-2.5">Ad</th>
-                  <th className="text-left px-4 py-2.5">Proje</th>
-                  <th className="text-left px-4 py-2.5">Durum</th>
+                  <th className="text-left px-4 py-2.5">{t('ocp_kind')}</th>
+                  <th className="text-left px-4 py-2.5">{t('name')}</th>
+                  <th className="text-left px-4 py-2.5">{t('ocp_col_project')}</th>
+                  <th className="text-left px-4 py-2.5">{t('col_status')}</th>
                   <th className="text-left px-4 py-2.5">Ready</th>
                   <th className="text-left px-4 py-2.5">Restart</th>
                   <th className="text-left px-4 py-2.5">Node / Host</th>
@@ -1786,7 +1648,7 @@ export default function OpenShiftDashboard({
                   </tr>
                 ))}
                 {workloads.length === 0 && (
-                  <tr><td colSpan={7} className="text-center py-8 text-slate-500">Workload bulunamadı</td></tr>
+                  <tr><td colSpan={7} className="text-center py-8 text-slate-500">{t('ocp_no_workload')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -1797,20 +1659,20 @@ export default function OpenShiftDashboard({
 
       {tab === 'risks' && (
         <div className="space-y-2">
-          {risks.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">Riskli pod yok.</div>}
+          {risks.length === 0 && <div className="text-center py-10 text-slate-500 text-sm">{t('ocp_no_risk_pod')}</div>}
           {risks.map(w => (
             <div key={w.id} className={`rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-2 ${
               w.risk_severity === 'critical' ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/30 bg-amber-500/5'
             }`}>
               <div className="min-w-0">
                 <div className="text-white text-sm truncate">{w.project} / {w.name}</div>
-                <div className="text-xs text-slate-500">{w.node_name || '—'} · restart {w.restart_count}</div>
+                <div className="text-xs text-slate-500">{w.node_name || '—'} · {t('ocp_restart_n', { n: w.restart_count })}</div>
               </div>
               <div className="flex items-center gap-3">
                 <span className={`text-xs font-medium ${statusColor(w.status)}`}>{w.status}</span>
                 <span className="text-[10px] uppercase text-slate-400">{w.risk_severity}</span>
                 <button type="button" className="text-xs text-rose-300" onClick={() => setPodView({ clusterId: w.cluster_id, namespace: w.project, pod: w.name })}>
-                  Log / Detay
+                  {t('ocp_log_detail')}
                 </button>
                 <button type="button" className="text-xs text-slate-400" onClick={() => setTopo({ clusterId: w.cluster_id, project: w.project })}>
                   Topology
@@ -1823,7 +1685,7 @@ export default function OpenShiftDashboard({
 
       {tab === 'storage' && (
         <div className="space-y-4">
-          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          {!primaryClusterId && <div className="text-sm text-slate-500">{t('ocp_add_cluster_first')}</div>}
           {storage && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1845,7 +1707,7 @@ export default function OpenShiftDashboard({
                   <tbody className="divide-y divide-white/[0.04]">
                     {(storage.storage_classes || []).map((sc: any) => (
                       <tr key={sc.name}>
-                        <td className="px-4 py-2 text-white">{sc.name}{sc.default ? ' · default' : ''}</td>
+                        <td className="px-4 py-2 text-white">{sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}</td>
                         <td className="px-4 py-2 text-slate-500 text-xs">{sc.provisioner}</td>
                       </tr>
                     ))}
@@ -1853,11 +1715,11 @@ export default function OpenShiftDashboard({
                 </table>
               </div>
               <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">PVC (ilk 40)</div>
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">{t('ocp_pvc_first')}</div>
                 <table className="w-full text-sm">
                   <thead className="text-xs text-slate-500">
                     <tr>
-                      <th className="text-left px-4 py-2">Ad</th>
+                      <th className="text-left px-4 py-2">{t('name')}</th>
                       <th className="text-left px-4 py-2">NS</th>
                       <th className="text-left px-4 py-2">Phase</th>
                       <th className="text-left px-4 py-2">Cap</th>
@@ -1878,11 +1740,11 @@ export default function OpenShiftDashboard({
                 </table>
               </div>
               <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">PersistentVolume (ilk 40)</div>
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-white/[0.06]">{t('ocp_pv_first')}</div>
                 <table className="w-full text-sm">
                   <thead className="text-xs text-slate-500">
                     <tr>
-                      <th className="text-left px-4 py-2">Ad</th>
+                      <th className="text-left px-4 py-2">{t('name')}</th>
                       <th className="text-left px-4 py-2">Phase</th>
                       <th className="text-left px-4 py-2">Cap</th>
                       <th className="text-left px-4 py-2">Claim</th>
@@ -1904,7 +1766,7 @@ export default function OpenShiftDashboard({
                     ))}
                     {(storage.persistent_volumes || []).length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-slate-500 text-sm">PV yok</td>
+                        <td colSpan={5} className="px-4 py-6 text-center text-slate-500 text-sm">{t('ocp_no_pv')}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1917,7 +1779,7 @@ export default function OpenShiftDashboard({
 
       {tab === 'resources' && (
         <div className="space-y-3">
-          {!primaryClusterId && <div className="text-sm text-slate-500">Önce cluster ekleyin.</div>}
+          {!primaryClusterId && <div className="text-sm text-slate-500">{t('ocp_add_cluster_first')}</div>}
           <div className="flex flex-wrap gap-2">
             <select
               value={resKind}
@@ -1931,20 +1793,20 @@ export default function OpenShiftDashboard({
             <input
               value={resNs}
               onChange={e => setResNs(e.target.value)}
-              placeholder="namespace (boş = tüm cluster)"
+              placeholder={t('ocp_ns_placeholder')}
               className="flex-1 min-w-[10rem] max-w-xs bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
             />
           </div>
           <p className="text-[11px] text-slate-500">
-            Namespace boş bırakılırsa cluster genelinde listelenir. Daraltmak için proje adı yazın.
+            {t('ocp_ns_hint')}
           </p>
-          {resLoading && <div className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw size={12} className="animate-spin" /> Yükleniyor…</div>}
+          {resLoading && <div className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw size={12} className="animate-spin" /> {t('loading')}</div>}
           {resources?.error && <div className="text-xs text-amber-400">{resources.error}</div>}
           <div className="rounded-xl border border-white/[0.06] overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-white/[0.03] text-xs text-slate-500">
                 <tr>
-                  <th className="text-left px-4 py-2">Ad</th>
+                  <th className="text-left px-4 py-2">{t('name')}</th>
                   <th className="text-left px-4 py-2">NS</th>
                   <th className="text-left px-4 py-2">Info</th>
                   <th className="text-left px-4 py-2">Age</th>
@@ -1985,16 +1847,17 @@ export default function OpenShiftDashboard({
 }
 
 function Pager({ page, pageSize, total, onChange }: { page: number; pageSize: number; total: number; onChange: (p: number) => void }) {
+  const t = useT()
   const pages = Math.max(1, Math.ceil(total / pageSize))
   if (total <= pageSize) return null
   return (
     <div className="flex items-center justify-between text-xs text-slate-400">
-      <span>{total} kayıt · sayfa {page}/{pages}</span>
+      <span>{t('ocp_pager', { total, page, pages })}</span>
       <div className="flex gap-2">
         <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}
-          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">Önceki</button>
+          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">{t('page_prev')}</button>
         <button type="button" disabled={page >= pages} onClick={() => onChange(page + 1)}
-          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">Sonraki</button>
+          className="px-3 py-1.5 rounded-lg border border-white/[0.06] disabled:opacity-40 hover:bg-white/[0.04]">{t('page_next')}</button>
       </div>
     </div>
   )

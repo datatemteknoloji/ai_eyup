@@ -72,6 +72,9 @@ def _user_dict(u: User) -> dict:
     theme = getattr(u, "theme", None) or "dark"
     if theme not in ("dark", "light"):
         theme = "dark"
+    locale = (getattr(u, "locale", None) or "tr").strip().lower()
+    if locale not in ("tr", "en"):
+        locale = "tr"
     return {
         "id": u.id,
         "username": u.username,
@@ -81,6 +84,7 @@ def _user_dict(u: User) -> dict:
         "is_active": u.is_active,
         "auth_source": getattr(u, "auth_source", None) or "local",
         "theme": theme,
+        "locale": locale,
         "created_at": u.created_at.isoformat() if u.created_at else None,
         "last_login": u.last_login.isoformat() if u.last_login else None,
     }
@@ -346,6 +350,7 @@ def change_own_password(req: PasswordChangeRequest, request: Request,
 
 class PreferencesPatch(BaseModel):
     theme: Optional[str] = None
+    locale: Optional[str] = None
 
 
 @router.patch("/preferences")
@@ -358,6 +363,11 @@ def update_preferences(
         if req.theme not in ("dark", "light"):
             raise HTTPException(status_code=400, detail="theme dark veya light olmalı")
         user.theme = req.theme
+    if req.locale is not None:
+        loc = req.locale.strip().lower()
+        if loc not in ("tr", "en"):
+            raise HTTPException(status_code=400, detail="locale tr veya en olmalı")
+        user.locale = loc
     db.commit()
     db.refresh(user)
     return _user_dict_with_modules(user, db)

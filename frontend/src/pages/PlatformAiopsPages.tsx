@@ -1,6 +1,6 @@
 import React from 'react'
-import type { PlatformKey } from '../config/platformAiops'
-import { PLATFORM_AIOPS_LABEL } from '../config/platformAiops'
+import { PLATFORM_AIOPS_LABEL_KEY, type PlatformKey } from '../config/platformAiops'
+import { useT } from '../i18n/LocaleProvider'
 import OpsCenter from './OpsCenter'
 import VirtOpsCenter from './VirtOpsCenter'
 import OpenShiftOpsCenter from './OpenShiftOpsCenter'
@@ -13,20 +13,21 @@ import WindowsChat from './WindowsChat'
 import HypervisorChat from './HypervisorChat'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 
-const CHAT_HINT: Record<PlatformKey, string> = {
-  linux: 'AI-Ready Linux sunuculara SSH ile bağlanır; OS, proses, disk, servis, log sorularına canlı cevap verir.',
-  windows: 'AI-Ready Windows sunuculara WinRM ile bağlanır; performans, servis, event log, güncelleme sorularına cevap verir.',
-  virt: 'Senkronize vCenter/OLVM verisi (host, VM, cluster, datastore, metrik) üzerinden doğal dilde soru sorabilirsiniz.',
-  exadata: 'Exadata compute/cell’e bağlı Linux node’lar üzerinden doğal dil sorgulama.',
-  openshift: 'Senkronize OpenShift cluster/node/proje/workload verisi üzerinden doğal dilde soru sorabilirsiniz.',
+const CHAT_HINT: Record<PlatformKey, 'chat_hint_linux' | 'chat_hint_windows' | 'chat_hint_virt' | 'chat_hint_exadata' | 'chat_hint_openshift'> = {
+  linux: 'chat_hint_linux',
+  windows: 'chat_hint_windows',
+  virt: 'chat_hint_virt',
+  exadata: 'chat_hint_exadata',
+  openshift: 'chat_hint_openshift',
 }
 
 function PlatformBanner({ platform, hint }: { platform: PlatformKey; hint?: string }) {
+  const t = useT()
   return (
     <div className="px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs text-slate-400">
-      <span className="text-slate-500">Platform:</span>{' '}
-      <span className="font-medium text-slate-200">{PLATFORM_AIOPS_LABEL[platform]}</span>
-      <span className="text-slate-500 ml-2">— {hint || 'doğal dil sorgulama'}</span>
+      <span className="text-slate-500">{t('platform')}:</span>{' '}
+      <span className="font-medium text-slate-200">{t(PLATFORM_AIOPS_LABEL_KEY[platform])}</span>
+      <span className="text-slate-500 ml-2">— {hint || t('ops_nl_hint')}</span>
     </div>
   )
 }
@@ -38,10 +39,11 @@ function PlatformChatShell({
   platform: PlatformKey
   children: React.ReactNode
 }) {
+  const t = useT()
   return (
     <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
       <div className="flex-none px-4 pt-3 pb-2 border-b border-slate-700/50">
-        <PlatformBanner platform={platform} hint={CHAT_HINT[platform]} />
+        <PlatformBanner platform={platform} hint={t(CHAT_HINT[platform])} />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {children}

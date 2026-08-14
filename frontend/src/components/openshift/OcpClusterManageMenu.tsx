@@ -9,6 +9,7 @@ import { API_BASE_URL } from '../../config/api'
 import { inventoryHeaders } from '../../lib/inventoryApi'
 import { useAuth } from '../../auth/AuthContext'
 import type { OcpCluster } from './ocpTypes'
+import { useT } from '../../i18n/LocaleProvider'
 
 type Props = {
   cluster: OcpCluster | undefined
@@ -30,6 +31,7 @@ const emptyForm = (): FormState => ({
 })
 
 export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: Props) {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const qc = useQueryClient()
@@ -64,7 +66,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
         body: JSON.stringify(payload),
       })
       const data = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(data.detail || 'Küme eklenemedi')
+      if (!r.ok) throw new Error(data.detail || t('ocp_cluster_added_fail'))
       return data
     },
     onSuccess: async (created) => {
@@ -83,35 +85,35 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
 
   const updateMut = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
-      if (!cluster?.id) throw new Error('Küme seçili değil')
+      if (!cluster?.id) throw new Error(t('ocp_no_cluster_sel'))
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${cluster.id}`, {
         method: 'PUT',
         headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       })
       const data = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(data.detail || 'Güncelleme başarısız')
+      if (!r.ok) throw new Error(data.detail || t('ocp_updated_fail'))
       return data
     },
     onSuccess: () => {
       invalidate()
       setModal(null)
       setForm(emptyForm())
-      setMsg({ ok: true, text: 'Bağlantı güncellendi' })
+      setMsg({ ok: true, text: t('ocp_update_ok') })
       setTimeout(() => setMsg(null), 2500)
     },
   })
 
   const deleteMut = useMutation({
     mutationFn: async () => {
-      if (!cluster?.id) throw new Error('Küme seçili değil')
+      if (!cluster?.id) throw new Error(t('ocp_no_cluster_sel'))
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${cluster.id}`, {
         method: 'DELETE',
         headers: inventoryHeaders(),
       })
       if (!r.ok) {
         const data = await r.json().catch(() => ({}))
-        throw new Error(data.detail || 'Silme başarısız')
+        throw new Error(data.detail || t('ocp_delete_failed'))
       }
     },
     onSuccess: () => {
@@ -127,7 +129,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
         href="/integrations/openshift"
         className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
       >
-        <Settings2 size={12} /> Entegrasyonlar
+        <Settings2 size={12} /> {t('nav_integrations')}
       </a>
     )
   }
@@ -173,7 +175,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
       }
       await createMut.mutateAsync(payload)
     } catch (err) {
-      setMsg({ ok: false, text: err instanceof Error ? err.message : 'Hata' })
+      setMsg({ ok: false, text: err instanceof Error ? err.message : t('error_generic') })
     } finally {
       setBusy(false)
     }
@@ -197,7 +199,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
       }
       await updateMut.mutateAsync(payload)
     } catch (err) {
-      setMsg({ ok: false, text: err instanceof Error ? err.message : 'Hata' })
+      setMsg({ ok: false, text: err instanceof Error ? err.message : t('error_generic') })
     } finally {
       setBusy(false)
     }
@@ -211,7 +213,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
           onClick={() => setOpen((v) => !v)}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
         >
-          <Settings2 size={12} /> Yönet <ChevronDown size={12} className={open ? 'rotate-180' : ''} />
+          <Settings2 size={12} /> {t('ocp_manage')} <ChevronDown size={12} className={open ? 'rotate-180' : ''} />
         </button>
         {open && (
           <div className="absolute right-0 mt-1 w-52 rounded-lg border border-white/[0.08] bg-cyber-card shadow-xl z-40 py-1 text-xs">
@@ -220,7 +222,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
               onClick={openCreate}
               className="w-full px-3 py-2 text-left text-slate-200 hover:bg-white/[0.06] inline-flex items-center gap-2"
             >
-              <Plus size={12} className="text-rose-400" /> Yeni küme
+              <Plus size={12} className="text-rose-400" /> {t('ocp_new_cluster')}
             </button>
             <button
               type="button"
@@ -228,19 +230,19 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
               onClick={openToken}
               className="w-full px-3 py-2 text-left text-slate-200 hover:bg-white/[0.06] inline-flex items-center gap-2 disabled:opacity-40"
             >
-              <KeyRound size={12} className="text-cyan-400" /> Token güncelle
+              <KeyRound size={12} className="text-cyan-400" /> {t('ocp_update_token')}
             </button>
             <button
               type="button"
               disabled={!cluster || deleteMut.isPending}
               onClick={() => {
                 if (!cluster) return
-                if (!window.confirm(`'${cluster.name}' bağlantısı silinsin mi?`)) return
+                if (!window.confirm(t('ocp_delete_cluster_confirm', { name: cluster.name }))) return
                 deleteMut.mutate()
               }}
               className="w-full px-3 py-2 text-left text-red-300 hover:bg-red-500/10 inline-flex items-center gap-2 disabled:opacity-40"
             >
-              <Trash2 size={12} /> Bağlantıyı sil
+              <Trash2 size={12} /> {t('ocp_delete_link')}
             </button>
           </div>
         )}
@@ -255,7 +257,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
           <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
             <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
               <h2 className="text-sm font-semibold text-white">
-                {modal === 'create' ? 'Yeni OpenShift kümesi' : 'Bağlantı / Token güncelle'}
+                {modal === 'create' ? t('ocp_new_ocp') : t('ocp_update_conn')}
               </h2>
               <button type="button" onClick={() => setModal(null)} className="text-slate-400 hover:text-white">
                 <X size={18} />
@@ -263,7 +265,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
             </div>
             <form onSubmit={modal === 'create' ? submitCreate : submitToken} className="p-5 space-y-3">
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Ad</label>
+                <label className="block text-[11px] text-slate-400 mb-1">{t('name')}</label>
                 <input
                   required={modal === 'create'}
                   value={form.name}
@@ -272,7 +274,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                 />
               </div>
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">API URL</label>
+                <label className="block text-[11px] text-slate-400 mb-1">{t('ocp_api_url')}</label>
                 <input
                   required={modal === 'create'}
                   value={form.api_url}
@@ -294,13 +296,13 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                   onClick={() => setAuthMethod('credentials')}
                   className={`py-1.5 rounded-md text-xs ${authMethod === 'credentials' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}
                 >
-                  Kullanıcı / Şifre
+                  {t('ocp_user_pass_short')}
                 </button>
               </div>
               {authMethod === 'token' ? (
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">
-                    Bearer Token {modal === 'token' && <span className="text-slate-600">(boş = mevcut kalır)</span>}
+                    Bearer Token {modal === 'token' && <span className="text-slate-600">{t('ocp_token_keep')}</span>}
                   </label>
                   <textarea
                     required={modal === 'create'}
@@ -314,7 +316,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                 <>
                   <input
                     required={modal === 'create'}
-                    placeholder="Kullanıcı"
+                    placeholder={t('ocp_username')}
                     value={form.username}
                     onChange={(e) => setForm({ ...form, username: e.target.value })}
                     className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
@@ -322,7 +324,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                   <input
                     required={modal === 'create'}
                     type="password"
-                    placeholder="Şifre"
+                    placeholder={t('ocp_password_ph')}
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white"
@@ -335,7 +337,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                   checked={form.verify_ssl}
                   onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })}
                 />
-                SSL doğrula
+                {t('ocp_ssl_verify')}
               </label>
               {msg && (
                 <div className={`text-xs flex items-center gap-1.5 ${msg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -344,7 +346,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
               )}
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => setModal(null)} className="flex-1 py-2 rounded-lg bg-white/[0.07] text-sm text-white">
-                  İptal
+                  {t('cancel')}
                 </button>
                 <button
                   type="submit"
@@ -352,7 +354,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
                   className="flex-1 py-2 rounded-lg bg-rose-600 text-sm text-white font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
                 >
                   {busy && <RefreshCw size={12} className="animate-spin" />}
-                  {modal === 'create' ? 'Ekle' : 'Kaydet'}
+                  {modal === 'create' ? t('add') : t('save')}
                 </button>
               </div>
             </form>

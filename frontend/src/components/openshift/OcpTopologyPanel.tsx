@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Network, RefreshCw, Layers, ExternalLink, Search, X, Boxes, Globe, Server } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
+import { useT } from '../../i18n/LocaleProvider'
 
 const KIND_META: Record<string, { short: string; ring: string; text: string }> = {
   deployment: { short: 'D', ring: 'ring-sky-500/60', text: 'text-sky-300' },
@@ -29,6 +30,7 @@ export default function OcpTopologyPanel({
   project: string
   onPickProject?: () => void
 }) {
+  const t = useT()
   const [sel, setSel] = useState<any>(null)
   const [q, setQ] = useState('')
 
@@ -74,11 +76,11 @@ export default function OcpTopologyPanel({
   if (!project) {
     return (
       <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-8 text-center text-sm text-amber-100/90">
-        Topoloji için üstten bir <b>Proje</b> seçin
+        {t('ocp_need_project_topo')}
         {onPickProject && (
           <>
-            {' '}veya{' '}
-            <button type="button" onClick={onPickProject} className="underline">Projeler</button>
+            {' '}{t('ocp_or')}{' '}
+            <button type="button" onClick={onPickProject} className="underline">{t('ocp_projects')}</button>
           </>
         )}
         .
@@ -103,7 +105,7 @@ export default function OcpTopologyPanel({
         >
           <span className={`text-sm font-bold ${m.text}`}>{m.short}</span>
           {n.host && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-cyber-card ring-2 ring-cyan-500/60 grid place-items-center" title="Route host">
+            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-cyber-card ring-2 ring-cyan-500/60 grid place-items-center" title={t('ocp_route_host')}>
               <ExternalLink size={10} className="text-cyan-300" />
             </span>
           )}
@@ -127,7 +129,7 @@ export default function OcpTopologyPanel({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Network size={16} className="text-cyan-400" />
-          <h2 className="text-sm font-medium text-white">Topoloji</h2>
+          <h2 className="text-sm font-medium text-white">{t('ocp_nav_topology')}</h2>
           <span className="text-xs text-slate-500 font-mono">{project}</span>
           {data?.summary && (
             <span className="text-[11px] text-slate-600">
@@ -140,7 +142,7 @@ export default function OcpTopologyPanel({
           onClick={() => refetch()}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
         </button>
       </div>
 
@@ -148,17 +150,17 @@ export default function OcpTopologyPanel({
         <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
         <input
           className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600"
-          placeholder="iş yükü ara…"
+          placeholder={t('ocp_search_workload')}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
 
-      {isLoading && <div className="text-sm text-slate-500">Yükleniyor…</div>}
-      {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : 'Hata'}</div>}
+      {isLoading && <div className="text-sm text-slate-500">{t('loading')}</div>}
+      {error && <div className="text-sm text-red-400">{error instanceof Error ? error.message : t('error_generic')}</div>}
 
       {!isLoading && nodes.length === 0 && (
-        <div className="text-sm text-slate-500 py-10 text-center">Bu projede topoloji düğümü yok</div>
+        <div className="text-sm text-slate-500 py-10 text-center">{t('ocp_no_topo')}</div>
       )}
 
       {nodes.length > 0 && (
@@ -187,7 +189,7 @@ export default function OcpTopologyPanel({
             {!sel ? (
               <div className="p-6 text-center">
                 <Network size={32} className="mx-auto mb-2 text-slate-700" />
-                <p className="text-xs text-slate-500">Ayrıntı için bir düğüm seçin</p>
+                <p className="text-xs text-slate-500">{t('ocp_pick_node')}</p>
               </div>
             ) : (
               <div>
@@ -202,8 +204,8 @@ export default function OcpTopologyPanel({
                 </div>
                 <div className="p-3 space-y-3 text-xs max-h-[26rem] overflow-y-auto">
                   {[
-                    ['Tür', sel.kind],
-                    ['Durum', sel.status || '—'],
+                    [t('ocp_kind'), sel.kind],
+                    [t('col_status'), sel.status || '—'],
                     ['Host', sel.host || '—'],
                     ['Node', sel.node_name || '—'],
                     ['Ready', sel.ready != null ? String(sel.ready) : '—'],
@@ -216,10 +218,10 @@ export default function OcpTopologyPanel({
                   ))}
                   <div>
                     <p className="text-[11px] font-medium text-slate-400 mb-1 flex items-center gap-1.5">
-                      <Boxes size={14} className="text-emerald-400" /> Giden ({related.out.length})
+                      <Boxes size={14} className="text-emerald-400" /> {t('ocp_outgoing', { n: related.out.length })}
                     </p>
                     <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-2.5 py-1.5 space-y-1">
-                      {related.out.length === 0 && <p className="text-[11px] text-slate-600 py-1">yok</p>}
+                      {related.out.length === 0 && <p className="text-[11px] text-slate-600 py-1">{t('ocp_none_lower')}</p>}
                       {related.out.map((e: any, i: number) => (
                         <div key={i} className="text-[11px] text-slate-300">
                           —{e.rel}→ <span className="font-mono">{e.node?.name || e.to}</span>
@@ -230,10 +232,10 @@ export default function OcpTopologyPanel({
                   </div>
                   <div>
                     <p className="text-[11px] font-medium text-slate-400 mb-1 flex items-center gap-1.5">
-                      <Server size={14} className="text-sky-400" /> Gelen ({related.inn.length})
+                      <Server size={14} className="text-sky-400" /> {t('ocp_incoming', { n: related.inn.length })}
                     </p>
                     <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-2.5 py-1.5 space-y-1">
-                      {related.inn.length === 0 && <p className="text-[11px] text-slate-600 py-1">yok</p>}
+                      {related.inn.length === 0 && <p className="text-[11px] text-slate-600 py-1">{t('ocp_none_lower')}</p>}
                       {related.inn.map((e: any, i: number) => (
                         <div key={i} className="text-[11px] text-slate-300">
                           <span className="font-mono">{e.node?.name || e.from}</span> —{e.rel}→

@@ -8,18 +8,20 @@ import {
   Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun,
+  KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
+import { useLocale } from '../i18n/LocaleProvider'
 import {
   buildPlatformAiopsChildren,
-  PLATFORM_AIOPS_LABEL,
+  PLATFORM_AIOPS_LABEL_KEY,
   aiopsTotalBadge,
 } from '../config/platformAiops'
 
 // ── Şifre Değiştir Modal ──────────────────────────────────────────────────────
 function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const { t } = useLocale()
   const [pw, setPw] = useState('')
   const [pw2, setPw2] = useState('')
   const [saving, setSaving] = useState(false)
@@ -28,8 +30,8 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (pw.length < 4) { setError('En az 4 karakter giriniz'); return }
-    if (pw !== pw2) { setError('Şifreler eşleşmiyor'); return }
+    if (pw.length < 4) { setError(t('pw_min')); return }
+    if (pw !== pw2) { setError(t('pw_mismatch')); return }
     setSaving(true); setError(null)
     try {
       const r = await fetch(`${API_BASE_URL}/auth/change-password`, {
@@ -39,7 +41,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       })
       if (!r.ok) {
         const err = await r.json().catch(() => ({}))
-        throw new Error(err.detail ?? 'Hata oluştu')
+        throw new Error(err.detail ?? t('pw_error'))
       }
       setDone(true)
     } catch (e: any) { setError(e.message) }
@@ -51,7 +53,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/60">
           <h2 className="text-base font-semibold text-white flex items-center gap-2">
-            <KeyRound size={16} className="text-amber-400" /> Şifremi Değiştir
+            <KeyRound size={16} className="text-amber-400" /> {t('change_password')}
           </h2>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
             <X size={18} />
@@ -62,25 +64,25 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
             <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
               <Check size={24} className="text-green-400" />
             </div>
-            <p className="text-white font-medium">Şifre güncellendi</p>
-            <p className="text-slate-400 text-sm">Bir sonraki girişte yeni şifrenizi kullanın.</p>
+            <p className="text-white font-medium">{t('pw_updated')}</p>
+            <p className="text-slate-400 text-sm">{t('pw_updated_hint')}</p>
             <button onClick={onClose}
               className="w-full py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm transition-colors mt-2">
-              Kapat
+              {t('close')}
             </button>
           </div>
         ) : (
           <form onSubmit={submit} className="p-6 space-y-4">
             <div>
-              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Yeni Şifre</label>
+              <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('pw_new')}</label>
               <input value={pw} onChange={e => setPw(e.target.value)} type="password"
-                placeholder="En az 4 karakter" required autoFocus
+                placeholder={t('pw_placeholder')} required autoFocus
                 className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Yeni Şifre (Tekrar)</label>
+              <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('pw_new_again')}</label>
               <input value={pw2} onChange={e => setPw2(e.target.value)} type="password"
-                placeholder="Aynı şifreyi tekrar girin" required
+                placeholder={t('pw_repeat_placeholder')} required
                 className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
             </div>
             {error && (
@@ -91,12 +93,12 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={onClose}
                 className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm transition-colors">
-                İptal
+                {t('cancel')}
               </button>
               <button type="submit" disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-sm disabled:opacity-60 transition-colors">
                 {saving ? <RefreshCw size={13} className="animate-spin" /> : <KeyRound size={13} />}
-                {saving ? '…' : 'Değiştir'}
+                {saving ? '…' : t('pw_submit')}
               </button>
             </div>
           </form>
@@ -164,6 +166,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, logout, hasModule } = useAuth()
   const isAdmin = user?.role === 'admin' || !!user?.is_admin
   const { theme, toggleTheme } = useTheme()
+  const { t, locale, setLocale } = useLocale()
   const { appName, logoUrl, version } = useBranding()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -229,101 +232,89 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       return { ...prev, [key]: !current }
     })
 
-  const linuxAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('linux', opsSummary))
-  const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary))
-  const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary))
-  const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary))
+  const linuxAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('linux', opsSummary, t))
+  const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary, t))
+  const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary, t))
+  const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary, t))
 
   const menuItems: MenuItem[] = [
-    // ── Genel dashboard (admin / çok modüllü özet) ────────────────────────
-    { type: 'link', path: '/dashboard', name: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-    // ── Üst düzey yönetici özeti — tüm ortamlar tek ekranda ───────────────
+    { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} /> },
     {
-      type: 'group', key: 'executive', name: 'Yönetici Ekranı', icon: <Crown size={18} />,
+      type: 'group', key: 'executive', name: t('nav_executive'), icon: <Crown size={18} />,
       moduleIds: ['executive', 'ai_automation'],
       children: [
-        { type: 'link', path: '/executive', name: 'Özet', icon: <LayoutDashboard size={15} />, moduleId: 'executive' },
-        { type: 'link', path: '/chat', name: 'Tüm Altyapı Analizi', icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
+        { type: 'link', path: '/executive', name: t('nav_executive_summary'), icon: <LayoutDashboard size={15} />, moduleId: 'executive' },
+        { type: 'link', path: '/chat', name: t('nav_unified_chat'), icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
       ],
     },
-
-    // ── Linux ─────────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'linux', name: 'Linux Yönetimi', icon: <Server size={18} />, moduleId: 'linux',
+      type: 'group', key: 'linux', name: t('nav_linux'), icon: <Server size={18} />, moduleId: 'linux',
       children: [
-        { type: 'link', path: '/linux/dashboard', name: 'Dashboard',          icon: <LayoutDashboard size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/servers',       name: 'Linux Sunucular',  icon: <Monitor size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/metrics',       name: 'Canlı Metrikler',  icon: <Activity size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/packages',      name: 'Paket & Yama',     icon: <Package size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/system-update', name: 'Sistem Güncelle',  icon: <RefreshCw size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/repositories',  name: 'Local Repo',       icon: <Database size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/ansible',       name: 'Ansible/AWX',      icon: <Zap size={15} />, moduleId: 'linux' },
-        { type: 'link', path: '/linux/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/linux/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/servers', name: t('nav_linux_servers'), icon: <Monitor size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/metrics', name: t('nav_live_metrics'), icon: <Activity size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/packages', name: t('nav_packages'), icon: <Package size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/system-update', name: t('nav_system_update'), icon: <RefreshCw size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/repositories', name: t('nav_local_repo'), icon: <Database size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/ansible', name: t('nav_ansible_awx'), icon: <Zap size={15} />, moduleId: 'linux' },
+        { type: 'link', path: '/linux/reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} />, moduleId: 'linux' },
         {
-          type: 'subgroup', key: 'linux-aiops', name: PLATFORM_AIOPS_LABEL.linux, icon: <Brain size={15} />,
+          type: 'subgroup', key: 'linux-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.linux), icon: <Brain size={15} />,
           moduleId: 'linux',
           badge: aiopsTotalBadge(opsSummary),
           children: linuxAiopsLinks,
         },
       ],
     },
-
-    // ── Windows ───────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'windows', name: 'Windows Yönetimi', icon: <Shield size={18} />, moduleId: 'windows',
+      type: 'group', key: 'windows', name: t('nav_windows'), icon: <Shield size={18} />, moduleId: 'windows',
       children: [
-        { type: 'link', path: '/windows/dashboard', name: 'Dashboard',           icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/windows',         name: 'Windows Sunucular', icon: <Monitor size={15} /> },
-        { type: 'link', path: '/windows/live-metrics', name: 'Canlı Metrikler', icon: <Activity size={15} /> },
-        { type: 'link', path: '/windows/events',  name: 'Event Log',         icon: <ClipboardList size={15} /> },
-        { type: 'link', path: '/windows/updates', name: 'Windows Update',    icon: <RefreshCw size={15} /> },
-        { type: 'link', path: '/windows/ansible', name: 'Ansible/AWX',       icon: <Zap size={15} /> },
-        { type: 'link', path: '/windows/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} /> },
+        { type: 'link', path: '/windows/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/windows', name: t('nav_windows_servers'), icon: <Monitor size={15} /> },
+        { type: 'link', path: '/windows/live-metrics', name: t('nav_live_metrics'), icon: <Activity size={15} /> },
+        { type: 'link', path: '/windows/events', name: t('nav_event_log'), icon: <ClipboardList size={15} /> },
+        { type: 'link', path: '/windows/updates', name: t('nav_windows_update'), icon: <RefreshCw size={15} /> },
+        { type: 'link', path: '/windows/ansible', name: t('nav_ansible_awx'), icon: <Zap size={15} /> },
+        { type: 'link', path: '/windows/reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
-          type: 'subgroup', key: 'windows-aiops', name: PLATFORM_AIOPS_LABEL.windows, icon: <Brain size={15} />,
+          type: 'subgroup', key: 'windows-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.windows), icon: <Brain size={15} />,
           moduleId: 'windows',
           badge: aiopsTotalBadge(windowsOpsSummary),
           children: windowsAiopsLinks,
         },
       ],
     },
-
-    // ── Virtualization ────────────────────────────────────────────────────
     {
-      type: 'group', key: 'virt', name: 'Sanallaştırma', icon: <Cloud size={18} />, moduleId: 'virtualization',
+      type: 'group', key: 'virt', name: t('nav_virt'), icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
-        { type: 'link', path: '/hypervisors', name: 'Dashboard',          icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/infra-reports', name: 'Altyapı Raporları',  icon: <BarChart3 size={15} /> },
+        { type: 'link', path: '/hypervisors', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/infra-reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
-          type: 'subgroup', key: 'virt-aiops', name: PLATFORM_AIOPS_LABEL.virt, icon: <Brain size={15} />,
+          type: 'subgroup', key: 'virt-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.virt), icon: <Brain size={15} />,
           moduleId: 'virtualization',
           badge: aiopsTotalBadge(virtOpsSummary),
           children: virtAiopsLinks,
         },
       ],
     },
-
-    // ── Exadata ───────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'exadata', name: 'Exadata', icon: <Layers size={18} />, moduleId: 'exadata',
+      type: 'group', key: 'exadata', name: t('nav_exadata'), icon: <Layers size={18} />, moduleId: 'exadata',
       children: [
-        { type: 'link', path: '/exadata', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/exadata/reports', name: 'Altyapı Raporları', icon: <BarChart3 size={15} /> },
+        { type: 'link', path: '/exadata', name: t('nav_inventory'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/exadata/reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
-          type: 'subgroup', key: 'exadata-aiops', name: PLATFORM_AIOPS_LABEL.exadata, icon: <Brain size={15} />,
+          type: 'subgroup', key: 'exadata-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.exadata), icon: <Brain size={15} />,
           moduleId: 'exadata',
           badge: aiopsTotalBadge(exadataOpsSummary),
           children: exadataAiopsLinks,
         },
       ],
     },
-
-    // ── OpenShift ─────────────────────────────────────────────────────────
     {
-      type: 'group', key: 'openshift', name: 'OpenShift', icon: <Boxes size={18} />, moduleId: 'openshift',
+      type: 'group', key: 'openshift', name: t('nav_openshift'), icon: <Boxes size={18} />, moduleId: 'openshift',
       children: [
         {
-          type: 'link', path: '/openshift/ops', name: 'Komuta Merkezi', icon: <Zap size={15} />,
+          type: 'link', path: '/openshift/ops', name: t('nav_command_center'), icon: <Zap size={15} />,
           badge: () => {
             const n = openshiftOpsSummary?.critical ?? 0
             if (n <= 0) return null
@@ -334,10 +325,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             )
           },
         },
-        { type: 'link', path: '/openshift', name: 'Envanter', icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/openshift/vms', name: 'Virtual Machines', icon: <Monitor size={15} /> },
+        { type: 'link', path: '/openshift', name: t('nav_inventory'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/openshift/vms', name: t('nav_virtual_machines'), icon: <Monitor size={15} /> },
         {
-          type: 'link', path: '/openshift/events', name: 'Events', icon: <ClipboardList size={15} />,
+          type: 'link', path: '/openshift/events', name: t('nav_events'), icon: <ClipboardList size={15} />,
           badge: () => {
             const n = openshiftOpsSummary?.warning ?? 0
             if (n <= 0) return null
@@ -349,7 +340,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           },
         },
         {
-          type: 'link', path: '/openshift/incidents', name: 'Incidents', icon: <AlertTriangle size={15} />,
+          type: 'link', path: '/openshift/incidents', name: t('nav_incidents'), icon: <AlertTriangle size={15} />,
           badge: () => {
             const n = openshiftOpsSummary?.open_incidents ?? 0
             if (n <= 0) return null
@@ -360,40 +351,34 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             )
           },
         },
-        { type: 'link', path: '/openshift/chat', name: 'Asistan', icon: <Brain size={15} /> },
+        { type: 'link', path: '/openshift/chat', name: t('nav_assistant'), icon: <Brain size={15} /> },
       ],
     },
-
-    // ── Level 1 Operations ────────────────────────────────────────────────
     {
-      type: 'group', key: 'level1', name: 'İşletim Level 1', icon: <Wrench size={18} />, moduleId: 'level1',
+      type: 'group', key: 'level1', name: t('nav_level1'), icon: <Wrench size={18} />, moduleId: 'level1',
       children: [
-        { type: 'link', path: '/level1', name: 'Operasyon Merkezi', icon: <Wrench size={15} /> },
-        { type: 'link', path: '/level1/jobs', name: 'İşler', icon: <ClipboardList size={15} /> },
-        { type: 'link', path: '/level1/audit', name: 'Denetim', icon: <ScrollText size={15} />, adminOnly: true },
-        { type: 'link', path: '/level1/settings', name: 'Ayarlar', icon: <Settings size={15} />, adminOnly: true },
+        { type: 'link', path: '/level1', name: t('nav_ops_center'), icon: <Wrench size={15} /> },
+        { type: 'link', path: '/level1/jobs', name: t('nav_jobs'), icon: <ClipboardList size={15} /> },
+        { type: 'link', path: '/level1/audit', name: t('nav_audit'), icon: <ScrollText size={15} />, adminOnly: true },
+        { type: 'link', path: '/level1/settings', name: t('nav_settings'), icon: <Settings size={15} />, adminOnly: true },
       ],
     },
-
-    // ── Integrations ──────────────────────────────────────────────────────
     {
-      type: 'group', key: 'integrations', name: 'Entegrasyonlar', icon: <FileUp size={18} />, moduleId: 'integrations',
+      type: 'group', key: 'integrations', name: t('nav_integrations'), icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
-        { type: 'link', path: '/integrations', name: 'Envanter Merkezi', icon: <Database size={15} /> },
-        { type: 'link', path: '/integrations/ucmdb', name: 'uCMDB Entegrasyon', icon: <FileUp size={15} /> },
-        { type: 'link', path: '/integrations/hypervisors', name: 'vCenter / OLVM', icon: <Cloud size={15} /> },
-        { type: 'link', path: '/integrations/physical-hosts', name: 'Fiziksel Hostlar', icon: <Server size={15} /> },
-        { type: 'link', path: '/integrations/exadata', name: 'Exadata Envanter', icon: <Layers size={15} /> },
-        { type: 'link', path: '/integrations/openshift', name: 'OpenShift Envanter', icon: <Boxes size={15} /> },
+        { type: 'link', path: '/integrations', name: t('nav_inventory_hub'), icon: <Database size={15} /> },
+        { type: 'link', path: '/integrations/ucmdb', name: t('nav_ucmdb'), icon: <FileUp size={15} /> },
+        { type: 'link', path: '/integrations/hypervisors', name: t('nav_vcenter_olvm'), icon: <Cloud size={15} /> },
+        { type: 'link', path: '/integrations/physical-hosts', name: t('nav_physical_hosts'), icon: <Server size={15} /> },
+        { type: 'link', path: '/integrations/exadata', name: t('nav_exadata_inventory'), icon: <Layers size={15} /> },
+        { type: 'link', path: '/integrations/openshift', name: t('nav_openshift_inventory'), icon: <Boxes size={15} /> },
       ],
     },
-
-    // ── System ────────────────────────────────────────────────────────────
-    { type: 'link', path: '/applications', name: 'Uygulamalar', icon: <Package size={18} />, moduleId: 'applications' },
-    { type: 'link', path: '/knowledge-base', name: 'Bilgi Bankası', icon: <Brain size={18} />, moduleId: 'knowledge' },
-    { type: 'link', path: '/audit',    name: 'Audit Log',          icon: <ScrollText size={18} /> },
-    { type: 'link', path: '/users',    name: 'Kullanıcı Yönetimi', icon: <Users size={18} /> },
-    { type: 'link', path: '/settings', name: 'Ayarlar',            icon: <Settings size={18} /> },
+    { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
+    { type: 'link', path: '/knowledge-base', name: t('nav_knowledge'), icon: <Brain size={18} />, moduleId: 'knowledge' },
+    { type: 'link', path: '/audit', name: t('nav_audit_log'), icon: <ScrollText size={18} /> },
+    { type: 'link', path: '/users', name: t('nav_users'), icon: <Users size={18} /> },
+    { type: 'link', path: '/settings', name: t('nav_settings'), icon: <Settings size={18} /> },
   ]
 
   // Flat link list for page title
@@ -408,7 +393,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return []
   })
 
-  const pageTitle = allLinks.find(l => isActive(l.path))?.name || 'Dashboard'
+  const pageTitle = allLinks.find(l => isActive(l.path))?.name || t('nav_dashboard')
 
   const renderLinkChild = (child: LinkChild, indent = false) => {
     const childActive = isActive(child.path)
@@ -652,7 +637,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               >
                 {sidebarOpen && (
                   <div className="text-right leading-tight hidden sm:block">
-                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user?.full_name || user?.username || 'Kullanıcı'}</div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user?.full_name || user?.username || t('user_fallback')}</div>
                     <div className="text-[10px] uppercase" style={{ color: 'var(--text-muted)' }}>{user?.role || ''}</div>
                   </div>
                 )}
@@ -680,14 +665,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-                      {theme === 'dark' ? 'Açık tema' : 'Koyu tema'}
+                      {theme === 'dark' ? t('theme_light') : t('theme_dark')}
+                    </button>
+                    <button
+                      onClick={() => { setLocale(locale === 'tr' ? 'en' : 'tr') }}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Languages size={14} />
+                      {locale === 'tr' ? t('language_en') : t('language_tr')}
                     </button>
                     <button
                       onClick={() => { setUserMenuOpen(false); setShowChangePassword(true) }}
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
                       style={{ color: 'var(--text-secondary)' }}
                     >
-                      <KeyRound size={14} /> Şifremi Değiştir
+                      <KeyRound size={14} /> {t('change_password')}
                     </button>
                     {user?.role === 'admin' && (
                       <Link
@@ -696,7 +689,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
                         style={{ color: 'var(--text-secondary)' }}
                       >
-                        <Settings size={14} /> Ayarlar
+                        <Settings size={14} /> {t('nav_settings')}
                       </Link>
                     )}
                     <div className="border-t my-1" style={{ borderColor: 'var(--border)' }} />
@@ -704,7 +697,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       onClick={logout}
                       className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10"
                     >
-                      <LogOut size={14} /> Çıkış Yap
+                      <LogOut size={14} /> {t('logout')}
                     </button>
                   </div>
                 </>

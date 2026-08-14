@@ -8,10 +8,11 @@ import {
   Activity, BellOff, RefreshCw, ScanSearch, ShieldAlert, Siren, AlertTriangle, CheckCircle2,
 } from 'lucide-react'
 import {
-  PLATFORM_AIOPS_LABEL,
+  PLATFORM_AIOPS_LABEL_KEY,
   PLATFORM_AIOPS_PREFIX,
   type PlatformKey,
 } from '../../config/platformAiops'
+import { useT } from '../../i18n/LocaleProvider'
 
 export function OpsPlatformBanner({
   platform,
@@ -20,12 +21,13 @@ export function OpsPlatformBanner({
   platform: PlatformKey
   hint?: string
 }) {
+  const t = useT()
   return (
     <div className="mb-0 px-4 py-2 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-strong)] text-sm text-[var(--text-secondary)]">
-      <span className="text-[var(--text-muted)]">Platform:</span>{' '}
-      <span className="font-medium text-[var(--text-primary)]">{PLATFORM_AIOPS_LABEL[platform]}</span>
+      <span className="text-[var(--text-muted)]">{t('platform')}:</span>{' '}
+      <span className="font-medium text-[var(--text-primary)]">{t(PLATFORM_AIOPS_LABEL_KEY[platform])}</span>
       <span className="text-[var(--text-muted)] ml-2">
-        — {hint || 'Komuta Merkezi · kendi kaynaklarından izleme'}
+        — {hint || t('ops_banner_hint')}
       </span>
     </div>
   )
@@ -34,12 +36,13 @@ export function OpsPlatformBanner({
 export function OpsHealthRing({
   score,
   label,
-  subtitle = 'Sistem Sağlığı',
+  subtitle,
 }: {
   score: number
   label: string
   subtitle?: string
 }) {
+  const t = useT()
   const color =
     score >= 90 ? '#4ade80' : score >= 75 ? '#60a5fa' : score >= 55 ? '#facc15' : score >= 35 ? '#fb923c' : '#f87171'
   const r = 22
@@ -69,7 +72,7 @@ export function OpsHealthRing({
       </div>
       <div>
         <div className="text-sm font-semibold text-[var(--text-primary)]">{label}</div>
-        <div className="text-xs text-[var(--text-muted)] mt-0.5">{subtitle}</div>
+        <div className="text-xs text-[var(--text-muted)] mt-0.5">{subtitle || t('ops_health')}</div>
       </div>
     </div>
   )
@@ -140,6 +143,7 @@ export function OpsRefreshCountdown({
   onRefresh: () => void
   interval?: number
 }) {
+  const t = useT()
   const [remaining, setRemaining] = useState(interval)
   const startRef = useRef(Date.now())
 
@@ -168,7 +172,7 @@ export function OpsRefreshCountdown({
         onRefresh()
       }}
       className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-slate-500 transition-colors group"
-      title="Şimdi yenile"
+      title={t('ops_refresh_now')}
     >
       <div className="relative w-5 h-5">
         <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
@@ -192,19 +196,20 @@ export function OpsRefreshCountdown({
 }
 
 export function OpsBottomNav({ platform }: { platform: PlatformKey }) {
+  const t = useT()
   const base = PLATFORM_AIOPS_PREFIX[platform]
   const items = platform === 'openshift'
     ? [
-        { to: `${base}/events`, icon: <Activity size={13} />, label: 'Events' },
-        { to: `${base}/incidents`, icon: <Siren size={13} />, label: 'Incidents' },
-        { to: `${base}?tab=risks`, icon: <BellOff size={13} />, label: 'Riskler' },
+        { to: `${base}/events`, icon: <Activity size={13} />, label: t('nav_events') },
+        { to: `${base}/incidents`, icon: <Siren size={13} />, label: t('nav_incidents') },
+        { to: `${base}?tab=risks`, icon: <BellOff size={13} />, label: t('ops_nav_risks') },
         { to: `${base}/vms`, icon: <ScanSearch size={13} />, label: 'VMs' },
       ]
     : [
-        { to: `${base}/events`, icon: <Activity size={13} />, label: 'Events' },
-        { to: `${base}/incidents`, icon: <Siren size={13} />, label: 'Incidents' },
+        { to: `${base}/events`, icon: <Activity size={13} />, label: t('nav_events') },
+        { to: `${base}/incidents`, icon: <Siren size={13} />, label: t('nav_incidents') },
         { to: `${base}/analysis?tab=baseline`, icon: <BellOff size={13} />, label: 'Baseline' },
-        { to: `${base}/analysis?tab=rca`, icon: <ScanSearch size={13} />, label: 'Kök Neden' },
+        { to: `${base}/analysis?tab=rca`, icon: <ScanSearch size={13} />, label: t('ops_nav_rca') },
       ]
   return (
     <div className="grid grid-cols-4 gap-2 pt-4 border-t border-slate-800/60">
@@ -246,7 +251,7 @@ export function OpsShell({
   children,
   sideRail,
   loading,
-  loadingLabel = 'Alarm durumu yükleniyor…',
+  loadingLabel,
 }: {
   platform: PlatformKey
   health?: { score: number; label: string } | null
@@ -260,12 +265,13 @@ export function OpsShell({
   loading?: boolean
   loadingLabel?: string
 }) {
+  const t = useT()
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[280px]">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 rounded-full border-2 border-t-cyan-400 border-r-transparent animate-spin mx-auto" />
-          <p className="text-slate-400 text-sm">{loadingLabel}</p>
+          <p className="text-slate-400 text-sm">{loadingLabel || t('ops_loading')}</p>
         </div>
       </div>
     )
@@ -289,7 +295,7 @@ export function OpsShell({
           <div className="flex gap-2 sm:gap-3">
             <OpsKpiChip
               value={kpi.critical}
-              label="Kritik"
+              label={t('status_critical')}
               tone="critical"
               icon={<ShieldAlert size={10} />}
               onClick={kpi.onCriticalClick}
@@ -297,7 +303,7 @@ export function OpsShell({
             />
             <OpsKpiChip
               value={kpi.warning}
-              label="Uyarı"
+              label={t('status_warning')}
               tone="warning"
               icon={<AlertTriangle size={10} />}
               onClick={kpi.onWarningClick}

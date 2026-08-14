@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { useBranding } from '../branding/BrandingContext'
 import { API_BASE_URL } from '../config/api'
+import { useLocale } from '../i18n/LocaleProvider'
 
 type Step = 'credentials' | 'mfa' | 'enroll'
 
 const Login: React.FC = () => {
   const { login, completeMfaLogin } = useAuth()
   const { appName, logoUrl, version } = useBranding()
+  const { t, locale, setLocale } = useLocale()
   const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -40,7 +42,7 @@ const Login: React.FC = () => {
           })
           if (!r.ok) {
             const err = await r.json().catch(() => ({}))
-            throw new Error(err.detail || 'MFA kayıt başlatılamadı')
+            throw new Error(err.detail || t('login_mfa_start_failed'))
           }
           const data = await r.json()
           setMfaToken(data.mfa_token || result.mfa_token)
@@ -54,7 +56,7 @@ const Login: React.FC = () => {
         await finish()
       }
     } catch (err: any) {
-      setError(err?.message || 'Giriş başarısız')
+      setError(err?.message || t('login_failed'))
     } finally {
       setBusy(false)
     }
@@ -68,7 +70,7 @@ const Login: React.FC = () => {
       await completeMfaLogin(mfaToken, code.trim(), step === 'enroll')
       await finish()
     } catch (err: any) {
-      setError(err?.message || 'MFA doğrulama başarısız')
+      setError(err?.message || t('login_mfa_failed'))
     } finally {
       setBusy(false)
     }
@@ -95,7 +97,7 @@ const Login: React.FC = () => {
         {step === 'credentials' ? (
           <form onSubmit={submitCreds}
             className="bg-slate-800 border border-white/[0.06] rounded-2xl p-6 space-y-4 shadow-2xl">
-            <h1 className="text-lg font-semibold text-white text-center">Giriş Yap</h1>
+            <h1 className="text-lg font-semibold text-white text-center">{t('login_title')}</h1>
 
             {error && (
               <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
@@ -104,7 +106,7 @@ const Login: React.FC = () => {
             )}
 
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Kullanıcı Adı</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('login_username')}</label>
               <input
                 autoFocus
                 value={username}
@@ -115,7 +117,7 @@ const Login: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Parola</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('login_password')}</label>
               <input
                 type="password"
                 value={password}
@@ -130,18 +132,18 @@ const Login: React.FC = () => {
               disabled={busy || !username || !password}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 text-sm transition-colors flex items-center justify-center gap-2"
             >
-              {busy ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Giriş yapılıyor...</> : 'Giriş Yap'}
+              {busy ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> {t('login_submitting')}</> : t('login_submit')}
             </button>
           </form>
         ) : (
           <form onSubmit={submitMfa}
             className="bg-slate-800 border border-white/[0.06] rounded-2xl p-6 space-y-4 shadow-2xl">
             <h1 className="text-lg font-semibold text-white text-center">
-              {step === 'enroll' ? 'MFA Kaydı' : 'MFA Doğrulama'}
+              {step === 'enroll' ? t('login_mfa_enroll') : t('login_mfa_verify')}
             </h1>
             {step === 'enroll' && (
               <div className="text-xs text-slate-400 space-y-2">
-                <p>Authenticator uygulamanıza şu secret’ı ekleyin:</p>
+                <p>{t('login_mfa_secret_hint')}</p>
                 <p className="font-mono text-amber-200 break-all bg-cyber-deep rounded-lg px-2 py-2">{secret}</p>
                 {otpauthUrl && (
                   <p className="break-all text-slate-500">otpauth: {otpauthUrl}</p>
@@ -154,7 +156,7 @@ const Login: React.FC = () => {
               </div>
             )}
             <div>
-              <label className="block text-xs text-slate-400 mb-1">6 haneli kod</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('login_mfa_code')}</label>
               <input
                 autoFocus
                 value={code}
@@ -169,19 +171,28 @@ const Login: React.FC = () => {
               disabled={busy || code.trim().length < 6}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-700 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 text-sm"
             >
-              {busy ? 'Doğrulanıyor…' : 'Doğrula'}
+              {busy ? t('login_mfa_verifying') : t('login_mfa_confirm')}
             </button>
             <button
               type="button"
               onClick={() => { setStep('credentials'); setCode(''); setError('') }}
               className="w-full text-xs text-slate-400 hover:text-white"
             >
-              Geri
+              {t('login_back')}
             </button>
           </form>
         )}
 
-        <p className="text-center text-xs text-slate-600 mt-4">
+        <div className="flex items-center justify-center gap-2 mt-4">
+          <button
+            type="button"
+            onClick={() => setLocale(locale === 'tr' ? 'en' : 'tr')}
+            className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-lg border border-white/[0.06]"
+          >
+            {locale === 'tr' ? 'EN' : 'TR'}
+          </button>
+        </div>
+        <p className="text-center text-xs text-slate-600 mt-2">
           {appName}{version ? ` v${version}` : ''} · © 2026
         </p>
       </div>

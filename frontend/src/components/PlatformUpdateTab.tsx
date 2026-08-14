@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
 
 interface PlatformCapability {
   enabled: boolean
@@ -52,12 +53,12 @@ function fmtBytes(n?: number) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
 
-async function readError(res: Response) {
+async function readError(res: Response, fallback: string) {
   try {
     const j = await res.json()
     return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail || j)
   } catch {
-    return res.statusText || 'İstek başarısız'
+    return res.statusText || fallback
   }
 }
 
@@ -66,7 +67,8 @@ const UpgradeOverlay: React.FC<{
   onDone: () => void
   onFail: (msg: string) => void
 }> = ({ expectedVersion, onDone, onFail }) => {
-  const [msg, setMsg] = useState('Güncelleme sürüyor — servisler yeniden başlatılıyor…')
+  const t = useT()
+  const [msg, setMsg] = useState(t('pu_overlay_running'))
   const [elapsed, setElapsed] = useState(0)
   const started = useRef(Date.now())
 
@@ -83,41 +85,42 @@ const UpgradeOverlay: React.FC<{
             const v = String(data.version || '').replace(/^[vV]/, '')
             const expect = expectedVersion.replace(/^[vV]/, '')
             if (v && (v === expect || v.startsWith(expect))) {
-              setMsg(`Tamamlandı: v${v}`)
+              setMsg(t('pu_overlay_done', { v }))
               setTimeout(() => onDone(), 800)
               return
             }
-            setMsg(`Bekleniyor… şu an v${v || '?'} (hedef v${expect})`)
+            setMsg(t('pu_overlay_wait', { cur: v || '?', expect }))
           } else {
-            setMsg('Backend yeniden başlıyor…')
+            setMsg(t('pu_overlay_restart'))
           }
         } catch {
-          setMsg('Bağlantı kesildi — güncelleme devam ediyor olabilir…')
+          setMsg(t('pu_overlay_disc'))
         }
         await new Promise(r => setTimeout(r, 3000))
         if (Date.now() - started.current > 15 * 60 * 1000) {
-          onFail('Zaman aşımı: 15 dk içinde yeni sürüm görünmedi. Sunucuda logları kontrol edin.')
+          onFail(t('pu_overlay_timeout'))
           return
         }
       }
     }
     poll()
     return () => { cancelled = true; clearInterval(tick) }
-  }, [expectedVersion, onDone, onFail])
+  }, [expectedVersion, onDone, onFail, t])
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md">
       <div className="bg-cyber-card border border-white/[0.08] rounded-2xl p-8 max-w-md w-full mx-4 text-center shadow-2xl">
         <div className="w-12 h-12 mx-auto mb-4 rounded-full border-2 border-blue-500/40 border-t-blue-400 animate-spin" />
-        <h3 className="text-lg font-semibold text-white mb-2">Platform güncelleniyor</h3>
+        <h3 className="text-lg font-semibold text-white mb-2">{t('pu_overlay_title')}</h3>
         <p className="text-sm text-slate-300 mb-1">{msg}</p>
-        <p className="text-xs text-slate-500">Geçen süre: {elapsed}s — sayfayı kapatmayın</p>
+        <p className="text-xs text-slate-500">{t('pu_overlay_elapsed', { n: elapsed })}</p>
       </div>
     </div>
   )
 }
 
 export const PlatformUpdateTab: React.FC = () => {
+  const t = useT()
   const [file, setFile] = useState<File | null>(null)
   const [prepared, setPrepared] = useState<PreparedInfo | null>(null)
   const [confirmVer, setConfirmVer] = useState('')
@@ -128,7 +131,7 @@ export const PlatformUpdateTab: React.FC = () => {
     queryKey: ['platform-update-status'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/platform-update/status`)
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     refetchInterval: (q) => (q.state.data?.job?.state === 'running' ? 3000 : 15000),
@@ -140,7 +143,7 @@ export const PlatformUpdateTab: React.FC = () => {
       const r = await fetch(`${API_BASE_URL}/platform-update/packages`)
       if (!r.ok) {
         if (r.status === 400) return { packages: [] }
-        throw new Error(await readError(r))
+        throw new Error(await readError(r, t('pu_req_fail')))
       }
       return r.json()
     },
@@ -149,11 +152,11 @@ export const PlatformUpdateTab: React.FC = () => {
 
   const uploadMut = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error('Dosya seçin')
+      if (!file) throw new Error(t('pu_pick_file'))
       const fd = new FormData()
       fd.append('file', file)
       const r = await fetch(`${API_BASE_URL}/platform-update/upload`, { method: 'POST', body: fd })
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     onSuccess: () => {
@@ -162,7 +165,7 @@ export const PlatformUpdateTab: React.FC = () => {
       refetchStatus()
       setErr(null)
     },
-    onError: (e) => setErr(e instanceof Error ? e.message : 'Yükleme hatası'),
+    onError: (e) => setErr(e instanceof Error ? e.message : t('pu_upload_err')),
   })
 
   const prepareMut = useMutation({
@@ -172,7 +175,7 @@ export const PlatformUpdateTab: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, allow_downgrade: false }),
       })
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json() as Promise<PreparedInfo>
     },
     onSuccess: (d) => {
@@ -180,12 +183,12 @@ export const PlatformUpdateTab: React.FC = () => {
       setConfirmVer('')
       setErr(null)
     },
-    onError: (e) => setErr(e instanceof Error ? e.message : 'Hazırlama hatası'),
+    onError: (e) => setErr(e instanceof Error ? e.message : t('pu_prepare_err')),
   })
 
   const applyMut = useMutation({
     mutationFn: async () => {
-      if (!prepared) throw new Error('Önce paket hazırlayın')
+      if (!prepared) throw new Error(t('pu_apply_first'))
       const r = await fetch(`${API_BASE_URL}/platform-update/apply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -194,14 +197,14 @@ export const PlatformUpdateTab: React.FC = () => {
           confirm_version: confirmVer.trim(),
         }),
       })
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     onSuccess: (d) => {
       sessionStorage.setItem('ainew_upgrade_expect', d.new_version || prepared?.target_version || '')
       setOverlayVer(d.new_version || prepared?.target_version || '')
     },
-    onError: (e) => setErr(e instanceof Error ? e.message : 'Uygulama hatası'),
+    onError: (e) => setErr(e instanceof Error ? e.message : t('pu_apply_err')),
   })
 
   const rollbackMut = useMutation({
@@ -211,14 +214,14 @@ export const PlatformUpdateTab: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true }),
       })
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     onSuccess: () => {
       setOverlayVer(status?.current_version || 'rollback')
       sessionStorage.setItem('ainew_upgrade_expect', 'rollback')
     },
-    onError: (e) => setErr(e instanceof Error ? e.message : 'Geri alma hatası'),
+    onError: (e) => setErr(e instanceof Error ? e.message : t('pu_rollback_err')),
   })
 
   useEffect(() => {
@@ -247,11 +250,11 @@ export const PlatformUpdateTab: React.FC = () => {
         />
       )}
 
-      <h2 className="text-xl font-semibold text-white mb-2">Platform Güncelleme</h2>
+      <h2 className="text-xl font-semibold text-white mb-2">{t('set_tab_update')}</h2>
       <p className="text-slate-400 text-sm mb-6">
-        Dağıtım paketini (.tar.gz) yükleyin veya sunucuda{' '}
+        {t('pu_subtitle_pre')}{' '}
         <code className="text-slate-300 bg-cyber-deep px-1 rounded">$DATA_DIR/updates/</code>
-        {' '}klasörüne bırakın; ardından GUI üzerinden uygulayın.
+        {' '}{t('pu_subtitle_post')}
       </p>
 
       {err && (
@@ -260,30 +263,29 @@ export const PlatformUpdateTab: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
-          <p className="text-slate-400 text-sm">Mevcut sürüm</p>
+          <p className="text-slate-400 text-sm">{t('pu_current')}</p>
           <p className="text-2xl font-semibold text-white">v{status?.current_version || '—'}</p>
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
-          <p className="text-slate-400 text-sm">Kurulum</p>
+          <p className="text-slate-400 text-sm">{t('pu_install')}</p>
           <p className="text-sm text-white font-mono break-all">{status?.install_dir || '—'}</p>
         </div>
         <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4">
-          <p className="text-slate-400 text-sm">Özellik</p>
+          <p className="text-slate-400 text-sm">{t('pu_feature')}</p>
           <p className={`text-lg font-semibold ${status?.enabled ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {status?.enabled ? 'Aktif' : 'Kapalı'}
+            {status?.enabled ? t('pu_feat_on') : t('pu_feat_off')}
           </p>
         </div>
       </div>
 
       {!status?.enabled && (
         <div className="mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-100 text-sm space-y-1">
-          <p className="font-medium">Platform güncelleme bu kurulumda kullanılamıyor.</p>
+          <p className="font-medium">{t('pu_unavailable')}</p>
           {(status?.reasons || []).map((r) => (
             <p key={r} className="text-amber-200/80 text-xs">• {r}</p>
           ))}
           <p className="text-xs text-amber-200/70 mt-2">
-            Prod paket kurulumunda <code>PLATFORM_UPDATE_ENABLED=true</code> ve docker.sock mount gerekir.
-            Geliştirme (volume-mount) ortamında CLI <code>update-rhel.sh</code> kullanın.
+            {t('pu_prod_hint')}
           </p>
         </div>
       )}
@@ -291,7 +293,7 @@ export const PlatformUpdateTab: React.FC = () => {
       {status?.job && status.job.state && status.job.state !== 'idle' && (
         <div className="mb-6 p-4 rounded-xl border border-white/[0.08] bg-cyber-deep/40">
           <p className="text-sm text-slate-300 mb-1">
-            Son işlem: <span className="text-white font-medium">{status.job.action || '—'}</span>
+            {t('pu_last_job')} <span className="text-white font-medium">{status.job.action || '—'}</span>
             {' · '}
             <span className={
               status.job.state === 'success' ? 'text-emerald-400'
@@ -314,9 +316,9 @@ export const PlatformUpdateTab: React.FC = () => {
       {status?.enabled && (
         <>
           <div className="mb-6 p-5 bg-cyber-deep/70 rounded-xl border border-emerald-500/30">
-            <h3 className="text-base font-semibold text-white mb-1">Paket yükle</h3>
+            <h3 className="text-base font-semibold text-white mb-1">{t('pu_upload_pkg')}</h3>
             <p className="text-slate-400 text-xs mb-4">
-              Büyük imaj paketleri ({`>`}{maxMb || 8192} MB limit) için SCP önerilir:
+              {t('pu_scp_hint', { n: maxMb || 8192 })}
               {' '}<code className="text-slate-300">scp ainew-*.tar.gz host:{status.data_dir}/updates/</code>
             </p>
             <div className="flex flex-wrap items-end gap-3">
@@ -332,23 +334,23 @@ export const PlatformUpdateTab: React.FC = () => {
                 onClick={() => uploadMut.mutate()}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium"
               >
-                {uploadMut.isPending ? 'Yükleniyor…' : 'Yükle'}
+                {uploadMut.isPending ? t('loading') : t('upload')}
               </button>
               <button
                 type="button"
                 onClick={() => { refetchPackages(); refetchStatus() }}
                 className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm"
               >
-                Yenile
+                {t('refresh_action')}
               </button>
             </div>
-            {file && <p className="text-emerald-400 text-xs mt-2">Seçili: {file.name} ({fmtBytes(file.size)})</p>}
+            {file && <p className="text-emerald-400 text-xs mt-2">{t('pu_selected', { name: file.name, size: fmtBytes(file.size) })}</p>}
           </div>
 
           <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-white/[0.06]">
-            <h3 className="text-base font-semibold text-white mb-3">Bulunan paketler</h3>
+            <h3 className="text-base font-semibold text-white mb-3">{t('pu_packages')}</h3>
             {packages.length === 0 ? (
-              <p className="text-slate-500 text-sm">Henüz paket yok. Yükleyin veya sunucuya bırakın.</p>
+              <p className="text-slate-500 text-sm">{t('pu_no_packages')}</p>
             ) : (
               <ul className="space-y-2">
                 {packages.map((pkg) => (
@@ -362,7 +364,7 @@ export const PlatformUpdateTab: React.FC = () => {
                         v{pkg.version} · {pkg.kind}
                         {pkg.size_bytes != null ? ` · ${fmtBytes(pkg.size_bytes)}` : ''}
                         {pkg.has_images ? ' · images' : ''}
-                        {pkg.newer_than_current ? ' · güncel değil' : ''}
+                        {pkg.newer_than_current ? ` · ${t('pu_newer')}` : ''}
                       </p>
                     </div>
                     <button
@@ -371,7 +373,7 @@ export const PlatformUpdateTab: React.FC = () => {
                       onClick={() => prepareMut.mutate(pkg.path)}
                       className="px-3 py-1.5 text-xs bg-blue-600/20 text-blue-300 border border-blue-500/40 rounded-lg hover:bg-blue-600/30"
                     >
-                      Hazırla
+                      {t('pu_prepare')}
                     </button>
                   </li>
                 ))}
@@ -381,18 +383,18 @@ export const PlatformUpdateTab: React.FC = () => {
 
           {prepared && (
             <div className="mb-6 p-5 rounded-xl border-2 border-blue-500/40 bg-blue-500/5">
-              <h3 className="text-base font-semibold text-white mb-2">Uygulamaya hazır</h3>
+              <h3 className="text-base font-semibold text-white mb-2">{t('pu_ready')}</h3>
               <p className="text-slate-300 text-sm mb-3">
                 <span className="text-white font-mono">v{prepared.current_version}</span>
                 {' → '}
                 <span className="text-emerald-400 font-mono">v{prepared.target_version}</span>
               </p>
               <p className="text-xs text-slate-500 mb-4">
-                Güncelleme öncesi otomatik yedek alınır. Onay için hedef sürümü yazın.
+                {t('pu_backup_hint')}
               </p>
               <div className="flex flex-wrap items-end gap-3">
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Onay sürümü</label>
+                  <label className="block text-xs text-slate-400 mb-1">{t('pu_confirm_ver')}</label>
                   <input
                     value={confirmVer}
                     onChange={(e) => setConfirmVer(e.target.value)}
@@ -404,35 +406,35 @@ export const PlatformUpdateTab: React.FC = () => {
                   type="button"
                   disabled={applyMut.isPending || confirmVer.trim() !== prepared.target_version}
                   onClick={() => {
-                    if (!window.confirm(`${prepared.current_version} → ${prepared.target_version} uygulansın mı?`)) return
+                    if (!window.confirm(t('pu_apply_confirm', { from: prepared.current_version, to: prepared.target_version }))) return
                     applyMut.mutate()
                   }}
                   className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold"
                 >
-                  {applyMut.isPending ? 'Başlatılıyor…' : 'Güncellemeyi Uygula'}
+                  {applyMut.isPending ? t('starting') : t('pu_apply')}
                 </button>
               </div>
             </div>
           )}
 
           <div className="p-4 rounded-xl border border-white/[0.06] bg-cyber-deep/30">
-            <h4 className="text-sm font-medium text-slate-300 mb-2">Geri al</h4>
+            <h4 className="text-sm font-medium text-slate-300 mb-2">{t('pu_rollback')}</h4>
             <p className="text-xs text-slate-500 mb-3">
-              Son güncelleme yedeğindeki imaj etiketlerine döner (DB dump restore edilmez).
+              {t('pu_rollback_hint')}
             </p>
             <button
               type="button"
               disabled={!status.has_backup || rollbackMut.isPending}
               onClick={() => {
-                if (!window.confirm('Son yedekten geri alma başlatılsın mı?')) return
+                if (!window.confirm(t('pu_rollback_confirm'))) return
                 rollbackMut.mutate()
               }}
               className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white rounded-lg text-sm"
             >
-              {rollbackMut.isPending ? 'Başlatılıyor…' : 'Son yedekten geri al'}
+              {rollbackMut.isPending ? t('starting') : t('pu_rollback_btn')}
             </button>
             {!status.has_backup && (
-              <p className="text-xs text-slate-600 mt-2">Henüz pre-update yedeği yok.</p>
+              <p className="text-xs text-slate-600 mt-2">{t('pu_no_backup')}</p>
             )}
           </div>
         </>

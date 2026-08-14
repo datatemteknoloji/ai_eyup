@@ -1,0 +1,14 @@
+---
+description: ainew UI dili (TR/EN) — teknik terimler İngilizce kalır; LLM prompt’larına dokunma
+globs: frontend/src/**/*.{ts,tsx},frontend/src/dropt/i18n/**,backend/app/api/auth.py,backend/app/models/user.py
+alwaysApply: false
+---
+
+# ainew i18n
+
+- Dil **tema gibi** kullanıcı profilidir: `users.locale` (`tr`|`en`), `PATCH /auth/preferences`, Layout kullanıcı menüsü. Dropt’ta **ayrı dil seçici yok**.
+- Kullanıcıya görünen metin `t('key')` + `frontend/src/i18n/messages.ts` (ana app) veya `frontend/src/dropt/i18n/messages.ts` (Level 1).
+- **UI fiilini çevir, teknik adı çevirme.** Cluster, Pod, Namespace, VM, SSH, WinRM, VLAN, interface, Host, AIOps, AI Ready, Exadata, OpenShift, Memory — her iki sözlükte aynı İngilizce. **RAM yazma; bellek için her yerde Memory.**
+- TR’de yanlış Türkçeleştirilmiş teknik kelimeyi düzelt: Küme→Cluster, düğüm→Node, arayüz→interface (network), iş yükü→Workload.
+- **Yasak:** `*_chat.py` `_build_prompt`, `SYSTEM_PROMPT`, RAG seed, collector’ın modele verdiği etiketler, model çıktısı. AI cevap dili locale ile değişmez.
+- Celery/uygulama worker ≠ OpenShift Worker Node. Sunucu=Server; fiziksel/ESXi/Dropt hostname ekranı=Host.

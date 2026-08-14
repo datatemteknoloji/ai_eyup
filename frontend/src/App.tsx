@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { BrandingProvider } from './branding/BrandingContext'
 import { ThemeProvider } from './theme/ThemeProvider'
+import { LocaleProvider, useT } from './i18n/LocaleProvider'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import { RequirePlatformAiops } from './components/RequirePlatformAiops'
@@ -207,6 +208,7 @@ const RequireAnyModule: React.FC<{ moduleIds: string[]; children: React.ReactNod
 
 const HomeRedirect: React.FC = () => {
   const { hasModule, loading, user } = useAuth()
+  const t = useT()
   if (loading) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
@@ -227,8 +229,8 @@ const HomeRedirect: React.FC = () => {
   return (
     <div className="min-h-[50vh] flex items-center justify-center text-center px-6">
       <div className="max-w-sm">
-        <p className="text-slate-300 font-medium mb-1">Henüz bir modül atanmamış</p>
-        <p className="text-sm text-slate-500">Erişim için lütfen sistem yöneticinizle iletişime geçin.</p>
+        <p className="text-slate-300 font-medium mb-1">{t('no_module_title')}</p>
+        <p className="text-sm text-slate-500">{t('no_module_hint')}</p>
       </div>
     </div>
   )
@@ -241,6 +243,7 @@ function App() {
       <BrowserRouter>
         <AuthProvider>
           <ThemeProvider>
+          <LocaleProvider>
           <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -372,6 +375,7 @@ function App() {
             } />
           </Routes>
           </Suspense>
+          </LocaleProvider>
           </ThemeProvider>
         </AuthProvider>
       </BrowserRouter>

@@ -10,6 +10,7 @@ import {
 import { Eye, BarChart3 } from 'lucide-react'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 interface SystemEvent {
   id: number; server_id: number | null; server_name: string | null
@@ -32,21 +33,25 @@ interface EventGroup {
 
 const PAGE_SIZE = 50
 
-function fmtDate(d: string | null, short = true) {
+function fmtDate(d: string | null, short = true, locale?: string) {
   if (!d) return '-'
-  return new Date(d).toLocaleString('tr-TR', short
+  const loc = locale === 'en' ? 'en-GB' : 'tr-TR'
+  return new Date(d).toLocaleString(loc, short
     ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }
     : undefined)
 }
 
 function StatusPill({ e }: { e: { resolved: boolean; is_known: boolean; is_acknowledged: boolean } }) {
-  if (e.resolved) return <span className="text-[11px] font-medium" style={{ color: NEON.green }}>Çözüldü</span>
-  if (e.is_known) return <span className="text-[11px] font-medium" style={{ color: NEON.cyan }}>Bilinen</span>
-  if (e.is_acknowledged) return <span className="text-[11px] font-medium" style={{ color: NEON.orange }}>İncelemede</span>
-  return <span className="text-[11px] font-medium" style={{ color: NEON.red }}>Yeni</span>
+  const t = useT()
+  if (e.resolved) return <span className="text-[11px] font-medium" style={{ color: NEON.green }}>{t('ev_resolved')}</span>
+  if (e.is_known) return <span className="text-[11px] font-medium" style={{ color: NEON.cyan }}>{t('ops_known')}</span>
+  if (e.is_acknowledged) return <span className="text-[11px] font-medium" style={{ color: NEON.orange }}>{t('ev_investigating')}</span>
+  return <span className="text-[11px] font-medium" style={{ color: NEON.red }}>{t('ev_new')}</span>
 }
 
 const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [severityFilter, setSeverityFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [resolvedFilter, setResolvedFilter] = useState<string>('false')
@@ -91,7 +96,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, source: 'manual' })
       })
-      if (!res.ok) throw new Error('Incident oluşturulamadı')
+      if (!res.ok) throw new Error(t('ev_incident_failed'))
       return res.json()
     },
     onSuccess: () => { setIncidentModal(null); invalidate() },
@@ -210,7 +215,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           total_saved: 0,
           details: [],
           job_id: data.job_id,
-          message: data.message || 'Tarama arka planda başladı',
+          message: data.message || t('ev_scan_starting'),
         } as any)
       } else {
         setScanResult(data)
@@ -224,7 +229,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       const res = await fetch(`${API_BASE_URL}/events/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       })
-      if (!res.ok) throw new Error('Oluşturulamadı')
+      if (!res.ok) throw new Error(t('ev_create_failed'))
       return res.json()
     },
     onSuccess: () => { invalidate(); setShowCreateForm(false); setNewEvent({ title: '', event_type: 'custom', severity: 'info', description: '' }) }
@@ -322,7 +327,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
         }
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError') setAnalysisText('Analiz başarısız.')
+      if (e?.name !== 'AbortError') setAnalysisText(t('ev_analyze_failed'))
     } finally { setIsAnalyzing(false) }
   }
 
@@ -335,14 +340,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     try {
       const res = await fetch(`${API_BASE_URL}/events/${eventId}/log-analyze`, { method: 'POST' })
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Bağlantı hatası' }))
+        const err = await res.json().catch(() => ({ detail: t('conn_error') }))
         setLogAnalysisError(err.detail || `HTTP ${res.status}`)
         return
       }
       const data = await res.json()
       setLogAnalysis(data)
     } catch {
-      setLogAnalysisError('Analiz isteği başarısız.')
+      setLogAnalysisError(t('ev_log_analyze_failed'))
     } finally {
       setIsLogAnalyzing(false)
     }
@@ -355,14 +360,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
 
   // group row action menu
   const groupMenu = (grp: EventGroup): MenuItem[] => [
-    { label: 'Tümünü gör', icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
-    { label: 'İncelemeye al', icon: <Eye size={13} strokeWidth={2} />, onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
-    { label: 'Onayı kaldır', icon: '↩', hidden: !grp.is_acknowledged, onClick: () => bulkAction.mutate({ action: 'unacknowledge', ids: grp.event_ids }) },
-    { label: 'Bilinen olay', icon: '', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
-    { label: 'Bilineni kaldır', icon: '↩', hidden: !grp.is_known, onClick: () => bulkAction.mutate({ action: 'unknown', ids: grp.event_ids }) },
-    { label: 'Kapat (çöz)', icon: '', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
-    { label: 'Yeniden aç', icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
-    { label: 'Incident oluştur', icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
+    { label: t('ev_view_all'), icon: '', onClick: () => setDetailGroupIds(grp.event_ids) },
+    { label: t('ev_investigate'), icon: <Eye size={13} strokeWidth={2} />, onClick: () => bulkAction.mutate({ action: 'acknowledge', ids: grp.event_ids }) },
+    { label: t('ev_unack'), icon: '↩', hidden: !grp.is_acknowledged, onClick: () => bulkAction.mutate({ action: 'unacknowledge', ids: grp.event_ids }) },
+    { label: t('ev_mark_known'), icon: '', onClick: () => bulkAction.mutate({ action: 'known', ids: grp.event_ids }) },
+    { label: t('ev_unmark_known'), icon: '↩', hidden: !grp.is_known, onClick: () => bulkAction.mutate({ action: 'unknown', ids: grp.event_ids }) },
+    { label: t('ev_close_resolve'), icon: '', accent: NEON.green, onClick: () => bulkAction.mutate({ action: 'resolve', ids: grp.event_ids }) },
+    { label: t('ops_reopen'), icon: '↩', hidden: !grp.resolved, onClick: () => bulkAction.mutate({ action: 'unresolve', ids: grp.event_ids }) },
+    { label: t('ev_create_incident'), icon: '', accent: NEON.blue, onClick: () => openIncidentForGroup(grp) },
   ]
   const markAsNormal = async (eventId: number) => {
     try {
@@ -396,14 +401,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
 
   const flatMenu = (e: SystemEvent): MenuItem[] => [
     { label: 'Raw data', icon: '', hidden: !(e.has_raw_data || (e.raw_data && Object.keys(e.raw_data).length)), onClick: () => { void toggleRaw(e) } },
-    { label: 'İncelemeye al', icon: <Eye size={13} strokeWidth={2} />, hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
-    { label: 'Onayı kaldır', icon: '↩', hidden: !e.is_acknowledged || e.resolved, onClick: () => unackEvent.mutate(e.id) },
-    { label: 'Bilinen olay', icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
-    { label: 'Bilineni kaldır', icon: '↩', hidden: !e.is_known, onClick: () => unknownEvent.mutate(e.id) },
-    { label: 'Bu sunucu için normal', icon: <BarChart3 size={13} strokeWidth={2} />, hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
-    { label: 'Kapat (çöz)', icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
-    { label: 'Yeniden aç', icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
-    { label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu event silinecek. Emin misiniz?')) deleteEvent.mutate(e.id) } },
+    { label: t('ev_investigate'), icon: <Eye size={13} strokeWidth={2} />, hidden: e.is_acknowledged || e.resolved, onClick: () => ackEvent.mutate(e.id) },
+    { label: t('ev_unack'), icon: '↩', hidden: !e.is_acknowledged || e.resolved, onClick: () => unackEvent.mutate(e.id) },
+    { label: t('ev_mark_known'), icon: '', hidden: e.is_known || e.resolved, onClick: () => knownEvent.mutate(e.id) },
+    { label: t('ev_unmark_known'), icon: '↩', hidden: !e.is_known, onClick: () => unknownEvent.mutate(e.id) },
+    { label: t('ev_normal_for_server'), icon: <BarChart3 size={13} strokeWidth={2} />, hidden: e.event_type !== 'metric_anomaly', accent: NEON.orange, onClick: () => markAsNormal(e.id) },
+    { label: t('ev_close_resolve'), icon: '', accent: NEON.green, hidden: e.resolved, onClick: () => resolveEvent.mutate(e.id) },
+    { label: t('ops_reopen'), icon: '↩', hidden: !e.resolved, onClick: () => unresolveEvent.mutate(e.id) },
+    { label: t('delete'), icon: '✕', accent: NEON.red, onClick: () => { if (confirm(t('ev_delete_confirm'))) deleteEvent.mutate(e.id) } },
   ]
 
   const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
@@ -413,14 +418,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     <div className="space-y-4 animate-fade-in">
       {!hideHeader && (
       <PageHeader
-        title="Events"
-        subtitle="Sistem olaylarını izleyin, gruplayın ve yönetin"
+        title={t('nav_events')}
+        subtitle={t('ev_subtitle')}
         actions={<>
           <GhostButton accent={NEON.green} onClick={handleScan} disabled={scanning}>
-            {scanning ? 'Taranıyor...' : 'Şimdi Tara'}
+            {scanning ? t('ev_scanning') : t('ev_scan_now')}
           </GhostButton>
           <PrimaryButton accent={NEON.blue} onClick={() => setShowCreateForm(v => !v)}>
-            {showCreateForm ? 'İptal' : '+ Yeni Event'}
+            {showCreateForm ? t('cancel') : t('ev_new_event')}
           </PrimaryButton>
         </>}
       />
@@ -429,30 +434,30 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       {platform === 'virt' && (
         <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
           <input type="checkbox" checked={showRoutine} onChange={e => { setShowRoutine(e.target.checked); setPage(0) }} className="rounded border-slate-600" />
-          Rutin olayları göster (vCenter task, login/logout)
+          {t('ev_show_routine')}
         </label>
       )}
 
       {/* KPI row — tıklayınca filtreler */}
       <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
-        <Kpi label="Toplam" value={stats?.total ?? 0} accent={NEON.cyan}
+        <Kpi label={t('total')} value={stats?.total ?? 0} accent={NEON.cyan}
           active={!severityFilter && resolvedFilter === '' && ackFilter === '' && knownFilter === ''}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />
-        <Kpi label="Aktif" value={stats?.actionable_total ?? ((stats?.critical ?? 0) + (stats?.warning ?? 0))} accent={NEON.orange}
+        <Kpi label={t('ev_kpi_active')} value={stats?.actionable_total ?? ((stats?.critical ?? 0) + (stats?.warning ?? 0))} accent={NEON.orange}
           active={resolvedFilter === 'false' && ackFilter === 'false' && knownFilter === 'false' && !severityFilter}
           onClick={() => { setSeverityFilter(''); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setExcludeKnown(true); setPage(0) }} />
-        <Kpi label="Kritik" value={stats?.critical ?? 0} accent={NEON.red}
+        <Kpi label={t('status_critical')} value={stats?.critical ?? 0} accent={NEON.red}
           active={severityFilter === 'critical,emergency' || severityFilter === 'critical'}
           onClick={() => { setSeverityFilter('critical,emergency'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
-        <Kpi label="Acil" value={stats?.emergency ?? 0} accent={NEON.pink}
+        <Kpi label={t('ev_kpi_emergency')} value={stats?.emergency ?? 0} accent={NEON.pink}
           active={severityFilter === 'emergency'} onClick={() => { setSeverityFilter('emergency'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
-        <Kpi label="Uyarı" value={stats?.warning ?? 0} accent={NEON.orange}
+        <Kpi label={t('status_warning')} value={stats?.warning ?? 0} accent={NEON.orange}
           active={severityFilter === 'warning' && ackFilter === 'false'}
           onClick={() => { setSeverityFilter('warning'); setResolvedFilter('false'); setAckFilter('false'); setKnownFilter('false'); setPage(0) }} />
-        <Kpi label="Onaylanan" value={stats?.acknowledged ?? 0} accent={NEON.blue}
+        <Kpi label={t('ev_ack_yes')} value={stats?.acknowledged ?? 0} accent={NEON.blue}
           active={ackFilter === 'true'}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter('true'); setKnownFilter(''); setExcludeKnown(false); setPage(0) }} />
-        <Kpi label="Bilinen" value={stats?.known ?? 0} accent={NEON.cyan}
+        <Kpi label={t('ops_known')} value={stats?.known ?? 0} accent={NEON.cyan}
           active={knownFilter === 'true'}
           onClick={() => { setSeverityFilter(''); setResolvedFilter(''); setAckFilter(''); setKnownFilter('true'); setExcludeKnown(false); setPage(0) }} />
       </div>
@@ -460,16 +465,16 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       {coverage && (platform === 'linux' || platform === 'windows' || platform === 'exadata') && (
         <div className="cyber-card px-4 py-3 flex flex-wrap items-start gap-4 text-xs">
           <div>
-            <p className="font-medium text-slate-300 mb-1">AI Ready kapsama (24s)</p>
+            <p className="font-medium text-slate-300 mb-1">{t('ev_coverage')}</p>
             <p style={{ color: 'rgba(148,163,184,0.65)' }}>
-              <span style={{ color: NEON.green }}>{coverage.with_count} event gelen</span>
+              <span style={{ color: NEON.green }}>{t('ev_with_events', { n: coverage.with_count })}</span>
               {' · '}
-              <span style={{ color: NEON.orange }}>{coverage.without_count} event gelmeyen</span>
+              <span style={{ color: NEON.orange }}>{t('ev_without_events', { n: coverage.without_count })}</span>
             </p>
           </div>
           {coverage.without_events.length > 0 && (
             <div className="flex-1 min-w-[12rem]">
-              <p className="mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Event gelmeyen (AI Ready):</p>
+              <p className="mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ev_without_list')}</p>
               <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
                 {coverage.without_events.slice(0, 40).map(s => (
                   <span key={s.id} className="px-2 py-0.5 rounded border text-[11px]"
@@ -490,10 +495,10 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           style={{ borderColor: scanResult.total_saved > 0 ? `rgba(${rgb(NEON.green)},0.3)` : undefined }}>
           <div>
             <p className="font-medium text-white mb-1">
-              {scanResult.total_saved > 0 ? `Tarama tamamlandı — ${scanResult.total_saved} yeni event` : 'Tarama tamamlandı — yeni event yok'}
+              {scanResult.total_saved > 0 ? t('ev_scan_done_n', { n: scanResult.total_saved }) : t('ev_scan_done_none')}
             </p>
             <p className="text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>
-              {scanResult.total_servers} sunucu tarandı · {scanResult.servers_with_logs} sunucuda log
+              {t('ev_scan_servers', { s: scanResult.total_servers, l: scanResult.servers_with_logs })}
             </p>
           </div>
           <button onClick={() => setScanResult(null)} className="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
@@ -501,22 +506,22 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       )}
 
       {showCreateForm && (
-        <Section title="Yeni Event Oluştur" accent={NEON.blue}>
+        <Section title={t('ev_create_title')} accent={NEON.blue}>
           <form onSubmit={e => { e.preventDefault(); createEvent.mutate(newEvent) }} className="p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Başlık *</label>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_title_req')}</label>
                 <input type="text" required value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} className={inputCls} style={inputStyle} />
               </div>
               <div>
-                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Tip</label>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_type')}</label>
                 <select value={newEvent.event_type} onChange={e => setNewEvent({ ...newEvent, event_type: e.target.value })} className={inputCls} style={inputStyle}>
                   <option value="custom">Custom</option><option value="cpu_high">CPU High</option><option value="memory_high">Memory High</option>
                   <option value="disk_full">Disk Full</option><option value="service_down">Service Down</option><option value="network_issue">Network Issue</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Önem</label>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ops_severity')}</label>
                 <select value={newEvent.severity} onChange={e => setNewEvent({ ...newEvent, severity: e.target.value })} className={inputCls} style={inputStyle}>
                   <option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option>
                   <option value="critical">Critical</option><option value="emergency">Emergency</option>
@@ -524,30 +529,30 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
               </div>
             </div>
             <div>
-              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</label>
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_description')}</label>
               <textarea value={newEvent.description} onChange={e => setNewEvent({ ...newEvent, description: e.target.value })} className={inputCls} style={inputStyle} rows={2} />
             </div>
-            <PrimaryButton accent={NEON.green} disabled={createEvent.isPending}>{createEvent.isPending ? 'Oluşturuluyor...' : 'Oluştur'}</PrimaryButton>
+            <PrimaryButton accent={NEON.green} disabled={createEvent.isPending}>{createEvent.isPending ? t('ev_creating') : t('ev_create')}</PrimaryButton>
           </form>
         </Section>
       )}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={search} onChange={v => { setSearch(v); setPage(0) }} placeholder="Başlıkta ara..." />
+        <SearchInput value={search} onChange={v => { setSearch(v); setPage(0) }} placeholder={t('ev_search_title')} />
         <Select value={severityFilter} onChange={v => { setSeverityFilter(v); setPage(0) }}>
-          <option value="">Tüm Seviyeler</option><option value="info">Info</option><option value="warning">Warning</option>
+          <option value="">{t('ev_all_sev')}</option><option value="info">Info</option><option value="warning">Warning</option>
           <option value="error">Error</option><option value="critical">Critical</option><option value="emergency">Emergency</option>
         </Select>
         <Select value={typeFilter} onChange={v => { setTypeFilter(v); setPage(0) }}>
-          <option value="">Tüm Tipler</option>
+          <option value="">{t('filter_all_types')}</option>
           {(eventTypes || []).map(t => <option key={t} value={t}>{t}</option>)}
         </Select>
         <Select value={resolvedFilter} onChange={v => { setResolvedFilter(v); setPage(0) }}>
-          <option value="">Tüm Durumlar</option><option value="false">Aktif (çözülmemiş)</option><option value="true">Çözülmüş / Kapatılan</option>
+          <option value="">{t('filter_all_status')}</option><option value="false">{t('ev_status_unresolved')}</option><option value="true">{t('ev_status_resolved')}</option>
         </Select>
         <Select value={ackFilter} onChange={v => { setAckFilter(v); if (v === 'true') { setResolvedFilter(''); setExcludeKnown(false) }; setPage(0) }}>
-          <option value="">Onay: hepsi</option><option value="true">Onaylanan</option><option value="false">Onaysız</option>
+          <option value="">{t('ev_ack_all')}</option><option value="true">{t('ev_ack_yes')}</option><option value="false">{t('ev_ack_no')}</option>
         </Select>
         <label className="flex items-center gap-2 cursor-pointer select-none ml-1">
           <div onClick={() => { setGroupedView(v => !v); setPage(0) }}
@@ -555,7 +560,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
             style={{ background: groupedView ? NEON.cyan : 'rgba(100,116,139,0.5)' }}>
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${groupedView ? 'translate-x-4' : ''}`} />
           </div>
-          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>Benzerleri grupla</span>
+          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_group_similar')}</span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <div onClick={() => { setExcludeKnown(v => !v); setPage(0) }}
@@ -564,44 +569,44 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${excludeKnown ? 'translate-x-4' : ''}`} />
           </div>
           <span className="text-xs" style={{ color: excludeKnown ? NEON.orange : 'rgba(148,163,184,0.5)' }}>
-            Bilinenleri gizle
+            {t('ev_hide_known')}
           </span>
         </label>
-        <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{total} {groupedView ? 'grup' : 'sonuç'}</span>
+        <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{groupedView ? t('ev_n_groups', { n: total }) : t('ev_n_results', { n: total })}</span>
       </div>
 
       {/* Flat bulk toolbar */}
       {!groupedView && selectedIds.size > 0 && (
         <div className="flex items-center gap-2 flex-wrap cyber-card px-4 py-2.5" style={{ borderColor: `rgba(${rgb(NEON.cyan)},0.3)` }}>
-          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{selectedIds.size} event seçili</span>
-          <GhostButton accent={NEON.orange} onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })}>İncelemeye al</GhostButton>
-          <GhostButton accent={NEON.cyan} onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })}>Bilinen</GhostButton>
-          <GhostButton accent={NEON.green} onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })}>Kapat</GhostButton>
+          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{t('ev_n_selected', { n: selectedIds.size })}</span>
+          <GhostButton accent={NEON.orange} onClick={() => bulkAction.mutate({ action: 'acknowledge', ids: [...selectedIds] })}>{t('ev_investigate')}</GhostButton>
+          <GhostButton accent={NEON.cyan} onClick={() => bulkAction.mutate({ action: 'known', ids: [...selectedIds] })}>{t('ops_known')}</GhostButton>
+          <GhostButton accent={NEON.green} onClick={() => bulkAction.mutate({ action: 'resolve', ids: [...selectedIds] })}>{t('ev_close')}</GhostButton>
           <GhostButton accent={NEON.blue} onClick={() => {
             const f = events.find(e => selectedIds.has(e.id))
-            setIncidentForm({ title: f ? f.title : 'Yeni Incident', description: '', severity: 'medium', assigned_to: '' })
+            setIncidentForm({ title: f ? f.title : t('ev_new_incident'), description: '', severity: 'medium', assigned_to: '' })
             setIncidentModal({ event_ids: [...selectedIds] })
           }}>Incident</GhostButton>
-          <GhostButton accent={NEON.red} onClick={() => { if (confirm(`${selectedIds.size} event silinecek?`)) bulkDelete.mutate([...selectedIds]) }}>Sil</GhostButton>
-          <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>Seçimi kaldır</button>
+          <GhostButton accent={NEON.red} onClick={() => { if (confirm(t('ev_delete_n_confirm', { n: selectedIds.size }))) bulkDelete.mutate([...selectedIds]) }}>{t('delete')}</GhostButton>
+          <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>{t('ops_clear_sel')}</button>
         </div>
       )}
 
       {/* Group bulk toolbar */}
       {groupedView && selectedGroups.size > 0 && (
         <div className="flex items-center gap-2 flex-wrap cyber-card px-4 py-2.5" style={{ borderColor: `rgba(${rgb(NEON.cyan)},0.3)` }}>
-          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{selectedGroups.size} grup ({selectedGroupEventIds().length} event)</span>
-          <GhostButton accent={NEON.orange} onClick={() => groupBulkAction('acknowledge')}>İncelemeye al</GhostButton>
-          <GhostButton accent={NEON.cyan} onClick={() => groupBulkAction('known')}>Bilinen</GhostButton>
-          <GhostButton accent={NEON.green} onClick={() => groupBulkAction('resolve')}>Kapat</GhostButton>
+          <span className="text-sm font-medium" style={{ color: NEON.cyan }}>{t('ev_n_groups_sel', { n: selectedGroups.size, e: selectedGroupEventIds().length })}</span>
+          <GhostButton accent={NEON.orange} onClick={() => groupBulkAction('acknowledge')}>{t('ev_investigate')}</GhostButton>
+          <GhostButton accent={NEON.cyan} onClick={() => groupBulkAction('known')}>{t('ops_known')}</GhostButton>
+          <GhostButton accent={NEON.green} onClick={() => groupBulkAction('resolve')}>{t('ev_close')}</GhostButton>
           <GhostButton accent={NEON.blue} onClick={() => {
             const ids = selectedGroupEventIds()
             const title = [...selectedGroups].map(i => groups[i]?.title).filter(Boolean).join(', ')
-            setIncidentForm({ title: title || 'Çoklu Grup Incident', description: '', severity: 'medium', assigned_to: '' })
+            setIncidentForm({ title: title || t('ev_multi_incident'), description: '', severity: 'medium', assigned_to: '' })
             setIncidentModal({ event_ids: ids })
           }}>Incident</GhostButton>
-          <GhostButton accent={NEON.red} onClick={() => groupBulkAction('delete')}>Sil</GhostButton>
-          <button onClick={() => setSelectedGroups(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>İptal</button>
+          <GhostButton accent={NEON.red} onClick={() => groupBulkAction('delete')}>{t('delete')}</GhostButton>
+          <button onClick={() => setSelectedGroups(new Set())} className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.6)' }}>{t('cancel')}</button>
         </div>
       )}
 
@@ -609,19 +614,19 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
       {isLoadingList ? (
         <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
       ) : groupedView ? (
-        groups.length === 0 ? <Section><EmptyState icon="" text="Henüz event yok" /></Section> : (
+        groups.length === 0 ? <Section><EmptyState icon="" text={t('ev_empty')} /></Section> : (
           <Section className="overflow-visible">
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table w-full text-sm">
                 <thead>
                   <tr>
                     <th className="w-8"><input type="checkbox" checked={selectedGroups.size === groups.length && groups.length > 0} onChange={toggleSelectAllGroups} /></th>
-                    <th className="text-left cursor-pointer" onClick={() => handleSort('severity')}>Önem<SortIcon col="severity" /></th>
-                    <th className="text-left cursor-pointer" onClick={() => handleSort('title')}>Başlık<SortIcon col="title" /></th>
-                    <th className="text-left cursor-pointer" onClick={() => handleSort('server_name')}>Sunucu<SortIcon col="server_name" /></th>
-                    <th className="text-left cursor-pointer" onClick={() => handleSort('count')}>Adet<SortIcon col="count" /></th>
-                    <th className="text-left cursor-pointer" onClick={() => handleSort('latest_created_at')}>Son Oluşum<SortIcon col="latest_created_at" /></th>
-                    <th className="text-right">İşlem</th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('severity')}>{t('ops_severity')}<SortIcon col="severity" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('title')}>{t('ev_title')}<SortIcon col="title" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('server_name')}>{t('col_server')}<SortIcon col="server_name" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('count')}>{t('ev_col_count')}<SortIcon col="count" /></th>
+                    <th className="text-left cursor-pointer" onClick={() => handleSort('latest_created_at')}>{t('ev_col_last')}<SortIcon col="latest_created_at" /></th>
+                    <th className="text-right">{t('actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -637,13 +642,13 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                           {grp.count}×
                         </span>
                       </td>
-                      <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(grp.latest_created_at)}</td>
+                      <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(grp.latest_created_at, true, locale)}</td>
                       <td>
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => startAnalyze(grp)}
                             className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
                             style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.3)` }}>
-                            Analiz
+                            {t('analyze')}
                           </button>
                           <ActionMenu items={groupMenu(grp)} />
                         </div>
@@ -656,15 +661,15 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           </Section>
         )
       ) : (
-        events.length === 0 ? <Section><EmptyState icon="" text="Henüz event yok" /></Section> : (
+        events.length === 0 ? <Section><EmptyState icon="" text={t('ev_empty')} /></Section> : (
           <Section className="overflow-visible">
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table w-full text-sm">
                 <thead>
                   <tr>
                     <th className="w-8"><input type="checkbox" checked={selectedIds.size === events.length && events.length > 0} onChange={toggleSelectAll} /></th>
-                    <th className="text-left">Önem</th><th className="text-left">Başlık</th><th className="text-left">Sunucu</th>
-                    <th className="text-left">Tip</th><th className="text-left">Durum</th><th className="text-left">Tarih</th><th className="text-right">İşlem</th>
+                    <th className="text-left">{t('ops_severity')}</th><th className="text-left">{t('ev_title')}</th><th className="text-left">{t('col_server')}</th>
+                    <th className="text-left">{t('ev_type')}</th><th className="text-left">{t('lm_status')}</th><th className="text-left">{t('ev_col_date')}</th><th className="text-right">{t('actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -682,16 +687,16 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                         <td><span className="font-mono text-xs" style={{ color: event.server_name ? NEON.blue : 'rgba(148,163,184,0.4)' }}>{event.server_name || '-'}</span></td>
                         <td><span className="font-mono text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{event.event_type}</span></td>
                         <td><StatusPill e={event} /></td>
-                        <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(event.created_at)}</td>
+                        <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(event.created_at, true, locale)}</td>
                         <td><div className="flex justify-end"><ActionMenu items={flatMenu(event)} /></div></td>
                       </tr>
                       {expandedRaw === event.id && (
                         <tr>
                           <td colSpan={8} className="px-5 py-3" style={{ background: 'var(--bg-deep)' }}>
-                            <p className="text-xs mb-1 font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>Raw Data:</p>
+                            <p className="text-xs mb-1 font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_raw_data')}</p>
                             <pre className="text-[11px] font-mono rounded p-3 overflow-auto max-h-40" style={{ background: '#05080f', color: NEON.green }}>
                               {rawCache[event.id] === undefined
-                                ? 'Yükleniyor…'
+                                ? t('loading')
                                 : JSON.stringify(rawCache[event.id] ?? event.raw_data, null, 2)}
                             </pre>
                           </td>
@@ -706,14 +711,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
         )
       )}
 
-      <Pagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} unit={groupedView ? 'grup' : 'event'} onPage={setPage} />
+      <Pagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} unit={groupedView ? t('ev_unit_group') : t('ev_unit_event')} onPage={setPage} />
 
       {/* Occurrences modal */}
       {detailGroupIds && (
-        <Modal title={`Tüm oluşumlar (${occurrenceData?.events?.length ?? '...'})`} onClose={() => setDetailGroupIds(null)}>
+        <Modal title={t('ev_occurrences', { n: occurrenceData?.events?.length ?? '...' })} onClose={() => setDetailGroupIds(null)}>
           <div className="p-4 space-y-2">
             {(occurrenceData?.events ?? []).length === 0 ? (
-              <div className="text-center py-8" style={{ color: 'rgba(148,163,184,0.5)' }}>Yükleniyor...</div>
+              <div className="text-center py-8" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('loading')}</div>
             ) : (occurrenceData?.events ?? []).map(ev => (
               <div key={ev.id} className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.12)' }}>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -721,7 +726,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                   {ev.server_name && <span className="text-[11px] font-mono" style={{ color: NEON.blue }}>{ev.server_name}</span>}
                   <span className="text-[11px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{ev.event_type}</span>
                   <StatusPill e={ev} />
-                  <span className="ml-auto text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{fmtDate(ev.created_at, false)}</span>
+                  <span className="ml-auto text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{fmtDate(ev.created_at, false, locale)}</span>
                 </div>
                 <p className="text-white text-xs mt-2 break-words">{ev.title}</p>
                 {ev.description && ev.description !== ev.title && <p className="text-[11px] mt-1" style={{ color: 'rgba(148,163,184,0.6)' }}>{ev.description}</p>}
@@ -740,11 +745,11 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           footer={
             <div className="flex justify-between items-center gap-2">
               {analyzeTab === 'chat'
-                ? <GhostButton accent={NEON.blue} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>Yeniden</GhostButton>
-                : <GhostButton accent={NEON.cyan} onClick={() => startLogAnalyze(analyzeGroup)} disabled={isLogAnalyzing}>Yeniden Analiz Et</GhostButton>
+                ? <GhostButton accent={NEON.blue} onClick={() => startAnalyze(analyzeGroup)} disabled={isAnalyzing}>{t('analyze_again')}</GhostButton>
+                : <GhostButton accent={NEON.cyan} onClick={() => startLogAnalyze(analyzeGroup)} disabled={isLogAnalyzing}>{t('ev_reanalyze')}</GhostButton>
               }
               <div className="flex gap-2">
-                <GhostButton accent={NEON.green} onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}>Kapat</GhostButton>
+                <GhostButton accent={NEON.green} onClick={() => { bulkAction.mutate({ action: 'resolve', ids: analyzeGroup.event_ids }); setAnalyzeGroup(null) }}>{t('ev_close')}</GhostButton>
                 <GhostButton accent={NEON.blue} onClick={() => {
                   setIncidentForm({ title: analyzeGroup.title, description: analysisText.slice(0, 300) || `${analyzeGroup.count} event`, severity: analyzeGroup.severity === 'emergency' ? 'critical' : analyzeGroup.severity, assigned_to: '' })
                   setIncidentModal({ event_ids: analyzeGroup.event_ids, group_title: analyzeGroup.title })
@@ -758,12 +763,12 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
               onClick={() => setAnalyzeTab('chat')}
               className="text-xs font-medium pb-2 mr-4 border-b-2 transition-colors"
               style={{ borderColor: analyzeTab === 'chat' ? NEON.blue : 'transparent', color: analyzeTab === 'chat' ? NEON.blue : 'rgba(148,163,184,0.6)' }}
-            >AI Sohbet</button>
+            >{t('ev_ai_chat')}</button>
             <button
               onClick={() => { setAnalyzeTab('log'); if (!logAnalysis && !isLogAnalyzing) startLogAnalyze(analyzeGroup) }}
               className="text-xs font-medium pb-2 border-b-2 transition-colors flex items-center gap-1"
               style={{ borderColor: analyzeTab === 'log' ? NEON.cyan : 'transparent', color: analyzeTab === 'log' ? NEON.cyan : 'rgba(148,163,184,0.6)' }}
-            >Log Kök Neden Analizi</button>
+            >{t('ev_log_rca')}</button>
           </div>
 
           {/* AI Sohbet sekmesi */}
@@ -772,7 +777,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
               {isAnalyzing && !analysisText && (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
                   <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.blue} transparent ${NEON.blue} ${NEON.blue}` }} />
-                  AI analiz yapıyor...
+                  {t('ev_ai_working')}
                 </div>
               )}
               {analysisText && (
@@ -790,7 +795,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
               {isLogAnalyzing && (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(148,163,184,0.7)' }}>
                   <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent ${NEON.cyan} ${NEON.cyan}` }} />
-                  Log satırları okunuyor, AI analiz yapıyor...
+                  {t('ev_log_reading')}
                 </div>
               )}
               {logAnalysisError && (
@@ -808,22 +813,22 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                         color: logAnalysis.confidence === 'high' ? NEON.green : logAnalysis.confidence === 'medium' ? NEON.orange : 'rgba(148,163,184,0.6)',
                         border: `1px solid ${logAnalysis.confidence === 'high' ? 'rgba(34,197,94,0.3)' : logAnalysis.confidence === 'medium' ? 'rgba(251,191,36,0.3)' : 'rgba(148,163,184,0.2)'}`,
                       }}>
-                      {logAnalysis.confidence === 'high' ? 'Yüksek Güven' : logAnalysis.confidence === 'medium' ? 'Orta Güven' : 'Düşük Güven'}
+                      {logAnalysis.confidence === 'high' ? t('ev_conf_high') : logAnalysis.confidence === 'medium' ? t('ev_conf_med') : t('ev_conf_low')}
                     </span>
-                    <span>{logAnalysis.log_lines_used} log satırı kullanıldı</span>
+                    <span>{t('ev_log_lines', { n: logAnalysis.log_lines_used })}</span>
                     <span>Model: {logAnalysis.model}</span>
                   </div>
 
                   {/* Kök neden */}
                   <div className="p-3 rounded-[8px]" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)' }}>
-                    <div className="text-xs font-semibold mb-1" style={{ color: NEON.cyan }}>Kök Neden</div>
+                    <div className="text-xs font-semibold mb-1" style={{ color: NEON.cyan }}>{t('ops_root_cause')}</div>
                     <div className="text-sm" style={{ color: 'rgba(226,232,240,0.9)' }}>{logAnalysis.root_cause}</div>
                   </div>
 
                   {/* Etki */}
                   {logAnalysis.impact && (
                     <div className="p-3 rounded-[8px]" style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.12)' }}>
-                      <div className="text-xs font-semibold mb-1" style={{ color: NEON.orange }}>Etki</div>
+                      <div className="text-xs font-semibold mb-1" style={{ color: NEON.orange }}>{t('ops_impact')}</div>
                       <div className="text-sm" style={{ color: 'rgba(226,232,240,0.9)' }}>{logAnalysis.impact}</div>
                     </div>
                   )}
@@ -832,9 +837,9 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                   {logAnalysis.recommendations.length > 0 && (
                     <div className="p-3 rounded-[8px]" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.12)' }}>
                       <div className="text-xs font-semibold mb-2 flex items-center gap-2" style={{ color: NEON.green }}>
-                        Önerilen Aksiyonlar
+                        {t('ops_recommended')}
                         {logAnalysis.requires_approval && (
-                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.3)' }}>Onay Gerekli</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.3)' }}>{t('ev_approval_needed')}</span>
                         )}
                       </div>
                       <ol className="space-y-1.5">
@@ -856,35 +861,35 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
 
       {/* Incident create modal */}
       {incidentModal && (
-        <Modal title="Incident Oluştur" subtitle={`${incidentModal.event_ids.length} event bağlanacak`} onClose={() => setIncidentModal(null)} maxWidth="max-w-lg"
+        <Modal title={t('ev_incident_title')} subtitle={t('ev_incident_sub', { n: incidentModal.event_ids.length })} onClose={() => setIncidentModal(null)} maxWidth="max-w-lg"
           footer={
             <div className="flex gap-2 justify-end">
-              <GhostButton onClick={() => setIncidentModal(null)}>İptal</GhostButton>
+              <GhostButton onClick={() => setIncidentModal(null)}>{t('cancel')}</GhostButton>
               <PrimaryButton accent={NEON.blue} disabled={!incidentForm.title.trim() || createIncident.isPending}
                 onClick={() => createIncident.mutate({ title: incidentForm.title, description: incidentForm.description, severity: incidentForm.severity, assigned_to: incidentForm.assigned_to, related_events: incidentModal.event_ids })}>
-                {createIncident.isPending ? 'Oluşturuluyor...' : 'Oluştur'}
+                {createIncident.isPending ? t('ev_creating') : t('ev_create')}
               </PrimaryButton>
             </div>
           }>
           <div className="p-5 space-y-4">
             <div>
-              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Başlık *</label>
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_title_req')}</label>
               <input value={incidentForm.title} onChange={e => setIncidentForm(f => ({ ...f, title: e.target.value }))} className={inputCls} style={inputStyle} />
             </div>
             <div>
-              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</label>
+              <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_description')}</label>
               <textarea value={incidentForm.description} onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))} rows={3} className={inputCls} style={inputStyle} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Önem</label>
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ops_severity')}</label>
                 <select value={incidentForm.severity} onChange={e => setIncidentForm(f => ({ ...f, severity: e.target.value }))} className={inputCls} style={inputStyle}>
                   <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Atanan</label>
-                <input value={incidentForm.assigned_to} onChange={e => setIncidentForm(f => ({ ...f, assigned_to: e.target.value }))} placeholder="İsim..." className={inputCls} style={inputStyle} />
+                <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_assigned')}</label>
+                <input value={incidentForm.assigned_to} onChange={e => setIncidentForm(f => ({ ...f, assigned_to: e.target.value }))} placeholder={t('ev_assigned_ph')} className={inputCls} style={inputStyle} />
               </div>
             </div>
           </div>

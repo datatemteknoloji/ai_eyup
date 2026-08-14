@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL } from '../config/api'
 import { Shield, HelpCircle } from 'lucide-react'
+import { useT } from '../i18n/LocaleProvider'
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string }
 interface AIModel { name: string }
@@ -67,6 +68,7 @@ const riskBadge = (tool?: string) => {
 }
 
 const Agent: React.FC = () => {
+  const t = useT()
   const [servers, setServers] = useState<Server[]>([])
   const [models, setModels] = useState<string[]>([])
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('agent_model') || 'qwen3.5:35b')
@@ -106,8 +108,8 @@ const Agent: React.FC = () => {
   const applyResponse = (resp: AgentResponse) => {
     const items: TimelineItem[] = (resp.steps || []).map(s => ({ kind: 'step' as const, step: s }))
     if (resp.status === 'done' && resp.answer) items.push({ kind: 'answer', text: resp.answer })
-    if (resp.status === 'max_steps') items.push({ kind: 'answer', text: resp.answer || 'Maksimum adıma ulaşıldı.' })
-    if (resp.status === 'error') items.push({ kind: 'error', text: resp.error || 'Bilinmeyen hata' })
+    if (resp.status === 'max_steps') items.push({ kind: 'answer', text: resp.answer || t('chat_max_steps') })
+    if (resp.status === 'error') items.push({ kind: 'error', text: resp.error || t('unknown_error') })
     setTimeline(prev => [...prev, ...items])
     setPendingActionId(resp.status === 'pending' ? (resp.action_id ?? null) : null)
     setQuestionActionId(resp.status === 'question' ? (resp.action_id ?? null) : null)
@@ -200,12 +202,12 @@ const Agent: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-blue-400">AI</span>
             <div>
-              <h2 className="text-white font-semibold">AI Agent</h2>
-              <p className="text-xs text-slate-400">Otonom teşhis + onaylı düzeltme (human-in-the-loop)</p>
+              <h2 className="text-white font-semibold">{t('chat_agent_title')}</h2>
+              <p className="text-xs text-slate-400">{t('chat_agent_sub')}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-400">Model</label>
+            <label className="text-xs text-slate-400">{t('chat_model')}</label>
             <select
               value={selectedModel}
               onChange={e => setSelectedModel(e.target.value)}
@@ -222,7 +224,7 @@ const Agent: React.FC = () => {
 
         {/* Server selector */}
         <div className="flex flex-wrap gap-2">
-          {servers.length === 0 && <span className="text-xs text-slate-500">AI-ready sunucu yok.</span>}
+          {servers.length === 0 && <span className="text-xs text-slate-500">{t('chat_no_ai_ready_dot')}</span>}
           {servers.map(s => {
             const sel = selectedServers.includes(s.id)
             return (
@@ -275,7 +277,7 @@ const Agent: React.FC = () => {
             return (
               <div key={i} className="bg-amber-500/5 border border-amber-500/40 rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-amber-300 font-medium">Onay gerekiyor</span>
+                  <span className="text-amber-300 font-medium">{t('chat_approval')}</span>
                   {riskBadge(s.tool)}
                 </div>
                 <div className="text-sm text-slate-300">
@@ -286,7 +288,7 @@ const Agent: React.FC = () => {
                   <div className="text-xs flex items-start gap-2 bg-cyber-deep/60 border border-white/[0.06] rounded-lg p-2">
                     <span className="flex items-center gap-1 text-slate-400"><Shield size={12} strokeWidth={2} /> Guard:</span>
                     <span className={s.guard.degraded ? 'text-slate-400' : 'text-emerald-300'}>
-                      {s.guard.degraded ? 'erişilemedi (fail-open)' : 'izin verdi'}
+                      {s.guard.degraded ? t('chat_guard_failopen') : t('chat_guard_allow')}
                     </span>
                     {s.guard.reason && <span className="text-slate-500">— {s.guard.reason}</span>}
                   </div>
@@ -294,18 +296,14 @@ const Agent: React.FC = () => {
                 {isPending && s.requires_root && (
                   <div className="space-y-1.5 bg-red-500/5 border border-red-500/40 rounded-lg p-3">
                     <div className="flex items-center gap-2 text-xs text-red-300">
-                      <span>Yetki yükseltme gerekli</span>
+                      <span>{t('chat_need_root')}</span>
                     </div>
-                    <p className="text-[11px] text-slate-400">
-                      Bu komut root yetkisi gerektiriyor ve kayıtlı sudo yetkisi bulunamadı.
-                      Çalıştırmak için root/sudo şifresini girin. Şifre yalnızca bu işlem için
-                      kullanılır, kaydedilmez.
-                    </p>
+                    <p className="text-[11px] text-slate-400">{t('chat_root_hint')}</p>
                     <input
                       type="password"
                       value={rootPassword}
                       onChange={e => setRootPassword(e.target.value)}
-                      placeholder="root / sudo şifresi"
+                      placeholder={t('chat_root_ph')}
                       autoComplete="new-password"
                       className="w-full bg-cyber-deep border border-white/[0.08] text-slate-200 text-sm rounded-lg px-3 py-1.5"
                     />
@@ -318,18 +316,18 @@ const Agent: React.FC = () => {
                       disabled={loading || (s.requires_root && !rootPassword.trim())}
                       className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium disabled:opacity-50"
                     >
-                      ✓ Onayla & Çalıştır
+                      {t('chat_approve_run')}
                     </button>
                     <button
                       onClick={() => s.action_id && decide(s.action_id, false)}
                       disabled={loading}
                       className="px-4 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 text-sm disabled:opacity-50"
                     >
-                      ✕ Reddet
+                      ✕ {t('reject')}
                     </button>
                   </div>
                 ) : (
-                  <div className="text-xs text-slate-500">Karar verildi.</div>
+                  <div className="text-xs text-slate-500">{t('chat_decided')}</div>
                 )}
               </div>
             )
@@ -345,8 +343,8 @@ const Agent: React.FC = () => {
             return (
               <div key={i} className="bg-blue-500/5 border border-blue-500/40 rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1 text-blue-300 font-medium"><HelpCircle size={13} strokeWidth={2} /> Seçim gerekiyor</span>
-                  {multi && <span className="text-[10px] text-slate-400">(birden çok seçilebilir)</span>}
+                  <span className="flex items-center gap-1 text-blue-300 font-medium"><HelpCircle size={13} strokeWidth={2} /> {t('chat_need_choice')}</span>
+                  {multi && <span className="text-[10px] text-slate-400">{t('chat_multi_ok')}</span>}
                 </div>
                 <div className="text-sm text-slate-200">{s.question}</div>
                 <div className="space-y-1.5">
@@ -373,7 +371,7 @@ const Agent: React.FC = () => {
                     disabled={loading || choiceSel.length === 0}
                     className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-50"
                   >
-                    Seç & Devam
+                    {t('chat_choose_continue')}
                   </button>
                 )}
               </div>
@@ -383,7 +381,7 @@ const Agent: React.FC = () => {
             const sel = Array.isArray(s.selected) ? s.selected.join(', ') : s.selected
             return (
               <div key={i} className="text-xs text-slate-400 border-l-2 border-blue-500/40 pl-3">
-                Seçildi: <span className="text-slate-200">{sel}</span>
+                {t('chat_chosen')} <span className="text-slate-200">{sel}</span>
               </div>
             )
           }
@@ -395,21 +393,21 @@ const Agent: React.FC = () => {
                   <code className="text-red-200 text-sm">{s.tool}</code>
                 </div>
                 {s.preview && <pre className="bg-cyber-deep border border-white/[0.07] rounded-lg p-2 text-xs text-slate-300 overflow-x-auto">{s.preview}</pre>}
-                {s.guard?.reason && <div className="text-xs text-red-300">Gerekçe: {s.guard.reason}</div>}
-                <div className="text-[11px] text-slate-500">Bu işlem güvenlik politikası nedeniyle çalıştırılmadı; agent alternatif arayacak.</div>
+                {s.guard?.reason && <div className="text-xs text-red-300">{t('chat_reason')} {s.guard.reason}</div>}
+                <div className="text-[11px] text-slate-500">{t('chat_blocked_hint')}</div>
               </div>
             )
           }
 
           const okColor = s.result?.ok ? 'text-emerald-300' : 'text-red-300'
-          const label = s.type === 'read_only' ? 'Teşhis' : s.type === 'executed' ? 'Çalıştırıldı' : s.type === 'rejected' ? 'Reddedildi' : 'Hata'
+          const label = s.type === 'read_only' ? t('chat_diag') : s.type === 'executed' ? t('chat_executed') : s.type === 'rejected' ? t('chat_rejected') : t('error_generic')
           return (
             <details key={i} className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-3" open={s.type !== 'read_only'}>
               <summary className="cursor-pointer flex items-center gap-2 text-sm">
                 <span className="text-slate-400">{label}</span>
                 <code className="text-cyan-300">{s.tool}</code>
                 {riskBadge(s.tool)}
-                {s.result && <span className={`ml-auto text-xs ${okColor}`}>{s.result.ok ? 'OK' : (s.result.error || s.detail || 'hata')}</span>}
+                {s.result && <span className={`ml-auto text-xs ${okColor}`}>{s.result.ok ? 'OK' : (s.result.error || s.detail || t('error_generic'))}</span>}
               </summary>
               {s.preview && <div className="mt-2 text-xs text-slate-400">{s.preview}</div>}
               {s.result?.stdout && (
@@ -424,7 +422,7 @@ const Agent: React.FC = () => {
         {loading && (
           <div className="flex items-center gap-2 text-slate-400 text-sm">
             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            Agent çalışıyor...
+            {t('chat_agent_running')}
           </div>
         )}
         <div ref={endRef} />
@@ -437,7 +435,7 @@ const Agent: React.FC = () => {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder="Örn: web01 sunucusunda disk doluluğunu kontrol et, gerekirse eski logları temizle"
+            placeholder={t('chat_agent_ph')}
             rows={2}
             disabled={loading}
             className="flex-1 bg-cyber-card border border-white/[0.06] rounded-[10px] px-4 py-3 text-slate-200 text-sm resize-none focus:outline-none focus:border-blue-500 disabled:opacity-60"
@@ -447,7 +445,7 @@ const Agent: React.FC = () => {
             disabled={loading || !input.trim()}
             className="px-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-50"
           >
-            Gönder
+            {t('chat_send')}
           </button>
         </div>
       </div>

@@ -267,8 +267,8 @@ export function osIconKey(s: OsLabelInput): OsIconKey {
 
 export function serverTypeLabel(serverType?: string | null): string {
   const t = (serverType || '').toUpperCase()
-  if (t === 'PHYSICAL') return 'Fiziksel'
-  if (t === 'VIRTUAL') return 'Sanal'
+  if (t === 'PHYSICAL') return 'Physical'
+  if (t === 'VIRTUAL') return 'Virtual'
   if (t === 'UNKNOWN' || !t) return '—'
   return serverType || '—'
 }

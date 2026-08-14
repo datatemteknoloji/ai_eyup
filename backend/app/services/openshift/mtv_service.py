@@ -121,6 +121,42 @@ def _vcenter(db: Session, hypervisor_id: int):
     return hv, client
 
 
+def _provider_deletable(name: str, ptype: Optional[str]) -> bool:
+    n = (name or "").strip().lower()
+    t = (ptype or "").strip().lower()
+    if t == "openshift" or n == "host":
+        return False
+    return True
+
+
+def _source_provider_name(obj: Dict) -> Optional[str]:
+    spec = obj.get("spec") or {}
+    prov = spec.get("provider") or {}
+    if not isinstance(prov, dict):
+        return None
+    src = prov.get("source")
+    if isinstance(src, dict) and src.get("name"):
+        return str(src["name"])
+    if prov.get("name"):
+        return str(prov["name"])
+    return None
+
+
+def _refs_for_provider(client: OpenShiftClient, provider_name: str) -> Dict[str, List[str]]:
+    refs: Dict[str, List[str]] = {"plans": [], "networkmaps": [], "storagemaps": [], "hosts": []}
+    for kind, key in (
+        ("plans", "plans"),
+        ("networkmaps", "networkmaps"),
+        ("storagemaps", "storagemaps"),
+        ("hosts", "hosts"),
+    ):
+        data = _get(client, f"{FORKLIFT}/namespaces/{NS}/{kind}") or {}
+        for item in data.get("items") or []:
+            if _source_provider_name(item) == provider_name:
+                refs[key].append((item.get("metadata") or {}).get("name") or "?")
+    return refs
+
+
 def list_providers(cluster: OpenShiftCluster) -> List[Dict]:
     client = _client(cluster)
     try:
@@ -136,13 +172,16 @@ def list_providers(cluster: OpenShiftCluster) -> List[Dict]:
                 None,
             )
             settings = (item.get("spec") or {}).get("settings") or {}
+            ptype = (item.get("spec") or {}).get("type")
+            pname = item["metadata"]["name"]
             out.append({
-                "name": item["metadata"]["name"],
-                "type": (item.get("spec") or {}).get("type"),
+                "name": pname,
+                "type": ptype,
                 "url": (item.get("spec") or {}).get("url", ""),
                 "ready": bool(ready and ready.get("status") == "True"),
                 "error": crit.get("message") if crit else None,
                 "vddk": settings.get("vddkInitImage") or None,
+                "deletable": _provider_deletable(pname, ptype),
             })
         return out
     finally:
@@ -167,6 +206,52 @@ def set_provider_vddk(cluster: OpenShiftCluster, provider_name: str, vddk_image:
         if r.status_code >= 400:
             raise MtvError(f"VDDK ayarlanamadı ({r.status_code}): {(r.text or '')[:200]}")
         return {"provider": pname, "vddk": img or None}
+    finally:
+        client.logout()
+
+
+def delete_provider(cluster: OpenShiftCluster, provider_name: str, actor: str = "") -> Dict:
+    pname = _rfc1123(provider_name)
+    client = _client(cluster)
+    try:
+        item = _get(client, f"{FORKLIFT}/namespaces/{NS}/providers/{pname}")
+        if item is None:
+            listed = _get(client, f"{FORKLIFT}/namespaces/{NS}/providers") or {}
+            item = next(
+                (x for x in (listed.get("items") or []) if (x.get("metadata") or {}).get("name") == pname),
+                None,
+            )
+        if item is None:
+            raise MtvError(f"Sağlayıcı bulunamadı: {pname}")
+        ptype = (item.get("spec") or {}).get("type")
+        if not _provider_deletable(pname, ptype):
+            raise MtvError("OpenShift hedef sağlayıcısı (host) silinemez")
+        refs = _refs_for_provider(client, pname)
+        if refs["plans"]:
+            raise MtvError(
+                f"'{pname}' kullanılıyor — önce bağlı planları silin: {', '.join(refs['plans'])}"
+            )
+        # Plansız kalan eşleme/host artıklarını temizle (Atlas kopyaları vb.)
+        for kind, names in (
+            ("networkmaps", refs["networkmaps"]),
+            ("storagemaps", refs["storagemaps"]),
+            ("hosts", refs["hosts"]),
+        ):
+            for n in names:
+                dr = client._delete(f"{FORKLIFT}/namespaces/{NS}/{kind}/{n}")
+                if dr.status_code == 403:
+                    raise MtvError("Yetki yok (403) — MTV yazma izni gerekli")
+        secret = ((item.get("spec") or {}).get("secret") or {}).get("name") or pname
+        r = client._delete(f"{FORKLIFT}/namespaces/{NS}/providers/{pname}")
+        if r.status_code == 403:
+            raise MtvError("Yetki yok (403) — MTV yazma izni gerekli")
+        if r.status_code not in (200, 202, 204, 404):
+            raise MtvError(f"Sağlayıcı silinemedi ({r.status_code}): {(r.text or '')[:200]}")
+        sr = client._delete(f"/api/v1/namespaces/{NS}/secrets/{secret}")
+        if sr.status_code not in (200, 202, 204, 404):
+            logger.warning("MTV provider secret silinemedi: %s (%s)", secret, sr.status_code)
+        logger.info("MTV provider silindi: %s — %s", pname, actor)
+        return {"deleted": pname, "secret": secret}
     finally:
         client.logout()
 

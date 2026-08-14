@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 // DESIGN.md: "Mor (purple, violet) kullanılmaz — blue-600 tek aksan rengidir."
 // `info` DESIGN.md'deki --info token'ıyla aynı (#38bdf8) — RAM/VM-sayısı gibi
@@ -106,7 +107,9 @@ const fmtDisk = (gb: number) => gb >= 1024 ? `${(gb/1024).toFixed(1)} TB` : `${g
 // ── Confirm Modal ───────────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
-}) => (
+}) => {
+  const t = useT()
+  return (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
@@ -114,17 +117,18 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
           <AlertTriangle className="w-4 h-4 text-yellow-400" />
         </div>
         <div>
-          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm font-semibold text-white mb-1">{t('confirm_title')}</div>
           <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
-        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">{t('cancel')}</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">{t('confirm_ok')}</button>
       </div>
     </div>
   </div>
-)
+  )
+}
 
 // ── Stat Card ───────────────────────────────────────────────────────────────
 const StatCard = ({ icon: Icon, label, value, sub, accent, trend }: {
@@ -153,6 +157,7 @@ const StatCard = ({ icon: Icon, label, value, sub, accent, trend }: {
 const ResourceGauge = ({ label, used, total, unit, accent }: {
   label: string; used: number; total: number; unit: string; accent: string
 }) => {
+  const t = useT()
   const pct = total > 0 ? Math.round((used / total) * 100) : 0
   const free = total - used
   const getColor = (p: number) => p >= 90 ? NEON.red : p >= 75 ? NEON.orange : accent
@@ -172,8 +177,8 @@ const ResourceGauge = ({ label, used, total, unit, accent }: {
         />
       </div>
       <div className="flex justify-between text-xs">
-        <span className="text-slate-400">Kullanılan: <span className="text-white font-medium">{unit === 'GB' ? fmtDisk(used) : fmtMem(used)}</span></span>
-        <span className="text-slate-400">Boş: <span className="text-green-400 font-medium">{unit === 'GB' ? fmtDisk(free) : fmtMem(free)}</span></span>
+        <span className="text-slate-400">{t('hv_used')}: <span className="text-white font-medium">{unit === 'GB' ? fmtDisk(used) : fmtMem(used)}</span></span>
+        <span className="text-slate-400">{t('hv_free')}: <span className="text-green-400 font-medium">{unit === 'GB' ? fmtDisk(free) : fmtMem(free)}</span></span>
       </div>
     </div>
   )
@@ -181,17 +186,18 @@ const ResourceGauge = ({ label, used, total, unit, accent }: {
 
 // ── VM Status Pie ───────────────────────────────────────────────────────────
 const VMStatusPie = ({ poweredOn, poweredOff }: { poweredOn: number; poweredOff: number }) => {
+  const t = useT()
   const total = poweredOn + poweredOff
   if (total === 0) return null
   
   const data = [
-    { name: 'Çalışan', value: poweredOn, color: NEON.green },
-    { name: 'Kapalı', value: poweredOff, color: '#475569' },
+    { name: t('hv_running'), value: poweredOn, color: NEON.green },
+    { name: t('power_off'), value: poweredOff, color: '#475569' },
   ].filter(d => d.value > 0)
 
   return (
     <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
-      <h3 className="text-sm font-medium text-white mb-4">VM Durum Dağılımı</h3>
+      <h3 className="text-sm font-medium text-white mb-4">{t('hv_vm_status_dist')}</h3>
       <div className="flex items-center gap-6">
         <div className="relative">
           <ResponsiveContainer width={100} height={100}>
@@ -210,14 +216,14 @@ const VMStatusPie = ({ poweredOn, poweredOff }: { poweredOn: number; poweredOff:
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Power className="w-4 h-4 text-green-400" />
-              <span className="text-sm text-slate-300">Çalışan</span>
+              <span className="text-sm text-slate-300">{t('hv_running')}</span>
             </div>
             <span className="text-sm font-bold text-green-400">{poweredOn}</span>
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <PowerOff className="w-4 h-4 text-slate-500" />
-              <span className="text-sm text-slate-300">Kapalı</span>
+              <span className="text-sm text-slate-300">{t('power_off')}</span>
             </div>
             <span className="text-sm font-bold text-slate-400">{poweredOff}</span>
           </div>
@@ -229,18 +235,19 @@ const VMStatusPie = ({ poweredOn, poweredOff }: { poweredOn: number; poweredOff:
 
 // ── Host Resource Bar Chart ─────────────────────────────────────────────────
 const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
+  const t = useT()
   if (hosts.length === 0) return null
 
   const data = hosts.slice(0, 6).map(h => ({
     name: h.host_name.length > 12 ? h.host_name.slice(0, 12) + '...' : h.host_name,
     CPU: h.cpu_usage_pct || 0,
-    RAM: h.mem_usage_pct || 0,
+    Memory: h.mem_usage_pct || 0,
     Disk: h.ds_usage_pct || 0,
   }))
 
   return (
     <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
-      <h3 className="text-sm font-medium text-white mb-4">Host Kaynak Kullanımı</h3>
+      <h3 className="text-sm font-medium text-white mb-4">{t('hv_host_resource')}</h3>
       <ResponsiveContainer width="100%" height={180}>
         <BarChart data={data} layout="vertical" margin={{ left: 0, right: 10 }}>
           <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -250,12 +257,12 @@ const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
             formatter={(v: number) => [`${v}%`, '']}
           />
           <Bar dataKey="CPU" fill={NEON.cyan} radius={[0, 4, 4, 0]} barSize={8} />
-          <Bar dataKey="RAM" fill={NEON.info} radius={[0, 4, 4, 0]} barSize={8} />
+          <Bar dataKey="Memory" fill={NEON.info} radius={[0, 4, 4, 0]} barSize={8} />
           <Bar dataKey="Disk" fill={NEON.orange} radius={[0, 4, 4, 0]} barSize={8} />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-4 mt-2">
-        {[{ label: 'CPU', color: NEON.cyan }, { label: 'RAM', color: NEON.info }, { label: 'Disk', color: NEON.orange }].map(l => (
+        {[{ label: 'CPU', color: NEON.cyan }, { label: 'Memory', color: NEON.info }, { label: 'Disk', color: NEON.orange }].map(l => (
           <div key={l.label} className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />
             <span className="text-xs text-slate-400">{l.label}</span>
@@ -276,13 +283,15 @@ const VMDetailDrawer = ({
   hypervisorName: string
   onClose: () => void
 }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const isOn = isVmOnline(vm.status, vm.vm_power_state)
 
   const { data: details, isLoading, isError, refetch, isFetching } = useQuery<VmDetailsPayload>({
     queryKey: ['hypervisor-vm-details', vm.id],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/snapshots/server/${vm.id}/vm-details`)
-      if (!r.ok) throw new Error('VM detayı alınamadı')
+      if (!r.ok) throw new Error(t('hv_vm_detail_fail'))
       return r.json()
     },
     enabled: !!vm.id,
@@ -299,7 +308,7 @@ const VMDetailDrawer = ({
     queryKey: ['vm-live-metrics', vm.id],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/servers/${vm.id}/vm-live-metrics`)
-      if (!r.ok) throw new Error('VM metrik alınamadı')
+      if (!r.ok) throw new Error(t('hv_metrics_err'))
       return r.json()
     },
     enabled: !!vm.id,
@@ -318,7 +327,7 @@ const VMDetailDrawer = ({
       }
       await Promise.all([refetch(), refetchMetrics()])
     } catch (e: any) {
-      alert(e?.message || 'VM bilgisini yenilerken hata')
+      alert(e?.message || t('hv_refresh_fail'))
     } finally {
       setSyncing(false)
     }
@@ -343,15 +352,15 @@ const VMDetailDrawer = ({
 
   const fields: { label: string; val?: string | number | null }[] = [
     { label: 'VM ID', val: details?.hypervisor_vm_id || vm.hypervisor_vm_id },
-    { label: 'VM Adı', val: details?.vm_name || vm.name },
-    { label: 'Guest Host', val: details?.vm_guest_hostname || vm.hostname },
+    { label: t('label_vm_name'), val: details?.vm_name || vm.name },
+    { label: t('hv_guest_host'), val: details?.vm_guest_hostname || vm.hostname },
     { label: 'IP', val: details?.vm_guest_ip || vm.ip_address },
     { label: 'OS', val: vm.os_type },
-    { label: 'Hypervisor', val: hypervisorName },
+    { label: t('hv_hypervisor'), val: hypervisorName },
     { label: 'Cluster', val: details?.vm_cluster },
-    { label: 'Datastore', val: details?.vm_datastore },
-    { label: 'HW Versiyon', val: details?.vm_hardware_version },
-    { label: 'VMware Tools', val: details?.vm_tools_status },
+    { label: t('hv_datastore'), val: details?.vm_datastore },
+    { label: t('hw_version'), val: details?.vm_hardware_version },
+    { label: t('hv_vmware_tools'), val: details?.vm_tools_status },
   ]
 
   return (
@@ -370,7 +379,7 @@ const VMDetailDrawer = ({
                 powerOn ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-400'
               }`}>
                 {powerOn ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
-                {powerOn ? 'Çalışıyor' : 'Kapalı'}
+                {powerOn ? t('hv_running_now') : t('power_off')}
               </span>
             </div>
           </div>
@@ -389,19 +398,19 @@ const VMDetailDrawer = ({
             <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
               <MemoryStick className="w-4 h-4 text-sky-400 mx-auto mb-1" />
               <div className="text-lg font-bold text-white">{ramGb != null ? Number(ramGb).toFixed(ramGb < 10 ? 1 : 0) : '—'}</div>
-              <div className="text-[10px] text-slate-500">GB RAM</div>
+              <div className="text-[10px] text-slate-500">{t('hv_gb_memory')}</div>
             </div>
             <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3 text-center">
               <HardDrive className="w-4 h-4 text-orange-400 mx-auto mb-1" />
               <div className="text-lg font-bold text-white">{diskGb ?? '—'}</div>
-              <div className="text-[10px] text-slate-500">GB Disk</div>
+              <div className="text-[10px] text-slate-500">{t('hv_gb_disk')}</div>
             </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                <BarChart3 className="w-3.5 h-3.5" /> Canlı metrikler (vCenter)
+                <BarChart3 className="w-3.5 h-3.5" /> {t('hv_live_metrics')}
               </h3>
               <button
                 onClick={() => refetchMetrics()}
@@ -409,7 +418,7 @@ const VMDetailDrawer = ({
                 className="text-[11px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-50 flex items-center gap-1"
               >
                 <RefreshCw className={`w-3 h-3 ${metricsFetching ? 'animate-spin' : ''}`} />
-                Yenile
+                {t('refresh_action')}
               </button>
             </div>
             {metricsLoading ? (
@@ -418,7 +427,7 @@ const VMDetailDrawer = ({
               </div>
             ) : metricsError || !liveMetrics?.source ? (
               <p className="text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
-                {liveMetrics?.error || 'vCenter metrik alınamadı. VM ID ve hypervisor bağlantısını kontrol edin.'}
+                {liveMetrics?.error || t('hv_metrics_fail')}
               </p>
             ) : (
               <div className="space-y-3">
@@ -426,7 +435,7 @@ const VMDetailDrawer = ({
                   <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">vCenter</span>
                   {liveMetrics.uptime_seconds != null && (
                     <span className="text-slate-500">
-                      Uptime: {Math.floor(liveMetrics.uptime_seconds / 86400)}g {Math.floor((liveMetrics.uptime_seconds % 86400) / 3600)}s
+                      {t('hv_uptime', { d: Math.floor(liveMetrics.uptime_seconds / 86400), h: Math.floor((liveMetrics.uptime_seconds % 86400) / 3600) })}
                     </span>
                   )}
                 </div>
@@ -437,7 +446,7 @@ const VMDetailDrawer = ({
                     hint: liveMetrics.cpu_mhz != null ? `${liveMetrics.cpu_mhz} MHz` : (liveMetrics.cpu_num != null ? `${liveMetrics.cpu_num} vCPU` : undefined),
                   },
                   {
-                    label: 'RAM',
+                    label: 'Memory',
                     value: liveMetrics.mem_percent,
                     hint: liveMetrics.mem_used_gb != null && liveMetrics.mem_total_gb != null
                       ? `${liveMetrics.mem_used_gb}/${liveMetrics.mem_total_gb} GB`
@@ -447,8 +456,8 @@ const VMDetailDrawer = ({
                     label: 'Disk',
                     value: liveMetrics.disk_percent,
                     hint: liveMetrics.disk_avail_gb != null && liveMetrics.disk_total_gb != null
-                      ? `${liveMetrics.disk_avail_gb} GB boş / ${liveMetrics.disk_total_gb} GB`
-                      : 'Guest Tools gerekir',
+                      ? t('hv_disk_free', { avail: liveMetrics.disk_avail_gb, total: liveMetrics.disk_total_gb })
+                      : t('hv_guest_tools'),
                   },
                 ].map(m => (
                   <div key={m.label}>
@@ -468,7 +477,7 @@ const VMDetailDrawer = ({
                 ))}
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
-                    <div className="text-[10px] text-slate-500 mb-0.5">Disk IOPS</div>
+                    <div className="text-[10px] text-slate-500 mb-0.5">{t('hv_disk_iops')}</div>
                     <div className="text-sm text-slate-200 tabular-nums">
                       R {liveMetrics.disk_read_iops != null ? liveMetrics.disk_read_iops.toFixed(0) : '—'}
                       <span className="text-slate-600"> / </span>
@@ -477,7 +486,7 @@ const VMDetailDrawer = ({
                   </div>
                   <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
                     <div className="text-[10px] text-slate-500 mb-0.5 flex items-center gap-1">
-                      <Network className="w-3 h-3" /> Ağ
+                      <Network className="w-3 h-3" /> {t('hv_network')}
                     </div>
                     <div className="text-sm text-slate-200 tabular-nums">
                       ↓ {fmtKbps(liveMetrics.net_rx_kbps)}
@@ -493,7 +502,7 @@ const VMDetailDrawer = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                <Cloud className="w-3.5 h-3.5" /> VM Bilgileri
+                <Cloud className="w-3.5 h-3.5" /> {t('hv_vm_info')}
               </h3>
               <button
                 onClick={syncVm}
@@ -501,7 +510,7 @@ const VMDetailDrawer = ({
                 className="text-[11px] px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-50 flex items-center gap-1"
               >
                 <RefreshCw className={`w-3 h-3 ${syncing || isFetching ? 'animate-spin' : ''}`} />
-                Yenile
+                {t('refresh_action')}
               </button>
             </div>
             {isLoading ? (
@@ -509,7 +518,7 @@ const VMDetailDrawer = ({
                 <RefreshCw className="w-5 h-5 text-slate-500 animate-spin" />
               </div>
             ) : isError ? (
-              <p className="text-xs text-amber-400 mb-2">Detaylar yüklenemedi. Liste bilgileri gösteriliyor.</p>
+              <p className="text-xs text-amber-400 mb-2">{t('hv_details_fail')}</p>
             ) : null}
             <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 divide-y divide-slate-800/80">
               {fields.filter(f => f.val != null && f.val !== '').map(f => (
@@ -521,7 +530,7 @@ const VMDetailDrawer = ({
             </div>
             {details?.vm_last_sync && (
               <p className="text-[10px] text-slate-600 mt-2">
-                Son sync: {new Date(details.vm_last_sync).toLocaleString('tr-TR')}
+                {t('hv_last_sync', { time: new Date(details.vm_last_sync).toLocaleString(locale === 'en' ? 'en-US' : 'tr-TR') })}
               </p>
             )}
           </div>
@@ -529,7 +538,7 @@ const VMDetailDrawer = ({
           {(details?.vm_network_info?.length ?? 0) > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Network className="w-3.5 h-3.5" /> Ağ Adaptörleri
+                <Network className="w-3.5 h-3.5" /> {t('hv_nics')}
               </h3>
               <div className="space-y-2">
                 {details!.vm_network_info!.map((nic, i) => (
@@ -549,7 +558,7 @@ const VMDetailDrawer = ({
 
           {!details?.hypervisor_vm_id && !vm.hypervisor_vm_id && !isLoading && (
             <p className="text-xs text-slate-500 bg-slate-800/40 border border-slate-700/50 rounded-lg px-3 py-2">
-              VM ID henüz kaydedilmemiş. “Yenile” ile hypervisor’dan çekebilirsiniz.
+              {t('hv_vm_id_hint')}
             </p>
           )}
         </div>
@@ -559,13 +568,13 @@ const VMDetailDrawer = ({
             to={`/servers?highlight=${vm.id}`}
             className="flex-1 text-center text-xs px-3 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 flex items-center justify-center gap-1.5"
           >
-            <ExternalLink className="w-3.5 h-3.5" /> Sunucu kaydı
+            <ExternalLink className="w-3.5 h-3.5" /> {t('hv_server_record')}
           </Link>
           <button
             onClick={onClose}
             className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs hover:text-white border border-slate-700"
           >
-            Kapat
+            {t('close')}
           </button>
         </div>
       </div>
@@ -575,6 +584,7 @@ const VMDetailDrawer = ({
 
 // ── VM Table ────────────────────────────────────────────────────────────────
 const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] }) => {
+  const t = useT()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'cpu' | 'ram'>('name')
@@ -615,7 +625,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
       <div className="px-5 py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Monitor className="w-5 h-5 text-blue-400" />
-          <span className="text-sm font-medium text-white">Sanal Makineler</span>
+          <span className="text-sm font-medium text-white">{t('hv_virtual_machines')}</span>
           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">{vms.length}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -624,7 +634,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
             <input
               type="text"
-              placeholder="VM ara..."
+              placeholder={t('hv_vm_search')}
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="bg-cyber-deep border border-white/[0.06] rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 w-48"
@@ -636,9 +646,9 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
             onChange={e => setFilter(e.target.value as any)}
             className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
           >
-            <option value="all">Tümü</option>
-            <option value="online">Çalışan</option>
-            <option value="offline">Kapalı</option>
+            <option value="all">{t('filter_all')}</option>
+            <option value="online">{t('hv_running')}</option>
+            <option value="offline">{t('power_off')}</option>
           </select>
           {/* Sort */}
           <select
@@ -646,9 +656,9 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
             onChange={e => setSortBy(e.target.value as any)}
             className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
           >
-            <option value="name">İsme Göre</option>
-            <option value="cpu">CPU'ya Göre</option>
-            <option value="ram">RAM'e Göre</option>
+            <option value="name">{t('hv_sort_name')}</option>
+            <option value="cpu">{t('hv_sort_cpu')}</option>
+            <option value="ram">{t('memory')}</option>
           </select>
         </div>
       </div>
@@ -663,15 +673,15 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
               <th className="text-left px-5 py-3 font-medium">IP</th>
               <th className="text-left px-5 py-3 font-medium">OS</th>
               <th className="text-center px-5 py-3 font-medium">CPU</th>
-              <th className="text-center px-5 py-3 font-medium">RAM</th>
-              <th className="text-center px-5 py-3 font-medium">Durum</th>
+              <th className="text-center px-5 py-3 font-medium">Memory</th>
+              <th className="text-center px-5 py-3 font-medium">{t('col_status')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.04]">
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-5 py-12 text-center text-slate-500">
-                  {search || filter !== 'all' ? 'Filtreye uygun VM bulunamadı' : 'Henüz VM yok'}
+                  {search || filter !== 'all' ? t('hv_no_vm_filter') : t('hv_no_vm')}
                 </td>
               </tr>
             ) : (
@@ -690,7 +700,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
                       </div>
                       <div>
                         <div className="text-sm font-medium text-blue-300">{vm.name}</div>
-                        {vm.ai_ready && <span className="text-[10px] text-cyan-400">AI Ready</span>}
+                        {vm.ai_ready && <span className="text-[10px] text-cyan-400">{t('ai_ready')}</span>}
                       </div>
                     </div>
                   </td>
@@ -710,7 +720,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
                       isPoweredOn(vm) ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-400'
                     }`}>
                       {isPoweredOn(vm) ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
-                      {isPoweredOn(vm) ? 'Çalışıyor' : 'Kapalı'}
+                      {isPoweredOn(vm) ? t('hv_running_now') : t('power_off')}
                     </span>
                   </td>
                 </tr>
@@ -720,7 +730,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
         </table>
         {filtered.length > 100 && (
           <div className="px-5 py-3 text-center text-xs text-slate-500 border-t border-white/[0.04]">
-            İlk 100 VM gösteriliyor. Toplam: {filtered.length}
+            {t('hv_showing_first', { n: filtered.length })}
           </div>
         )}
       </div>
@@ -738,6 +748,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
 
 // ── Host Cards ──────────────────────────────────────────────────────────────
 const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const getStatusColor = (pct: number) => pct >= 90 ? NEON.red : pct >= 75 ? NEON.orange : NEON.green
 
@@ -753,7 +764,7 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
           </div>
           <div>
             <div className="text-sm font-medium text-white">{host.host_name}</div>
-            <div className="text-xs text-slate-500">{hvName} • {host.vms_running}/{host.vms_total} VM</div>
+            <div className="text-xs text-slate-500">{t('hv_host_vms', { hv: hvName, running: host.vms_running, total: host.vms_total })}</div>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -765,7 +776,7 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
             </div>
             <div className="text-center">
               <div className="text-xs font-bold" style={{ color: getStatusColor(host.mem_usage_pct) }}>{host.mem_usage_pct?.toFixed(0) || 0}%</div>
-              <div className="text-[10px] text-slate-500">RAM</div>
+              <div className="text-[10px] text-slate-500">Memory</div>
             </div>
             <div className="text-center">
               <div className="text-xs font-bold" style={{ color: getStatusColor(host.ds_usage_pct) }}>{host.ds_usage_pct?.toFixed(0) || 0}%</div>
@@ -781,7 +792,7 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
           {/* Resource Bars */}
           {[
             { label: 'CPU', used: host.cpu_usage_mhz, total: host.cpu_total_mhz, unit: 'MHz', pct: host.cpu_usage_pct, color: NEON.cyan },
-            { label: 'RAM', used: host.mem_used_mb, total: host.mem_total_mb, unit: 'MB', pct: host.mem_usage_pct, color: NEON.info },
+            { label: 'Memory', used: host.mem_used_mb, total: host.mem_total_mb, unit: 'MB', pct: host.mem_usage_pct, color: NEON.info },
             { label: 'Disk', used: host.ds_used_gb, total: host.ds_total_gb, unit: 'GB', pct: host.ds_usage_pct, color: NEON.orange },
           ].map(r => (
             <div key={r.label}>
@@ -801,10 +812,10 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
           {/* Hardware Info */}
           {host.inventory && (
             <div className="pt-2 border-t border-white/[0.04] grid grid-cols-2 gap-2 text-xs">
-              {host.inventory.vendor && <div><span className="text-slate-500">Marka:</span> <span className="text-slate-300">{host.inventory.vendor}</span></div>}
-              {host.inventory.model && <div><span className="text-slate-500">Model:</span> <span className="text-slate-300">{host.inventory.model}</span></div>}
+              {host.inventory.vendor && <div><span className="text-slate-500">{t('hv_brand')}:</span> <span className="text-slate-300">{host.inventory.vendor}</span></div>}
+              {host.inventory.model && <div><span className="text-slate-500">{t('hv_model')}:</span> <span className="text-slate-300">{host.inventory.model}</span></div>}
               {host.inventory.cpu_model && <div className="col-span-2"><span className="text-slate-500">CPU:</span> <span className="text-slate-300">{host.inventory.cpu_model}</span></div>}
-              <div><span className="text-slate-500">Core:</span> <span className="text-slate-300">{host.cpu_cores}</span></div>
+              <div><span className="text-slate-500">{t('hv_core')}:</span> <span className="text-slate-300">{host.cpu_cores}</span></div>
             </div>
           )}
         </div>
@@ -833,6 +844,7 @@ const HypervisorManagement = ({
   syncingAll?: boolean
   readOnly?: boolean
 }) => {
+  const t = useT()
   const getTypeColor = (type: string) => {
     const colors: Record<string, string> = {
       vmware: 'from-green-500 to-green-600',
@@ -846,7 +858,7 @@ const HypervisorManagement = ({
   }
 
   const getTypeLabel = (type: string) => {
-    const labels: Record<string, string> = { vmware: 'VMware', hyperv: 'Hyper-V', kvm: 'oVirt/KVM', xen: 'XEN', proxmox: 'Proxmox', openshift_virt: 'OpenShift Virtualization' }
+    const labels: Record<string, string> = { vmware: 'VMware', hyperv: 'Hyper-V', kvm: 'oVirt/KVM', xen: 'XEN', proxmox: 'Proxmox', openshift_virt: t('hv_type_ocp_virt') }
     return labels[type.toLowerCase()] || type.toUpperCase()
   }
 
@@ -854,9 +866,9 @@ const HypervisorManagement = ({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-white">Hypervisor Bağlantıları</h3>
+          <h3 className="text-sm font-medium text-white">{t('hv_connections')}</h3>
           {!readOnly && (
-            <p className="text-xs text-slate-500 mt-0.5">Envanter otomatik olarak her 5 dakikada bir senkronize edilir</p>
+            <p className="text-xs text-slate-500 mt-0.5">{t('hv_auto_sync')}</p>
           )}
         </div>
         {!readOnly && (
@@ -867,14 +879,14 @@ const HypervisorManagement = ({
                 disabled={syncingAll}
                 className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-400 text-sm rounded-lg hover:bg-blue-500/20 transition-all disabled:opacity-50"
               >
-                <RefreshCw className={`w-4 h-4 ${syncingAll ? 'animate-spin' : ''}`} /> Tümünü Senkronize Et
+                <RefreshCw className={`w-4 h-4 ${syncingAll ? 'animate-spin' : ''}`} /> {t('hv_sync_all')}
               </button>
             )}
             <button
               onClick={onAdd}
               className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
             >
-              <Plus className="w-4 h-4" /> Ekle
+              <Plus className="w-4 h-4" /> {t('add')}
             </button>
           </div>
         )}
@@ -883,13 +895,13 @@ const HypervisorManagement = ({
       {hypervisors.length === 0 ? (
         <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
           <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-400 mb-4">Henüz hypervisor bağlantısı yok</p>
+          <p className="text-slate-400 mb-4">{t('hv_no_connection')}</p>
           {readOnly ? (
             <Link to="/integrations/hypervisors" className="text-blue-400 hover:text-blue-300 text-sm">
-              Entegrasyonlar → vCenter / OLVM
+              {t('hv_integrations_link')}
             </Link>
           ) : (
-            <button onClick={onAdd} className="text-blue-400 hover:text-blue-300 text-sm">+ Hypervisor Ekle</button>
+            <button onClick={onAdd} className="text-blue-400 hover:text-blue-300 text-sm">{t('hv_add_hypervisor')}</button>
           )}
         </div>
       ) : (
@@ -906,7 +918,7 @@ const HypervisorManagement = ({
                       {hv.name}
                       {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') && (
                         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                          <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Taranıyor
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" /> {t('hv_scanning')}
                         </span>
                       )}
                     </div>
@@ -916,12 +928,12 @@ const HypervisorManagement = ({
               </div>
               <div className="space-y-1.5 text-xs mb-4">
                 <div className="flex"><span className="w-12 text-slate-500">IP:</span><span className="text-slate-300 font-mono">{hv.ip_address}:{hv.port}</span></div>
-                <div className="flex"><span className="w-12 text-slate-500">User:</span><span className="text-slate-300">{hv.username}</span></div>
+                <div className="flex"><span className="w-12 text-slate-500">{t('hv_user')}:</span><span className="text-slate-300">{hv.username}</span></div>
               </div>
               {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') && (
                 <div className="mb-3">
                   <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                    <span className="truncate pr-2">{hv.sync_job?.message || 'Tarama sürüyor...'}</span>
+                    <span className="truncate pr-2">{hv.sync_job?.message || t('hv_scan_progress')}</span>
                     <span>{Math.round(Number(hv.sync_job?.percent) || 0)}%</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
@@ -937,7 +949,7 @@ const HypervisorManagement = ({
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/20 text-xs transition-colors disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') ? 'animate-spin' : ''}`} />
-                    {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') ? 'Taranıyor...' : 'Sync VMs'}
+                    {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') ? t('hv_scanning_dots') : t('hv_sync_vms')}
                   </button>
                   <button
                     onClick={() => onDelete(hv.id)}
@@ -953,7 +965,7 @@ const HypervisorManagement = ({
                   onClick={() => onShowProgress(hv.id)}
                   className="mt-2 w-full text-[11px] text-blue-400 hover:text-blue-300 py-1"
                 >
-                  İlerleme ekranını aç →
+                  {t('hv_open_progress')}
                 </button>
               )}
             </div>
@@ -978,7 +990,8 @@ const SyncScanningOverlay = ({
   onDone: (job: SyncJob) => void
   onDismiss: () => void
 }) => {
-  const [job, setJob] = useState<SyncJob>({ status: 'running', percent: 1, message: 'Tarama başlıyor...' })
+  const tr = useT()
+  const [job, setJob] = useState<SyncJob>({ status: 'running', percent: 1, message: tr('hv_scan_starting') })
   const [vmCount, setVmCount] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
   const startedAtRef = React.useRef(Date.now())
@@ -989,16 +1002,16 @@ const SyncScanningOverlay = ({
   useEffect(() => {
     startedAtRef.current = Date.now()
     setElapsedSec(0)
-    const t = setInterval(() => {
+    const tick = setInterval(() => {
       setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000))
     }, 1000)
-    return () => clearInterval(t)
+    return () => clearInterval(tick)
   }, [hypervisorId])
 
   useEffect(() => {
     let cancelled = false
     let finished = false
-    setJob({ status: 'running', percent: 1, message: 'Tarama başlıyor...' })
+    setJob({ status: 'running', percent: 1, message: tr('hv_scan_starting') })
     const tick = async () => {
       if (finished || cancelled) return
       try {
@@ -1008,7 +1021,7 @@ const SyncScanningOverlay = ({
         if (!r.ok || cancelled) return
         const data = await r.json()
         const j: SyncJob = data.sync_job || {}
-        setJob(j.status ? j : { status: 'running', percent: 3, message: 'Bağlanılıyor...' })
+        setJob(j.status ? j : { status: 'running', percent: 3, message: tr('hv_connecting') })
         setVmCount(data.vm_count_in_db || 0)
         if (j.status === 'done' || j.status === 'error') {
           finished = true
@@ -1029,11 +1042,11 @@ const SyncScanningOverlay = ({
   const pct = Math.max(0, Math.min(100, Number(job.percent) || 0))
   const done = job.status === 'done' || job.status === 'error'
   const fmtDur = (sec: number) => {
-    if (sec < 60) return `${sec} sn`
+    if (sec < 60) return tr('dur_sec', { n: sec })
     const m = Math.floor(sec / 60)
     const s = sec % 60
-    if (m < 60) return `${m} dk ${s} sn`
-    return `${Math.floor(m / 60)} sa ${m % 60} dk`
+    if (m < 60) return tr('dur_min_sec', { m, s })
+    return tr('dur_hr_min', { h: Math.floor(m / 60), m: m % 60 })
   }
   const etaSec =
     !done && pct >= 8 && elapsedSec >= 15
@@ -1057,7 +1070,7 @@ const SyncScanningOverlay = ({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-white">
-              {job.status === 'done' ? 'Tarama tamamlandı' : job.status === 'error' ? 'Tarama hatası' : 'Hypervisor taranıyor'}
+              {job.status === 'done' ? tr('hv_scan_done') : job.status === 'error' ? tr('hv_scan_error') : tr('hv_scanning_title')}
             </h2>
             <p className="text-sm text-slate-400 mt-0.5 truncate">{hypervisorName}</p>
             {queueLabel && <p className="text-xs text-blue-400/80 mt-1">{queueLabel}</p>}
@@ -1066,7 +1079,7 @@ const SyncScanningOverlay = ({
 
         <div className="mb-4">
           <div className="flex justify-between text-xs text-slate-400 mb-1.5">
-            <span className="truncate pr-2">{job.message || 'İşleniyor...'}</span>
+            <span className="truncate pr-2">{job.message || tr('job_processing')}</span>
             <span className="font-mono text-slate-300 flex-shrink-0">{pct}%</span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
@@ -1081,7 +1094,7 @@ const SyncScanningOverlay = ({
 
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">VM progress</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{tr('hv_vm_progress')}</div>
             <div className="text-sm text-white font-medium mt-0.5">
               {job.vms_done != null && job.vms_total != null
                 ? `${job.vms_done} / ${job.vms_total}`
@@ -1089,24 +1102,23 @@ const SyncScanningOverlay = ({
             </div>
           </div>
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Geçen süre</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{tr('job_elapsed')}</div>
             <div className="text-sm text-white font-medium mt-0.5">{fmtDur(elapsedSec)}</div>
           </div>
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Tahmini kalan</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{tr('job_eta')}</div>
             <div className="text-sm text-white font-medium mt-0.5">
-              {done ? '—' : etaSec != null ? `~${fmtDur(etaSec)}` : 'hesaplanıyor…'}
+              {done ? '—' : etaSec != null ? `~${fmtDur(etaSec)}` : tr('job_eta_calc')}
             </div>
           </div>
         </div>
         {vmCount > 0 && (
-          <p className="text-[11px] text-slate-500 mb-3">Veritabanında bu hypervisor için şu an {vmCount} VM kayıtlı.</p>
+          <p className="text-[11px] text-slate-500 mb-3">{tr('hv_db_vms', { n: vmCount })}</p>
         )}
 
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            Büyük ortamlarda tam envanter taraması genelde 10–20 dakika sürebilir. Pencereyi kapatırsanız tarama
-            arka planda devam eder; kart üzerindeki “İlerleme ekranını aç” ile tekrar izleyebilirsiniz.
+            {tr('hv_scan_hint')}
           </p>
         )}
         {job.status === 'error' && job.error && (
@@ -1121,7 +1133,7 @@ const SyncScanningOverlay = ({
             onClick={onDismiss}
             className="px-4 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
           >
-            {done ? 'Kapat' : 'Arka planda devam et'}
+            {done ? tr('close') : tr('job_continue_bg')}
           </button>
         </div>
       </div>
@@ -1131,6 +1143,7 @@ const SyncScanningOverlay = ({
 
 // ── Add Hypervisor Modal ────────────────────────────────────────────────────
 const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) => {
+  const t = useT()
   const [formData, setFormData] = useState({
     name: '', type: 'vmware', hostname: '', ip_address: '', port: 443, username: '', password: '', token: ''
   })
@@ -1164,7 +1177,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
       const data = await r.json()
       setTestResult({ success: data.success, message: data.message })
     } catch {
-      setTestResult({ success: false, message: 'Bağlantı hatası' })
+      setTestResult({ success: false, message: t('conn_error') })
     } finally {
       setTesting(false)
     }
@@ -1185,49 +1198,49 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Hypervisor Ekle</h2>
+          <h2 className="text-lg font-semibold text-white">{t('hv_add_title')}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Adı *</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('hv_name_req')}</label>
             <input type="text" required value={formData.name} onChange={e => { setFormData({...formData, name: e.target.value}); setTestResult(null) }}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="vCenter Production" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Tip *</label>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('hv_type_req')}</label>
             <select value={formData.type} onChange={e => { setFormData({...formData, type: e.target.value}); setTestResult(null) }}
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
               <option value="vmware">VMware vCenter / ESXi</option>
               <option value="hyperv">Microsoft Hyper-V</option>
               <option value="kvm">KVM / oVirt</option>
               <option value="proxmox">Proxmox VE</option>
-              <option value="openshift_virt">OpenShift Virtualization</option>
+              <option value="openshift_virt">{t('hv_type_ocp_virt')}</option>
             </select>
           </div>
           {isTokenAuth ? (
             <>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Kimlik Doğrulama Yöntemi</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_auth_method')}</label>
                 <div className="grid grid-cols-2 gap-2 p-1 bg-cyber-deep border border-white/[0.06] rounded-lg">
                   <button type="button" onClick={() => { setOcpAuthMethod('token'); setTestResult(null) }}
                     className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'token' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                    Bearer Token
+                    {t('hv_bearer')}
                   </button>
                   <button type="button" onClick={() => { setOcpAuthMethod('credentials'); setTestResult(null) }}
                     className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'credentials' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                    Kullanıcı Adı / Şifre
+                    {t('hv_user_pass')}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">API Server URL *</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_api_url')}</label>
                 <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
                   className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="https://api.cluster.example.com:6443" />
               </div>
               {ocpAuthMethod === 'token' ? (
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Bearer Token *</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">{t('hv_token_req')}</label>
                   <textarea required value={formData.token} onChange={e => { setFormData({...formData, token: e.target.value}); setTestResult(null) }}
                     rows={3}
                     className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 font-mono" placeholder="Service Account token (oc whoami -t / sa/token secret)" />
@@ -1235,17 +1248,17 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
               ) : (
                 <>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+                    <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
                     <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
                       className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="kubeadmin" />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+                    <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')}</label>
                     <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
                       className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Kullanıcı adı/şifre, cluster'ın OAuth sunucusu üzerinden ("oc login" ile aynı akış) bir erişim token'ına çevrilir.
+                    {t('hv_oauth_hint')}
                   </p>
                 </>
               )}
@@ -1254,23 +1267,23 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
             <>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1.5">IP Adresi *</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">{t('hv_ip_req')}</label>
                   <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
                     className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="192.168.1.100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Port</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">{t('hv_port')}</label>
                   <input type="number" value={formData.port} onChange={e => { setFormData({...formData, port: parseInt(e.target.value) || 443}); setTestResult(null) }}
                     className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Kullanıcı Adı *</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
                 <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
                   className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Şifre *</label>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')}</label>
                 <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
                   className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
               </div>
@@ -1279,7 +1292,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
 
           <button type="button" onClick={testConnection} disabled={testing || !canTest}
             className="w-full py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2">
-            {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> Test Ediliyor...</> : 'Bağlantıyı Test Et'}
+            {testing ? <><RefreshCw className="w-4 h-4 animate-spin" /> {t('hv_testing')}</> : t('hv_test_conn')}
           </button>
 
           {testResult && (
@@ -1292,10 +1305,10 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
           )}
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">İptal</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
             <button type="submit" disabled={!testResult?.success}
               className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-sm font-medium">
-              Ekle
+              {t('add')}
             </button>
           </div>
         </form>
@@ -1308,6 +1321,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
 // ── Main Component ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventoryEdit = false }) => {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>(allowInventoryEdit ? 'hypervisors' : 'dashboard')
   const [showAddModal, setShowAddModal] = useState(false)
   const [scanTarget, setScanTarget] = useState<{ id: number; name: string } | null>(null)
@@ -1322,7 +1336,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     queryKey: ['hypervisors'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/`)
-      if (!r.ok) throw new Error('Hypervisor listesi alınamadı')
+      if (!r.ok) throw new Error(t('hv_list_fail'))
       return r.json()
     },
     refetchInterval: (q) => {
@@ -1381,7 +1395,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
       method: 'POST',
       headers: inventoryHeaders(),
     })
-    if (!r.ok) throw new Error((await r.json()).detail || 'Sync başlatılamadı')
+    if (!r.ok) throw new Error((await r.json()).detail || t('hv_sync_fail'))
     if (queue && queue.length > 0) setScanQueue(queue)
     else setScanQueue([])
     dismissedProgressRef.current.delete(id)
@@ -1397,7 +1411,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
         headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(data),
       })
-      if (!r.ok) throw new Error((await r.json()).detail || 'Ekleme hatası')
+      if (!r.ok) throw new Error((await r.json()).detail || t('hv_add_fail'))
       return r.json()
     },
     onSuccess: async (created) => {
@@ -1405,16 +1419,16 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
       try {
         await startScan(created.id, created.name)
       } catch (e) {
-        alert(e instanceof Error ? e.message : 'Tarama başlatılamadı')
+        alert(e instanceof Error ? e.message : t('hv_scan_fail'))
       }
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Ekleme hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('hv_add_fail')),
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/${id}`, { method: 'DELETE', headers: inventoryHeaders() })
-      if (!r.ok) throw new Error('Silme hatası')
+      if (!r.ok) throw new Error(t('hv_delete_fail'))
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
@@ -1427,7 +1441,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
       const hv = hypervisors.find(h => h.id === id)
       return startScan(id, hv?.name || `Hypervisor #${id}`)
     },
-    onError: (e) => alert(e instanceof Error ? e.message : 'Sync hatası'),
+    onError: (e) => alert(e instanceof Error ? e.message : t('hv_sync_error')),
   })
 
   const [syncingAll, setSyncingAll] = useState(false)
@@ -1435,7 +1449,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   const syncAllMutation = useMutation({
     mutationFn: async () => {
       const list = hypervisors.map(h => ({ id: h.id, name: h.name }))
-      if (list.length === 0) throw new Error('Hypervisor yok')
+      if (list.length === 0) throw new Error(t('hv_no_hv'))
       setSyncingAll(true)
       // Sırayla: ilkini başlat, kalanı kuyruğa al — overlay bitince sonraki başlar
       const [first, ...rest] = list
@@ -1444,7 +1458,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     },
     onError: (e) => {
       setSyncingAll(false)
-      alert(e instanceof Error ? e.message : 'Senkronizasyon hatası')
+      alert(e instanceof Error ? e.message : t('hv_sync_all_fail'))
     },
   })
 
@@ -1460,7 +1474,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
       } catch (e) {
         setSyncingAll(false)
         setScanQueue([])
-        alert(e instanceof Error ? e.message : 'Sonraki tarama başlatılamadı')
+        alert(e instanceof Error ? e.message : t('hv_next_scan_fail'))
       }
     } else {
       // Overlay "tamamlandı" durumunda kalsın; kullanıcı Kapat ile kapatır
@@ -1492,8 +1506,8 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   const queueLabel = (() => {
     if (!scanTarget || scanQueue.length <= 1) return undefined
     const idx = scanQueue.findIndex(h => h.id === scanTarget.id)
-    if (idx < 0) return `${scanQueue.length} hypervisor kuyruğu`
-    return `Hypervisor ${idx + 1} / ${scanQueue.length}`
+    if (idx < 0) return t('hv_queue_n', { n: scanQueue.length })
+    return t('hv_queue_pos', { i: idx + 1, n: scanQueue.length })
   })()
 
   // Stats (toplamlar summary'den; sayfa içeriği vms)
@@ -1545,16 +1559,16 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
         <div>
           {allowInventoryEdit ? (
             <>
-              <Link to="/integrations" className="text-xs text-slate-500 hover:text-white">← Envanter Merkezi</Link>
-              <h1 className="text-xl font-bold text-white mt-1">vCenter / OLVM — Hypervisor Yönetimi</h1>
-              <p className="text-sm text-slate-500">Hypervisor bağlantıları ve VM envanter senkronizasyonu</p>
+              <Link to="/integrations" className="text-xs text-slate-500 hover:text-white">← {t('nav_inventory_hub')}</Link>
+              <h1 className="text-xl font-bold text-white mt-1">{t('hv_title_mgmt')}</h1>
+              <p className="text-sm text-slate-500">{t('hv_subtitle_mgmt')}</p>
             </>
           ) : (
             <>
-              <h1 className="text-xl font-bold text-white">Sanallaştırma Dashboard</h1>
-              <p className="text-sm text-slate-500">Hypervisor, host ve VM operasyon görünümü</p>
+              <h1 className="text-xl font-bold text-white">{t('hv_title_dash')}</h1>
+              <p className="text-sm text-slate-500">{t('hv_subtitle_dash')}</p>
               <Link to="/integrations/hypervisors" className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300">
-                Envanter yönetimi → Entegrasyonlar
+                {t('hv_inventory_mgmt')}
               </Link>
             </>
           )}
@@ -1563,12 +1577,12 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
           <>
             {/* Quick Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              <StatCard icon={Database} label="Hypervisor" value={hypervisors.length} sub={`${hypervisors.filter(h => h.type === 'vmware').length} VMware`} accent={NEON.blue} />
+              <StatCard icon={Database} label={t('hv_hypervisor')} value={hypervisors.length} sub={t('hv_n_vmware', { n: hypervisors.filter(h => h.type === 'vmware').length })} accent={NEON.blue} />
               <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
-              <StatCard icon={Monitor} label="Toplam VM" value={virtSummary?.total ?? vmsTotal} sub={`${poweredOn} çalışıyor`} accent={NEON.info} />
-              <StatCard icon={Power} label="Aktif VM" value={poweredOn} sub={`${poweredOff} kapalı`} accent={NEON.green} />
-              <StatCard icon={Cpu} label="vCPU Tahsis" value={totalVmCpu} sub="toplam çekirdek" accent={NEON.orange} />
-              <StatCard icon={MemoryStick} label="RAM Tahsis" value={`${totalVmRam} GB`} sub="toplam bellek" accent={NEON.red} />
+              <StatCard icon={Monitor} label={t('hv_stat_total_vm')} value={virtSummary?.total ?? vmsTotal} sub={t('hv_sub_running', { n: poweredOn })} accent={NEON.info} />
+              <StatCard icon={Power} label={t('hv_stat_active_vm')} value={poweredOn} sub={t('hv_sub_off', { n: poweredOff })} accent={NEON.green} />
+              <StatCard icon={Cpu} label={t('hv_stat_vcpu')} value={totalVmCpu} sub={t('hv_sub_cores')} accent={NEON.orange} />
+              <StatCard icon={MemoryStick} label={t('hv_stat_mem')} value={`${totalVmRam} GB`} sub={t('hv_sub_mem')} accent={NEON.red} />
             </div>
 
             <div className="flex justify-end">
@@ -1577,7 +1591,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition-colors"
               >
                 <BarChart3 className="w-4 h-4" />
-                Altyapı Raporları
+                {t('nav_infra_reports')}
               </Link>
             </div>
           </>
@@ -1586,12 +1600,12 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
         {/* Tabs */}
         <div className="flex gap-1 p-1 bg-cyber-card rounded-xl border border-white/[0.06] w-fit">
           {(allowInventoryEdit
-            ? [{ id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' }]
+            ? [{ id: 'hypervisors', icon: Settings, label: t('hv_tab_hvs') }]
             : [
-                { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-                { id: 'vms', icon: Monitor, label: 'VM Listesi' },
-                { id: 'hosts', icon: Database, label: 'Host\'lar' },
-                { id: 'hypervisors', icon: Settings, label: 'Hypervisorlar' },
+                { id: 'dashboard', icon: LayoutDashboard, label: t('nav_dashboard') },
+                { id: 'vms', icon: Monitor, label: t('hv_tab_vms') },
+                { id: 'hosts', icon: Database, label: t('hv_tab_hosts') },
+                { id: 'hypervisors', icon: Settings, label: t('hv_tab_hvs') },
               ]
           ).map(tab => (
             <button
@@ -1615,9 +1629,9 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             {/* Resource Gauges */}
             {allHosts.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <ResourceGauge label="CPU Kullanımı" used={usedHostCpu} total={totalHostCpu} unit="MHz" accent={NEON.cyan} />
-                <ResourceGauge label="Bellek Kullanımı" used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.info} />
-                <ResourceGauge label="Depolama Kullanımı" used={usedHostDisk} total={totalHostDisk} unit="GB" accent={NEON.orange} />
+                <ResourceGauge label={t('hv_cpu_usage')} used={usedHostCpu} total={totalHostCpu} unit="MHz" accent={NEON.cyan} />
+                <ResourceGauge label={t('hv_mem_usage')} used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.info} />
+                <ResourceGauge label={t('hv_disk_usage')} used={usedHostDisk} total={totalHostDisk} unit="GB" accent={NEON.orange} />
               </div>
             )}
 
@@ -1631,8 +1645,8 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             {vms.length > 0 && (
               <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-white">Son Eklenen VM'ler</h3>
-                  <button onClick={() => setActiveTab('vms')} className="text-xs text-blue-400 hover:text-blue-300">Tümünü Gör →</button>
+                  <h3 className="text-sm font-medium text-white">{t('hv_recent_vms')}</h3>
+                  <button onClick={() => setActiveTab('vms')} className="text-xs text-blue-400 hover:text-blue-300">{t('hv_see_all')}</button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {vms.slice(0, 8).map(vm => {
@@ -1668,10 +1682,10 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                 <span>{(vmPage - 1) * vmPageSize + 1}–{Math.min(vmPage * vmPageSize, vmsTotal)} / {vmsTotal}</span>
                 <div className="flex items-center gap-2">
                   <button type="button" disabled={vmPage <= 1} onClick={() => setVmPage(p => Math.max(1, p - 1))}
-                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">Önceki</button>
+                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">{t('page_prev')}</button>
                   <span>{vmPage} / {Math.max(1, Math.ceil(vmsTotal / vmPageSize))}</span>
                   <button type="button" disabled={vmPage * vmPageSize >= vmsTotal} onClick={() => setVmPage(p => p + 1)}
-                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">Sonraki</button>
+                    className="px-3 py-1 rounded-lg bg-cyber-card border border-white/[0.08] disabled:opacity-40">{t('page_next')}</button>
                 </div>
               </div>
             )}
@@ -1687,9 +1701,9 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             ) : allHosts.length === 0 ? (
               <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-12 text-center">
                 <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                <p className="text-slate-400">Host verisi bulunamadı</p>
+                <p className="text-slate-400">{t('hv_no_host')}</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {allowInventoryEdit ? 'VMware hypervisor ekleyip sync yapın' : 'Entegrasyonlar üzerinden hypervisor tanımlayın'}
+                  {allowInventoryEdit ? t('hv_no_host_edit') : t('hv_no_host_view')}
                 </p>
               </div>
             ) : (
@@ -1708,7 +1722,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             readOnly={!allowInventoryEdit}
             onAdd={() => setShowAddModal(true)}
             onDelete={async (id) => {
-              if (await showConfirm('Bu hypervisor\'ı silmek istediğinize emin misiniz?')) {
+              if (await showConfirm(t('hv_delete_confirm'))) {
                 deleteMutation.mutate(id)
               }
             }}

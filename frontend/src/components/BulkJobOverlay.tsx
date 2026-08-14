@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { RefreshCw, Check, AlertTriangle, Maximize2 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 export interface BulkJob {
   id: string
@@ -20,27 +22,29 @@ export interface BulkJob {
 const STORAGE_JOB = 'ainew.bulkJobId'
 const STORAGE_MIN = 'ainew.bulkJobMinimized'
 
-const fmtDur = (sec: number) => {
-  if (sec < 60) return `${sec} sn`
+type TFn = (key: TranslationKey, vars?: Record<string, string | number>) => string
+
+const fmtDur = (sec: number, t: TFn) => {
+  if (sec < 60) return t('dur_sec', { n: sec })
   const m = Math.floor(sec / 60)
   const s = sec % 60
-  if (m < 60) return `${m} dk ${s} sn`
-  return `${Math.floor(m / 60)} sa ${m % 60} dk`
+  if (m < 60) return t('dur_min_sec', { m, s })
+  return t('dur_hr_min', { h: Math.floor(m / 60), m: m % 60 })
 }
 
-const kindLabel = (kind?: string) =>
+const kindLabel = (kind: string | undefined, t: TFn) =>
   kind === 'ai_ready'
-    ? 'Linux SSH AI Ready'
+    ? t('job_kind_ai_ready')
     : kind === 'win_ai_ready'
-      ? 'Windows WinRM AI Ready'
+      ? t('job_kind_win_ai_ready')
       : kind === 'health_check'
-        ? 'Sunucu durum kontrolü'
+        ? t('job_kind_health')
         : kind === 'dropt_sync_all'
-          ? 'Level 1 envanter senkronu'
+          ? t('job_kind_dropt')
           : kind === 'os_refresh'
-            ? 'OS bilgisi yenileme'
+            ? t('job_kind_os')
             : kind?.startsWith('events_scan_')
-              ? 'Log / event taraması'
+              ? t('job_kind_events')
               : kind || 'bulk'
 
 /** Sayfa yenileme / navigasyonda — yalnızca bu sekmede kullanıcı başlatmış işi geri yükle.
@@ -84,11 +88,12 @@ export const BulkJobOverlay: React.FC<{
   onDone?: (job: BulkJob) => void
   onDismiss: () => void
 }> = ({ jobId, onDone, onDismiss }) => {
+  const t = useT()
   const [job, setJob] = useState<BulkJob>({
     id: jobId,
     status: 'running',
     percent: 1,
-    message: 'İşlem başlıyor...',
+    message: t('job_starting'),
   })
   const [elapsedSec, setElapsedSec] = useState(0)
   const [cancelling, setCancelling] = useState(false)
@@ -115,7 +120,7 @@ export const BulkJobOverlay: React.FC<{
     let finished = false
     let delay = 1500
     let timer: ReturnType<typeof setTimeout> | undefined
-    setJob({ id: jobId, status: 'running', percent: 1, message: 'İşlem başlıyor...' })
+    setJob({ id: jobId, status: 'running', percent: 1, message: t('job_starting') })
 
     const tick = async () => {
       if (finished || cancelled) return
@@ -188,7 +193,7 @@ export const BulkJobOverlay: React.FC<{
         <button
           type="button"
           onClick={reopen}
-          title="Ön plana getir"
+          title={t('job_bring_front')}
           className="w-full text-left bg-slate-800/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl shadow-black/50 p-3 hover:border-blue-500/50 transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -213,14 +218,14 @@ export const BulkJobOverlay: React.FC<{
               <div className="text-sm text-white font-medium truncate">
                 {done
                   ? job.status === 'error'
-                    ? 'İşlem hatası'
+                    ? t('job_error')
                     : job.status === 'cancelled'
-                      ? 'İşlem iptal edildi'
-                      : 'İşlem tamamlandı'
-                  : job.title || 'Toplu işlem sürüyor'}
+                      ? t('job_cancelled')
+                      : t('job_done')
+                  : job.title || t('job_running')}
               </div>
               <div className="text-[11px] text-slate-400 truncate mt-0.5">
-                {done ? kindLabel(job.kind) : `${pct}% · ${job.message || 'İşleniyor...'}`}
+                {done ? kindLabel(job.kind, t) : `${pct}% · ${job.message || t('job_processing')}`}
               </div>
             </div>
             <Maximize2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
@@ -239,7 +244,7 @@ export const BulkJobOverlay: React.FC<{
               disabled={cancelling}
               className="text-[11px] px-2.5 py-1 rounded-lg text-red-200 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50"
             >
-              {cancelling ? 'İptal…' : 'Zorla iptal'}
+              {cancelling ? t('cancel') : t('job_force_cancel')}
             </button>
           )}
           {done ? (
@@ -248,7 +253,7 @@ export const BulkJobOverlay: React.FC<{
               onClick={closeFully}
               className="text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700"
             >
-              Kapat
+              {t('close')}
             </button>
           ) : (
             <button
@@ -256,7 +261,7 @@ export const BulkJobOverlay: React.FC<{
               onClick={reopen}
               className="text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700"
             >
-              Detay
+              {t('detail')}
             </button>
           )}
         </div>
@@ -288,20 +293,20 @@ export const BulkJobOverlay: React.FC<{
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-white">
               {job.status === 'done'
-                ? 'İşlem tamamlandı'
+                ? t('job_done')
                 : job.status === 'error'
-                  ? 'İşlem hatası'
+                  ? t('job_error')
                   : job.status === 'cancelled'
-                    ? 'İşlem iptal edildi'
-                    : job.title || 'Toplu işlem sürüyor'}
+                    ? t('job_cancelled')
+                    : job.title || t('job_running')}
             </h2>
-            <p className="text-sm text-slate-400 mt-0.5 truncate">{kindLabel(job.kind)}</p>
+            <p className="text-sm text-slate-400 mt-0.5 truncate">{kindLabel(job.kind, t)}</p>
           </div>
         </div>
 
         <div className="mb-4">
           <div className="flex justify-between text-xs text-slate-400 mb-1.5">
-            <span className="truncate pr-2">{job.message || 'İşleniyor...'}</span>
+            <span className="truncate pr-2">{job.message || t('job_processing')}</span>
             <span className="font-mono text-slate-300 flex-shrink-0">{pct}%</span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
@@ -320,7 +325,7 @@ export const BulkJobOverlay: React.FC<{
 
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">İlerleme</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{t('job_progress')}</div>
             <div className="text-sm text-white font-medium mt-0.5">
               {job.total != null && job.total > 0
                 ? `${job.done ?? 0} / ${job.total}`
@@ -328,29 +333,28 @@ export const BulkJobOverlay: React.FC<{
             </div>
           </div>
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Geçen süre</div>
-            <div className="text-sm text-white font-medium mt-0.5">{fmtDur(elapsedSec)}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{t('job_elapsed')}</div>
+            <div className="text-sm text-white font-medium mt-0.5">{fmtDur(elapsedSec, t)}</div>
           </div>
           <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-white/[0.04]">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Tahmini kalan</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{t('job_eta')}</div>
             <div className="text-sm text-white font-medium mt-0.5">
-              {done ? '—' : etaSec != null ? `~${fmtDur(etaSec)}` : 'hesaplanıyor…'}
+              {done ? '—' : etaSec != null ? `~${fmtDur(etaSec, t)}` : t('job_eta_calc')}
             </div>
           </div>
         </div>
 
         {(Number(job.ok_count) > 0 || Number(job.fail_count) > 0) && (
           <p className="text-[11px] text-slate-500 mb-3">
-            Başarılı: {job.ok_count ?? 0}
-            {Number(job.fail_count) > 0 ? ` · Başarısız: ${job.fail_count}` : ''}
+            {Number(job.fail_count) > 0
+              ? t('job_ok_fail_n', { ok: job.ok_count ?? 0, fail: job.fail_count ?? 0 })
+              : t('job_ok_fail', { ok: job.ok_count ?? 0 })}
           </p>
         )}
 
         {!done && (
           <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            İşlem varsayılan olarak sağ altta arka planda ilerler; bu pencereyi
-            chip’e tıklayarak açtınız. “Arka planda devam et” ile tekrar küçültebilir;
-            “Zorla iptal” işi hemen kapatır (takılı %0 işler dahil).
+            {t('job_hint')}
           </p>
         )}
         {job.status === 'error' && job.error && (
@@ -360,7 +364,7 @@ export const BulkJobOverlay: React.FC<{
         )}
         {job.status === 'cancelled' && (
           <p className="text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-4">
-            {job.message || 'İşlem kullanıcı tarafından iptal edildi.'}
+            {job.message || t('job_cancelled_by_user')}
           </p>
         )}
 
@@ -372,7 +376,7 @@ export const BulkJobOverlay: React.FC<{
               disabled={cancelling}
               className="px-4 py-2 rounded-lg text-sm text-red-200 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50"
             >
-              {cancelling ? 'İptal…' : 'Zorla iptal'}
+              {cancelling ? t('cancel') : t('job_force_cancel')}
             </button>
           )}
           <button
@@ -380,7 +384,7 @@ export const BulkJobOverlay: React.FC<{
             onClick={done ? closeFully : goBackground}
             className="px-4 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.07] hover:bg-slate-600 border border-slate-600"
           >
-            {done ? 'Kapat' : 'Arka planda devam et'}
+            {done ? t('close') : t('job_continue_bg')}
           </button>
         </div>
       </div>

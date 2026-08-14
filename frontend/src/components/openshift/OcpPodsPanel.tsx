@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
+import { useT } from '../../i18n/LocaleProvider'
 
 export default function OcpPodsPanel({
   clusterId,
@@ -16,6 +17,7 @@ export default function OcpPodsPanel({
   project: string
   onPickProject?: () => void
 }) {
+  const t = useT()
   const { user } = useAuth()
   const canWrite = Boolean(user?.is_admin || user?.role === 'admin')
   const [q, setQ] = useState('')
@@ -74,7 +76,7 @@ export default function OcpPodsPanel({
   }
 
   const restartPod = async (p: any) => {
-    if (!window.confirm(`${p.name} silinsin mi? Controller varsa yeni pod oluşur.`)) return
+    if (!window.confirm(t('ocp_pod_delete_confirm', { name: p.name }))) return
     setActing(p.name)
     try {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pod/delete`, {
@@ -83,10 +85,10 @@ export default function OcpPodsPanel({
         body: JSON.stringify({ kind: 'pods', namespace: project, name: p.name }),
       })
       const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(d.detail || 'Silinemedi')
+      if (!r.ok) throw new Error(d.detail || t('ocp_delete_failed'))
       setTimeout(() => refetch(), 1500)
     } catch (e: any) {
-      window.alert(e.message || 'Hata')
+      window.alert(e.message || t('error_generic'))
     } finally {
       setActing(null)
     }
@@ -95,10 +97,10 @@ export default function OcpPodsPanel({
   if (!project) {
     return (
       <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-8 text-center text-sm text-amber-100/90">
-        Pod listesi için <b>Proje</b> seçin
+        {t('ocp_need_project_pods')}
         {onPickProject && (
           <>
-            {' '}· <button type="button" onClick={onPickProject} className="underline">Projeler</button>
+            {' '}· <button type="button" onClick={onPickProject} className="underline">{t('ocp_projects')}</button>
           </>
         )}
       </div>
@@ -110,7 +112,7 @@ export default function OcpPodsPanel({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <Stethoscope size={16} className="text-emerald-400" />
-          <h2 className="text-sm font-medium text-white">Pod & Log</h2>
+          <h2 className="text-sm font-medium text-white">{t('ocp_nav_pod_log')}</h2>
           <span className="text-xs text-slate-500 font-mono">{project}</span>
           <span className="text-xs text-slate-600">{shown.length}/{pods.length}</span>
         </div>
@@ -119,7 +121,7 @@ export default function OcpPodsPanel({
           onClick={() => refetch()}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
         </button>
       </div>
 
@@ -128,7 +130,7 @@ export default function OcpPodsPanel({
           <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
           <input
             className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200"
-            placeholder="pod ara…"
+            placeholder={t('ocp_search_pod')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -143,12 +145,12 @@ export default function OcpPodsPanel({
                 : 'border-white/[0.08] text-amber-400/80'
             }`}
           >
-            {pods.filter((p) => !p.healthy).length} sorunlu
+            {t('ocp_n_bad', { n: pods.filter((p) => !p.healthy).length })}
           </button>
         )}
       </div>
 
-      {isLoading && <div className="text-sm text-slate-500">Yükleniyor…</div>}
+      {isLoading && <div className="text-sm text-slate-500">{t('loading')}</div>}
 
       <div className="space-y-1.5 max-h-[32rem] overflow-y-auto pr-1">
         {shown.map((p) => (
@@ -180,7 +182,7 @@ export default function OcpPodsPanel({
               {canWrite && (
                 <button
                   type="button"
-                  title="Pod yeniden başlat (sil)"
+                  title={t('ocp_pod_restart_title')}
                   disabled={acting === p.name}
                   onClick={() => restartPod(p)}
                   className="p-1.5 rounded-md text-slate-500 hover:text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"
@@ -192,7 +194,7 @@ export default function OcpPodsPanel({
 
             {open === p.name && (
               <div className="border-t border-white/[0.06] px-3 py-3 space-y-3 text-xs">
-                {!detail && <div className="text-slate-500">Detay yükleniyor…</div>}
+                {!detail && <div className="text-slate-500">{t('ocp_detail_loading')}</div>}
                 {detail && (
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -243,7 +245,7 @@ export default function OcpPodsPanel({
           </div>
         ))}
         {!isLoading && shown.length === 0 && (
-          <div className="text-sm text-slate-500 py-8 text-center">Pod yok</div>
+          <div className="text-sm text-slate-500 py-8 text-center">{t('ocp_no_pods')}</div>
         )}
       </div>
 
@@ -254,7 +256,7 @@ export default function OcpPodsPanel({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
-              <div className="text-sm text-white font-mono truncate">{logView.name} · logs</div>
+              <div className="text-sm text-white font-mono truncate">{logView.name} · {t('ocp_logs')}</div>
               <button type="button" onClick={() => setLogView(null)} className="p-1.5 text-slate-400 hover:bg-white/[0.06] rounded-lg">
                 <X size={16} />
               </button>

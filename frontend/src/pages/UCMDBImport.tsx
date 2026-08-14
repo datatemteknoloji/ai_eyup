@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
+import { useT } from '../i18n/LocaleProvider'
 
 const UCMDB_API = `${API_BASE_URL}/ucmdb`
 
@@ -38,11 +39,12 @@ type Step = 'upload' | 'mapping' | 'confirm' | 'done'
 // ── Step indicator ────────────────────────────────────────────────────────────
 
 const Steps: React.FC<{ current: Step }> = ({ current }) => {
+  const t = useT()
   const steps: { id: Step; label: string }[] = [
-    { id: 'upload',  label: '1. Dosya Yükle' },
-    { id: 'mapping', label: '2. Alan Eşleştir' },
-    { id: 'confirm', label: '3. Önizle & İmport' },
-    { id: 'done',    label: '4. Tamamlandı' },
+    { id: 'upload',  label: t('ucmdb_step_upload') },
+    { id: 'mapping', label: t('ucmdb_step_map') },
+    { id: 'confirm', label: t('ucmdb_step_preview') },
+    { id: 'done',    label: t('ucmdb_step_done') },
   ]
   const idx = (s: Step) => steps.findIndex(x => x.id === s)
   const cur = idx(current)
@@ -75,6 +77,7 @@ const Steps: React.FC<{ current: Step }> = ({ current }) => {
 // ── Drop zone ─────────────────────────────────────────────────────────────────
 
 const DropZone: React.FC<{ onFile: (f: File) => void; loading: boolean }> = ({ onFile, loading }) => {
+  const t = useT()
   const [drag, setDrag] = useState(false)
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -102,13 +105,13 @@ const DropZone: React.FC<{ onFile: (f: File) => void; loading: boolean }> = ({ o
       )}
       <div className="text-center">
         <p className="text-white font-medium">
-          {loading ? 'Dosya okunuyor...' : 'CSV veya Excel dosyasını buraya sürükleyin'}
+          {loading ? t('ucmdb_drop_loading') : t('ucmdb_drop')}
         </p>
-        <p className="text-slate-500 text-sm mt-1">veya tıklayarak seçin · .csv · .xlsx · .xls · Maks. 20 MB</p>
+        <p className="text-slate-500 text-sm mt-1">{t('ucmdb_drop_hint')}</p>
       </div>
       <div className="flex gap-3 text-xs text-slate-500">
-        <span className="flex items-center gap-1"><FileText size={12} /> UCMDB CI Export</span>
-        <span className="flex items-center gap-1"><Table2 size={12} /> Rapor CSV</span>
+        <span className="flex items-center gap-1"><FileText size={12} /> {t('ucmdb_ci_export')}</span>
+        <span className="flex items-center gap-1"><Table2 size={12} /> {t('ucmdb_report_csv')}</span>
       </div>
     </label>
   )
@@ -117,6 +120,7 @@ const DropZone: React.FC<{ onFile: (f: File) => void; loading: boolean }> = ({ o
 // ── Main Component ────────────────────────────────────────────────────────────
 
 const UCMDBImport: React.FC = () => {
+  const t = useT()
   const qc = useQueryClient()
   const [mode, setMode] = useState<'api' | 'csv'>('api')
   const [step, setStep] = useState<Step>('upload')
@@ -146,7 +150,7 @@ const UCMDBImport: React.FC = () => {
     queryKey: ['ucmdb-connection'],
     queryFn: async () => {
       const r = await fetch(`${UCMDB_API}/connection`, { headers: inventoryHeaders() })
-      if (!r.ok) throw new Error('Bağlantı ayarları alınamadı')
+      if (!r.ok) throw new Error(t('ucmdb_settings_fail'))
       return r.json()
     },
   })
@@ -196,7 +200,7 @@ const UCMDBImport: React.FC = () => {
         body: JSON.stringify(body),
       })
       const d = await r.json()
-      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Kayıt başarısız')
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : t('ucmdb_save_fail'))
       return d
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['ucmdb-connection'] }),
@@ -207,7 +211,7 @@ const UCMDBImport: React.FC = () => {
       await saveMut.mutateAsync()
       const r = await fetch(`${UCMDB_API}/connection/test`, { method: 'POST', headers: inventoryHeaders() })
       const d = await r.json()
-      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Test başarısız')
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : t('ucmdb_test_fail'))
       return d
     },
   })
@@ -221,7 +225,7 @@ const UCMDBImport: React.FC = () => {
         body: JSON.stringify({ dry_run }),
       })
       const d = await r.json()
-      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Sync başarısız')
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : t('ucmdb_sync_fail'))
       return d
     },
     onSuccess: (d) => setSyncResult(d),
@@ -244,7 +248,7 @@ const UCMDBImport: React.FC = () => {
       const fd = new FormData()
       fd.append('file', file)
       const r = await fetch(`${UCMDB_API}/preview`, { method: 'POST', body: fd })
-      if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Yükleme hatası') }
+      if (!r.ok) { const e = await r.json(); throw new Error(e.detail || t('ucmdb_upload_fail')) }
       return r.json() as Promise<PreviewResult>
     },
     onSuccess: (data) => {
@@ -296,10 +300,8 @@ const UCMDBImport: React.FC = () => {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-white">OpenText uCMDB</h1>
-        <p className="text-slate-400 text-sm mt-0.5">
-          REST API ile fiziksel sunucu ve Exadata çekin; veya CSV/Excel export aktarın
-        </p>
+        <h1 className="text-xl font-bold text-white">{t('ucmdb_title')}</h1>
+        <p className="text-slate-400 text-sm mt-0.5">{t('ucmdb_sub')}</p>
       </div>
 
       <div className="flex gap-1 p-1 rounded-xl bg-slate-800/80 border border-slate-700 w-fit">
@@ -315,7 +317,7 @@ const UCMDBImport: React.FC = () => {
           onClick={() => setMode('csv')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${mode === 'csv' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
         >
-          <Upload size={14} /> CSV / Excel
+          <Upload size={14} /> {t('ucmdb_csv_excel')}
         </button>
       </div>
 
@@ -323,12 +325,12 @@ const UCMDBImport: React.FC = () => {
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 space-y-5">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <h2 className="text-white font-semibold flex items-center gap-2"><Server size={16} /> REST bağlantısı</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Örn: https://ucmdb.firma.com:8443/rest-api</p>
+              <h2 className="text-white font-semibold flex items-center gap-2"><Server size={16} /> {t('ucmdb_rest')}</h2>
+              <p className="text-xs text-slate-500 mt-0.5">{t('ucmdb_url_ph')}</p>
             </div>
             <label className="flex items-center gap-2 text-sm text-slate-300">
               <input type="checkbox" checked={form.enabled} onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))} />
-              Periyodik sync (envanter aralığı)
+              {t('ucmdb_periodic')}
             </label>
           </div>
 
@@ -338,42 +340,42 @@ const UCMDBImport: React.FC = () => {
                 value={form.base_url} onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
                 placeholder="https://ucmdb:8443/rest-api" />
             </label>
-            <label className="text-xs text-slate-400">Kullanıcı
+            <label className="text-xs text-slate-400">{t('ucmdb_user')}
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
             </label>
-            <label className="text-xs text-slate-400">Parola {conn?.password_set ? '(kayıtlı — boş bırakırsanız korunur)' : ''}
+            <label className="text-xs text-slate-400">{t('ucmdb_pw')} {conn?.password_set ? t('ucmdb_pw_kept') : ''}
               <input type="password" className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                 placeholder={conn?.password_set ? '••••••••' : ''} />
             </label>
             <label className="text-xs text-slate-400 md:col-span-2 flex items-center gap-2 pt-2">
               <input type="checkbox" checked={form.verify_ssl} onChange={e => setForm(f => ({ ...f, verify_ssl: e.target.checked }))} />
-              SSL sertifikasını doğrula
+              {t('ucmdb_ssl')}
             </label>
           </div>
 
           <div className="grid md:grid-cols-2 gap-3 border-t border-slate-700 pt-4">
             <label className="text-xs text-slate-400 flex items-center gap-2">
               <input type="checkbox" checked={form.sync_physical} onChange={e => setForm(f => ({ ...f, sync_physical: e.target.checked }))} />
-              Fiziksel sunucuları çek
+              {t('ucmdb_pull_phys')}
             </label>
             <label className="text-xs text-slate-400 flex items-center gap-2">
               <input type="checkbox" checked={form.sync_exadata} onChange={e => setForm(f => ({ ...f, sync_exadata: e.target.checked }))} />
-              <Database size={12} /> Exadata rack/node çek
+              <Database size={12} /> {t('ucmdb_pull_exa')}
             </label>
             <label className="text-xs text-slate-400 flex items-center gap-2 md:col-span-2">
               <input type="checkbox" checked={form.sync_virtual} onChange={e => setForm(f => ({ ...f, sync_virtual: e.target.checked }))} />
-              Sanal makineleri de aktar (varsayılan: hayır — VM’ler hypervisor sync’ten gelir)
+              {t('ucmdb_pull_vm')}
             </label>
-            <label className="text-xs text-slate-400">Fiziksel CI tipleri (virgülle)
+            <label className="text-xs text-slate-400">{t('ucmdb_ci_types')}
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.physical_ci_types} onChange={e => setForm(f => ({ ...f, physical_ci_types: e.target.value }))} />
             </label>
-            <label className="text-xs text-slate-400">Fiziksel TQL adı (opsiyonel)
+            <label className="text-xs text-slate-400">{t('ucmdb_tql')}
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.physical_tql} onChange={e => setForm(f => ({ ...f, physical_tql: e.target.value }))}
-                placeholder="Kaydedilmiş TQL adı" />
+                placeholder={t('ucmdb_tql_ph')} />
             </label>
             <label className="text-xs text-slate-400">Exadata CI tipleri
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
@@ -383,7 +385,7 @@ const UCMDBImport: React.FC = () => {
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.exadata_tql} onChange={e => setForm(f => ({ ...f, exadata_tql: e.target.value }))} />
             </label>
-            <label className="text-xs text-slate-400 md:col-span-2">Exadata node isim kalıpları
+            <label className="text-xs text-slate-400 md:col-span-2">{t('ucmdb_node_pat')}
               <input className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
                 value={form.exadata_node_name_patterns} onChange={e => setForm(f => ({ ...f, exadata_node_name_patterns: e.target.value }))} />
             </label>
@@ -392,20 +394,20 @@ const UCMDBImport: React.FC = () => {
           <div className="flex flex-wrap gap-2 pt-2">
             <button type="button" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
               className="px-4 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50">
-              {saveMut.isPending ? 'Kaydediliyor…' : 'Kaydet'}
+              {saveMut.isPending ? t('saving') : t('save')}
             </button>
             <button type="button" onClick={() => testMut.mutate()} disabled={testMut.isPending || saveMut.isPending}
               className="px-4 py-2 rounded-lg text-sm bg-white/[0.07] border border-slate-600 text-slate-200 hover:bg-slate-700 disabled:opacity-50">
-              {testMut.isPending ? 'Test…' : 'Bağlantıyı test et'}
+              {testMut.isPending ? t('ucmdb_test_short') : t('ucmdb_test')}
             </button>
             <button type="button" onClick={() => syncMut.mutate(true)} disabled={syncMut.isPending}
               className="px-4 py-2 rounded-lg text-sm bg-amber-600/80 hover:bg-amber-600 text-white disabled:opacity-50">
-              Önizleme (dry-run)
+              {t('ucmdb_preview')}
             </button>
             <button type="button" onClick={() => syncMut.mutate(false)} disabled={syncMut.isPending}
               className="px-4 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 inline-flex items-center gap-1.5">
               <RefreshCw size={14} className={syncMut.isPending ? 'animate-spin' : ''} />
-              {syncMut.isPending ? 'Senkronize…' : 'Şimdi Sync'}
+              {syncMut.isPending ? t('ucmdb_syncing') : t('ucmdb_sync_now')}
             </button>
           </div>
 
@@ -418,17 +420,17 @@ const UCMDBImport: React.FC = () => {
           )}
           {testMut.isSuccess && (
             <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-sm text-green-300">
-              {testMut.data?.message || 'Bağlantı OK'}
+              {testMut.data?.message || t('ucmdb_conn_ok')}
             </div>
           )}
           {syncResult && (
             <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-600 text-sm text-slate-300 space-y-2">
-              <p className="font-medium text-white">{syncResult.dry_run ? 'Önizleme' : 'Sync sonucu'}</p>
+              <p className="font-medium text-white">{syncResult.dry_run ? t('ucmdb_preview_lbl') : t('ucmdb_sync_result')}</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <div>Fiziksel CI: <b className="text-white">{syncResult.physical_fetched ?? 0}</b></div>
                 <div>Exadata CI: <b className="text-white">{syncResult.exadata_fetched ?? 0}</b></div>
                 <div>Yeni sunucu: <b className="text-green-400">{syncResult.created ?? 0}</b></div>
-                <div>Güncellenen: <b className="text-blue-400">{syncResult.updated ?? 0}</b></div>
+                <div>{t('ucmdb_updated_n')} <b className="text-blue-400">{syncResult.updated ?? 0}</b></div>
                 <div>Exadata rack +: <b>{syncResult.exadata_rack_created ?? 0}</b></div>
                 <div>Exadata node +: <b>{syncResult.exadata_node_created ?? 0}</b></div>
               </div>
@@ -438,7 +440,7 @@ const UCMDBImport: React.FC = () => {
                 </ul>
               )}
               {syncResult.preview_physical && (
-                <p className="text-xs text-slate-500">Örnek fiziksel: {syncResult.preview_physical.slice(0, 5).map((x: any) => x.name).join(', ')}</p>
+                <p className="text-xs text-slate-500">{t('ucmdb_preview_phys')} {syncResult.preview_physical.slice(0, 5).map((x: any) => x.name).join(', ')}</p>
               )}
             </div>
           )}
@@ -463,15 +465,15 @@ const UCMDBImport: React.FC = () => {
 
           {/* How-to hint */}
           <div className="bg-slate-700/40 rounded-xl p-4 text-sm text-slate-400 space-y-2">
-            <p className="font-medium text-slate-300">UCMDB'den nasıl export alınır?</p>
+            <p className="font-medium text-slate-300">{t('ucmdb_how')}</p>
             <ol className="list-decimal list-inside space-y-1 text-xs">
               <li>UCMDB Web UI → <strong className="text-slate-300">Managers → Modeling → IT Universe Manager</strong></li>
-              <li>Sol panelden CI Type seçin (örn: <em>Host</em>, <em>Unix</em>, <em>Windows</em>)</li>
-              <li>Üst menü → <strong className="text-slate-300">Actions → Export to Excel/CSV</strong></li>
+              <li>{t('ucmdb_how_1')}</li>
+              <li>{t('ucmdb_how_2')}</li>
               <li>Ya da <strong className="text-slate-300">Reports → Create Report</strong> → CSV/Excel export</li>
             </ol>
             <p className="text-xs text-slate-500 mt-2">
-              Önerilen kolonlar: Name, Primary IP Address, OS Name, OS Version, CPU Count, Memory Size, Environment
+              {t('ucmdb_cols')}
             </p>
           </div>
         </div>
@@ -483,13 +485,13 @@ const UCMDBImport: React.FC = () => {
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-white font-semibold">Alan Eşleştirme</h3>
+                <h3 className="text-white font-semibold">{t('ucmdb_mapping')}</h3>
                 <p className="text-slate-400 text-xs mt-0.5">
-                  {preview.filename} · {preview.total_rows.toLocaleString()} satır · {preview.columns.length} kolon
+                  {t('ucmdb_file_meta', { file: preview.filename, rows: preview.total_rows.toLocaleString(), cols: preview.columns.length })}
                 </p>
               </div>
               <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-full px-3 py-1">
-                {mappedCount} / {preview.columns.length} eşleşti
+                {t('ucmdb_mapped', { n: mappedCount, t: preview.columns.length })}
               </span>
             </div>
 
@@ -526,7 +528,7 @@ const UCMDBImport: React.FC = () => {
 
           {/* Sample data preview */}
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-            <h4 className="text-sm font-semibold text-slate-300 mb-3">Örnek Veriler (ilk 5 satır)</h4>
+            <h4 className="text-sm font-semibold text-slate-300 mb-3">{t('ucmdb_sample')}</h4>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -553,18 +555,18 @@ const UCMDBImport: React.FC = () => {
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={updateExisting} onChange={e => setUpdateExisting(e.target.checked)}
                 className="w-4 h-4 rounded text-blue-600" />
-              <span className="text-sm text-slate-300">Mevcut sunucuları güncelle (IP/hostname eşleşirse)</span>
+              <span className="text-sm text-slate-300">{t('ucmdb_update_exist')}</span>
             </label>
             <div className="flex gap-3">
               <button onClick={reset} className="px-4 py-2 text-sm text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
-                Başa Dön
+                {t('ucmdb_restart')}
               </button>
               <button
                 onClick={() => dryRunMut.mutate()}
                 disabled={dryRunMut.isPending || mappedCount === 0}
                 className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
               >
-                {dryRunMut.isPending ? <><RefreshCw size={14} className="animate-spin" /> Önizleniyor...</> : <>Önizle <ChevronRight size={14} /></>}
+                {dryRunMut.isPending ? <><RefreshCw size={14} className="animate-spin" /> {t('ucmdb_previewing')}</> : <>{t('ucmdb_preview_go')} <ChevronRight size={14} /></>}
               </button>
             </div>
           </div>
@@ -583,10 +585,10 @@ const UCMDBImport: React.FC = () => {
           {/* Summary cards */}
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: 'Toplam Satır', value: importResult.total_rows, color: 'text-white' },
-              { label: 'Yeni Eklenecek', value: importResult.created, color: 'text-green-400' },
-              { label: 'Güncellenecek', value: importResult.updated, color: 'text-blue-400' },
-              { label: 'Atlanacak', value: importResult.skipped, color: 'text-slate-400' },
+              { label: t('ucmdb_kpi_rows'), value: importResult.total_rows, color: 'text-white' },
+              { label: t('ucmdb_will_add'), value: importResult.created, color: 'text-green-400' },
+              { label: t('ucmdb_kpi_will_upd'), value: importResult.updated, color: 'text-blue-400' },
+              { label: t('ucmdb_will_skip'), value: importResult.skipped, color: 'text-slate-400' },
             ].map(c => (
               <div key={c.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-center">
                 <div className={`text-2xl font-bold ${c.color}`}>{c.value}</div>
@@ -600,7 +602,7 @@ const UCMDBImport: React.FC = () => {
             <div className="bg-amber-500/8 border border-amber-500/25 rounded-xl p-4">
               <p className="text-amber-300 font-medium text-sm mb-2">
                 <AlertTriangle size={13} className="inline mr-1" />
-                {importResult.errors.length} satırda hata var (import yine de devam eder):
+                {t('ucmdb_row_errs', { n: importResult.errors.length })}
               </p>
               <div className="space-y-0.5 max-h-32 overflow-y-auto">
                 {importResult.errors.map((e, i) => (
@@ -613,12 +615,12 @@ const UCMDBImport: React.FC = () => {
           {/* Preview table */}
           {importResult.preview.length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-slate-300 mb-3">Import Edilecek Örnekler</h4>
+              <h4 className="text-sm font-semibold text-slate-300 mb-3">{t('ucmdb_import_samples')}</h4>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-slate-700">
-                      {['Ad', 'IP', 'Hostname', 'Tür', 'OS', 'Tier', 'CPU', 'RAM'].map(h => (
+                      {[t('ucmdb_col_name'), 'IP', t('ucmdb_col_hostname'), t('ucmdb_col_kind'), 'OS', 'Tier', 'CPU', 'Memory'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-slate-400 font-medium">{h}</th>
                       ))}
                     </tr>
@@ -657,7 +659,7 @@ const UCMDBImport: React.FC = () => {
 
           <div className="flex justify-between">
             <button onClick={() => setStep('mapping')} className="px-4 py-2 text-sm text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
-              ← Geri
+              ← {t('login_back')}
             </button>
             <button
               onClick={() => importMut.mutate()}
@@ -665,8 +667,8 @@ const UCMDBImport: React.FC = () => {
               className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-all"
             >
               {importMut.isPending
-                ? <><RefreshCw size={14} className="animate-spin" /> Import ediliyor...</>
-                : <><Download size={14} /> {importResult.created + importResult.updated} Sunucuyu Import Et</>}
+                ? <><RefreshCw size={14} className="animate-spin" /> {t('ucmdb_importing')}</>
+                : <><Download size={14} /> {t('ucmdb_import_n', { n: importResult.created + importResult.updated })}</>}
             </button>
           </div>
         </div>
@@ -679,20 +681,20 @@ const UCMDBImport: React.FC = () => {
             <CheckCircle size={32} className="text-green-400" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">Import Tamamlandı</h2>
-            <p className="text-slate-400 text-sm mt-1">{importResult.filename || 'UCMDB verisi'} başarıyla aktarıldı</p>
+            <h2 className="text-xl font-bold text-white">{t('ucmdb_done_title')}</h2>
+            <p className="text-slate-400 text-sm mt-1">{t('ucmdb_done_sub', { file: importResult.filename || t('ucmdb_data') })}</p>
           </div>
           <div className="flex justify-center gap-6 text-sm">
-            <div><span className="text-2xl font-bold text-green-400">{importResult.created}</span><div className="text-slate-400 text-xs">Yeni Sunucu</div></div>
-            <div><span className="text-2xl font-bold text-blue-400">{importResult.updated}</span><div className="text-slate-400 text-xs">Güncellendi</div></div>
-            <div><span className="text-2xl font-bold text-slate-400">{importResult.skipped}</span><div className="text-slate-400 text-xs">Atlandı</div></div>
+            <div><span className="text-2xl font-bold text-green-400">{importResult.created}</span><div className="text-slate-400 text-xs">{t('ucmdb_created')}</div></div>
+            <div><span className="text-2xl font-bold text-blue-400">{importResult.updated}</span><div className="text-slate-400 text-xs">{t('ucmdb_updated')}</div></div>
+            <div><span className="text-2xl font-bold text-slate-400">{importResult.skipped}</span><div className="text-slate-400 text-xs">{t('ucmdb_skipped')}</div></div>
           </div>
           {importResult.errors.length > 0 && (
-            <p className="text-amber-400 text-sm">{importResult.errors.length} satırda hata oluştu</p>
+            <p className="text-amber-400 text-sm">{t('ucmdb_row_err_n', { n: importResult.errors.length })}</p>
           )}
           <div className="flex justify-center gap-3 pt-2">
             <button onClick={reset} className="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
-              Yeni Import
+              {t('ucmdb_new_import')}
             </button>
             <a href="/servers" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors inline-block">
               Sunuculara Git →

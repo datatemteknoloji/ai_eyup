@@ -19,6 +19,8 @@ import {
   OpsShell,
 } from '../components/ops/OpsShell'
 import { exportRcaSectionsToPrintWindow } from '../utils/pdfExport'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ServerInfo { id: number | null; name: string; hostname: string; ip: string; tier: string }
@@ -102,17 +104,19 @@ const SEV_BADGE: Record<string, string> = {
   info:      'bg-blue-500/20 text-blue-300 border-blue-500/40',
 }
 
-function relTime(iso: string | null | undefined): string {
+type TFn = (key: TranslationKey, vars?: Record<string, string | number>) => string
+
+function relTime(iso: string | null | undefined, t: TFn): string {
   if (!iso) return ''
-  const t = new Date(iso).getTime()
-  if (!Number.isFinite(t)) return ''
-  const d = Date.now() - t
+  const ts = new Date(iso).getTime()
+  if (!Number.isFinite(ts)) return ''
+  const d = Date.now() - ts
   const m = Math.floor(d / 60000)
-  if (m < 1) return 'şimdi'
-  if (m < 60) return `${m}dk`
+  if (m < 1) return t('ops_rel_now')
+  if (m < 60) return t('ops_rel_min', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}s`
-  return `${Math.floor(h / 24)}g`
+  if (h < 24) return t('ops_rel_hr', { n: h })
+  return t('ops_rel_day', { n: Math.floor(h / 24) })
 }
 
 function metricCategory(metric: string): 'cpu' | 'memory' | 'disk' | 'network' | 'other' {
@@ -144,6 +148,7 @@ function MetricWidget({ icon, label, count, critCount, color, active, onClick }:
   icon: React.ReactNode; label: string; count: number; critCount: number; color: string
   active?: boolean; onClick?: () => void
 }) {
+  const t = useT()
   const pct = count === 0 ? 0 : Math.min(100, count * 12)
   return (
     <button
@@ -165,7 +170,7 @@ function MetricWidget({ icon, label, count, critCount, color, active, onClick }:
           backgroundColor: count > 0 ? (critCount > 0 ? '#ef4444' : '#f59e0b') : 'var(--border-strong)'
         }} />
       </div>
-      {critCount > 0 && <div className="text-[10px] text-red-400 mt-1">{critCount} kritik</div>}
+      {critCount > 0 && <div className="text-[10px] text-red-400 mt-1">{t('ops_crit_n', { n: critCount })}</div>}
     </button>
   )
 }
@@ -174,6 +179,7 @@ function MetricWidget({ icon, label, count, critCount, color, active, onClick }:
 function RCAPanel({ eventIds, metric, isStorm, onClose }: {
   eventIds: number[]; metric: string; isStorm?: boolean; onClose: () => void
 }) {
+  const t = useT()
   const [result, setResult] = useState<RCAResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -200,7 +206,7 @@ function RCAPanel({ eventIds, metric, isStorm, onClose }: {
     <div className="mt-3 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
-          <ScanSearch size={13} /> {isStorm ? 'Fırtına Analizi' : 'AI Kök Neden Analizi'}
+          <ScanSearch size={13} /> {isStorm ? t('ops_storm_analysis') : t('ops_rca')}
         </span>
         <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors">
           <X size={14} />
@@ -209,38 +215,38 @@ function RCAPanel({ eventIds, metric, isStorm, onClose }: {
       {loading && (
         <div className="flex items-center gap-2 py-2">
           <div className="w-4 h-4 rounded-full border-2 border-t-cyan-400 border-r-transparent animate-spin" />
-          <span className="text-xs text-slate-400">Analiz ediliyor…</span>
+          <span className="text-xs text-slate-400">{t('analyzing')}</span>
         </div>
       )}
       {error && (
         <div className="text-xs text-red-400 bg-red-500/10 rounded-lg p-3 flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={run} className="text-cyan-400 hover:underline">Tekrar dene</button>
+          <button onClick={run} className="text-cyan-400 hover:underline">{t('retry')}</button>
         </div>
       )}
       {result && (
         <div className="space-y-2.5 text-sm">
           {result.analysis.root_cause && (
             <div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">Kök Neden</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">{t('ops_root_cause')}</p>
               <p className="text-slate-200">{result.analysis.root_cause}</p>
             </div>
           )}
           {result.analysis.likely_cause && (
             <div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">Olası Sebep</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">{t('ops_likely_cause')}</p>
               <p className="text-slate-300">{result.analysis.likely_cause}</p>
             </div>
           )}
           {result.analysis.impact && (
             <div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">Etki</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">{t('ops_impact')}</p>
               <p className="text-slate-300">{result.analysis.impact}</p>
             </div>
           )}
           {(result.analysis.actions ?? []).length > 0 && (
             <div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">Önerilen Aksiyonlar</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1">{t('ops_recommended')}</p>
               <ul className="space-y-1">
                 {result.analysis.actions!.map((a, i) => (
                   <li key={i} className="text-xs text-slate-300 flex gap-2">
@@ -252,28 +258,28 @@ function RCAPanel({ eventIds, metric, isStorm, onClose }: {
             </div>
           )}
           <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50 text-xs text-slate-500">
-            <span className={confCol}>Güven: {conf}</span>
+            <span className={confCol}>{t('ops_confidence', { conf: String(conf) })}</span>
             <span>{result.event_count} event</span>
             <button
               type="button"
               onClick={() => {
                 const a = result.analysis
                 const sections: Array<{ heading?: string; body?: string; items?: string[] }> = []
-                if (a.root_cause) sections.push({ heading: 'Kök Neden', body: a.root_cause })
-                if (a.likely_cause) sections.push({ heading: 'Olası Sebep', body: a.likely_cause })
-                if (a.impact) sections.push({ heading: 'Etki', body: a.impact })
-                if ((a.actions || []).length) sections.push({ heading: 'Önerilen Aksiyonlar', items: a.actions })
-                if (a.affected_summary) sections.push({ heading: 'Etkilenen Özet', body: a.affected_summary })
-                if (a.severity_assessment) sections.push({ heading: 'Önem', body: a.severity_assessment })
-                if (a.confidence) sections.push({ heading: 'Güven', body: String(a.confidence) })
+                if (a.root_cause) sections.push({ heading: t('ops_root_cause'), body: a.root_cause })
+                if (a.likely_cause) sections.push({ heading: t('ops_likely_cause'), body: a.likely_cause })
+                if (a.impact) sections.push({ heading: t('ops_impact'), body: a.impact })
+                if ((a.actions || []).length) sections.push({ heading: t('ops_recommended'), items: a.actions })
+                if (a.affected_summary) sections.push({ heading: t('ops_affected_summary'), body: a.affected_summary })
+                if (a.severity_assessment) sections.push({ heading: t('ops_severity'), body: a.severity_assessment })
+                if (a.confidence) sections.push({ heading: t('ops_conf_label'), body: String(a.confidence) })
                 exportRcaSectionsToPrintWindow(sections, {
-                  title: isStorm ? `Fırtına RCA — ${metric}` : `OpsCenter RCA — ${metric}`,
+                  title: isStorm ? `${t('ops_storm_analysis')} — ${metric}` : `OpsCenter RCA — ${metric}`,
                   subtitle: `${result.model || ''} · ${result.event_count} event · ${result.analyzed_at || ''}`,
                   filename: `rca_ops_${(metric || 'analiz').replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
                 })
               }}
               className="inline-flex items-center gap-1 hover:text-cyan-300 transition-colors"
-              title="PDF olarak kaydet"
+              title={t('ops_pdf_save')}
             >
               <FileDown size={12} /> PDF
             </button>
@@ -291,6 +297,7 @@ function RCAPanel({ eventIds, metric, isStorm, onClose }: {
 function ServerDetailPanel({
   card, onClose, onDone
 }: { card: ServerCard; onClose: () => void; onDone: () => void }) {
+  const t = useT()
   const [showRCA, setShowRCA] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
   const [showSnooze, setShowSnooze] = useState(false)
@@ -359,24 +366,24 @@ function ServerDetailPanel({
           <div className="flex flex-wrap gap-2">
             <button onClick={() => doAction('acknowledge')} disabled={loading !== null}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-blue-500/50 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50 transition-colors">
-              <CheckCircle2 size={14} /> {loading === 'acknowledge' ? '…' : 'Onayla'}
+              <CheckCircle2 size={14} /> {loading === 'acknowledge' ? '…' : t('confirm_ok')}
             </button>
             <button onClick={() => doAction('known')} disabled={loading !== null}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-slate-600 text-slate-400 hover:bg-slate-700 disabled:opacity-50 transition-colors">
-              <Eye size={14} /> {loading === 'known' ? '…' : 'Bilinen'}
+              <Eye size={14} /> {loading === 'known' ? '…' : t('ops_known')}
             </button>
             <button onClick={() => doAction('suppress')} disabled={loading !== null}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-slate-600 text-slate-400 hover:bg-slate-700 disabled:opacity-50 transition-colors">
-              <BellOff size={14} /> {loading === 'suppress' ? '…' : 'Bastır'}
+              <BellOff size={14} /> {loading === 'suppress' ? '…' : t('ops_suppress')}
             </button>
             <div className="relative">
               <button onClick={() => setShowSnooze(v => !v)} disabled={loading !== null}
                 className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-slate-600 text-slate-400 hover:bg-slate-700 disabled:opacity-50 transition-colors">
-                <Clock size={14} /> Ertele <ChevronDown size={12} />
+                <Clock size={14} /> {t('ops_snooze')} <ChevronDown size={12} />
               </button>
               {showSnooze && (
                 <div className="absolute top-full left-0 mt-1 z-10 bg-slate-800 border border-slate-700 rounded-xl shadow-xl min-w-[130px] py-1 overflow-hidden">
-                  {[[30,'30 dk'],[60,'1 saat'],[120,'2 saat'],[480,'8 saat']].map(([m,l]) => (
+                  {[[30, t('ops_snooze_30m')],[60, t('ops_snooze_1h')],[120, t('ops_snooze_2h')],[480, t('ops_snooze_8h')]].map(([m,l]) => (
                     <button key={m} onClick={() => doSnooze(m as number)}
                       className="w-full text-left text-sm px-4 py-2 text-slate-300 hover:bg-slate-700 transition-colors">
                       {l}
@@ -390,7 +397,7 @@ function ServerDetailPanel({
           {/* Metrics */}
           <div>
             <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-              Aktif Alarmlar ({card.metrics.length})
+              {t('ops_active_alarms', { n: card.metrics.length })}
             </h4>
             <div className="space-y-2">
               {card.metrics.map(m => (
@@ -406,7 +413,7 @@ function ServerDetailPanel({
                   {m.occurrence_count > 1 && (
                     <span className="text-xs text-slate-600">{m.occurrence_count}×</span>
                   )}
-                  <span className="text-xs text-slate-600 ml-auto">{relTime(m.last_seen)}</span>
+                  <span className="text-xs text-slate-600 ml-auto">{relTime(m.last_seen, t)}</span>
                 </div>
               ))}
             </div>
@@ -416,7 +423,7 @@ function ServerDetailPanel({
           {card.suggested_actions.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                Önerilen Komutlar
+                {t('ops_suggested_cmds')}
               </h4>
               <div className="space-y-2">
                 {card.suggested_actions.map((a, i) => (
@@ -437,7 +444,7 @@ function ServerDetailPanel({
                   ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
                   : 'border-slate-700 text-slate-400 hover:border-slate-600 hover:text-white'
               }`}>
-              <span className="flex items-center gap-2"><ScanSearch size={14} /> AI Kök Neden Analizi</span>
+              <span className="flex items-center gap-2"><ScanSearch size={14} /> {t('ops_rca')}</span>
               <ChevronDown size={14} className={`transition-transform ${showRCA ? 'rotate-180' : ''}`} />
             </button>
             {showRCA && (
@@ -448,15 +455,15 @@ function ServerDetailPanel({
           {/* Quick links */}
           {card.server.id && (
             <div>
-              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Hızlı Erişim</h4>
+              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">{t('ops_quick_access')}</h4>
               <div className="grid grid-cols-2 gap-2">
                 <Link to={`/metrics?server=${card.server.id}`}
                   className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 text-sm transition-colors">
-                  <BarChart3 size={14} /> Canlı Metrikler
+                  <BarChart3 size={14} /> {t('nav_live_metrics')}
                 </Link>
                 <Link to={`/servers?id=${card.server.id}`}
                   className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 text-sm transition-colors">
-                  <Terminal size={14} /> Terminal
+                  <Terminal size={14} /> {t('ssh_terminal')}
                 </Link>
               </div>
             </div>
@@ -475,6 +482,7 @@ function ServerAlarmCard({
   onSelect: (ids: number[], checked: boolean) => void
   onDone: () => void; onClick: () => void
 }) {
+  const t = useT()
   const [loading, setLoading] = useState<string | null>(null)
   const sev = card.max_severity
 
@@ -538,11 +546,11 @@ function ServerAlarmCard({
                   </span>
                 )}
                 {m.occurrence_count > 1 && <span className="text-slate-600">{m.occurrence_count}×</span>}
-                <span className="text-slate-600">{relTime(m.last_seen)}</span>
+                <span className="text-slate-600">{relTime(m.last_seen, t)}</span>
               </div>
             ))}
             {card.metrics.length > 3 && (
-              <span className="text-xs text-slate-600">+{card.metrics.length - 3} daha…</span>
+              <span className="text-xs text-slate-600">{t('ops_more_n', { n: card.metrics.length - 3 })}</span>
             )}
           </div>
 
@@ -551,13 +559,13 @@ function ServerAlarmCard({
             <button onClick={quickAck}
               disabled={loading !== null}
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50 transition-colors">
-              {loading === 'ack' ? '…' : <><CheckCircle2 size={11} /> Onayla</>}
+              {loading === 'ack' ? '…' : <><CheckCircle2 size={11} /> {t('confirm_ok')}</>}
             </button>
             <button onClick={e => { e.stopPropagation(); onClick() }}
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-slate-600 text-slate-400 hover:bg-slate-700 transition-colors">
-              <ArrowRight size={11} /> Detay
+              <ArrowRight size={11} /> {t('detail')}
             </button>
-            <span className="ml-auto text-xs text-slate-600">{relTime(card.last_seen)}</span>
+            <span className="ml-auto text-xs text-slate-600">{relTime(card.last_seen, t)}</span>
           </div>
         </div>
       </div>
@@ -571,6 +579,7 @@ function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
   onSelect: (ids: number[], checked: boolean) => void; onDone: () => void
   platform: string
 }) {
+  const t = useT()
   const [showServers, setShowServers] = useState(false)
   const [showRCA, setShowRCA] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
@@ -605,8 +614,7 @@ function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
 
           <button onClick={() => setShowServers(v => !v)}
             className="mt-2 flex items-center gap-1.5 text-sm text-slate-400 hover:text-amber-300 transition-colors">
-            <span className="font-semibold text-amber-300">{storm.server_count}</span> sunucu ·
-            <span>{storm.event_count} event</span>
+            <span>{t('ops_n_servers_events', { n: storm.server_count, e: storm.event_count })}</span>
             <ChevronDown size={13} className={`transition-transform ${showServers ? 'rotate-180' : ''}`} />
           </button>
 
@@ -637,9 +645,9 @@ function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
             </button>
             <button onClick={doAck} disabled={loading !== null}
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50 transition-colors">
-              <CheckCircle2 size={11} /> {loading === 'ack' ? '…' : `Tümünü Onayla (${storm.event_count})`}
+              <CheckCircle2 size={11} /> {loading === 'ack' ? '…' : t('ops_ack_all', { n: storm.event_count })}
             </button>
-            <span className="ml-auto text-xs text-slate-600">{relTime(storm.last_seen)}</span>
+            <span className="ml-auto text-xs text-slate-600">{relTime(storm.last_seen, t)}</span>
           </div>
 
           {showRCA && (
@@ -655,6 +663,7 @@ function StormAlarmCard({ storm, selected, onSelect, onDone, platform }: {
 function BulkToolbar({ selectedIds, onClear, onDone }: {
   selectedIds: number[]; onClear: () => void; onDone: () => void
 }) {
+  const t = useT()
   const [loading, setLoading] = useState<string | null>(null)
 
   async function doAll(action: 'acknowledge' | 'known' | 'suppress' | 'snooze') {
@@ -680,13 +689,13 @@ function BulkToolbar({ selectedIds, onClear, onDone }: {
 
   return (
     <div className="sticky top-0 z-20 flex items-center gap-2 bg-slate-900/95 backdrop-blur-sm border border-cyan-500/40 rounded-2xl px-5 py-2.5 shadow-xl">
-      <span className="text-sm font-semibold text-cyan-400">{selectedIds.length} alarm seçili</span>
+      <span className="text-sm font-semibold text-cyan-400">{t('ops_n_alarms_sel', { n: selectedIds.length })}</span>
       <div className="flex gap-1.5 ml-3">
         {([
-          ['acknowledge', <CheckCircle2 size={13} />, 'Onayla', 'border-blue-500/40 text-blue-300 hover:bg-blue-500/10'],
-          ['known', <Eye size={13} />, 'Bilinen', 'border-slate-600 text-slate-400 hover:bg-slate-700'],
-          ['suppress', <BellOff size={13} />, 'Bastır', 'border-slate-600 text-slate-400 hover:bg-slate-700'],
-          ['snooze', <Clock size={13} />, '1sa Ertele', 'border-slate-600 text-slate-400 hover:bg-slate-700'],
+          ['acknowledge', <CheckCircle2 size={13} />, t('confirm_ok'), 'border-blue-500/40 text-blue-300 hover:bg-blue-500/10'],
+          ['known', <Eye size={13} />, t('ops_known'), 'border-slate-600 text-slate-400 hover:bg-slate-700'],
+          ['suppress', <BellOff size={13} />, t('ops_suppress'), 'border-slate-600 text-slate-400 hover:bg-slate-700'],
+          ['snooze', <Clock size={13} />, t('ops_snooze_1h_short'), 'border-slate-600 text-slate-400 hover:bg-slate-700'],
         ] as const).map(([act, icon, label, style]) => (
           <button key={act} onClick={() => doAll(act)} disabled={loading !== null}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border disabled:opacity-50 transition-colors ${style}`}>
@@ -696,7 +705,7 @@ function BulkToolbar({ selectedIds, onClear, onDone }: {
         ))}
       </div>
       <button onClick={onClear} className="ml-auto flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-        <X size={13} /> Seçimi kaldır
+        <X size={13} /> {t('ops_clear_sel')}
       </button>
     </div>
   )
@@ -704,6 +713,7 @@ function BulkToolbar({ selectedIds, onClear, onDone }: {
 
 // ── Activity Timeline ─────────────────────────────────────────────────────────
 function ActivityTimeline({ platform }: { platform: string }) {
+  const t = useT()
   const { data } = useQuery<{ events: EventItem[]; total: number }>({
     queryKey: ['ops-timeline', platform],
     queryFn: async () => {
@@ -728,24 +738,24 @@ function ActivityTimeline({ platform }: { platform: string }) {
 
   const timeLabel = (iso: string | null | undefined) => {
     if (!iso) return '—'
-    const t = new Date(iso).getTime()
-    if (!Number.isFinite(t)) return '—'
-    const rel = relTime(iso)
-    if (rel === 'şimdi' || (rel && rel.endsWith('dk'))) return rel
-    return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    const ts = new Date(iso).getTime()
+    if (!Number.isFinite(ts)) return '—'
+    const rel = relTime(iso, t)
+    if (rel === t('ops_rel_now') || (rel && (rel.endsWith('dk') || rel.endsWith('m')))) return rel
+    return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   }
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex-none px-4 py-3 border-b border-slate-800/60">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
-          <Activity size={14} className="text-cyan-400" /> Son Aktivite
+          <Activity size={14} className="text-cyan-400" /> {t('ops_recent_activity')}
         </div>
-        <div className="text-xs text-slate-600 mt-0.5">{events.length} açık alarm</div>
+        <div className="text-xs text-slate-600 mt-0.5">{t('ops_open_alarms', { n: events.length })}</div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {events.length === 0 ? (
-          <div className="text-center py-12 text-slate-600 text-sm">Aktif alarm yok</div>
+          <div className="text-center py-12 text-slate-600 text-sm">{t('ops_no_active')}</div>
         ) : (
           <div className="relative px-4 py-3">
             {/* Vertical line */}
@@ -788,10 +798,13 @@ interface HandledEvent {
   occurrence_count: number; last_seen: string | null
 }
 
-const HANDLE_LABEL: Record<string, { text: string; cls: string }> = {
-  acknowledged: { text: 'Onaylandı', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
-  known: { text: 'Bilinen', cls: 'bg-slate-500/20 text-slate-300 border-slate-500/40' },
-  resolved: { text: 'Kapatıldı', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+function handleLabel(status: string, t: TFn): { text: string; cls: string } {
+  const map: Record<string, { text: string; cls: string }> = {
+    acknowledged: { text: t('ops_handled_ack'), cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+    known: { text: t('ops_known'), cls: 'bg-slate-500/20 text-slate-300 border-slate-500/40' },
+    resolved: { text: t('ops_handled_closed'), cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+  }
+  return map[status] || map.acknowledged
 }
 
 function HandledEventsPanel({
@@ -802,6 +815,7 @@ function HandledEventsPanel({
   search: string
   onDone: () => void
 }) {
+  const t = useT()
   const [busyId, setBusyId] = useState<number | null>(null)
 
   const { data, isLoading, refetch } = useQuery<{
@@ -850,22 +864,22 @@ function HandledEventsPanel({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap text-xs text-slate-400">
-        <span>Son 24 saatte işlenen alarmlar</span>
+        <span>{t('ops_handled_24h')}</span>
         {counts && (
           <span className="text-slate-600">
-            · Onay {counts.acknowledged} · Bilinen {counts.known} · Kapatılan {counts.resolved}
+            {t('ops_handled_counts', { a: counts.acknowledged, k: counts.known, r: counts.resolved })}
           </span>
         )}
       </div>
       {events.length === 0 ? (
         <div className="flex flex-col items-center py-16 text-center text-slate-500">
           <CheckCircle2 size={40} className="text-slate-600 mb-3" />
-          <p className="text-sm">Bu filtrede işlenen alarm yok.</p>
+          <p className="text-sm">{t('ops_handled_empty')}</p>
         </div>
       ) : (
         <div className="space-y-2">
           {events.map(ev => {
-            const badge = HANDLE_LABEL[ev.handle_status] || HANDLE_LABEL.acknowledged
+            const badge = handleLabel(ev.handle_status, t)
             return (
               <div key={ev.id}
                 className="rounded-xl border border-slate-700/60 bg-slate-900/50 px-4 py-3 flex items-start gap-3">
@@ -886,7 +900,7 @@ function HandledEventsPanel({
                   <p className="text-sm text-slate-200 truncate" title={ev.title}>{ev.title}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {ev.server_name}{ev.server_ip ? ` · ${ev.server_ip}` : ''}
-                    {ev.last_seen ? ` · ${relTime(ev.last_seen)} önce` : ''}
+                    {ev.last_seen ? ` · ${t('ops_ago', { rel: relTime(ev.last_seen, t) })}` : ''}
                   </p>
                 </div>
                 <button
@@ -894,9 +908,9 @@ function HandledEventsPanel({
                   disabled={busyId === ev.id}
                   onClick={() => reopen(ev)}
                   className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-50"
-                  title="Aktif alarmlara geri al"
+                  title={t('ops_reopen_title')}
                 >
-                  {busyId === ev.id ? '…' : 'Yeniden aç'}
+                  {busyId === ev.id ? '…' : t('ops_reopen')}
                 </button>
               </div>
             )
@@ -909,6 +923,7 @@ function HandledEventsPanel({
 
 // ── Ana Sayfa ─────────────────────────────────────────────────────────────────
 export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
+  const t = useT()
   const qc = useQueryClient()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [tierFilter, setTierFilter] = useState<'all' | 'production' | 'staging' | 'development'>('all')
@@ -1009,7 +1024,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           critical: kpiCritical,
           warning: kpiWarning,
           tertiaryValue: data?.green_count ?? 0,
-          tertiaryLabel: 'İşlenen',
+          tertiaryLabel: t('ops_handled'),
           onCriticalClick: () => { setViewMode('active'); setSevFilter('critical') },
           onWarningClick: () => { setViewMode('active'); setSevFilter('warning') },
           onTertiaryClick: () => { setViewMode(v => v === 'handled' ? 'active' : 'handled'); setHandledStatus('') },
@@ -1020,7 +1035,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
         headerActions={(
           <>
             <span className="text-xs text-slate-600 hidden sm:block">
-              {relTime(data?.generated_at ?? null)} önce güncellendi
+              {t('ops_updated_ago', { rel: relTime(data?.generated_at ?? null, t) })}
             </span>
             <OpsRefreshCountdown onRefresh={() => { refetch(); invalidate() }} interval={30} />
           </>
@@ -1029,9 +1044,9 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           <div className="flex gap-3 w-full basis-full order-last">
             {[
               { key: 'cpu', icon: <Cpu size={14} />, label: 'CPU', color: 'text-orange-400' },
-              { key: 'memory', icon: <MemoryStick size={14} />, label: 'RAM', color: 'text-sky-400' },
+              { key: 'memory', icon: <MemoryStick size={14} />, label: 'Memory', color: 'text-sky-400' },
               { key: 'disk', icon: <HardDrive size={14} />, label: 'Disk', color: 'text-blue-400' },
-              { key: 'network', icon: <Network size={14} />, label: 'Ağ', color: 'text-teal-400' },
+              { key: 'network', icon: <Network size={14} />, label: t('ops_network'), color: 'text-teal-400' },
             ].map(({ key, icon, label, color }) => (
               <MetricWidget
                 key={key}
@@ -1053,8 +1068,8 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
           <>
             <div className="flex gap-1 mr-1">
               {([
-                ['active', 'Aktif'],
-                ['handled', 'İşlenen'],
+                ['active', t('ops_tab_active')],
+                ['handled', t('ops_handled')],
               ] as const).map(([mode, label]) => (
                 <button
                   key={mode}
@@ -1075,7 +1090,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder={viewMode === 'handled' ? 'İşlenen alarm veya sunucu ara…' : 'Sunucu, IP veya metrik ara…'}
+                placeholder={viewMode === 'handled' ? t('ops_search_handled') : t('ops_search_active')}
                 className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
               />
               {search && (
@@ -1087,10 +1102,10 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             {viewMode === 'handled' ? (
               <div className="flex gap-1">
                 {([
-                  ['', 'Tümü'],
-                  ['acknowledged', 'Onaylanan'],
-                  ['known', 'Bilinen'],
-                  ['resolved', 'Kapatılan'],
+                  ['', t('filter_all')],
+                  ['acknowledged', t('ops_filter_acked')],
+                  ['known', t('ops_known')],
+                  ['resolved', t('ops_filter_closed')],
                 ] as const).map(([st, label]) => (
                   <button
                     key={st || 'all'}
@@ -1109,18 +1124,18 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             ) : (
               <>
                 <div className="flex gap-1">
-                  {(['all', 'production', 'staging', 'development'] as const).map(t => (
+                  {(['all', 'production', 'staging', 'development'] as const).map(tier => (
                     <button
-                      key={t}
+                      key={tier}
                       type="button"
-                      onClick={() => setTierFilter(t)}
+                      onClick={() => setTierFilter(tier)}
                       className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${
-                        tierFilter === t
+                        tierFilter === tier
                           ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
                           : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
                       }`}
                     >
-                      {t === 'all' ? 'Tümü' : TIER_SHORT[t]}
+                      {tier === 'all' ? t('filter_all') : TIER_SHORT[tier]}
                     </button>
                   ))}
                 </div>
@@ -1136,7 +1151,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
                           : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
                       }`}
                     >
-                      {s === 'all' ? 'Tüm Seviye' : s === 'critical' ? 'Kritik' : 'Uyarı'}
+                      {s === 'all' ? t('ops_all_sev') : s === 'critical' ? t('status_critical') : t('status_warning')}
                     </button>
                   ))}
                 </div>
@@ -1162,15 +1177,15 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
         {allOk && !search && sevFilter === 'all' && tierFilter === 'all' && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <CheckCircle2 size={48} className="text-green-400 mb-4" />
-            <h3 className="text-xl font-semibold text-green-400">Her şey yolunda</h3>
-            <p className="text-sm text-slate-400 mt-2">Son 24 saatte müdahale gerektiren alarm yok.</p>
+            <h3 className="text-xl font-semibold text-green-400">{t('ops_all_ok')}</h3>
+            <p className="text-sm text-slate-400 mt-2">{t('ops_all_ok_hint')}</p>
             {(data?.green_count ?? 0) > 0 && (
               <button
                 type="button"
                 onClick={() => setViewMode('handled')}
                 className="mt-4 text-sm text-cyan-400 hover:underline"
               >
-                {data!.green_count} işlenen alarmı gör →
+                {t('ops_see_handled', { n: data!.green_count })}
               </button>
             )}
           </div>
@@ -1181,7 +1196,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             <div className="flex items-center gap-2 mb-3">
               <Zap size={14} className="text-amber-400" />
               <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                Alarm Fırtınaları — {data!.storms.length}
+                {t('ops_storms', { n: data!.storms.length })}
               </h2>
             </div>
             <div className="space-y-3">
@@ -1204,7 +1219,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             <div className="flex items-center gap-2 mb-3">
               <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
               <h2 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                Hemen Bak — {critFiltered.length} sunucu
+                {t('ops_look_now', { n: critFiltered.length })}
               </h2>
             </div>
             <div className="space-y-2">
@@ -1227,7 +1242,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
             <div className="flex items-center gap-2 mb-3">
               <span className="w-2 h-2 rounded-full bg-amber-400" />
               <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                İzle — {warnFiltered.length} sunucu
+                {t('ops_watch', { n: warnFiltered.length })}
               </h2>
             </div>
             <div className="space-y-2">
@@ -1248,7 +1263,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
         {(critFiltered.length === 0 && warnFiltered.length === 0 && (search || sevFilter !== 'all' || tierFilter !== 'all')) && (
           <div className="text-center py-16 text-slate-600">
             <Search size={32} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">Filtre kriterlerine uyan alarm yok.</p>
+            <p className="text-sm">{t('ops_filter_empty')}</p>
           </div>
         )}
           </>

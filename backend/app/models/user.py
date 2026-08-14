@@ -25,5 +25,7 @@ class User(Base):
     allowed_tiers = Column(JSON, nullable=True)
     # UI theme: dark | light (per-user)
     theme = Column(String(16), default="dark", nullable=False)
+    # UI language: tr | en (per-user). Technical terms stay English in both.
+    locale = Column(String(8), default="tr", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)

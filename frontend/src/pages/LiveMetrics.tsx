@@ -2,6 +2,8 @@ import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { usePageVisible } from '../hooks/usePageVisible'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 import {
   AreaChart,
   Area,
@@ -19,16 +21,16 @@ import {
  * saklıyor; step değerleri, geniş aralıklarda grafik nokta sayısını makul
  * seviyede (~150-300 nokta) tutacak şekilde kademeli olarak büyütülüyor.
  */
-const TIME_RANGES = [
-  { label: 'Son 15 dk', value: 900, step: 30 },
-  { label: 'Son 30 dk', value: 1800, step: 30 },
-  { label: 'Son 1 saat', value: 3600, step: 60 },
-  { label: 'Son 2 saat', value: 7200, step: 120 },
-  { label: 'Son 8 saat', value: 28800, step: 300 },
-  { label: 'Son 24 saat', value: 86400, step: 600 },
-  { label: 'Son 7 gün', value: 604800, step: 3600 },
-  { label: 'Son 30 gün', value: 2592000, step: 14400 },
-] as const
+const TIME_RANGES: { labelKey: TranslationKey; value: number; step: number }[] = [
+  { labelKey: 'lm_range_15m', value: 900, step: 30 },
+  { labelKey: 'lm_range_30m', value: 1800, step: 30 },
+  { labelKey: 'lm_range_1h', value: 3600, step: 60 },
+  { labelKey: 'lm_range_2h', value: 7200, step: 120 },
+  { labelKey: 'lm_range_8h', value: 28800, step: 300 },
+  { labelKey: 'lm_range_24h', value: 86400, step: 600 },
+  { labelKey: 'lm_range_7d', value: 604800, step: 3600 },
+  { labelKey: 'lm_range_30d', value: 2592000, step: 14400 },
+]
 
 type PromResult = {
   metric: Record<string, string>
@@ -142,14 +144,14 @@ const fetchNodeExporterMetricNames = async (): Promise<string[]> => {
 /** Kullanıcının grafikte seçebileceği preset metrikler + PromQL şablonu */
 type MetricPreset = {
   id: string
-  label: string
+  labelKey: TranslationKey
   unit: string
   buildRangeQuery: (selector: string, byInstance: boolean) => string
 }
 const METRIC_PRESETS: MetricPreset[] = [
   {
     id: 'cpu',
-    label: 'CPU kullanımı (%)',
+    labelKey: 'lm_preset_cpu',
     unit: '%',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -158,7 +160,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'memory',
-    label: 'Bellek kullanımı (%)',
+    labelKey: 'lm_preset_mem',
     unit: '%',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -167,7 +169,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'disk',
-    label: 'Disk (/) kullanımı (%)',
+    labelKey: 'lm_preset_disk',
     unit: '%',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -176,14 +178,14 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'load',
-    label: 'Load average (1m)',
+    labelKey: 'lm_preset_load',
     unit: '',
     buildRangeQuery: (selector, byInstance) =>
       byInstance ? `node_load1{${selector}}` : `avg(node_load1{${selector}})`,
   },
   {
     id: 'net_rx',
-    label: 'Network RX (B/s)',
+    labelKey: 'lm_preset_net_rx',
     unit: 'B/s',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -192,7 +194,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'net_tx',
-    label: 'Network TX (B/s)',
+    labelKey: 'lm_preset_net_tx',
     unit: 'B/s',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -201,7 +203,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'mem_available',
-    label: 'Bellek kullanılabilir (bytes)',
+    labelKey: 'lm_preset_mem_avail',
     unit: 'B',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -210,7 +212,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'disk_read',
-    label: 'Disk okuma (B/s)',
+    labelKey: 'lm_preset_disk_read',
     unit: 'B/s',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -219,7 +221,7 @@ const METRIC_PRESETS: MetricPreset[] = [
   },
   {
     id: 'disk_written',
-    label: 'Disk yazma (B/s)',
+    labelKey: 'lm_preset_disk_write',
     unit: 'B/s',
     buildRangeQuery: (selector, byInstance) =>
       byInstance
@@ -386,20 +388,23 @@ const EnterpriseMetricChart: React.FC<{
   height = 280,
   instanceLabels = {},
   loading,
-  emptyMessage = 'Veri yok',
+  emptyMessage,
 }) => {
+  const t = useT()
+  const { locale } = useLocale()
+  const empty = emptyMessage ?? t('lm_empty_data')
   const { chartData, seriesKeys } = useMemo(() => {
     if (!results.length) return { chartData: [], seriesKeys: [] as string[] }
     const keys = results.map((r, idx) => {
       const inst = r.metric?.instance
       if (inst) return instanceLabels[inst] || inst
       // Ortalama / aggregate sorgu — instance etiketi yok
-      return results.length === 1 ? 'Ortalama' : `seri-${idx + 1}`
+      return results.length === 1 ? t('lm_average') : t('lm_series', { n: idx + 1 })
     })
     const timestamps = results[0]?.values?.map(([t]) => t) ?? []
     const data = timestamps.map((ts, i) => {
       const point: Record<string, number | string> = {
-        time: new Date(ts * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        time: new Date(ts * 1000).toLocaleTimeString(locale === 'en' ? 'en-GB' : 'tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         _ts: ts,
       }
       results.forEach((_r, idx) => {
@@ -410,16 +415,16 @@ const EnterpriseMetricChart: React.FC<{
       return point
     })
     return { chartData: data, seriesKeys: keys }
-  }, [results, instanceLabels])
+  }, [results, instanceLabels, t, locale])
 
   if (loading) {
     return (
       <div className="bg-cyber-card/80 border border-slate-600 rounded-xl shadow-lg overflow-hidden" style={{ height }}>
         <div className="p-4 border-b border-slate-600/50 flex items-center justify-between">
           <span className="text-sm font-semibold text-slate-200">{title}</span>
-          <span className="text-xs text-slate-500">Yükleniyor...</span>
+          <span className="text-xs text-slate-500">{t('loading')}</span>
         </div>
-        <div className="flex items-center justify-center flex-1 h-48 text-slate-500">Veri çekiliyor</div>
+        <div className="flex items-center justify-center flex-1 h-48 text-slate-500">{t('lm_fetching')}</div>
       </div>
     )
   }
@@ -431,7 +436,7 @@ const EnterpriseMetricChart: React.FC<{
           <span className="text-sm font-semibold text-slate-200">{title}</span>
           {unit && <span className="text-xs text-slate-400">{unit}</span>}
         </div>
-        <div className="flex items-center justify-center h-48 text-slate-500">{emptyMessage}</div>
+        <div className="flex items-center justify-center h-48 text-slate-500">{empty}</div>
       </div>
     )
   }
@@ -460,7 +465,7 @@ const EnterpriseMetricChart: React.FC<{
               contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
               labelStyle={{ color: '#94a3b8' }}
               formatter={(value: number) => [unit ? `${Number(value).toFixed(2)} ${unit}` : Number(value).toFixed(2), '']}
-              labelFormatter={(label) => `Saat: ${label}`}
+              labelFormatter={(label) => `${t('lm_time')}: ${label}`}
             />
             {seriesKeys.length <= 8 && (
               <Legend wrapperStyle={{ fontSize: 11 }} formatter={(value) => <span className="text-slate-400">{value}</span>} />
@@ -483,10 +488,10 @@ const EnterpriseMetricChart: React.FC<{
 }
 
 /** Real time modunda tüm veriler bu aralıkla (ms) yenilenir - "veri akar" */
-const REAL_TIME_REFETCH_OPTIONS = [
+const REAL_TIME_REFETCH_OPTIONS: { labelKey?: TranslationKey; label?: string; value: number }[] = [
   { label: '15s', value: 15000 },
   { label: '30s', value: 30000 },
-  { label: '1dk', value: 60000 },
+  { labelKey: 'lm_interval_1m', value: 60000 },
 ]
 const DEFAULT_realTimeRefetchMs = 15000
 const TABLE_PAGE_SIZE = 50
@@ -501,6 +506,7 @@ function escapePrometheusRegex(s: string): string {
 }
 
 const LiveMetrics: React.FC = () => {
+  const t = useT()
   const pageVisible = usePageVisible()
   const [selectedInstances, setSelectedInstances] = useState<string[]>([])
   const [realTimeRefetchMs, setRealTimeRefetchMs] = useState(DEFAULT_realTimeRefetchMs)
@@ -612,7 +618,7 @@ const LiveMetrics: React.FC = () => {
   const effectiveRangeIndex = realTimeMode ? 0 : timeRangeIndex
   const rangeSeconds = TIME_RANGES[effectiveRangeIndex].value
   const stepSeconds = TIME_RANGES[effectiveRangeIndex].step
-  const timeRangeLabel = TIME_RANGES[effectiveRangeIndex].label
+  const timeRangeLabel = t(TIME_RANGES[effectiveRangeIndex].labelKey)
 
   const getRangeQueryForMetricKey = (metricKey: string): string => {
     if (metricKey.startsWith('raw:')) {
@@ -625,7 +631,7 @@ const LiveMetrics: React.FC = () => {
   const getLabelForMetricKey = (metricKey: string): string => {
     if (metricKey.startsWith('raw:')) return metricKey.slice(4)
     const preset = METRIC_PRESETS.find((p) => p.id === metricKey)
-    return preset ? preset.label : metricKey
+    return preset ? t(preset.labelKey) : metricKey
   }
   const getUnitForMetricKey = (metricKey: string): string => {
     if (metricKey.startsWith('raw:')) return ''
@@ -883,21 +889,22 @@ const LiveMetrics: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-white">Canlı Metrikler</h2>
+          <h2 className="text-xl font-semibold text-white">{t('lm_title')}</h2>
           <p className="text-sm text-slate-400">
             {metricsOverview ? (
               <>
-                <span className="text-slate-300">{metricsOverview.total_online_installed}</span> Prometheus hedefi ·{' '}
-                <span className="text-emerald-400">{metricsOverview.total_live}</span> canlı
+                <span className="text-slate-300">{t('lm_prom_targets', { n: metricsOverview.total_online_installed })}</span>
+                {' · '}
+                <span className="text-emerald-400">{t('lm_live_n', { n: metricsOverview.total_live })}</span>
                 {metricsOverview.scrape_errors > 0 && (
-                  <span className="text-orange-400"> · {metricsOverview.scrape_errors} scrape hatası</span>
+                  <span className="text-orange-400"> · {t('lm_scrape_errors', { n: metricsOverview.scrape_errors })}</span>
                 )}
                 {selectedInstances.length === 0 && (
-                  <span className="text-slate-500"> · grafikler ortalama (host seçerek tek tek bakın)</span>
+                  <span className="text-slate-500"> · {t('lm_avg_hint')}</span>
                 )}
               </>
             ) : (
-              'Prometheus üzerinden gerçek zamanlı Node Exporter verileri'
+              t('lm_subtitle')
             )}
           </p>
         </div>
@@ -917,14 +924,14 @@ const LiveMetrics: React.FC = () => {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
                 </span>
-                Veri akıyor
+                {t('lm_streaming')}
               </>
             ) : (
-              <>Real time</>
+              t('lm_realtime')
             )}
           </button>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 whitespace-nowrap">Zaman aralığı:</span>
+            <span className="text-xs text-slate-400 whitespace-nowrap">{t('lm_time_range')}</span>
             <select
               value={timeRangeIndex}
               onChange={(e) => setTimeRangeIndex(Number(e.target.value))}
@@ -933,11 +940,11 @@ const LiveMetrics: React.FC = () => {
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {TIME_RANGES.map((r, i) => (
-                <option key={r.value} value={i} className="bg-slate-900 text-white">{r.label}</option>
+                <option key={r.value} value={i} className="bg-slate-900 text-white">{t(r.labelKey)}</option>
               ))}
             </select>
             {realTimeMode && (
-              <span className="text-xs text-emerald-400">(Son 15 dk)</span>
+              <span className="text-xs text-emerald-400">{t('lm_last_15m')}</span>
             )}
           </div>
           <div className="relative" ref={instanceDropdownRef}>
@@ -948,8 +955,8 @@ const LiveMetrics: React.FC = () => {
             >
               <span className="truncate">
                 {selectedInstances.length === 0
-                  ? 'Sunucu seçin'
-                  : `${selectedInstances.length} sunucu seçili`}
+                  ? t('lm_pick_server')
+                  : t('lm_servers_selected', { n: selectedInstances.length })}
               </span>
               <span className="ml-auto text-slate-500 shrink-0">{instanceDropdownOpen ? '▲' : '▼'}</span>
             </button>
@@ -960,7 +967,7 @@ const LiveMetrics: React.FC = () => {
                     type="text"
                     value={instanceSearch}
                     onChange={(e) => setInstanceSearch(e.target.value)}
-                    placeholder="Sunucu veya hostname ara..."
+                    placeholder={t('lm_search_server')}
                     className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -970,7 +977,7 @@ const LiveMetrics: React.FC = () => {
                     onClick={() => setSelectedInstances([])}
                     className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded"
                   >
-                    Tümünü kaldır
+                    {t('lm_clear_all')}
                   </button>
                   <button
                     type="button"
@@ -986,14 +993,14 @@ const LiveMetrics: React.FC = () => {
                     }}
                     className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
                   >
-                    Filtreyi seç (max {MAX_SELECTED_INSTANCES})
+                    {t('lm_select_filter', { n: MAX_SELECTED_INSTANCES })}
                   </button>
                   <span className="text-xs text-slate-500 ml-auto">
-                    {onlineMetricServers.filter((s) => {
+                    {t('lm_n_servers', { n: onlineMetricServers.filter((s) => {
                       if (!instanceSearch.trim()) return true
                       const q = instanceSearch.toLowerCase()
                       return s.instance.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
-                    }).length} sunucu
+                    }).length })}
                   </span>
                 </div>
                 <div className="overflow-y-auto flex-1 p-2">
@@ -1029,7 +1036,7 @@ const LiveMetrics: React.FC = () => {
                               {s.name}
                             </span>
                             {!s.live && (
-                              <span className="text-xs text-orange-400/70 flex-shrink-0">scrape yok</span>
+                              <span className="text-xs text-orange-400/70 flex-shrink-0">{t('lm_no_scrape')}</span>
                             )}
                           </div>
                           <div className="text-xs text-slate-500 font-mono truncate">{s.instance}</div>
@@ -1043,7 +1050,7 @@ const LiveMetrics: React.FC = () => {
           {selectedInstances.length > 0 && (
             <input
               type="text"
-              placeholder="Hostname filtre..."
+              placeholder={t('lm_host_filter')}
               value={hostFilter}
               onChange={(e) => setHostFilter(e.target.value)}
               className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1052,7 +1059,7 @@ const LiveMetrics: React.FC = () => {
 
           {realTimeMode ? (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 whitespace-nowrap">Yenileme:</span>
+              <span className="text-xs text-slate-400 whitespace-nowrap">{t('lm_refresh')}</span>
               <select
                 value={realTimeRefetchMs}
                 onChange={(e) => setRealTimeRefetchMs(Number(e.target.value))}
@@ -1060,15 +1067,15 @@ const LiveMetrics: React.FC = () => {
                 className="bg-cyber-card border border-white/[0.06] rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {REAL_TIME_REFETCH_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.label}</option>
+                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.labelKey ? t(opt.labelKey) : opt.label}</option>
                 ))}
               </select>
             </div>
           ) : (
             <span className="text-xs text-slate-400">
               {timeRangeIndex === 0
-                ? 'Yenileme: 15s'
-                : `Yenileme: 30s · ${timeRangeLabel}`}
+                ? t('lm_refresh_15s')
+                : t('lm_refresh_30s', { range: timeRangeLabel })}
             </span>
           )}
         </div>
@@ -1079,9 +1086,9 @@ const LiveMetrics: React.FC = () => {
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
           <span className="text-[10px] font-bold text-amber-400 mt-0.5 bg-amber-500/15 border border-amber-500/30 px-1 rounded leading-4 self-start">!</span>
           <div>
-            <p className="text-amber-300 text-sm font-medium">Seçili sunucularda veri yok</p>
+            <p className="text-amber-300 text-sm font-medium">{t('lm_no_data_selected')}</p>
             <p className="text-amber-400/70 text-xs mt-0.5">
-              {selectedInstances.filter(i => instanceUpStatus[i] === false).map(i => instanceLabels[i] || i).join(', ')} — Node Exporter çalışmıyor veya erişilemiyor. Sunucular sayfasından başlatabilirsiniz.
+              {t('lm_no_data_hint', { hosts: selectedInstances.filter(i => instanceUpStatus[i] === false).map(i => instanceLabels[i] || i).join(', ') })}
             </p>
           </div>
         </div>
@@ -1090,7 +1097,7 @@ const LiveMetrics: React.FC = () => {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">CPU Ortalama ({timeRangeLabel})</div>
+          <div className="text-xs text-slate-400">{t('lm_cpu_avg', { range: timeRangeLabel })}</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(cpuMap).toFixed(2)}%
@@ -1099,7 +1106,7 @@ const LiveMetrics: React.FC = () => {
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">Memory Ortalama ({timeRangeLabel})</div>
+          <div className="text-xs text-slate-400">{t('lm_mem_avg', { range: timeRangeLabel })}</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(memoryMap).toFixed(2)}%
@@ -1108,7 +1115,7 @@ const LiveMetrics: React.FC = () => {
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">Disk (/) ({timeRangeLabel})</div>
+          <div className="text-xs text-slate-400">{t('lm_disk_root', { range: timeRangeLabel })}</div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(diskMap).toFixed(2)}%
@@ -1117,13 +1124,13 @@ const LiveMetrics: React.FC = () => {
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">Load Ortalama</div>
+          <div className="text-xs text-slate-400">{t('lm_load_avg')}</div>
           <div className="text-2xl font-semibold text-white">
             {averageOfMap(loadMap).toFixed(2)}
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">Network Ortalama</div>
+          <div className="text-xs text-slate-400">{t('lm_net_avg')}</div>
           <div className="text-sm text-slate-300">
             RX: {averageOfMap(netRxMap).toFixed(0)} B/s
           </div>
@@ -1137,10 +1144,10 @@ const LiveMetrics: React.FC = () => {
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="text-lg font-semibold text-white">
-            Özelleştirilebilir grafikler
+            {t('lm_custom_charts')}
           </h3>
           <p className="text-sm text-slate-400">
-            Her grafik için Node Exporter metriklerinden birini seçin. Preset veya ham metrik adı kullanabilirsiniz. — {timeRangeLabel}
+            {t('lm_chart_help', { range: timeRangeLabel })}
           </p>
         </div>
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -1148,7 +1155,7 @@ const LiveMetrics: React.FC = () => {
             <div key={slotIndex} className="space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="text-xs font-medium text-slate-400 whitespace-nowrap">
-                  Grafik {slotIndex + 1} metrik:
+                  {t('lm_chart_metric', { n: slotIndex + 1 })}
                 </label>
                 <select
                   value={chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex]}
@@ -1156,13 +1163,13 @@ const LiveMetrics: React.FC = () => {
                   style={{ colorScheme: 'dark' }}
                   className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
                 >
-                  <optgroup label="Preset metrikler" className="bg-slate-900 text-white">
+                    <optgroup label={t('lm_presets')} className="bg-slate-900 text-white">
                     {METRIC_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id} className="bg-slate-900 text-white">{p.label}</option>
+                      <option key={p.id} value={p.id} className="bg-slate-900 text-white">{t(p.labelKey)}</option>
                     ))}
                   </optgroup>
                   {nodeMetricNames.length > 0 && (
-                    <optgroup label="Node Exporter (ham metrik)" className="bg-slate-900 text-white">
+                    <optgroup label={t('lm_raw_group')} className="bg-slate-900 text-white">
                       {nodeMetricNames.map((name) => (
                         <option key={name} value={`raw:${name}`} className="bg-slate-900 text-white">{name}</option>
                       ))}
@@ -1178,7 +1185,7 @@ const LiveMetrics: React.FC = () => {
                 height={280}
                 instanceLabels={instanceLabels}
                 loading={hasServerSelection && customChartLoading[slotIndex]}
-                emptyMessage={hasServerSelection ? 'Veri yok' : 'Sunucu seçin — grafik 0'}
+                emptyMessage={hasServerSelection ? t('lm_empty_data') : t('lm_empty_pick')}
               />
             </div>
           ))}
@@ -1197,7 +1204,7 @@ const LiveMetrics: React.FC = () => {
                       Hostname <span className="text-[10px]">{getSortIcon('hostname')}</span>
                     </button>
                   </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Durum</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">{t('lm_status')}</th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
                     <button onClick={() => toggleSort('cpu')} className="flex items-center gap-1">
                       CPU <span className="text-[10px]">{getSortIcon('cpu')}</span>
@@ -1240,11 +1247,11 @@ const LiveMetrics: React.FC = () => {
                     <td className="px-6 py-4 whitespace-nowrap">
                       {row.live ? (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Canlı
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> {t('lm_live')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-orange-500/15 text-orange-300 border border-orange-500/30">
-                          Scrape hatası
+                          {t('lm_scrape_fail')}
                         </span>
                       )}
                     </td>
@@ -1277,7 +1284,7 @@ const LiveMetrics: React.FC = () => {
           {sortedRows.length > TABLE_PAGE_SIZE && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06]">
               <span className="text-xs text-slate-500">
-                {sortedRows.length} satır · sayfa {safeTablePage}/{tablePageCount}
+                {t('lm_rows_page', { n: sortedRows.length, page: safeTablePage, pages: tablePageCount })}
               </span>
               <div className="flex gap-2">
                 <button
@@ -1286,7 +1293,7 @@ const LiveMetrics: React.FC = () => {
                   onClick={() => setTablePage((p) => Math.max(1, p - 1))}
                   className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
                 >
-                  Önceki
+                  {t('lm_prev')}
                 </button>
                 <button
                   type="button"
@@ -1294,14 +1301,14 @@ const LiveMetrics: React.FC = () => {
                   onClick={() => setTablePage((p) => Math.min(tablePageCount, p + 1))}
                   className="px-3 py-1 text-xs rounded-lg border border-white/[0.08] text-slate-300 disabled:opacity-40 hover:bg-white/[0.04]"
                 >
-                  Sonraki
+                  {t('lm_next')}
                 </button>
               </div>
             </div>
           )}
           {sortedRows.length === 0 && (
             <div className="text-center py-12 text-slate-500">
-              {isLoading ? 'Metrikler yükleniyor...' : 'Metrik bulunamadı'}
+              {isLoading ? t('lm_loading') : t('lm_not_found')}
             </div>
           )}
         </div>

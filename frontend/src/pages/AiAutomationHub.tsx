@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Bot, Server, Shield, Cloud, Layers, Globe, Boxes } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
+import { useT } from '../i18n/LocaleProvider'
 import Chat from './Chat'
 import WindowsChat from './WindowsChat'
 import UnifiedChat from './UnifiedChat'
@@ -15,15 +16,16 @@ const PLATFORM_TABS: {
   icon: React.ReactNode
   moduleIds: string[]
 }[] = [
-  { id: 'all', label: 'Tüm Altyapı', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'executive', 'openshift'] },
+  { id: 'all', label: 'all', icon: <Globe size={14} />, moduleIds: ['linux', 'windows', 'virtualization', 'executive', 'openshift'] },
   { id: 'linux', label: 'Linux', icon: <Server size={14} />, moduleIds: ['linux'] },
   { id: 'windows', label: 'Windows', icon: <Shield size={14} />, moduleIds: ['windows'] },
-  { id: 'virt', label: 'Sanallaştırma', icon: <Cloud size={14} />, moduleIds: ['virtualization'] },
+  { id: 'virt', label: 'virt', icon: <Cloud size={14} />, moduleIds: ['virtualization'] },
   { id: 'openshift', label: 'OpenShift', icon: <Boxes size={14} />, moduleIds: ['openshift'] },
   { id: 'exadata', label: 'Exadata', icon: <Layers size={14} />, moduleIds: ['exadata'] },
 ]
 
 export default function AiAutomationHub() {
+  const t = useT()
   const { hasModule } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -45,7 +47,7 @@ export default function AiAutomationHub() {
   if (platforms.length === 0) {
     return (
       <div className="p-8 text-center text-slate-400">
-        Altyapı analizi için en az bir platform modülüne erişiminiz olmalı.
+        {t('chat_hub_need_mod')}
       </div>
     )
   }
@@ -56,8 +58,8 @@ export default function AiAutomationHub() {
         <div className="flex items-center gap-2 mb-3">
           <Bot size={18} className="text-sky-400" />
           <div>
-            <h1 className="text-sm font-semibold text-white">AI & Otomasyon — Altyapı Analizi</h1>
-            <p className="text-xs text-slate-500">Tüm modüller tek merkezden; platform seçerek analiz yapın</p>
+            <h1 className="text-sm font-semibold text-white">{t('chat_hub_title')}</h1>
+            <p className="text-xs text-slate-500">{t('chat_hub_sub')}</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -73,7 +75,7 @@ export default function AiAutomationHub() {
               }`}
             >
               {tab.icon}
-              {tab.label}
+              {tab.id === 'all' ? t('chat_fleet') : tab.id === 'virt' ? t('chat_virt') : tab.label}
             </button>
           ))}
         </div>

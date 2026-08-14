@@ -14,6 +14,7 @@ export interface AuthUser {
   modules: string[]
   is_admin: boolean
   theme?: 'dark' | 'light'
+  locale?: 'tr' | 'en'
 }
 
 export type LoginResult =

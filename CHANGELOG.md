@@ -11,6 +11,14 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### OpenShift MTV / Explorer
+- MTV sağlayıcı silme; aranabilir proje seçici; daraltılabilir explorer nav; VM snapshot drawer.
+
+### UI dili (TR / EN)
+- Kullanıcı menüsünde tema gibi TR|EN seçimi; tercih `users.locale` + `PATCH /auth/preferences` (kullanıcı bazlı).
+- Level 1 / Dropt ayrı dil seçici kullanmaz; ana locale’i izler.
+- Teknik terimler (Cluster, Pod, interface, Host, AIOps…) her iki dilde İngilizce kalır.
+
 ### DATA_DIR kanonik yol
 - Kalıcı veri her zaman `$INSTALL_DIR/data` (örn. `/dttadvance/app/data`). Compose `${DATA_DIR:-./data}`; hardcoded `/data/data` kaldırıldı.
 - `install-rhel.sh` / `update-rhel.sh` DATA_DIR’i kanonik yola zorlar.

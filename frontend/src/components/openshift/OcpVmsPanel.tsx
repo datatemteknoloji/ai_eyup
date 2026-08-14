@@ -3,13 +3,15 @@
  */
 import React, { useMemo, useState } from 'react'
 import {
-  ChevronDown, ChevronRight, Cpu, Globe, Loader2, MemoryStick,
+  ChevronRight, Cpu, Globe, Loader2, MemoryStick,
   Monitor, MonitorPlay, Play, RefreshCw, RotateCcw, Square,
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
 import OcpVmAdminActions from './OcpVmAdminActions'
+import OcpVmDetailDrawer from './OcpVmDetailDrawer'
+import { useT } from '../../i18n/LocaleProvider'
 
 type VmRow = {
   name: string
@@ -35,11 +37,12 @@ function openVmConsole(clusterId: number, namespace: string, name: string) {
 }
 
 function UsageBar({ label, pct }: { label: string; pct: number | null }) {
+  const t = useT()
   const p = pct == null ? null : Math.max(0, Math.min(100, pct))
   const color =
     p == null ? 'bg-slate-600' : p > 85 ? 'bg-red-500' : p > 70 ? 'bg-amber-500' : 'bg-blue-500'
   return (
-    <span className="flex items-center gap-1" title={`${label} kullanımı`}>
+    <span className="flex items-center gap-1" title={t('ocp_usage_title', { label })}>
       <span className="text-[9px] text-slate-500 w-3">{label}</span>
       <span className="w-10 h-1 rounded-full bg-slate-700/80 overflow-hidden inline-block">
         <span className={`block h-full rounded-full ${color}`} style={{ width: `${p ?? 0}%` }} />
@@ -52,11 +55,12 @@ function UsageBar({ label, pct }: { label: string; pct: number | null }) {
 }
 
 export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
+  const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const qc = useQueryClient()
-  const [expanded, setExpanded] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  const [detailVm, setDetailVm] = useState<{ namespace: string; name: string } | null>(null)
 
   const { data, isFetching, refetch } = useQuery({
     queryKey: ['openshift-kubevirt-vms', clusterId],
@@ -99,7 +103,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
 
   const power = async (vm: VmRow, action: string) => {
     const key = `${vm.namespace}/${vm.name}`
-    if (!window.confirm(`${vm.name}: ${action}?`)) return
+    if (!window.confirm(t('ocp_power_confirm', { name: vm.name, action }))) return
     setActing(key)
     try {
       const r = await fetch(
@@ -112,7 +116,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
       }
       setTimeout(() => qc.invalidateQueries({ queryKey: ['openshift-kubevirt-vms', clusterId] }), 2000)
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'İşlem başarısız')
+      alert(e instanceof Error ? e.message : t('ocp_action_fail'))
     } finally {
       setActing(null)
     }
@@ -124,20 +128,20 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
         <div className="flex items-center gap-2 mb-3">
           <MonitorPlay size={16} className="text-violet-400" />
-          <h3 className="text-sm font-semibold text-slate-100">Sanallaştırma özeti</h3>
+          <h3 className="text-sm font-semibold text-slate-100">{t('ocp_virt_summary')}</h3>
           <button
             type="button"
             onClick={() => refetch()}
             className="ml-auto text-xs px-2 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.04] inline-flex items-center gap-1"
           >
-            <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+            <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
           </button>
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
           <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500">Toplam VM</div>
+            <div className="text-slate-500">{t('ocp_total_vm')}</div>
             <div className="text-lg font-bold text-slate-100">{vms.length}</div>
-            <div className="text-emerald-400 mt-0.5">{summary.running} çalışan</div>
+            <div className="text-emerald-400 mt-0.5">{t('ocp_n_running', { n: summary.running })}</div>
             <div className="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden">
               <div
                 className="h-full bg-emerald-500"
@@ -146,8 +150,8 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
             </div>
           </div>
           <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500">Ayrılan kaynak</div>
-            <div className="text-slate-100 mt-1">{summary.allocCpu} vCPU · {summary.allocMemGb} GB RAM</div>
+            <div className="text-slate-500">{t('ocp_alloc')}</div>
+            <div className="text-slate-100 mt-1">{t('ocp_alloc_line', { cpu: summary.allocCpu, mem: summary.allocMemGb })}</div>
             <div className="text-slate-500 mt-2 text-[11px]">
               Node:{' '}
               {Object.entries(summary.byNode)
@@ -156,7 +160,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
             </div>
           </div>
           <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500 mb-1">En çok CPU</div>
+            <div className="text-slate-500 mb-1">{t('ocp_top_cpu')}</div>
             {summary.topCpu.length === 0 && <div className="text-slate-600">—</div>}
             {summary.topCpu.map((v) => {
               const cores = v.cpu_count || v.cpu_cores || 1
@@ -170,7 +174,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
             })}
           </div>
           <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500 mb-1">En çok bellek</div>
+            <div className="text-slate-500 mb-1">{t('ocp_top_mem')}</div>
             {summary.topMem.length === 0 && <div className="text-slate-600">—</div>}
             {summary.topMem.map((v) => {
               const total = v.memory_mb || (v.memory_gb || 0) * 1024 || 1
@@ -200,13 +204,13 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-2">
         <div className="flex items-center gap-2 mb-1">
           <MonitorPlay size={16} className="text-rose-400" />
-          <h3 className="text-sm font-semibold text-slate-100">Sanal Makineler (KubeVirt)</h3>
+          <h3 className="text-sm font-semibold text-slate-100">{t('ocp_vms_kubevirt')}</h3>
           <span className="text-xs text-slate-500">{vms.length}</span>
         </div>
 
         {vms.length === 0 ? (
           <p className="text-sm text-slate-500 py-8 text-center">
-            {isFetching ? 'Yükleniyor…' : 'Bu kümede KubeVirt VM yok.'}
+            {isFetching ? t('loading') : t('ocp_no_kubevirt_vm')}
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -226,7 +230,6 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                 running && vm.usage?.memory_mb && memMb
                   ? (vm.usage.memory_mb / memMb) * 100
                   : null
-              const open = expanded === key
               const busy = acting === key
 
               return (
@@ -234,17 +237,25 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                   <div className="flex items-center gap-2 px-3 py-2 text-xs flex-wrap">
                     <button
                       type="button"
-                      onClick={() => setExpanded(open ? null : key)}
+                      onClick={() => setDetailVm({ namespace: vm.namespace, name: vm.name })}
                       className="text-slate-500 hover:text-slate-300"
+                      title={t('ocp_open_detail')}
                     >
-                      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <ChevronRight size={14} />
                     </button>
                     <span
                       className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                         running ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
                       }`}
                     />
-                    <span className="text-slate-100 font-medium">{vm.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setDetailVm({ namespace: vm.namespace, name: vm.name })}
+                      className="text-slate-100 font-medium hover:text-white truncate text-left"
+                      title={t('ocp_open_detail')}
+                    >
+                      {vm.name}
+                    </button>
                     <span className="text-slate-500">{vm.namespace}</span>
                     <span className="flex items-center gap-2 text-slate-500">
                       <span className="inline-flex items-center gap-0.5">
@@ -275,7 +286,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                           : 'bg-slate-500/20 text-slate-400'
                       }`}
                     >
-                      {running ? 'Çalışıyor' : vm.printable_status || vm.phase || 'Kapalı'}
+                      {running ? t('hv_running_now') : vm.printable_status || vm.phase || t('disabled')}
                     </span>
 
                     <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -286,7 +297,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                           {running && (
                             <button
                               type="button"
-                              title="Konsol (noVNC)"
+                              title={t('ocp_console_novnc')}
                               onClick={() => openVmConsole(clusterId, vm.namespace, vm.name)}
                               className="p-1 rounded text-violet-400 hover:bg-violet-500/15"
                             >
@@ -298,7 +309,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                               {!running && (
                                 <button
                                   type="button"
-                                  title="Başlat"
+                                  title={t('start')}
                                   onClick={() => power(vm, 'start')}
                                   className="p-1 rounded text-emerald-400 hover:bg-emerald-500/15"
                                 >
@@ -309,7 +320,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                                 <>
                                   <button
                                     type="button"
-                                    title="Yeniden başlat"
+                                    title={t('restart')}
                                     onClick={() => power(vm, 'restart')}
                                     className="p-1 rounded text-sky-400 hover:bg-sky-500/15"
                                   >
@@ -317,7 +328,7 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                                   </button>
                                   <button
                                     type="button"
-                                    title="Durdur"
+                                    title={t('stop')}
                                     onClick={() => power(vm, 'stop')}
                                     className="p-1 rounded text-red-400 hover:bg-red-500/15"
                                   >
@@ -332,33 +343,21 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
                       )}
                     </div>
                   </div>
-                  {open && (
-                    <div className="border-t border-white/[0.06] px-4 py-3 text-[11px] text-slate-400 grid sm:grid-cols-3 gap-2">
-                      <div>
-                        Node: <span className="text-slate-200 font-mono">{vm.node || vm.node_name || '—'}</span>
-                      </div>
-                      <div>
-                        CPU kullanım:{' '}
-                        <span className="text-slate-200">
-                          {vm.usage?.cpu_millicores != null ? `${vm.usage.cpu_millicores}m` : '—'}
-                        </span>
-                      </div>
-                      <div>
-                        Bellek kullanım:{' '}
-                        <span className="text-slate-200">
-                          {vm.usage?.memory_mb != null
-                            ? `${(vm.usage.memory_mb / 1024).toFixed(1)} GiB`
-                            : '—'}
-                        </span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )
             })}
           </div>
         )}
       </div>
+
+      {detailVm && (
+        <OcpVmDetailDrawer
+          clusterId={clusterId}
+          namespace={detailVm.namespace}
+          name={detailVm.name}
+          onClose={() => setDetailVm(null)}
+        />
+      )}
     </div>
   )
 }

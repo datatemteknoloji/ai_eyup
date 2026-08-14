@@ -7,7 +7,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Boxes, Activity, AlertTriangle, HardDrive, RefreshCw } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import { PLATFORM_AIOPS_LABEL } from '../config/platformAiops'
+import { PLATFORM_AIOPS_LABEL_KEY } from '../config/platformAiops'
+import { useT } from '../i18n/LocaleProvider'
 import { PageHeader, Tabs } from '../components/aiops/ui'
 
 type TabId = 'cluster' | 'operators' | 'risks'
@@ -27,6 +28,7 @@ function tone(status?: string) {
 }
 
 export default function OpenShiftAnalysisHub() {
+  const t = useT()
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = normalizeTab(searchParams.get('tab'))
   const setTab = (id: string) => setSearchParams({ tab: id }, { replace: true })
@@ -95,20 +97,20 @@ export default function OpenShiftAnalysisHub() {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="mb-1 px-4 py-2 rounded-xl bg-slate-800/80 border border-slate-700/60 text-sm text-slate-300">
-        <span className="text-slate-500">Platform:</span>{' '}
-        <span className="font-medium text-white">{PLATFORM_AIOPS_LABEL.openshift}</span>
+        <span className="text-slate-500">{t('platform')}:</span>{' '}
+        <span className="font-medium text-white">{t(PLATFORM_AIOPS_LABEL_KEY.openshift)}</span>
       </div>
 
       <PageHeader
-        title="Küme Analizi"
-        subtitle="Operator sağlığı, kapasite ve risk pod’ları — OpenShift’e özel"
+        title={t('nav_cluster_analysis')}
+        subtitle={t('ana_ocp_sub')}
         actions={(
           <button
             type="button"
             onClick={() => refetchBoard()}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-300 border border-white/[0.08] hover:bg-white/[0.04]"
           >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Yenile
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> {t('refresh_action')}
           </button>
         )}
       />
@@ -128,7 +130,9 @@ export default function OpenShiftAnalysisHub() {
       {!clusterId && (
         <div className="text-center py-12 text-slate-500 text-sm">
           <Boxes size={28} className="mx-auto mb-2 opacity-40" />
-          Cluster yok — önce <Link to="/openshift" className="text-rose-300 hover:underline">Envanter</Link>’e ekleyin.
+          {t('ana_no_cluster_pre')}{' '}
+          <Link to="/openshift" className="text-rose-300 hover:underline">{t('ana_inventory')}</Link>
+          {t('ana_no_cluster_post')}
         </div>
       )}
 
@@ -138,9 +142,9 @@ export default function OpenShiftAnalysisHub() {
             active={tab}
             onChange={setTab}
             tabs={[
-              { id: 'cluster', label: 'Kapasite / Özet' },
-              { id: 'operators', label: 'Operator / MCP' },
-              { id: 'risks', label: `Risk Pod’lar${risksData?.total ? ` (${risksData.total})` : ''}` },
+              { id: 'cluster', label: t('ana_tab_cap') },
+              { id: 'operators', label: t('ana_tab_ops') },
+              { id: 'risks', label: risksData?.total ? t('ana_tab_risks_n', { n: risksData.total }) : t('ana_tab_risks') },
             ]}
           />
 
@@ -156,9 +160,9 @@ export default function OpenShiftAnalysisHub() {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     {[
                       ['Node ready', `${boardCluster.nodes_ready}/${boardCluster.node_count}`],
-                      ['Proje', boardCluster.project_count],
+                      [t('ana_project'), boardCluster.project_count],
                       ['Pod', boardCluster.pod_count],
-                      ['Risk', boardCluster.risk_pod_count],
+                      [t('ana_risk'), boardCluster.risk_pod_count],
                     ].map(([l, v]) => (
                       <div key={String(l)} className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
                         <div className="text-slate-500">{l}</div>
@@ -173,15 +177,15 @@ export default function OpenShiftAnalysisHub() {
                 <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
                   <div className="text-sm text-white font-medium flex items-center gap-2">
                     <HardDrive size={14} className="text-slate-400" />
-                    Canlı kapasite · {overview.version || '—'}
+                    {t('ana_live_cap', { v: overview.version || '—' })}
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
-                      <div className="text-slate-500">CPU kullanım / kapasite</div>
+                      <div className="text-slate-500">{t('ana_cpu_cap')}</div>
                       <div className="text-white">{overview.capacity?.cpu_used_cores ?? '—'} / {overview.capacity?.cpu_cores}</div>
                     </div>
                     <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
-                      <div className="text-slate-500">Mem kullanım / kapasite</div>
+                      <div className="text-slate-500">{t('ana_mem_cap')}</div>
                       <div className="text-white">{overview.capacity?.memory_used_gb ?? '—'} / {overview.capacity?.memory_gb} GB</div>
                     </div>
                     <div className="rounded-lg bg-cyber-deep/60 border border-white/[0.05] px-3 py-2">
@@ -206,8 +210,8 @@ export default function OpenShiftAnalysisHub() {
                     ))}
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Detaylı envanter / topology için{' '}
-                    <Link to="/openshift" className="text-rose-300 hover:underline">OpenShift Envanter</Link>
+                    {t('ana_inv_hint')}{' '}
+                    <Link to="/openshift" className="text-rose-300 hover:underline">{t('nav_openshift_inventory')}</Link>
                   </div>
                 </div>
               )}
@@ -222,11 +226,12 @@ export default function OpenShiftAnalysisHub() {
                   <span className={`text-xs uppercase ${tone(opHealth.overall)}`}>{opHealth.overall}</span>
                 </div>
                 <div className="text-xs text-slate-400 mb-3">
-                  Sürüm {opHealth.version || '—'}
-                  {opHealth.updating ? ` · güncelleniyor: ${opHealth.update_message || ''}` : ''}
+                  {opHealth.updating
+                    ? t('ana_ver_updating', { v: opHealth.version || '—', m: opHealth.update_message || '' })
+                    : t('ana_ver', { v: opHealth.version || '—' })}
                 </div>
                 {(opHealth.operators?.degraded || []).length === 0 && (opHealth.operators?.unavailable || []).length === 0 && (
-                  <div className="text-sm text-emerald-400/90">Degraded / unavailable operator yok.</div>
+                  <div className="text-sm text-emerald-400/90">{t('ana_no_deg')}</div>
                 )}
                 {(opHealth.operators?.degraded || []).map((d: any) => (
                   <div key={d.name} className="text-xs text-red-300 border-b border-white/[0.04] py-1.5">
@@ -265,7 +270,7 @@ export default function OpenShiftAnalysisHub() {
           {tab === 'risks' && (
             <div className="space-y-2">
               {(risksData?.risks || []).length === 0 && (
-                <div className="text-center py-10 text-slate-500 text-sm">Riskli pod yok.</div>
+                <div className="text-center py-10 text-slate-500 text-sm">{t('ana_no_risk_pods')}</div>
               )}
               {(risksData?.risks || []).map((w: any) => (
                 <div
@@ -283,7 +288,7 @@ export default function OpenShiftAnalysisHub() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={`text-xs font-medium ${tone(w.status)}`}>{w.status}</span>
-                    <Link to="/openshift" className="text-xs text-rose-300 hover:underline">Envanter</Link>
+                    <Link to="/openshift" className="text-xs text-rose-300 hover:underline">{t('ana_inventory')}</Link>
                     <Link to="/openshift/events" className="text-xs text-slate-400 hover:text-slate-200">Events</Link>
                   </div>
                 </div>

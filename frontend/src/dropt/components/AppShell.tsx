@@ -32,6 +32,7 @@ export function AppShell() {
   const location = useLocation();
   const { t, locale, setLocale } = useI18n();
   const { theme, setTheme } = useTheme();
+  const ainewOwnsLocale = typeof localStorage !== "undefined" && (localStorage.getItem("ainew_locale") === "tr" || localStorage.getItem("ainew_locale") === "en");
   const [user, setUser] = useState<UserPublic | null>(null);
   const [appName, setAppName] = useState("Dr OPT");
   const [assistantEnabled, setAssistantEnabled] = useState(false);
@@ -315,6 +316,7 @@ export function AppShell() {
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </Button>
 
+            {!ainewOwnsLocale && (
             <Button
               type="button"
               size="sm"
@@ -332,6 +334,7 @@ export function AppShell() {
               <Languages className="h-4 w-4" />
               <span className="text-xs tracking-wide">{locale === "tr" ? "TR" : "EN"}</span>
             </Button>
+            )}
           </header>
 
           <main className="min-h-0 flex-1 overflow-auto">

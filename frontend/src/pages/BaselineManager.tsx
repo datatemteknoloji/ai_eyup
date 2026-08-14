@@ -14,6 +14,7 @@ import {
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 import { Monitor, CheckCircle2, ClipboardList } from 'lucide-react'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 // ── Tipler ───────────────────────────────────────────────────────────────────
 
@@ -61,8 +62,9 @@ function SevBadge({ severity }: { severity: string }) {
 }
 
 function ChronicBadge({ days }: { days: number }) {
+  const t = useT()
   const color = days >= 7 ? NEON.red : days >= 3 ? NEON.orange : 'rgba(148,163,184,0.4)'
-  const label = days >= 7 ? `${days}g kronik` : days >= 3 ? `${days}g tekrar` : `${days}g`
+  const label = days >= 7 ? t('ana_chronic_n', { n: days }) : days >= 3 ? t('ana_repeat_n', { n: days }) : t('ana_n_days', { n: days })
   return (
     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
       style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 18%, transparent)` }}>
@@ -86,6 +88,7 @@ function SuppressModal({
   onClose: () => void
   onSuccess: () => void
 }) {
+  const t = useT()
   const [cap, setCap] = useState<string>('suppress')  // 'suppress' | 'warning' | 'info'
   const [reason, setReason] = useState('')
   const [expireDays, setExpireDays] = useState('')
@@ -125,24 +128,22 @@ function SuppressModal({
         style={{ background: 'rgb(15,23,42)', border: '1px solid rgba(6,182,212,0.2)' }}
         onClick={e => e.stopPropagation()}>
         <div>
-          <h3 className="text-base font-semibold" style={{ color: NEON.cyan }}>Alarm Bastırma Kuralı</h3>
+          <h3 className="text-base font-semibold" style={{ color: NEON.cyan }}>{t('ana_rule_title')}</h3>
           <p className="text-xs mt-1" style={{ color: 'rgba(148,163,184,0.6)' }}>
-            <span style={{ color: NEON.orange }}>{serverName}</span> sunucusu için{' '}
-            <code className="px-1 rounded text-[11px]" style={{ background: 'rgba(0,0,0,0.3)' }}>{metric}</code>{' '}
-            metriğine kural ekle
+            {t('ana_rule_hint', { server: serverName, metric })}
           </p>
         </div>
 
         {/* Kural tipi */}
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'rgba(148,163,184,0.55)' }}>
-            Uygulama
+            {t('ana_apply')}
           </div>
           <div className="space-y-2">
             {[
-              { value: 'suppress', label: 'Tamamen bastır', desc: 'Bu metrik için hiç alarm oluşturma' },
-              { value: 'warning', label: 'Maksimum Warning', desc: 'Critical yerine Warning olarak oluştur' },
-              { value: 'info', label: 'Maksimum Info', desc: 'Her zaman info seviyesinde oluştur' },
+              { value: 'suppress', label: t('ana_opt_suppress'), desc: t('ana_opt_suppress_d') },
+              { value: 'warning', label: t('ana_opt_warn'), desc: t('ana_opt_warn_d') },
+              { value: 'info', label: t('ana_opt_info'), desc: t('ana_opt_info_d') },
             ].map(opt => (
               <button key={opt.value} onClick={() => setCap(opt.value)}
                 className="w-full text-left p-3 rounded-[8px] transition-colors"
@@ -159,21 +160,21 @@ function SuppressModal({
 
         {/* Sebep */}
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>Sebep (opsiyonel)</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>{t('ana_reason_opt')}</div>
           <input value={reason} onChange={e => setReason(e.target.value)}
             className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
-            placeholder="Örn: Bu sunucu yüklü bir Oracle DB sunucusu" />
+            placeholder={t('ana_reason_ph')} />
         </div>
 
         {/* Süre */}
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>Süre (opsiyonel)</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>{t('ana_duration_opt')}</div>
           <Select value={expireDays} onChange={setExpireDays}>
-            <option value="">Süresiz</option>
-            <option value="7">7 gün</option>
-            <option value="30">30 gün</option>
-            <option value="90">90 gün</option>
+            <option value="">{t('ana_indefinite')}</option>
+            <option value="7">{t('ana_n_days', { n: 7 })}</option>
+            <option value="30">{t('ana_n_days', { n: 30 })}</option>
+            <option value="90">{t('ana_n_days', { n: 90 })}</option>
           </Select>
         </div>
 
@@ -182,9 +183,9 @@ function SuppressModal({
         )}
 
         <div className="flex gap-2 pt-1">
-          <GhostButton accent={NEON.cyan} onClick={onClose}>İptal</GhostButton>
+          <GhostButton accent={NEON.cyan} onClick={onClose}>{t('cancel')}</GhostButton>
           <PrimaryButton accent={NEON.cyan} onClick={submit} disabled={loading}>
-            {loading ? 'Kaydediliyor...' : 'Kuralı Kaydet'}
+            {loading ? t('inc_saving') : t('ana_save_rule')}
           </PrimaryButton>
         </div>
       </div>
@@ -197,6 +198,9 @@ function SuppressModal({
 type Tab = 'recurrence' | 'rules'
 
 const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
+  const t = useT()
+  const { locale } = useLocale()
+  const loc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState<Tab>('recurrence')
   const [selectedServer, setSelectedServer] = useState('')
@@ -253,26 +257,26 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
     <div className="space-y-6">
       {!hideHeader && (
       <PageHeader
-        title="Baseline Yönetimi"
-        subtitle="Sunucu başına normal davranış tanımla — tekrarlayan alarmları bastır veya önceliğini düşür"
+        title={t('ana_bl_title')}
+        subtitle={t('ana_bl_sub')}
       />
       )}
 
       {/* Sunucu seçimi */}
       <Section>
         <div className="p-4 flex flex-wrap items-center gap-3">
-          <span className="text-sm" style={{ color: 'rgba(148,163,184,0.6)' }}>Sunucu:</span>
+          <span className="text-sm" style={{ color: 'rgba(148,163,184,0.6)' }}>{t('ana_server')}</span>
           <Select value={selectedServer} onChange={setSelectedServer}>
-            <option value="">Sunucu seçin...</option>
+            <option value="">{t('ana_pick_server_ph')}</option>
             {servers.map(s => (
               <option key={s.id} value={String(s.id)}>{s.name}</option>
             ))}
           </Select>
           {selectedServer && metrics.length > 0 && (
             <div className="flex gap-4 ml-2 text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
-              <span>Toplam metrik: <span style={{ color: NEON.cyan }}>{metrics.length}</span></span>
-              <span>Kronik: <span style={{ color: NEON.orange }}>{chronicCount}</span></span>
-              <span>Bastırılmış: <span style={{ color: NEON.green }}>{suppressedCount}</span></span>
+              <span>{t('ana_total_metrics')} <span style={{ color: NEON.cyan }}>{metrics.length}</span></span>
+              <span>{t('ana_chronic')} <span style={{ color: NEON.orange }}>{chronicCount}</span></span>
+              <span>{t('ana_suppressed')} <span style={{ color: NEON.green }}>{suppressedCount}</span></span>
             </div>
           )}
         </div>
@@ -281,8 +285,8 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
       {/* Sekme bar */}
       <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
         {([
-          { id: 'recurrence' as Tab, label: 'Tekrarlayan Alarmlar' },
-          { id: 'rules' as Tab, label: 'Aktif Kurallar' },
+          { id: 'recurrence' as Tab, label: t('ana_tab_recurring') },
+          { id: 'rules' as Tab, label: t('ana_tab_rules') },
         ]).map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className="flex-1 py-2 px-3 rounded-[8px] text-sm font-medium transition-all"
@@ -298,13 +302,13 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
       {activeTab === 'recurrence' && (
         <>
           {!selectedServer ? (
-            <EmptyState icon={<Monitor size={28} strokeWidth={1.5} />} text="Tekrarlayan alarmları görmek için bir sunucu seçin." />
+            <EmptyState icon={<Monitor size={28} strokeWidth={1.5} />} text={t('ana_pick_for_rec')} />
           ) : recLoading ? (
             <div className="py-16 flex justify-center">
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : metrics.length === 0 ? (
-            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text="Bu sunucuda son 14 günde tekrarlayan alarm yok." />
+            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text={t('ana_no_recurring')} />
           ) : (
             <div className="space-y-2">
               {metrics.map(m => (
@@ -324,13 +328,13 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                       <SevBadge severity={m.max_severity} />
                       {m.has_suppression && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.1)', color: NEON.green, border: '1px solid rgba(34,197,94,0.2)' }}>
-                          ✓ Kural var
+                          {t('ana_has_rule')}
                         </span>
                       )}
                     </div>
                     <p className="text-sm font-medium truncate" style={{ color: 'rgba(226,232,240,0.88)' }}>{m.metric}</p>
                     <p className="text-[11px] mt-0.5" style={{ color: 'rgba(148,163,184,0.45)' }}>
-                      {m.total_count} olay · son 14 günde {m.recurrence_days} farklı gün
+                      {t('ana_rec_stats', { n: m.total_count, d: m.recurrence_days })}
                     </p>
                   </div>
 
@@ -346,7 +350,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                     </PrimaryButton>
                   )}
                   {m.has_suppression && (
-                    <span className="text-xs px-2 py-1" style={{ color: 'rgba(148,163,184,0.35)' }}>Bastırılıyor</span>
+                    <span className="text-xs px-2 py-1" style={{ color: 'rgba(148,163,184,0.35)' }}>{t('ana_kpi_suppressed')}</span>
                   )}
                 </div>
               ))}
@@ -363,7 +367,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : rules.length === 0 ? (
-            <EmptyState icon={<ClipboardList size={28} strokeWidth={1.5} />} text="Henüz suppression kuralı yok. Tekrarlayan alarmlar sekmesinden kural ekleyin." />
+            <EmptyState icon={<ClipboardList size={28} strokeWidth={1.5} />} text={t('ana_no_rules')} />
           ) : (
             <div className="space-y-2">
               {rules.map(rule => (
@@ -376,7 +380,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                           color: rule.baseline_severity === null ? NEON.red : NEON.orange,
                           border: `1px solid ${rule.baseline_severity === null ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.2)'}`,
                         }}>
-                        {rule.baseline_severity === null ? 'Tamamen bastır' : `Max: ${rule.baseline_severity}`}
+                        {rule.baseline_severity === null ? t('ana_full_suppress') : `Max: ${rule.baseline_severity}`}
                       </span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.5)' }}>
                         {rule.scope}
@@ -390,17 +394,17 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                       <p className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{rule.reason}</p>
                     )}
                     <div className="flex gap-3 text-[10px]" style={{ color: 'rgba(148,163,184,0.35)' }}>
-                      {rule.created_at && <span>Oluşturuldu: {new Date(rule.created_at).toLocaleDateString('tr-TR')}</span>}
+                      {rule.created_at && <span>{t('ana_created_on', { d: new Date(rule.created_at).toLocaleDateString(loc) })}</span>}
                       {rule.expires_at
-                        ? <span style={{ color: NEON.orange }}>Bitiş: {new Date(rule.expires_at).toLocaleDateString('tr-TR')}</span>
-                        : <span>Süresiz</span>
+                        ? <span style={{ color: NEON.orange }}>{t('ana_expires_on', { d: new Date(rule.expires_at).toLocaleDateString(loc) })}</span>
+                        : <span>{t('ana_indefinite')}</span>
                       }
                     </div>
                   </div>
                   <button onClick={() => deleteRule.mutate(rule.id)}
                     className="flex-shrink-0 text-xs px-2 py-1.5 rounded transition-colors"
                     style={{ color: NEON.red, border: '1px solid rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.05)' }}>
-                    Kaldır
+                    {t('remove')}
                   </button>
                 </div>
               ))}

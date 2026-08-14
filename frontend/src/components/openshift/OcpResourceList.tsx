@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { FileCode, RefreshCw, Search, X, Minus, Plus, RotateCcw } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
+import { useT } from '../../i18n/LocaleProvider'
 
 type Item = { name: string; namespace?: string; age?: string; info?: string }
 
@@ -27,6 +28,7 @@ export default function OcpResourceList({
   namespaced?: boolean
   onPickProject?: () => void
 }) {
+  const t = useT()
   const { user } = useAuth()
   const canWrite = Boolean(user?.is_admin || user?.role === 'admin')
   const [q, setQ] = useState('')
@@ -42,7 +44,7 @@ export default function OcpResourceList({
       const params = new URLSearchParams({ kind })
       if (ns) params.set('namespace', ns)
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/resources?${params}`)
-      if (!r.ok) throw new Error((await r.json()).detail || 'Liste alınamadı')
+      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_list_fail'))
       return r.json() as Promise<{ items: Item[]; error?: string | null; total?: number }>
     },
     enabled: !!clusterId && !needsProject,
@@ -86,17 +88,17 @@ export default function OcpResourceList({
         }),
       })
       const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Ölçekleme başarısız')
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : t('ocp_scale_fail'))
       setTimeout(() => refetch(), 1200)
     } catch (e: any) {
-      window.alert(e.message || 'Hata')
+      window.alert(e.message || t('error_generic'))
     } finally {
       setActing(null)
     }
   }
 
   const restart = async (it: Item) => {
-    if (!window.confirm(`${it.name} yeniden başlatılsın mı (rollout restart)?`)) return
+    if (!window.confirm(t('ocp_restart_confirm', { name: it.name }))) return
     setActing(it.name)
     try {
       const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/workload/restart`, {
@@ -105,10 +107,10 @@ export default function OcpResourceList({
         body: JSON.stringify({ kind, namespace: it.namespace || ns, name: it.name }),
       })
       const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Başarısız')
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : t('failed'))
       setTimeout(() => refetch(), 1500)
     } catch (e: any) {
-      window.alert(e.message || 'Hata')
+      window.alert(e.message || t('error_generic'))
     } finally {
       setActing(null)
     }
@@ -123,7 +125,7 @@ export default function OcpResourceList({
           {!needsProject && (
             <span className="text-xs text-slate-500">
               {ns ? <span className="font-mono text-slate-400">{ns}</span> : null}
-              {' · '}{data?.total ?? items.length} kayıt
+              {' · '}{t('ocp_n_records', { n: data?.total ?? items.length })}
             </span>
           )}
         </div>
@@ -133,22 +135,22 @@ export default function OcpResourceList({
           onClick={() => refetch()}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5 disabled:opacity-40"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
         </button>
       </div>
 
       {needsProject ? (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-8 text-center space-y-2">
           <p className="text-sm text-amber-100/90">
-            Bu liste <b>proje (namespace)</b> bağlamında çalışır.
+            {t('ocp_needs_ns')}
           </p>
           <p className="text-xs text-amber-200/70">
-            Üstteki <b>Proje</b> seçicisinden seçin
+            {t('ocp_pick_or')}
             {onPickProject && (
               <>
-                {' '}veya{' '}
+                {' '}{t('ocp_or')}{' '}
                 <button type="button" onClick={onPickProject} className="underline font-medium">
-                  Projeler
+                  {t('ocp_projects')}
                 </button>
               </>
             )}
@@ -161,22 +163,22 @@ export default function OcpResourceList({
             <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
             <input
               className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-rose-500/40"
-              placeholder="ad veya bilgi ara…"
+              placeholder={t('ocp_search_name')}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
 
-          {isLoading && <div className="text-sm text-slate-500">Yükleniyor…</div>}
+          {isLoading && <div className="text-sm text-slate-500">{t('loading')}</div>}
           {error && (
             <div className="text-sm text-red-400">
-              {error instanceof Error ? error.message : 'Hata'}
+              {error instanceof Error ? error.message : t('error_generic')}
             </div>
           )}
           {data?.error && <div className="text-sm text-amber-400">{data.error}</div>}
 
           {!isLoading && items.length === 0 && !data?.error && (
-            <div className="text-sm text-slate-500 py-6 text-center">Bu projede kayıt yok</div>
+            <div className="text-sm text-slate-500 py-6 text-center">{t('ocp_empty_ns')}</div>
           )}
 
           {items.length > 0 && (
@@ -199,17 +201,17 @@ export default function OcpResourceList({
                         <>
                           {SCALABLE.includes(kind) && (
                             <>
-                              <button type="button" title="Ölçek -1" onClick={() => scale(it, -1)}
+                              <button type="button" title={t('ocp_scale_minus')} onClick={() => scale(it, -1)}
                                 className="p-1.5 rounded-md text-slate-500 hover:text-slate-100 hover:bg-white/[0.06]">
                                 <Minus size={14} />
                               </button>
-                              <button type="button" title="Ölçek +1" onClick={() => scale(it, +1)}
+                              <button type="button" title={t('ocp_scale_plus')} onClick={() => scale(it, +1)}
                                 className="p-1.5 rounded-md text-slate-500 hover:text-slate-100 hover:bg-white/[0.06]">
                                 <Plus size={14} />
                               </button>
                             </>
                           )}
-                          <button type="button" title="Yeniden başlat" onClick={() => restart(it)}
+                          <button type="button" title={t('restart')} onClick={() => restart(it)}
                             className="p-1.5 rounded-md text-slate-500 hover:text-amber-300 hover:bg-amber-500/10">
                             <RotateCcw size={14} />
                           </button>

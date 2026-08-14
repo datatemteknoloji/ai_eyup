@@ -3,6 +3,7 @@ import {
   createElement,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -15,6 +16,8 @@ import {
 } from "@dropt/i18n/messages";
 
 const STORAGE_KEY = "dropt_locale";
+const AINEW_KEY = "ainew_locale";
+const AINEW_EVENT = "ainew-locale";
 
 type I18nCtx = {
   locale: Locale;
@@ -24,15 +27,36 @@ type I18nCtx = {
 
 const Ctx = createContext<I18nCtx | null>(null);
 
+function parseLocale(raw: string | null | undefined): Locale | null {
+  return raw === "en" || raw === "tr" ? raw : null;
+}
+
 function readInitial(): Locale {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw === "en" ? "en" : "tr";
+  return parseLocale(localStorage.getItem(AINEW_KEY))
+    ?? parseLocale(localStorage.getItem(STORAGE_KEY))
+    ?? "tr";
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(readInitial);
 
+  useEffect(() => {
+    const sync = () => {
+      const next = readInitial();
+      setLocaleState(next);
+      document.documentElement.lang = next;
+    };
+    window.addEventListener(AINEW_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(AINEW_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
   const setLocale = useCallback((l: Locale) => {
+    // Embedded in ainew: parent LocaleProvider owns the preference.
+    if (parseLocale(localStorage.getItem(AINEW_KEY))) return;
     localStorage.setItem(STORAGE_KEY, l);
     setLocaleState(l);
     document.documentElement.lang = l;

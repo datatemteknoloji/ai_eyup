@@ -4,11 +4,11 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   Boxes, LayoutGrid, FolderOpen, Network, Database, Layers, Stethoscope,
   Share2, Globe, HardDrive, Server, Settings2, FileCode, MonitorPlay,
-  HeartPulse, AlertTriangle, RefreshCw, Info, ChevronRight, ArrowRightLeft,
+  HeartPulse, AlertTriangle, RefreshCw, Info, ChevronRight, ChevronLeft, ArrowRightLeft,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import OcpProjectsPanel from '../components/openshift/OcpProjectsPanel'
@@ -19,10 +19,13 @@ import OcpTopologyPanel from '../components/openshift/OcpTopologyPanel'
 import OcpPodsPanel from '../components/openshift/OcpPodsPanel'
 import OcpMtvPanel from '../components/openshift/OcpMtvPanel'
 import OcpClusterManageMenu from '../components/openshift/OcpClusterManageMenu'
+import OcpProjectPicker from '../components/openshift/OcpProjectPicker'
 import OcpVmsPanel from '../components/openshift/OcpVmsPanel'
 import {
-  NEEDS_PROJECT, SECTION_HELP, SECTION_KIND, type OcpCluster, type OcpSection,
+  NEEDS_PROJECT, SECTION_KIND, type OcpCluster, type OcpSection,
 } from '../components/openshift/ocpTypes'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 const VALID: OcpSection[] = [
   'genel', 'projeler', 'topoloji', 'deployments', 'statefulsets', 'daemonsets',
@@ -30,17 +33,42 @@ const VALID: OcpSection[] = [
   'kaynaklar', 'vms', 'tasima', 'saglik', 'riskler',
 ]
 
+const SECTION_HELP_KEYS: Partial<Record<OcpSection, TranslationKey>> = {
+  genel: 'ocp_help_overview',
+  saglik: 'ocp_help_health',
+  topoloji: 'ocp_help_topology',
+  depolama: 'ocp_help_storage',
+  vms: 'ocp_help_vms',
+  tasima: 'ocp_help_mtv',
+  kaynaklar: 'ocp_help_resources',
+  projeler: 'ocp_help_projects',
+  riskler: 'ocp_help_risks',
+  pods: 'ocp_help_pods',
+}
+
 function parseSection(raw: string | null): OcpSection | null {
   if (raw && VALID.includes(raw as OcpSection)) return raw as OcpSection
   return null
 }
 
 export default function OpenShiftExplorer({ initialSection = 'genel' }: { initialSection?: OcpSection }) {
+  const t = useT()
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionFromUrl = parseSection(searchParams.get('section')) || parseSection(searchParams.get('tab'))
   const [section, setSection] = useState<OcpSection>(sectionFromUrl || initialSection)
   const [clusterId, setClusterId] = useState<number | null>(null)
   const [project, setProject] = useState(searchParams.get('project') || '')
+  const [projSearch, setProjSearch] = useState('')
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try { return localStorage.getItem('ainew_ocp_nav_collapsed') === '1' } catch { return false }
+  })
+  const toggleNav = () => {
+    setNavCollapsed((v) => {
+      const next = !v
+      try { localStorage.setItem('ainew_ocp_nav_collapsed', next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }
 
   useEffect(() => {
     const next = sectionFromUrl || initialSection
@@ -80,25 +108,28 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
   }, [clusters, clusterId])
 
   const { data: projectsData } = useQuery({
-    queryKey: ['ocp-explorer-projects-select', clusterId],
+    queryKey: ['ocp-explorer-projects-select', clusterId, projSearch],
     queryFn: async () => {
       const params = new URLSearchParams({
         cluster_id: String(clusterId),
         include_system: 'true',
         page: '1',
-        page_size: '200',
+        page_size: '1000',
       })
+      const q = projSearch.trim()
+      if (q.length >= 2) params.set('q', q)
       const r = await fetch(`${API_BASE_URL}/openshift/projects?${params}`)
       if (!r.ok) return { projects: [] }
       return r.json()
     },
     enabled: !!clusterId,
+    placeholderData: keepPreviousData,
   })
   const projects = projectsData?.projects || []
 
   // Tek kullanıcı projesi varsa otomatik seç — sürtünmeyi azaltır
   useEffect(() => {
-    if (!clusterId || project) return
+    if (!clusterId || project || projSearch.trim()) return
     const users = projects.filter((p: any) => !p.is_system)
     if (users.length === 1) {
       const name = users[0].name as string
@@ -107,7 +138,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
       p.set('project', name)
       setSearchParams(p, { replace: true })
     }
-  }, [clusterId, projects, project, searchParams, setSearchParams])
+  }, [clusterId, projects, project, projSearch, searchParams, setSearchParams])
 
   const { data: overview, isFetching: ovFetching, refetch: refetchOv } = useQuery({
     queryKey: ['openshift-overview', clusterId],
@@ -148,59 +179,59 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
     const groups: { group?: string; items: { id: OcpSection; label: string; icon: any }[] }[] = [
       {
         items: [
-          { id: 'genel', label: 'Genel Bakış', icon: LayoutGrid },
-          { id: 'projeler', label: 'Projeler', icon: FolderOpen },
-          { id: 'topoloji', label: 'Topoloji', icon: Network },
+          { id: 'genel', label: t('ocp_nav_overview'), icon: LayoutGrid },
+          { id: 'projeler', label: t('ocp_projects'), icon: FolderOpen },
+          { id: 'topoloji', label: t('ocp_nav_topology'), icon: Network },
         ],
       },
       {
-        group: 'İş Yükleri',
+        group: t('ocp_nav_workloads'),
         items: [
           { id: 'deployments', label: 'Deployments', icon: Boxes },
           { id: 'statefulsets', label: 'StatefulSets', icon: Database },
           { id: 'daemonsets', label: 'DaemonSets', icon: Layers },
-          { id: 'pods', label: 'Pod & Log', icon: Stethoscope },
+          { id: 'pods', label: t('ocp_nav_pod_log'), icon: Stethoscope },
         ],
       },
       {
-        group: 'Ağ',
+        group: t('ocp_nav_network'),
         items: [
           { id: 'services', label: 'Services', icon: Share2 },
           { id: 'routes', label: 'Routes', icon: Globe },
         ],
       },
       {
-        group: 'Depolama',
+        group: t('ocp_nav_storage'),
         items: [
-          { id: 'depolama', label: 'Genel', icon: HardDrive },
+          { id: 'depolama', label: t('ocp_nav_storage_genel'), icon: HardDrive },
           { id: 'pvc', label: 'PVC', icon: Database },
           { id: 'pv', label: 'PersistentVolumes', icon: Server },
         ],
       },
       {
-        group: 'Yapılandırma',
+        group: t('ocp_nav_config'),
         items: [
           { id: 'configmaps', label: 'ConfigMaps', icon: Settings2 },
-          { id: 'kaynaklar', label: 'Tüm Kaynaklar', icon: FileCode },
+          { id: 'kaynaklar', label: t('ocp_nav_all_res'), icon: FileCode },
         ],
       },
       {
-        group: 'Sanallaştırma',
+        group: t('ocp_nav_virt'),
         items: [
-          ...(hasKubevirt ? [{ id: 'vms' as OcpSection, label: 'Sanal Makineler', icon: MonitorPlay }] : []),
-          { id: 'tasima' as OcpSection, label: 'Taşıma (MTV)', icon: ArrowRightLeft },
+          ...(hasKubevirt ? [{ id: 'vms' as OcpSection, label: t('ocp_nav_vms'), icon: MonitorPlay }] : []),
+          { id: 'tasima' as OcpSection, label: t('ocp_nav_mtv'), icon: ArrowRightLeft },
         ],
       },
       {
-        group: 'Küme',
+        group: 'Cluster',
         items: [
-          { id: 'saglik', label: 'Sağlık', icon: HeartPulse },
-          { id: 'riskler', label: 'Riskler', icon: AlertTriangle },
+          { id: 'saglik', label: t('ocp_nav_health'), icon: HeartPulse },
+          { id: 'riskler', label: t('ocp_nav_risks'), icon: AlertTriangle },
         ],
       },
     ]
     return groups.filter((g) => g.items.length > 0)
-  }, [hasKubevirt])
+  }, [hasKubevirt, t])
 
   const active: OcpSection = NAV.flatMap((g) => g.items.map((i) => i.id)).includes(section)
     ? section
@@ -219,8 +250,8 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
               <Boxes size={18} className="text-rose-400" />
             </span>
             <div>
-              <h1 className="text-base font-bold text-slate-100 leading-tight">OpenShift</h1>
-              <p className="text-[11px] text-slate-500">Konteyner platformu ve sanallaştırma</p>
+              <h1 className="text-base font-bold text-slate-100 leading-tight">{t('nav_openshift')}</h1>
+              <p className="text-[11px] text-slate-500">{t('ocp_subtitle')}</p>
             </div>
           </div>
 
@@ -228,13 +259,14 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
             <>
               <span className="w-px h-8 bg-white/[0.08] hidden sm:block" />
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] text-slate-500">Küme</span>
+                <span className="text-[11px] text-slate-500">Cluster</span>
                 <select
                   className="rounded-lg border border-white/[0.08] bg-cyber-deep/80 text-sm text-slate-200 py-1.5 px-2 w-52"
                   value={clusterId ?? ''}
                   onChange={(e) => {
                     setClusterId(Number(e.target.value))
                     setProject('')
+                    setProjSearch('')
                   }}
                 >
                   {clusters.map((c) => (
@@ -246,32 +278,20 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                     k8s {overview?.version || current?.version}
                   </span>
                 )}
-                <span className="text-[11px] text-slate-500 ml-1">Proje</span>
-                <select
-                  className="rounded-lg border border-white/[0.08] bg-cyber-deep/80 text-sm text-slate-200 py-1.5 px-2 w-52"
+                <span className="text-[11px] text-slate-500 ml-1">{t('ocp_project')}</span>
+                <OcpProjectPicker
+                  projects={projects}
                   value={project}
-                  onChange={(e) => {
-                    const v = e.target.value
+                  disabled={!clusterId}
+                  onQuery={setProjSearch}
+                  onChange={(v) => {
                     setProject(v)
                     const p = new URLSearchParams(searchParams)
                     if (v) p.set('project', v)
                     else p.delete('project')
                     setSearchParams(p, { replace: true })
                   }}
-                  title="İş yükü / pod / route bağlamı"
-                >
-                  <option value="">— proje seçin —</option>
-                  <optgroup label="Kullanıcı projeleri">
-                    {projects.filter((p: any) => !p.is_system).map((p: any) => (
-                      <option key={p.name} value={p.name}>{p.display_name || p.name}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Sistem">
-                    {projects.filter((p: any) => p.is_system).map((p: any) => (
-                      <option key={p.name} value={p.name}>{p.name}</option>
-                    ))}
-                  </optgroup>
-                </select>
+                />
               </div>
             </>
           )}
@@ -283,7 +303,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                 onClick={() => refetchOv()}
                 className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
               >
-                <RefreshCw size={12} className={ovFetching ? 'animate-spin' : ''} /> Yenile
+                <RefreshCw size={12} className={ovFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
               </button>
             )}
             <OcpClusterManageMenu
@@ -298,32 +318,45 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
       <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:px-5 space-y-4">
         {clustersLoading && (
           <div className="text-sm text-slate-500 flex items-center gap-2 py-12 justify-center">
-            <RefreshCw size={14} className="animate-spin" /> Yükleniyor…
+            <RefreshCw size={14} className="animate-spin" /> {t('loading')}
           </div>
         )}
 
         {!clustersLoading && clusters.length === 0 && (
           <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-10 text-center">
             <Boxes size={36} className="mx-auto mb-3 text-slate-600" />
-            <p className="text-sm text-slate-300">Henüz OpenShift kümesi eklenmedi</p>
+            <p className="text-sm text-slate-300">{t('ocp_no_cluster')}</p>
             <p className="text-xs text-slate-500 mt-2 max-w-md mx-auto">
-              Küme bağlantısını Entegrasyonlar üzerinden ekleyin; ardından burada envanter ve iş yükleri görünür.
+              {t('ocp_no_cluster_hint')}
             </p>
             <Link
               to="/integrations/openshift"
               className="inline-flex mt-4 text-xs px-4 py-2 rounded-lg bg-rose-600/90 text-white hover:bg-rose-500"
             >
-              Entegrasyonlar’a git
+              {t('ocp_go_integrations')}
             </Link>
           </div>
         )}
 
         {clusterId && overview && (
           <div className="flex gap-4 items-start">
-            <nav className="w-48 sm:w-52 flex-shrink-0 sticky top-2 space-y-3 hidden md:block">
+            <nav
+              className={`hidden md:flex flex-col flex-shrink-0 sticky top-2 self-start rounded-xl border border-white/[0.06] bg-cyber-card/50 overflow-hidden transition-[width] duration-300 ${
+                navCollapsed ? 'w-12' : 'w-52'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={toggleNav}
+                title={navCollapsed ? t('ocp_nav_expand') : t('ocp_nav_collapse')}
+                className="flex items-center justify-center h-9 border-b border-white/[0.06] text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]"
+              >
+                {navCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
+              <div className="py-2 space-y-3 overflow-y-auto max-h-[calc(100vh-12rem)]">
               {NAV.map((g, gi) => (
                 <div key={gi}>
-                  {g.group && (
+                  {g.group && !navCollapsed && (
                     <p className="text-[10px] uppercase tracking-wide text-slate-600 px-2 mb-1">{g.group}</p>
                   )}
                   <div className="space-y-0.5">
@@ -335,20 +368,24 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                           key={it.id}
                           type="button"
                           onClick={() => go(it.id)}
-                          className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors text-left ${
+                          title={it.label}
+                          className={`w-full flex items-center gap-2 py-1.5 rounded-lg text-xs transition-colors text-left ${
+                            navCollapsed ? 'justify-center px-0' : 'px-2.5'
+                          } ${
                             on
                               ? 'bg-rose-500/12 text-rose-300 font-medium'
                               : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                           }`}
                         >
                           <Icon size={14} className="flex-shrink-0" />
-                          <span className="truncate">{it.label}</span>
+                          {!navCollapsed && <span className="truncate">{it.label}</span>}
                         </button>
                       )
                     })}
                   </div>
                 </div>
               ))}
+              </div>
             </nav>
 
             {/* mobil section seçici */}
@@ -372,20 +409,14 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
               {NEEDS_PROJECT.includes(active) && !project && (
                 <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
                   <Info size={14} className="text-amber-400 flex-shrink-0" />
-                  <p className="text-[11px] text-amber-100/80">
-                    Proje seçilmedi — üstteki <b>Proje</b> seçicisinden birini seçin ya da{' '}
-                    <button type="button" onClick={() => go('projeler')} className="underline mx-0.5">
-                      Projeler
-                    </button>{' '}
-                    listesinden gidin.
-                  </p>
+                  <p className="text-[11px] text-amber-100/80">{t('ocp_need_project')}</p>
                 </div>
               )}
 
-              {SECTION_HELP[active] && (
+              {SECTION_HELP_KEYS[active] && (
                 <div className="flex items-start gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2">
                   <Info size={14} className="text-sky-400 mt-px flex-shrink-0" />
-                  <p className="text-[11px] text-sky-100/80 leading-relaxed">{SECTION_HELP[active]}</p>
+                  <p className="text-[11px] text-sky-100/80 leading-relaxed">{t(SECTION_HELP_KEYS[active]!)}</p>
                 </div>
               )}
 
@@ -432,8 +463,8 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                     <span className="text-xs uppercase text-slate-400">{opHealth.overall}</span>
                   </div>
                   <div className="text-xs text-slate-400">
-                    Sürüm {opHealth.version || '—'}
-                    {opHealth.updating ? ` · güncelleniyor: ${opHealth.update_message || ''}` : ''}
+                    {t('ocp_version', { v: opHealth.version || '—' })}
+                    {opHealth.updating ? ` · ${t('ocp_updating', { msg: opHealth.update_message || '' })}` : ''}
                   </div>
                   {(opHealth.operators?.degraded || []).length > 0 && (
                     <div className="space-y-1 pt-2">
@@ -449,9 +480,9 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
 
               {active === 'riskler' && (
                 <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-2">
-                  <div className="text-sm text-white font-medium mb-2">Riskli pod’lar</div>
+                  <div className="text-sm text-white font-medium mb-2">{t('ocp_risk_pods')}</div>
                   {(risksData?.risks || []).length === 0 && (
-                    <div className="text-sm text-slate-500 py-6 text-center">Risk kaydı yok</div>
+                    <div className="text-sm text-slate-500 py-6 text-center">{t('ocp_no_risks')}</div>
                   )}
                   {(risksData?.risks || []).slice(0, 50).map((w: any) => (
                     <div
@@ -489,7 +520,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                   kind="deployments"
                   namespace={project}
                   onPickProject={() => go('projeler')}
-                  title="Kaynak gezgini (Deployments)"
+                  title={t('ocp_explorer_title')}
                   namespaced
                 />
               )}
@@ -499,13 +530,13 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
               {/* AIOps kısayolları */}
               <div className="flex flex-wrap gap-2 pt-2 text-[11px] text-slate-500">
                 <Link to="/openshift/ops" className="inline-flex items-center gap-1 text-rose-300/80 hover:underline">
-                  Komuta Merkezi <ChevronRight size={12} />
+                  {t('nav_command_center')} <ChevronRight size={12} />
                 </Link>
                 <Link to="/openshift/events" className="inline-flex items-center gap-1 text-rose-300/80 hover:underline">
-                  Events <ChevronRight size={12} />
+                  {t('nav_events')} <ChevronRight size={12} />
                 </Link>
                 <Link to="/openshift/chat" className="inline-flex items-center gap-1 text-rose-300/80 hover:underline">
-                  Asistan <ChevronRight size={12} />
+                  {t('nav_assistant')} <ChevronRight size={12} />
                 </Link>
               </div>
             </div>
@@ -514,7 +545,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
 
         {clusterId && !overview && ovFetching && (
           <div className="text-sm text-slate-500 flex items-center gap-2 py-12 justify-center">
-            <RefreshCw size={14} className="animate-spin" /> Küme sorgulanıyor…
+            <RefreshCw size={14} className="animate-spin" /> {t('ocp_cluster_query')}
           </div>
         )}
       </div>

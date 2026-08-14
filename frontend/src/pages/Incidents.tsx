@@ -11,6 +11,7 @@ import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 import { exportMarkdownToPrintWindow, exportMultipleRcaToPrintWindow } from '../utils/pdfExport'
 import { Lock } from 'lucide-react'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 interface Server { id: number; name: string; ip: string; status?: string }
 interface RelatedEvent {
@@ -27,12 +28,15 @@ interface Incident {
 }
 interface IncidentStats { total: number; open: number; investigating: number; resolved: number; critical: number }
 
-function fmt(d: string | null, short = true) {
+function fmt(d: string | null, locale: string, short = true) {
   if (!d) return '—'
-  return new Date(d).toLocaleString('tr-TR', short ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' } : undefined)
+  const loc = locale === 'en' ? 'en-GB' : 'tr-TR'
+  return new Date(d).toLocaleString(loc, short ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' } : undefined)
 }
 
 const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [statusFilter, setStatusFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -114,7 +118,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const runRCA = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API_BASE_URL}/incidents/${id}/rca`, { method: 'POST' })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'RCA çalıştırılamadı') }
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || t('inc_rca_failed')) }
       return res.json()
     },
     onSuccess: (data) => { invalidate(); if (selectedIncident) setSelectedIncident({ ...selectedIncident, rca_result: data.rca, root_cause: data.rca?.analysis?.slice(0, 500) }) }
@@ -127,7 +131,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     const at = meta?.analyzed_at || inc.rca_result?.analyzed_at
     exportMarkdownToPrintWindow(text, {
       title: `RCA #${inc.id}: ${inc.title}`,
-      subtitle: [model, at ? fmt(at, false) : null].filter(Boolean).join(' · '),
+      subtitle: [model, at ? fmt(at, locale, false) : null].filter(Boolean).join(' · '),
       filename: `rca_incident_${inc.id}${suffix}_${new Date().toISOString().slice(0, 10)}`,
     })
   }
@@ -146,14 +150,14 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       if (!full.rca_result?.analysis) continue
       reports.push({
         title: `#${inc.id} — ${inc.title}`,
-        subtitle: [inc.severity, full.rca_result?.model, full.rca_result?.analyzed_at ? fmt(full.rca_result.analyzed_at, false) : null]
+        subtitle: [inc.severity, full.rca_result?.model, full.rca_result?.analyzed_at ? fmt(full.rca_result.analyzed_at, locale, false) : null]
           .filter(Boolean).join(' · '),
         markdown: String(full.rca_result.analysis),
       })
     }
     if (!reports.length) return
     exportMultipleRcaToPrintWindow(reports, {
-      title: 'Tüm Incident RCA Raporları',
+      title: t('inc_all_rca_title'),
       filename: `rca_tum_incident_${new Date().toISOString().slice(0, 10)}`,
     })
   }
@@ -165,10 +169,10 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
   const rowMenu = (inc: Incident) => {
     const items: { label: string; icon: React.ReactNode; accent: string; onClick: () => void }[] = []
-    if (inc.status === 'open') items.push({ label: "İncelemeye al", icon: "", accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
-    if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: 'Çözüldü işaretle', icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
-    if (inc.status === 'resolved') items.push({ label: 'Kapat', icon: <Lock size={13} strokeWidth={2} />, accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
-    items.push({ label: 'Sil', icon: '✕', accent: NEON.red, onClick: () => { if (confirm('Bu incident silinecek?')) deleteIncident.mutate(inc.id) } })
+    if (inc.status === 'open') items.push({ label: t('ev_investigate'), icon: "", accent: NEON.orange, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'investigating' } }) })
+    if (inc.status === 'open' || inc.status === 'investigating') items.push({ label: t('inc_mark_resolved'), icon: '', accent: NEON.green, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'resolved' } }) })
+    if (inc.status === 'resolved') items.push({ label: t('close'), icon: <Lock size={13} strokeWidth={2} />, accent: NEON.slate, onClick: () => updateIncident.mutate({ id: inc.id, data: { status: 'closed' } }) })
+    items.push({ label: t('delete'), icon: '✕', accent: NEON.red, onClick: () => { if (confirm(t('inc_delete_confirm'))) deleteIncident.mutate(inc.id) } })
     return items
   }
 
@@ -176,28 +180,28 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
     <div className="flex gap-4 animate-fade-in items-start min-h-0">
       {/* Left: list */}
       <div className={`flex-1 min-w-0 space-y-4 ${selectedIncident ? 'max-w-2xl' : ''}`}>
-        <PageHeader title="Incidents" subtitle="Incident yönetimi ve AI kök neden analizi"
-          actions={<PrimaryButton accent={NEON.red} onClick={() => setShowCreateForm(v => !v)}>{showCreateForm ? 'İptal' : '+ Yeni Incident'}</PrimaryButton>} />
+        <PageHeader title={t('nav_incidents')} subtitle={t('inc_subtitle')}
+          actions={<PrimaryButton accent={NEON.red} onClick={() => setShowCreateForm(v => !v)}>{showCreateForm ? t('cancel') : t('inc_new')}</PrimaryButton>} />
 
         {/* KPI */}
         <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-          <Kpi label="Toplam" value={stats?.total ?? 0} accent={NEON.cyan} active={!statusFilter && !severityFilter} onClick={() => { setStatusFilter(''); setSeverityFilter('') }} />
-          <Kpi label="Açık" value={stats?.open ?? 0} accent={NEON.red} active={statusFilter === 'open'} onClick={() => { setStatusFilter('open'); setSeverityFilter('') }} />
-          <Kpi label="İnceleniyor" value={stats?.investigating ?? 0} accent={NEON.orange} active={statusFilter === 'investigating'} onClick={() => { setStatusFilter('investigating'); setSeverityFilter('') }} />
-          <Kpi label="Çözülmüş" value={stats?.resolved ?? 0} accent={NEON.green} active={statusFilter === 'resolved'} onClick={() => { setStatusFilter('resolved'); setSeverityFilter('') }} />
-          <Kpi label="Kritik Açık" value={stats?.critical ?? 0} accent={NEON.red} active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setStatusFilter('') }} />
+          <Kpi label={t('total')} value={stats?.total ?? 0} accent={NEON.cyan} active={!statusFilter && !severityFilter} onClick={() => { setStatusFilter(''); setSeverityFilter('') }} />
+          <Kpi label={t('inc_kpi_open')} value={stats?.open ?? 0} accent={NEON.red} active={statusFilter === 'open'} onClick={() => { setStatusFilter('open'); setSeverityFilter('') }} />
+          <Kpi label={t('inc_kpi_investigating')} value={stats?.investigating ?? 0} accent={NEON.orange} active={statusFilter === 'investigating'} onClick={() => { setStatusFilter('investigating'); setSeverityFilter('') }} />
+          <Kpi label={t('inc_kpi_resolved')} value={stats?.resolved ?? 0} accent={NEON.green} active={statusFilter === 'resolved'} onClick={() => { setStatusFilter('resolved'); setSeverityFilter('') }} />
+          <Kpi label={t('inc_kpi_crit_open')} value={stats?.critical ?? 0} accent={NEON.red} active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setStatusFilter('') }} />
         </div>
 
         {showCreateForm && (
-          <Section title="Yeni Incident" accent={NEON.red}>
+          <Section title={t('inc_form_title')} accent={NEON.red}>
             <form onSubmit={e => { e.preventDefault(); createIncident.mutate(newIncident) }} className="p-5 space-y-4">
               <div className="grid grid-cols-3 gap-4">
                 <div className="col-span-2">
-                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Başlık *</label>
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_title_req')}</label>
                   <input required value={newIncident.title} onChange={e => setNewIncident({ ...newIncident, title: e.target.value })} className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Önem</label>
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ops_severity')}</label>
                   <select value={newIncident.severity} onChange={e => setNewIncident({ ...newIncident, severity: e.target.value })} className={inputCls} style={inputStyle}>
                     <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
                   </select>
@@ -205,41 +209,41 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</label>
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_description')}</label>
                   <textarea value={newIncident.description} onChange={e => setNewIncident({ ...newIncident, description: e.target.value })} rows={2} className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Atanan</label>
-                  <input value={newIncident.assigned_to} placeholder="ops-team / admin..." onChange={e => setNewIncident({ ...newIncident, assigned_to: e.target.value })} className={inputCls} style={inputStyle} />
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_assigned')}</label>
+                  <input value={newIncident.assigned_to} placeholder={t('inc_assign_ph')} onChange={e => setNewIncident({ ...newIncident, assigned_to: e.target.value })} className={inputCls} style={inputStyle} />
                 </div>
               </div>
-              <PrimaryButton accent={NEON.red} disabled={createIncident.isPending}>{createIncident.isPending ? 'Oluşturuluyor...' : 'Oluştur'}</PrimaryButton>
+              <PrimaryButton accent={NEON.red} disabled={createIncident.isPending}>{createIncident.isPending ? t('ev_creating') : t('ev_create')}</PrimaryButton>
             </form>
           </Section>
         )}
 
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder="Başlıkta ara..." width="w-48" />
+          <SearchInput value={search} onChange={setSearch} placeholder={t('ev_search_title')} width="w-48" />
           <Select value={statusFilter} onChange={setStatusFilter}>
-            <option value="">Tüm Durumlar</option><option value="open">Açık</option><option value="investigating">İnceleniyor</option><option value="resolved">Çözülmüş</option><option value="closed">Kapatılmış</option>
+            <option value="">{t('inc_all_status')}</option><option value="open">{t('inc_kpi_open')}</option><option value="investigating">{t('inc_kpi_investigating')}</option><option value="resolved">{t('inc_kpi_resolved')}</option><option value="closed">{t('inc_closed')}</option>
           </Select>
           <Select value={severityFilter} onChange={setSeverityFilter}>
-            <option value="">Tüm Önem</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+            <option value="">{t('inc_all_sev')}</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
           </Select>
           {rcaCount > 0 && (
             <GhostButton accent={NEON.blue} onClick={downloadAllRcaPdf}>
-              Tüm RCA PDF ({rcaCount})
+              {t('inc_all_rca_pdf', { n: rcaCount })}
             </GhostButton>
           )}
-          <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{incidentsData?.total ?? 0} sonuç</span>
+          <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('inc_n_results', { n: incidentsData?.total ?? 0 })}</span>
         </div>
 
         {/* List */}
         {isLoading ? (
           <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
         ) : incidents.length === 0 ? (
-          <Section><EmptyState icon="" text="Henüz incident yok" /></Section>
+          <Section><EmptyState icon="" text={t('inc_empty')} /></Section>
         ) : (
           <div className="space-y-2.5">
             {incidents.map(inc => {
@@ -261,9 +265,9 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                       {inc.description && <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(148,163,184,0.6)' }}>{inc.description}</p>}
                       <div className="flex items-center gap-3 mt-2 text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {inc.affected_server_details?.length > 0 && <span>{inc.affected_server_details.map(s => s.name).join(', ')}</span>}
-                        {inc.related_events?.length > 0 && <span>{inc.related_events.length} event</span>}
+                        {inc.related_events?.length > 0 && <span>{t('inc_n_events', { n: inc.related_events.length })}</span>}
                         {(inc.has_rca || inc.rca_result?.analysis) && <span className="text-[10px] font-bold text-blue-400">AI RCA</span>}
-                        <span className="ml-auto">{fmt(inc.created_at)}</span>
+                        <span className="ml-auto">{fmt(inc.created_at, locale)}</span>
                       </div>
                     </div>
                     <div onClick={e => e.stopPropagation()}><ActionMenu items={rowMenu(inc)} /></div>
@@ -297,17 +301,17 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
               <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 space-y-5 text-sm">
                 {selectedIncident.description && (
                   <div>
-                    <p className="text-xs font-medium mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>Açıklama</p>
+                    <p className="text-xs font-medium mb-1" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_description')}</p>
                     <p className="text-xs whitespace-pre-wrap" style={{ color: 'rgba(226,232,240,0.85)' }}>{selectedIncident.description}</p>
                   </div>
                 )}
 
                 <div className="grid grid-cols-2 gap-2.5 text-xs">
                   {[
-                    { l: 'Atanan', v: selectedIncident.assigned_to || '—' },
-                    { l: 'Kaynak', v: selectedIncident.source || '—' },
-                    { l: 'Oluşturulma', v: fmt(selectedIncident.created_at, false) },
-                    { l: 'Çözülme', v: fmt(selectedIncident.resolved_at, false) },
+                    { l: t('ev_assigned'), v: selectedIncident.assigned_to || '—' },
+                    { l: t('inc_source'), v: selectedIncident.source || '—' },
+                    { l: t('inc_created'), v: fmt(selectedIncident.created_at, locale, false) },
+                    { l: t('inc_resolved_at'), v: fmt(selectedIncident.resolved_at, locale, false) },
                   ].map(m => (
                     <div key={m.l} className="rounded-lg p-2.5" style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.1)' }}>
                       <p className="mb-0.5" style={{ color: 'rgba(148,163,184,0.5)' }}>{m.l}</p>
@@ -318,7 +322,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
                 {selectedIncident.affected_server_details?.length > 0 && (
                   <div>
-                    <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>Etkilenen Sunucular</p>
+                    <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('inc_affected')}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {selectedIncident.affected_server_details.map(s => (
                         <span key={s.id} className="text-[11px] px-2 py-0.5 rounded" style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.25)` }}>
@@ -332,37 +336,37 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                 {/* Status actions */}
                 <div className="flex gap-2 flex-wrap">
                   {selectedIncident.status === 'open' && (
-                    <GhostButton accent={NEON.orange} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'investigating' } })}>İncelemeye Al</GhostButton>
+                    <GhostButton accent={NEON.orange} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'investigating' } })}>{t('inc_investigate')}</GhostButton>
                   )}
                   {(selectedIncident.status === 'open' || selectedIncident.status === 'investigating') && (
                     <>
                       <GhostButton accent={NEON.blue} onClick={() => runRCA.mutate(selectedIncident.id)} disabled={runRCA.isPending}>
-                        {runRCA.isPending ? 'Analiz...' : 'AI RCA Çalıştır'}
+                        {runRCA.isPending ? t('inc_rca_running') : t('inc_run_rca')}
                       </GhostButton>
-                      <GhostButton accent={NEON.green} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'resolved' } })}>Çözüldü</GhostButton>
+                      <GhostButton accent={NEON.green} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'resolved' } })}>{t('inc_resolved')}</GhostButton>
                     </>
                   )}
                   {selectedIncident.status === 'resolved' && (
-                    <GhostButton accent={NEON.slate} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'closed' } })}>Kapat</GhostButton>
+                    <GhostButton accent={NEON.slate} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { status: 'closed' } })}>{t('close')}</GhostButton>
                   )}
                 </div>
 
                 {/* Assign */}
                 <div>
-                  <p className="text-xs font-medium mb-1.5" style={{ color: 'rgba(148,163,184,0.7)' }}>Atama</p>
+                  <p className="text-xs font-medium mb-1.5" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('inc_assign')}</p>
                   <div className="flex gap-2">
-                    <input value={assignText} onChange={e => setAssignText(e.target.value)} placeholder="ops-team / admin..." className={inputCls} style={inputStyle} />
-                    <GhostButton accent={NEON.blue} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { assigned_to: assignText || null } })}>Kaydet</GhostButton>
+                    <input value={assignText} onChange={e => setAssignText(e.target.value)} placeholder={t('inc_assign_ph')} className={inputCls} style={inputStyle} />
+                    <GhostButton accent={NEON.blue} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { assigned_to: assignText || null } })}>{t('save')}</GhostButton>
                   </div>
                 </div>
 
                 {/* Resolution */}
                 <div>
-                  <p className="text-xs font-medium mb-1.5" style={{ color: 'rgba(148,163,184,0.7)' }}>Çözüm Notları</p>
-                  <textarea value={resolutionText} onChange={e => setResolutionText(e.target.value)} placeholder="Çözüm adımları..." rows={3} className={inputCls} style={inputStyle} />
+                  <p className="text-xs font-medium mb-1.5" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('inc_resolution')}</p>
+                  <textarea value={resolutionText} onChange={e => setResolutionText(e.target.value)} placeholder={t('inc_resolution_ph')} rows={3} className={inputCls} style={inputStyle} />
                   <div className="mt-1.5">
                     <GhostButton accent={NEON.blue} onClick={() => updateIncident.mutate({ id: selectedIncident.id, data: { resolution: resolutionText } })} disabled={updateIncident.isPending}>
-                      {updateIncident.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+                      {updateIncident.isPending ? t('inc_saving') : t('save')}
                     </GhostButton>
                   </div>
                 </div>
@@ -372,14 +376,14 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <p className="text-xs font-medium flex items-center gap-1.5" style={{ color: NEON.blue }}>
-                        AI Kök Neden Analizi
-                        {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>OTOMATİK</span>}
+                        {t('ops_rca')}
+                        {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>{t('inc_auto')}</span>}
                       </p>
-                      <GhostButton accent={NEON.blue} onClick={() => downloadRcaPdf(selectedIncident)}>PDF İndir</GhostButton>
+                      <GhostButton accent={NEON.blue} onClick={() => downloadRcaPdf(selectedIncident)}>{t('ops_pdf_download')}</GhostButton>
                     </div>
                     <div className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: `1px solid rgba(${rgb(NEON.blue)},0.2)` }}>
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                        {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, false)}
+                        {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, locale, false)}
                       </p>
                       <div className="chat-response-content prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words text-slate-200">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
@@ -388,15 +392,15 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                     {Array.isArray(selectedIncident.rca_result.history) && selectedIncident.rca_result.history.length > 0 && (
                       <div className="mt-3 space-y-2">
                         <p className="text-[11px] font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>
-                          Önceki analizler ({selectedIncident.rca_result.history.length})
+                          {t('inc_prev_analyses', { n: selectedIncident.rca_result.history.length })}
                         </p>
                         {[...selectedIncident.rca_result.history].reverse().map((h: any, idx: number) => (
                           <div key={idx} className="rounded-lg p-2.5 flex items-start justify-between gap-2"
                             style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.12)' }}>
                             <div className="min-w-0 flex-1">
                               <p className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                                {h.model || '—'} · {fmt(h.analyzed_at, false)}
-                                {h.auto ? ' · otomatik' : ''}
+                                {h.model || '—'} · {fmt(h.analyzed_at, locale, false)}
+                                {h.auto ? t('inc_auto_suffix') : ''}
                               </p>
                               <p className="text-[11px] line-clamp-2" style={{ color: 'rgba(226,232,240,0.75)' }}>
                                 {String(h.analysis || '').slice(0, 180)}
@@ -419,7 +423,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                 {/* Related events */}
                 {(selectedIncident.related_event_details?.length ?? 0) > 0 && (
                   <div>
-                    <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>İlgili Eventler ({selectedIncident.related_event_details!.length})</p>
+                    <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('inc_related', { n: selectedIncident.related_event_details!.length })}</p>
                     <div className="space-y-1.5">
                       {selectedIncident.related_event_details!.map(evt => (
                         <div key={evt.id} className="flex items-start gap-2 rounded-lg p-2.5" style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.1)' }}>
@@ -428,8 +432,8 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                             <p className="text-xs text-white truncate" title={evt.title}>{evt.title}</p>
                             <div className="flex gap-2 mt-0.5 text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>
                               <span className="font-mono">{evt.event_type}</span>
-                              {evt.resolved && <span style={{ color: NEON.green }}>çözüldü</span>}
-                              <span>{fmt(evt.created_at)}</span>
+                              {evt.resolved && <span style={{ color: NEON.green }}>{t('inc_resolved').toLowerCase()}</span>}
+                              <span>{fmt(evt.created_at, locale)}</span>
                             </div>
                           </div>
                         </div>

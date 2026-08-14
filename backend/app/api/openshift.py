@@ -669,6 +669,20 @@ def kubevirt_vm_snapshots(
         kv.logout()
 
 
+@router.get("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/clones")
+def kubevirt_vm_clones(
+    cluster_id: int, namespace: str, name: str, db: Session = Depends(get_db),
+):
+    from app.services.openshift import kubevirt_ops as kvops
+    _, kv = _kv_cluster_client(cluster_id, db)
+    try:
+        return {"clones": kvops.list_clones(kv, namespace, name)}
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    finally:
+        kv.logout()
+
+
 @router.post("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/snapshots")
 def kubevirt_vm_snapshot_create(
     cluster_id: int,
@@ -1365,7 +1379,6 @@ async def list_projects(
     page_size: int = 50,
     db: Session = Depends(get_db),
 ):
-    from app.services.openshift_health import paginate_query
     query = db.query(OpenShiftProject)
     if cluster_id:
         query = query.filter(OpenShiftProject.cluster_id == cluster_id)
@@ -1375,21 +1388,12 @@ async def list_projects(
             (OpenShiftProject.name.ilike(like)) | (OpenShiftProject.display_name.ilike(like))
         )
     query = query.order_by(OpenShiftProject.name)
-    items, total_all = paginate_query(query, page, page_size)
     if not include_system:
         # sayfalama sonrası filtre toplamı bozar — önce filtrele
-        query2 = db.query(OpenShiftProject)
-        if cluster_id:
-            query2 = query2.filter(OpenShiftProject.cluster_id == cluster_id)
-        if q:
-            like = f"%{q.strip()}%"
-            query2 = query2.filter(
-                (OpenShiftProject.name.ilike(like)) | (OpenShiftProject.display_name.ilike(like))
-            )
-        all_p = query2.order_by(OpenShiftProject.name).all()
+        all_p = query.all()
         filtered = [p for p in all_p if not (p.meta_data or {}).get("is_system")]
         page = max(1, page)
-        page_size = min(max(1, page_size), 200)
+        page_size = min(max(1, page_size), 1000)
         total = len(filtered)
         items = filtered[(page - 1) * page_size: page * page_size]
         return {
@@ -1398,11 +1402,15 @@ async def list_projects(
             "page": page,
             "page_size": page_size,
         }
+    page = max(1, page)
+    page_size = min(max(1, page_size), 1000)
+    total_all = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
         "projects": [_project_dict(p) for p in items],
         "total": total_all,
-        "page": max(1, page),
-        "page_size": min(max(1, page_size), 200),
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -1608,6 +1616,23 @@ def mtv_set_vddk(
         return mtv_service.set_provider_vddk(cluster, provider_name, body.vddk_init_image)
     except mtv_service.MtvError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.delete("/clusters/{cluster_id}/mtv/providers/{provider_name}")
+def mtv_delete_provider(
+    cluster_id: int,
+    provider_name: str,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    from app.services.openshift import mtv_service as mtv_service
+    cluster = _mtv_cluster(cluster_id, db)
+    try:
+        return mtv_service.delete_provider(cluster, provider_name)
+    except mtv_service.MtvError as e:
+        msg = str(e)
+        code = 409 if "kullanılıyor" in msg else 400
+        raise HTTPException(status_code=code, detail=msg) from e
 
 
 @router.get("/clusters/{cluster_id}/mtv/targets")

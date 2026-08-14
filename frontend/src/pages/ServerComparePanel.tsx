@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { GitCompare, Loader2, Sparkles, Check, X, Search } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import type { PlatformKey } from '../config/platformAiops'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 type Candidate = {
   id: number
@@ -42,58 +44,56 @@ type CompareResult = {
   ai_analysis?: string | null
 }
 
-const ENTITY_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  linux: [{ value: 'server', label: 'Linux OS' }],
-  windows: [{ value: 'server', label: 'Windows OS' }],
+type TFn = (key: TranslationKey, vars?: Record<string, string | number>) => string
+
+const ENTITY_OPTIONS: Record<string, { value: string; labelKey: TranslationKey }[]> = {
+  linux: [{ value: 'server', labelKey: 'cmp_linux_os' }],
+  windows: [{ value: 'server', labelKey: 'cmp_win_os' }],
   virt: [
-    { value: 'vm', label: 'Sanal makine (VM)' },
-    { value: 'esx', label: 'ESX donanım' },
+    { value: 'vm', labelKey: 'cmp_vm' },
+    { value: 'esx', labelKey: 'cmp_esx' },
   ],
-  exadata: [{ value: 'server', label: 'Sunucu' }],
+  exadata: [{ value: 'server', labelKey: 'cmp_server' }],
 }
 
-function scopeCopy(platform: PlatformKey, entityType: string) {
+function scopeCopy(platform: PlatformKey, entityType: string, t: TFn) {
   if (platform === 'virt' && entityType === 'esx') {
     return {
-      title: 'ESX Donanım Karşılaştırma',
-      subtitle:
-        'Host marka/model, CPU, RAM, fiziksel NIC ve kapasite metriklerini yan yana karşılaştırın.',
-      configTitle: 'Envanter / bağlantı',
-      archTitle: 'Donanım özellikleri',
-      hint: '2–3 ESX/hypervisor seçin',
-      searchPh: 'Ara: host adı, IP, model...',
+      title: t('cmp_esx_title'),
+      subtitle: t('cmp_esx_sub'),
+      configTitle: t('cmp_esx_cfg'),
+      archTitle: t('cmp_esx_arch'),
+      hint: t('cmp_esx_hint'),
+      searchPh: t('cmp_esx_search'),
     }
   }
   if (platform === 'virt' && entityType === 'vm') {
     return {
-      title: 'VM Karşılaştırma',
-      subtitle:
-        'Sanal makineleri vCPU, RAM, disk, Tools durumu, cluster/datastore ve guest OS ile karşılaştırın.',
-      configTitle: 'VM yapılandırması',
-      archTitle: 'Kaynak / kapasite',
-      hint: '2–3 VM seçin',
-      searchPh: 'Ara: VM adı, guest IP, OS...',
+      title: t('cmp_vm_title'),
+      subtitle: t('cmp_vm_sub'),
+      configTitle: t('cmp_vm_cfg'),
+      archTitle: t('cmp_vm_arch'),
+      hint: t('cmp_vm_hint'),
+      searchPh: t('cmp_vm_search'),
     }
   }
   if (platform === 'windows') {
     return {
-      title: 'Windows OS Karşılaştırma',
-      subtitle:
-        'OS sürümü, güvenlik (Defender, güncelleme, reboot) ve temel kaynakları OS bazında karşılaştırın.',
-      configTitle: 'OS / güvenlik config',
-      archTitle: 'Kaynak / kapasite',
-      hint: '2–3 Windows sunucu seçin',
-      searchPh: 'Ara: ad, IP, OS...',
+      title: t('cmp_win_title'),
+      subtitle: t('cmp_win_sub'),
+      configTitle: t('cmp_os_cfg'),
+      archTitle: t('cmp_vm_arch'),
+      hint: t('cmp_win_hint'),
+      searchPh: t('cmp_os_search'),
     }
   }
   return {
-    title: 'Linux OS Karşılaştırma',
-    subtitle:
-      'OS sürümü, kernel, firewall, SELinux ve temel kaynakları OS bazında karşılaştırın.',
-    configTitle: 'OS / güvenlik config',
-    archTitle: 'Kaynak / kapasite',
-    hint: '2–3 Linux sunucu seçin',
-    searchPh: 'Ara: ad, IP, OS, kernel...',
+    title: t('cmp_linux_title'),
+    subtitle: t('cmp_linux_sub'),
+    configTitle: t('cmp_os_cfg'),
+    archTitle: t('cmp_vm_arch'),
+    hint: t('cmp_linux_hint'),
+    searchPh: t('cmp_linux_search'),
   }
 }
 
@@ -108,12 +108,13 @@ function DiffTable({
   labels: string[]
   onlyDiffs: boolean
 }) {
+  const t = useT()
   const visible = onlyDiffs ? rows.filter((r) => !r.identical) : rows
   if (!visible.length) {
     return (
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
         <h3 className="text-sm font-medium text-slate-200 mb-2">{title}</h3>
-        <p className="text-xs text-slate-500">Gösterilecek alan yok.</p>
+        <p className="text-xs text-slate-500">{t('cmp_no_fields')}</p>
       </div>
     )
   }
@@ -126,11 +127,11 @@ function DiffTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-slate-500 border-b border-slate-700/40">
-              <th className="text-left px-4 py-2 font-medium w-48">Alan</th>
+              <th className="text-left px-4 py-2 font-medium w-48">{t('cmp_field')}</th>
               {labels.map((l) => (
                 <th key={l} className="text-left px-4 py-2 font-medium">{l}</th>
               ))}
-              <th className="text-center px-3 py-2 w-16">Durum</th>
+              <th className="text-center px-3 py-2 w-16">{t('col_status')}</th>
             </tr>
           </thead>
           <tbody>
@@ -169,6 +170,7 @@ function DiffTable({
 }
 
 export default function ServerComparePanel({ platform }: { platform: PlatformKey }) {
+  const t = useT()
   const entityOpts = ENTITY_OPTIONS[platform] || ENTITY_OPTIONS.linux
   const [entityType, setEntityType] = useState(entityOpts[0].value)
   const [selected, setSelected] = useState<number[]>([])
@@ -186,7 +188,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
     setResult(null)
   }, [platform])
 
-  const copy = scopeCopy(platform, entityType)
+  const copy = scopeCopy(platform, entityType, t)
 
   const { data: candidatesData, isLoading: candLoading } = useQuery({
     queryKey: ['compare-candidates', platform, entityType],
@@ -194,7 +196,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
       const r = await fetch(
         `${API_BASE_URL}/compare/candidates?platform=${platform}&entity_type=${entityType}`
       )
-      if (!r.ok) throw new Error('Aday listesi alınamadı')
+      if (!r.ok) throw new Error(t('cmp_candidates_fail'))
       return r.json() as Promise<{ items: Candidate[]; count: number }>
     },
   })
@@ -220,7 +222,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
 
   async function runCompare() {
     if (selected.length < 2) {
-      setError('En az 2 kayıt seçin (en fazla 3).')
+      setError(t('cmp_need_two'))
       return
     }
     setLoading(true)
@@ -242,7 +244,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
       if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
       setResult(data)
     } catch (e: any) {
-      setError(e?.message || 'Karşılaştırma başarısız')
+      setError(e?.message || t('cmp_fail'))
     } finally {
       setLoading(false)
     }
@@ -266,7 +268,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
         <div className="lg:col-span-1 space-y-3">
           {entityOpts.length > 1 && (
             <div>
-              <label className="text-xs text-slate-400 mb-1.5 block">Karşılaştırma tipi</label>
+              <label className="text-xs text-slate-400 mb-1.5 block">{t('cmp_type')}</label>
               <div className="flex gap-1 bg-slate-800/60 border border-slate-700 rounded-lg p-1">
                 {entityOpts.map((o) => (
                   <button
@@ -282,7 +284,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    {o.label}
+                    {t(o.labelKey)}
                   </button>
                 ))}
               </div>
@@ -291,7 +293,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
 
           <div>
             <label className="text-xs text-slate-400 mb-1.5 block">
-              Seçim ({selected.length}/3) — {copy.hint}
+              {t('cmp_selection', { n: selected.length, hint: copy.hint })}
             </label>
             <div className="relative mb-2">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -305,11 +307,11 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
             <div className="max-h-80 overflow-y-auto border border-slate-700/60 rounded-lg divide-y divide-slate-800/80 bg-slate-900/40">
               {candLoading && (
                 <div className="p-4 text-xs text-slate-500 flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin" /> Yükleniyor...
+                  <Loader2 size={14} className="animate-spin" /> {t('loading')}
                 </div>
               )}
               {!candLoading && filtered.length === 0 && (
-                <div className="p-4 text-xs text-slate-500">Kayıt bulunamadı.</div>
+                <div className="p-4 text-xs text-slate-500">{t('cmp_none')}</div>
               )}
               {filtered.map((c) => {
                 const on = selected.includes(c.id)
@@ -344,12 +346,12 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                 onChange={(e) => setWithAi(e.target.checked)}
                 className="rounded border-slate-600"
               />
-              AI ile yorumla
+              {t('cmp_ai')}
             </label>
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Doğal dil soru (opsiyonel)"
+              placeholder={t('cmp_q_ph')}
               className="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
             <button
@@ -359,11 +361,11 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
             >
               {loading ? (
                 <>
-                  <Loader2 size={15} className="animate-spin" /> Karşılaştırılıyor...
+                  <Loader2 size={15} className="animate-spin" /> {t('cmp_comparing')}
                 </>
               ) : (
                 <>
-                  <GitCompare size={15} /> Karşılaştır
+                  <GitCompare size={15} /> {t('cmp_compare')}
                 </>
               )}
             </button>
@@ -375,14 +377,14 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
           {!result && !loading && (
             <div className="h-64 flex flex-col items-center justify-center text-center border border-dashed border-slate-700 rounded-xl">
               <GitCompare size={32} className="text-slate-600 mb-3" />
-              <p className="text-slate-400 text-sm">Soldan en az 2 kayıt seçip karşılaştırın.</p>
+              <p className="text-slate-400 text-sm">{t('cmp_pick_two')}</p>
             </div>
           )}
           {loading && (
             <div className="h-64 flex flex-col items-center justify-center text-center">
               <Loader2 size={28} className="animate-spin text-indigo-400 mb-3" />
               <p className="text-slate-400 text-sm">
-                {withAi ? 'Veriler toplanıyor ve AI yorumluyor...' : 'Veriler karşılaştırılıyor...'}
+                {withAi ? t('cmp_ai_wait') : t('cmp_wait')}
               </p>
             </div>
           )}
@@ -401,10 +403,10 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <span className="text-emerald-400">
-                    Aynı: {result.diffs.summary.total_same}
+                    {t('cmp_same', { n: result.diffs.summary.total_same })}
                   </span>
                   <span className="text-amber-400">
-                    Farklı: {result.diffs.summary.total_different}
+                    {t('cmp_diff', { n: result.diffs.summary.total_different })}
                   </span>
                   <label className="flex items-center gap-1.5 text-slate-400 cursor-pointer">
                     <input
@@ -412,7 +414,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                       checked={onlyDiffs}
                       onChange={(e) => setOnlyDiffs(e.target.checked)}
                     />
-                    Sadece farklar
+                    {t('cmp_diffs_only')}
                   </label>
                 </div>
               </div>
@@ -434,7 +436,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                 <div className="bg-indigo-950/30 border border-indigo-700/40 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <Sparkles size={15} className="text-indigo-300" />
-                    <h3 className="text-sm font-medium text-indigo-200">AI yorumu</h3>
+                    <h3 className="text-sm font-medium text-indigo-200">{t('cmp_ai_comment')}</h3>
                   </div>
                   <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
                     {result.ai_analysis}

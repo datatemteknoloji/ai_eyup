@@ -8,6 +8,7 @@ import { API_BASE_URL } from '../config/api'
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
 import { OsIcon } from '../components/OsIcon'
 import { fullOsLabel, shortenOsLabel, serverTypeLabel } from '../lib/osLabel'
+import { useT } from '../i18n/LocaleProvider'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -62,15 +63,16 @@ interface UpdateItem {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const statusBadge = (status: string) => {
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const t = useT()
   if (status === 'ONLINE') return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
-      <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" /> Aktif
+      <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" /> {t('status_online')}
     </span>
   )
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-500/15 text-slate-400 border border-slate-600/40">
-      <span className="w-1.5 h-1.5 bg-slate-500 rounded-full" /> Çevrimdışı
+      <span className="w-1.5 h-1.5 bg-slate-500 rounded-full" /> {t('status_offline')}
     </span>
   )
 }
@@ -85,6 +87,7 @@ const levelColor = (level: string) => {
 // ── Event Log Panel (reused by modal and dedicated /windows/events view) ───────
 
 const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
+  const t = useT()
   const [logChannel, setLogChannel] = useState('System')
   const [logLevel, setLogLevel] = useState(4) // 1=Kritik 2=Hata 3=Uyarı 4=Tümü (Information dahil)
 
@@ -100,7 +103,7 @@ const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
   if (!server.winrm_configured) {
     return (
       <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
-        Bu sunucu için WinRM kimlik bilgisi tanımlanmamış. Sunucu listesinden "WinRM Ayarla" butonuna basın.
+        {t('win_winrm_missing')}
       </div>
     )
   }
@@ -120,15 +123,15 @@ const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
           value={logLevel}
           onChange={e => setLogLevel(Number(e.target.value))}
           className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          title="Önem seviyesi filtresi"
+          title={t('win_level_filter')}
         >
-          <option value={4}>Tümü (Bilgi dahil)</option>
-          <option value={3}>Uyarı ve üzeri</option>
-          <option value={2}>Hata ve üzeri</option>
-          <option value={1}>Sadece Kritik</option>
+          <option value={4}>{t('win_level_all')}</option>
+          <option value={3}>{t('win_level_warn')}</option>
+          <option value={2}>{t('win_level_error')}</option>
+          <option value={1}>{t('win_level_crit')}</option>
         </select>
       </div>
-      {eventsQ.isPending && <p className="text-slate-400 text-sm">Event log yükleniyor...</p>}
+      {eventsQ.isPending && <p className="text-slate-400 text-sm">{t('win_events_loading')}</p>}
       <div className="space-y-1.5 max-h-[480px] overflow-y-auto">
         {(eventsQ.data || []).map((ev, i) => (
           <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2 text-sm">
@@ -145,9 +148,10 @@ const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
         ))}
         {!eventsQ.isPending && eventsQ.data?.length === 0 && (
           <p className="text-slate-500 text-sm text-center py-6">
-            Bu kanalda/seviyede kayıt yok. Seçili filtre: <span className="text-slate-400">{logChannel}</span>,{' '}
-            <span className="text-slate-400">{logLevel === 4 ? 'Tümü' : logLevel === 3 ? 'Uyarı+' : logLevel === 2 ? 'Hata+' : 'Kritik'}</span>.
-            Farklı bir kanal veya "Tümü" seviyesini deneyin.
+            {t('win_no_events', {
+              channel: logChannel,
+              level: logLevel === 4 ? t('win_level_all_short') : logLevel === 3 ? t('win_level_warn_short') : logLevel === 2 ? t('win_level_error_short') : t('win_level_crit_short'),
+            })}
           </p>
         )}
       </div>
@@ -158,6 +162,7 @@ const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
 // ── Updates Panel (reused by modal and dedicated /windows/updates view) ────────
 
 const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
+  const t = useT()
   const queryClient = useQueryClient()
 
   const updatesQ = useQuery({
@@ -184,27 +189,27 @@ const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
   if (!server.winrm_configured) {
     return (
       <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
-        Bu sunucu için WinRM kimlik bilgisi tanımlanmamış. Sunucu listesinden "WinRM Ayarla" butonuna basın.
+        {t('win_winrm_missing')}
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {updatesQ.isPending && <p className="text-slate-400 text-sm">Güncellemeler kontrol ediliyor...</p>}
+      {updatesQ.isPending && <p className="text-slate-400 text-sm">{t('win_updates_checking')}</p>}
       {updatesQ.data && (
         <>
           <div className="flex items-center justify-between">
             <div>
               <span className="text-white font-medium">{updatesQ.data.pending?.length || 0}</span>
-              <span className="text-slate-400 text-sm ml-2">bekleyen güncelleme</span>
+              <span className="text-slate-400 text-sm ml-2">{t('win_pending_updates')}</span>
             </div>
             {updatesQ.data.pending?.length > 0 && (
               <button onClick={() => installAllUpdates.mutate()}
                 disabled={installAllUpdates.isPending}
                 className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors">
                 <Download size={13} />
-                {installAllUpdates.isPending ? 'Kuruluyor...' : 'Tümünü Kur'}
+                {installAllUpdates.isPending ? t('win_installing') : t('win_install_all')}
               </button>
             )}
           </div>
@@ -233,7 +238,7 @@ const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
 
           {updatesQ.data.installed?.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Son Kurulan Güncellemeler</h4>
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{t('win_recent_updates')}</h4>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {updatesQ.data.installed.map((u: any, i: number) => (
                   <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-700/30 rounded px-2 py-1">
@@ -255,6 +260,7 @@ const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
 // ── Credential Modal ──────────────────────────────────────────────────────────
 
 const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> = ({ server, onClose }) => {
+  const t = useT()
   const queryClient = useQueryClient()
   const [form, setForm] = useState({
     username: '',
@@ -287,7 +293,7 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
       <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h3 className="text-white font-semibold">WinRM Kimlik Bilgileri</h3>
+            <h3 className="text-white font-semibold">{t('win_creds_title')}</h3>
             <p className="text-slate-500 text-xs mt-0.5">{server.name}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
@@ -296,8 +302,8 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
           {/* IP Address — required if missing */}
           <div>
             <label className="text-xs mb-1 flex items-center gap-1">
-              <span className={!hasIp ? 'text-amber-400' : 'text-slate-400'}>IP Adresi</span>
-              {!server.ip_address && <span className="text-amber-500 text-[10px]">● Gerekli — hypervisor'dan alınamadı</span>}
+              <span className={!hasIp ? 'text-amber-400' : 'text-slate-400'}>{t('label_ip')}</span>
+              {!server.ip_address && <span className="text-amber-500 text-[10px]">{t('win_ip_required')}</span>}
             </label>
             <input
               value={form.ip_address}
@@ -306,13 +312,13 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
               placeholder="192.168.1.x" />
           </div>
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Kullanıcı Adı (DOMAIN\\user veya user)</label>
+            <label className="text-xs text-slate-400 mb-1 block">{t('win_username')}</label>
             <input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
               className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Administrator" />
           </div>
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Parola</label>
+            <label className="text-xs text-slate-400 mb-1 block">{t('win_password')}</label>
             <input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
               className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="••••••••" />
@@ -332,8 +338,8 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
           {result && (
             <div className={`rounded-lg p-3 text-sm ${result.connection_test?.connected ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
               {result.connection_test?.connected
-                ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> Bağlantı başarılı</span>
-                : <span className="inline-flex items-center gap-1.5"><XCircle size={14} strokeWidth={2} /> {result.connection_test?.message || 'Bağlantı başarısız'}</span>}
+                ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> {t('win_conn_ok')}</span>
+                : <span className="inline-flex items-center gap-1.5"><XCircle size={14} strokeWidth={2} /> {result.connection_test?.message || t('win_conn_fail')}</span>}
             </div>
           )}
           <button
@@ -341,7 +347,7 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
             disabled={save.isPending || !form.username || !form.password || !form.ip_address.trim()}
             className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-medium text-sm transition-colors"
           >
-            {save.isPending ? 'Kaydediliyor & Test Ediliyor...' : 'Kaydet & Test Et'}
+            {save.isPending ? t('win_saving_test') : t('win_save_test')}
           </button>
         </div>
       </div>
@@ -356,6 +362,7 @@ const ServerDetail: React.FC<{
   onClose: () => void
   initialTab?: 'info' | 'services' | 'events' | 'updates' | 'exporter'
 }> = ({ server, onClose, initialTab }) => {
+  const t = useT()
   const [tab, setTab] = useState<'info' | 'services' | 'events' | 'updates' | 'exporter'>(initialTab || 'info')
   const [serviceSearch, setServiceSearch] = useState('')
   const queryClient = useQueryClient()
@@ -436,17 +443,17 @@ const ServerDetail: React.FC<{
             <h2 className="text-white font-semibold truncate">{server.name}</h2>
             <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
           </div>
-          {statusBadge(server.status)}
+          <StatusBadge status={server.status} />
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none ml-2">&times;</button>
         </div>
 
         {/* Tabs */}
         <div className="flex border-b border-slate-700 bg-slate-800/60 overflow-x-auto">
           {[
-            ['info', 'Sistem'],
-            ['services', 'Servisler'],
+            ['info', t('win_tab_system')],
+            ['services', t('win_tab_services')],
             ['events', 'Event Log'],
-            ['updates', 'Güncellemeler'],
+            ['updates', t('win_tab_updates')],
             ['exporter', 'Prometheus'],
           ].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id as any)}
@@ -459,7 +466,7 @@ const ServerDetail: React.FC<{
         {/* Not configured warning */}
         {!server.winrm_configured && (
           <div className="m-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
-            Bu sunucu için WinRM kimlik bilgisi tanımlanmamış. Sunucu listesinden "WinRM Ayarla" butonuna basın.
+            {t('win_winrm_missing')}
           </div>
         )}
 
@@ -486,7 +493,7 @@ const ServerDetail: React.FC<{
                   <div className="bg-slate-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <MemoryStick size={14} className="text-sky-400" />
-                      <span className="text-xs text-slate-400 font-medium">RAM</span>
+                      <span className="text-xs text-slate-400 font-medium">{t('memory')}</span>
                     </div>
                     <div className="text-2xl font-bold text-white">{perfQ.data.mem_used_pct ?? '—'}%</div>
                     <div className="mt-2 h-1.5 bg-slate-600 rounded-full overflow-hidden">
@@ -498,19 +505,19 @@ const ServerDetail: React.FC<{
               )}
 
               {/* OS Info */}
-              {infoQ.isPending && <div className="text-slate-400 text-sm">Bilgi alınıyor...</div>}
+              {infoQ.isPending && <div className="text-slate-400 text-sm">{t('win_info_loading')}</div>}
               {infoQ.data?.os && (
                 <div className="bg-slate-700/40 rounded-xl p-4">
-                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">İşletim Sistemi</h4>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{t('win_os')}</h4>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     {[
-                      ['OS', infoQ.data.os.Caption],
-                      ['Versiyon', infoQ.data.os.Version],
+                      [t('win_os'), infoQ.data.os.Caption],
+                      [t('win_version'), infoQ.data.os.Version],
                       ['Build', infoQ.data.os.BuildNumber],
-                      ['Mimari', infoQ.data.os.Architecture],
+                      [t('win_arch'), infoQ.data.os.Architecture],
                       ['Hostname', infoQ.data.os.Hostname],
                       ['Domain', infoQ.data.os.Domain],
-                      ['Son Boot', infoQ.data.os.LastBoot],
+                      [t('win_last_boot'), infoQ.data.os.LastBoot],
                     ].map(([k, v]) => v && (
                       <div key={k}>
                         <span className="text-slate-500">{k}: </span>
@@ -524,7 +531,7 @@ const ServerDetail: React.FC<{
               {/* Disks */}
               {infoQ.data?.disks?.length > 0 && (
                 <div className="bg-slate-700/40 rounded-xl p-4">
-                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Diskler</h4>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{t('win_disks')}</h4>
                   <div className="space-y-2">
                     {infoQ.data.disks.map((d: any) => {
                       const usedPct = d.TotalGB > 0 ? Math.round(d.UsedGB / d.TotalGB * 100) : 0
@@ -553,9 +560,9 @@ const ServerDetail: React.FC<{
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
                 <input value={serviceSearch} onChange={e => setServiceSearch(e.target.value)}
-                  placeholder="Servis ara..." className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  placeholder={t('win_search_service')} className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              {servicesQ.isPending && <p className="text-slate-400 text-sm">Servisler yükleniyor...</p>}
+              {servicesQ.isPending && <p className="text-slate-400 text-sm">{t('win_services_loading')}</p>}
               <div className="space-y-1 max-h-[500px] overflow-y-auto">
                 {filteredServices.map(svc => {
                   const running = svc.Status?.toLowerCase() === 'running' || svc.Status === '4'
@@ -570,14 +577,14 @@ const ServerDetail: React.FC<{
                       <div className="flex gap-1">
                         {!running && (
                           <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'start' })}
-                            className="p-1 rounded hover:bg-green-500/20 text-green-400" title="Başlat">
+                            className="p-1 rounded hover:bg-green-500/20 text-green-400" title={t('win_start')}>
                             <Play size={12} />
                           </button>
                         )}
                         {running && (
                           <>
                             <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'restart' })}
-                              className="p-1 rounded hover:bg-blue-500/20 text-blue-400" title="Yeniden Başlat">
+                              className="p-1 rounded hover:bg-blue-500/20 text-blue-400" title={t('win_restart')}>
                               <RotateCcw size={12} />
                             </button>
                             <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'stop' })}
@@ -603,7 +610,7 @@ const ServerDetail: React.FC<{
           {/* Exporter Tab */}
           {tab === 'exporter' && server.winrm_configured && (
             <div className="space-y-4">
-              {exporterQ.isPending && <p className="text-slate-400 text-sm">Durum kontrol ediliyor...</p>}
+              {exporterQ.isPending && <p className="text-slate-400 text-sm">{t('win_checking_status')}</p>}
               {exporterQ.data && (
                 <div className="bg-slate-700/40 rounded-xl p-4">
                   <div className="flex items-center gap-3 mb-4">
@@ -613,27 +620,26 @@ const ServerDetail: React.FC<{
                     <div>
                       <div className="text-white font-medium">Windows Exporter</div>
                       <div className={`text-sm ${exporterQ.data.running ? 'text-green-400' : 'text-slate-500'}`}>
-                        {exporterQ.data.running ? 'Çalışıyor — Port 9182' :
-                         exporterQ.data.installed ? 'Kurulu ama durdurulmuş' : 'Kurulu değil'}
+                        {exporterQ.data.running ? t('win_exporter_port') :
+                         exporterQ.data.installed ? t('win_exporter_installed_stopped') : t('win_exporter_not_installed')}
                       </div>
                     </div>
                   </div>
                   <div className="text-xs text-slate-400 mb-4">
-                    Windows Exporter, CPU, RAM, disk, network metriklerini Prometheus'a aktarır.
-                    Port 9182 üzerinden scrape edilir.
+                    {t('win_exporter_hint')}
                   </div>
                   {!exporterQ.data.installed && (
                     <button onClick={() => installExporter.mutate()}
                       disabled={installExporter.isPending}
                       className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors">
                       <Download size={14} />
-                      {installExporter.isPending ? 'Kuruluyor...' : 'İndir & Kur'}
+                      {installExporter.isPending ? t('win_installing') : t('win_install_download')}
                     </button>
                   )}
                   {installExporter.data && (
                     <div className={`mt-3 p-3 rounded-lg text-sm ${installExporter.data.success ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
                       {installExporter.data.success
-                        ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> Kurulum başarılı</span>
+                        ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} strokeWidth={2} /> {t('win_install_ok')}</span>
                         : <span className="inline-flex items-center gap-1.5"><XCircle size={14} strokeWidth={2} /> {installExporter.data.error}</span>}
                       {installExporter.data.steps && (
                         <div className="mt-2 space-y-0.5">
@@ -660,6 +666,7 @@ const ServerDetail: React.FC<{
 
 // ── WinRM AI Ready Güncelle Butonu ──────────────────────────────────────────────
 const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const t = useT()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -712,13 +719,11 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <p className="text-sm text-slate-200">
-              Tüm Windows sunucularında WinRM kimlik doğrulaması denenecek (sunucu veya global credential).
-              Kullanıcı/şifre yanlışsa domain hesabı kilitlemesine yol açabilir.
-              Bağlanabilenler → AI Ready = Evet. User hazır olan hostlarda çalıştırın. Devam?
+              {t('win_ai_ready_confirm')}
             </p>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>
-              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Devam</button>
+              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">{t('cancel')}</button>
+              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">{t('continue_action')}</button>
             </div>
           </div>
         </div>
@@ -727,12 +732,12 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
         onClick={() => setConfirmOpen(true)}
         disabled={loading || !!bulkJobId}
         className="flex items-center gap-2 px-4 py-2 bg-blue-600/90 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-        title="WinRM Credentials ile bağlanıp AI Ready durumunu güncelle"
+        title={t('win_ai_ready_title')}
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            Başlatılıyor...
+            {t('starting')}
           </>
         ) : result ? (
           <>
@@ -741,7 +746,7 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
           </>
         ) : (
           <>
-            <BrainCircuit size={14} /> AI Ready Güncelle
+            <BrainCircuit size={14} /> {t('ai_ready_update')}
           </>
         )}
       </button>
@@ -759,6 +764,7 @@ const FocusedServerView: React.FC<{
   servers: WindowsServer[]
   isLoading: boolean
 }> = ({ tab, servers, isLoading }) => {
+  const t = useT()
   const configured = servers.filter(s => s.winrm_configured)
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
@@ -775,7 +781,7 @@ const FocusedServerView: React.FC<{
     return (
       <div className="flex items-center justify-center h-40 gap-3 text-slate-400">
         <div className="w-5 h-5 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-        Yükleniyor...
+        {t('loading')}
       </div>
     )
   }
@@ -784,11 +790,10 @@ const FocusedServerView: React.FC<{
     return (
       <div className="flex flex-col items-center justify-center h-52 bg-slate-800 border border-slate-700 rounded-xl gap-3">
         <Shield size={40} className="text-slate-600" />
-        <p className="text-slate-400 font-medium">WinRM ayarlı Windows sunucu bulunamadı</p>
+        <p className="text-slate-400 font-medium">{t('win_no_winrm_servers')}</p>
         <p className="text-slate-500 text-sm text-center max-w-sm">
-          {tab === 'events' ? 'Event Log' : 'Windows Update'} görüntülemek için önce{' '}
-          <Link to="/windows" className="text-blue-400 hover:underline">Windows Sunucular</Link> sayfasından
-          bir sunucuya WinRM kimlik bilgisi tanımlayın.
+          {t('win_focused_hint', { what: tab === 'events' ? 'Event Log' : 'Windows Update' })}{' '}
+          <Link to="/windows" className="text-blue-400 hover:underline">{t('win_title')}</Link>
         </p>
       </div>
     )
@@ -797,7 +802,7 @@ const FocusedServerView: React.FC<{
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 bg-slate-800 border border-slate-700 rounded-xl p-3">
-        <span className="text-xs text-slate-400 font-medium flex-shrink-0">Sunucu:</span>
+        <span className="text-xs text-slate-400 font-medium flex-shrink-0">{t('win_pick_server')}</span>
         <select
           value={selectedId ?? ''}
           onChange={e => setSelectedId(Number(e.target.value))}
@@ -807,14 +812,14 @@ const FocusedServerView: React.FC<{
             <option key={s.id} value={s.id}>{s.name} ({s.ip_address || s.hostname || '—'})</option>
           ))}
         </select>
-        {selected && statusBadge(selected.status)}
+        {selected && <StatusBadge status={selected.status} />}
         {selected && !selected.ai_ready && (
           <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
-            <XCircle size={9} /> AI Ready değil — bağlantı sorunlu olabilir
+            <XCircle size={9} /> {t('win_ai_ready_conn_issue')}
           </span>
         )}
         <Link to="/windows" className="ml-auto text-xs text-blue-400 hover:underline flex-shrink-0">
-          Tüm Sunucular →
+          {t('win_all_servers')}
         </Link>
       </div>
       {selected && (
@@ -828,6 +833,7 @@ const FocusedServerView: React.FC<{
 
 // ── Windows Exporter Toplu Kurulum Butonu ───────────────────────────────────────
 const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart?: (jobId: string) => void }> = ({ onDone, onJobStart }) => {
+  const t = useT()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -856,12 +862,11 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setConfirmOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <p className="text-sm text-slate-200">
-              AI Ready olan ve henüz windows_exporter kurulu olmayan tüm sunuculara WinRM üzerinden
-              windows_exporter (Prometheus, port 9182) kurulacak. Sunucu başına ~30-60 sn sürebilir. Devam?
+              {t('win_exporter_all_confirm')}
             </p>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Vazgeç</button>
-              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Devam</button>
+              <button onClick={() => setConfirmOpen(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">{t('cancel')}</button>
+              <button onClick={handleClick} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg">{t('continue_action')}</button>
             </div>
           </div>
         </div>
@@ -870,12 +875,12 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart
         onClick={() => setConfirmOpen(true)}
         disabled={loading}
         className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-        title="Tüm AI Ready sunuculara windows_exporter kur (Prometheus canlı metrikler için)"
+        title={t('win_exporter_all_title')}
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            Başlatılıyor...
+            {t('starting')}
           </>
         ) : result ? (
           <>
@@ -884,7 +889,7 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart
           </>
         ) : (
           <>
-            <Download size={14} /> windows_exporter Kur
+            <Download size={14} /> {t('win_exporter_install')}
           </>
         )}
       </button>
@@ -895,6 +900,7 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const WindowsServers: React.FC = () => {
+  const t = useT()
   const location = useLocation()
   const routeTab: 'events' | 'updates' | null =
     location.pathname === '/windows/events' ? 'events' :
@@ -996,14 +1002,14 @@ const WindowsServers: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-white">
-            {routeTab === 'events' ? 'Windows Event Log' : routeTab === 'updates' ? 'Windows Update' : 'Windows Sunucular'}
+            {routeTab === 'events' ? t('win_event_log_title') : routeTab === 'updates' ? t('win_update_title') : t('win_title')}
           </h1>
           <p className="text-slate-400 text-sm mt-0.5">
             {routeTab === 'events'
-              ? 'Bir sunucu seçerek WinRM üzerinden canlı Event Log kayıtlarını görüntüleyin'
+              ? t('win_event_log_sub')
               : routeTab === 'updates'
-              ? 'Bir sunucu seçerek bekleyen Windows güncellemelerini görüntüleyin ve kurun'
-              : "WinRM ile yönetilen Windows VM'ler ve fiziksel sunucular"}
+              ? t('win_update_sub')
+              : t('win_subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1016,7 +1022,7 @@ const WindowsServers: React.FC = () => {
               >
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
               </div>
-              <span className="text-xs text-slate-400">OS Belirsiz VM'ler</span>
+              <span className="text-xs text-slate-400">{t('win_unclassified_vms')}</span>
             </label>
           )}
           {!routeTab && <WinRmAiReadyButton onDone={refetch} />}
@@ -1031,7 +1037,7 @@ const WindowsServers: React.FC = () => {
           )}
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
-            <RefreshCw size={14} /> Yenile
+            <RefreshCw size={14} /> {t('refresh_action')}
           </button>
         </div>
       </div>
@@ -1043,12 +1049,12 @@ const WindowsServers: React.FC = () => {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         {[
-          { label: 'Windows Tespit', value: winSummary?.confirmed_windows ?? confirmedWindows.length, color: 'text-blue-400' },
-          { label: 'OS Belirsiz', value: Math.max(0, (winSummary?.total ?? totalServers) - (winSummary?.confirmed_windows ?? confirmedWindows.length)), color: 'text-amber-400' },
-          { label: 'Aktif', value: online, color: 'text-green-400' },
-          { label: 'WinRM Ayarlı', value: configured, color: 'text-cyan-400' },
-          { label: 'AI Ready', value: aiReadyCount, color: 'text-emerald-400' },
-          { label: 'Exporter Çalışıyor', value: exporterRunningCount, color: 'text-sky-400' },
+          { label: t('win_stat_detected'), value: winSummary?.confirmed_windows ?? confirmedWindows.length, color: 'text-blue-400' },
+          { label: t('win_stat_unknown_os'), value: Math.max(0, (winSummary?.total ?? totalServers) - (winSummary?.confirmed_windows ?? confirmedWindows.length)), color: 'text-amber-400' },
+          { label: t('status_online'), value: online, color: 'text-green-400' },
+          { label: t('win_stat_winrm'), value: configured, color: 'text-cyan-400' },
+          { label: t('ai_ready'), value: aiReadyCount, color: 'text-emerald-400' },
+          { label: t('win_stat_exporter'), value: exporterRunningCount, color: 'text-sky-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -1063,7 +1069,7 @@ const WindowsServers: React.FC = () => {
           <Shield size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
           <div>
             <span className="text-amber-300 font-medium">{unclassified.length} VM</span>
-            <span className="text-amber-400/80"> hypervisor'dan senkronize edildi fakat işletim sistemi belirlenmedi. Bunlar Windows olabilir — WinRM bilgilerini girerek bağlantı kurun.</span>
+            <span className="text-amber-400/80">{t('win_unclassified_notice')}</span>
           </div>
         </div>
       )}
@@ -1072,24 +1078,23 @@ const WindowsServers: React.FC = () => {
       <div className="relative max-w-xs">
         <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Sunucu ara..." className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          placeholder={t('win_search')} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
 
       {/* Server List */}
       {isLoading ? (
         <div className="flex items-center justify-center h-40 gap-3 text-slate-400">
           <div className="w-5 h-5 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-          Yükleniyor...
+          {t('loading')}
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-52 bg-slate-800 border border-slate-700 rounded-xl gap-3">
           <Shield size={40} className="text-slate-600" />
-          <p className="text-slate-400 font-medium">Windows sunucu bulunamadı</p>
+          <p className="text-slate-400 font-medium">{t('win_none')}</p>
           <p className="text-slate-500 text-sm text-center max-w-sm">
-            Henüz tanımlı Windows sunucu yok.<br/>
-            Hypervisor senkronizasyonundan Windows VM'ler otomatik eklenir.<br/>
+            {t('win_none_hint')}<br/>
             <span className="text-slate-600">
-              "OS Belirsiz VM'ler" toggle'ı açarak sınıflandırılmamış VM'leri de görebilirsiniz.
+              {t('win_none_toggle_hint')}
             </span>
           </p>
         </div>
@@ -1099,7 +1104,7 @@ const WindowsServers: React.FC = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/80">
-                {['Sunucu', 'Tip', 'Durum', 'OS', 'CPU / RAM', 'WinRM', ''].map(h => (
+                {[t('col_server'), t('col_type'), t('col_status'), 'OS', `CPU / ${t('memory')}`, 'WinRM', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -1129,9 +1134,11 @@ const WindowsServers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
-                    {serverTypeLabel(srv.server_type)}
+                    {(srv.server_type || '').toUpperCase() === 'PHYSICAL' ? t('type_physical')
+                      : (srv.server_type || '').toUpperCase() === 'VIRTUAL' ? t('type_virtual')
+                        : serverTypeLabel(srv.server_type)}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">{statusBadge(srv.status)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={srv.status} /></td>
                   <td className="px-4 py-3 text-sm">
                     {srv.confirmed_windows
                       ? (
@@ -1139,13 +1146,13 @@ const WindowsServers: React.FC = () => {
                           {shortenOsLabel(osLabelInput)}
                         </span>
                       )
-                      : <span className="text-amber-500/70 text-xs italic">Belirsiz ({srv.os_type || 'boş'})</span>
+                      : <span className="text-amber-500/70 text-xs italic">{t('win_unknown_os', { os: srv.os_type || t('win_empty') })}</span>
                     }
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="text-xs text-slate-400">
                       {srv.cpu_cores > 0 && <div>{srv.cpu_cores} CPU</div>}
-                      {srv.memory_gb > 0 && <div>{srv.memory_gb} GB RAM</div>}
+                      {srv.memory_gb > 0 && <div>{srv.memory_gb} GB {t('memory')}</div>}
                       {!srv.cpu_cores && !srv.memory_gb && <span className="text-slate-600">—</span>}
                     </div>
                   </td>
@@ -1166,26 +1173,26 @@ const WindowsServers: React.FC = () => {
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] text-slate-600">
-                            <XCircle size={9} /> AI Ready değil
+                            <XCircle size={9} /> {t('ai_ready_not')}
                           </span>
                         )}
                         {srv.windows_exporter_running ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-sky-400">
-                            <Activity size={9} /> Exporter çalışıyor
+                            <Activity size={9} /> {t('win_exporter_running')}
                           </span>
                         ) : srv.windows_exporter_installed ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-amber-500">
-                            <Activity size={9} /> Exporter durdu
+                            <Activity size={9} /> {t('win_exporter_stopped')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] text-slate-600">
-                            <Activity size={9} /> Exporter yok
+                            <Activity size={9} /> {t('win_exporter_none')}
                           </span>
                         )}
                       </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-xs text-amber-500">
-                        <WifiOff size={11} /> Ayarsız
+                        <WifiOff size={11} /> {t('win_unconfigured')}
                       </span>
                     )}
                   </td>
@@ -1194,7 +1201,7 @@ const WindowsServers: React.FC = () => {
                       {!srv.winrm_configured && (
                         <button onClick={() => setCredServer(srv)}
                           className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg transition-colors">
-                          <Settings size={11} /> WinRM Ayarla
+                          <Settings size={11} /> {t('win_setup_winrm')}
                         </button>
                       )}
                       {srv.winrm_configured && (
@@ -1217,10 +1224,10 @@ const WindowsServers: React.FC = () => {
             <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalServers)} / {totalServers}</span>
             <div className="flex items-center gap-2">
               <button type="button" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}
-                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">Önceki</button>
+                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">{t('page_prev')}</button>
               <span>{page} / {totalPages}</span>
               <button type="button" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">Sonraki</button>
+                className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-40">{t('page_next')}</button>
             </div>
           </div>
         )}

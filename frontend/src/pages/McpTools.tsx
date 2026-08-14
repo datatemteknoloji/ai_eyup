@@ -2,6 +2,8 @@ import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { AlertTriangle, CheckCircle2, Lightbulb, XCircle } from 'lucide-react'
+import { useT } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Server {
@@ -124,7 +126,7 @@ const Mem: React.FC<{ s: string }> = ({ s }) => {
       {rows.map((r, i) => (
         <div key={i} className="bg-cyber-deep/50 rounded-lg p-2.5 space-y-1">
           <div className="flex justify-between text-xs">
-            <span className="text-blue-300 font-semibold">{r.label === 'Mem' ? 'RAM' : 'Swap'}</span>
+            <span className="text-blue-300 font-semibold">{r.label === 'Mem' ? 'Memory' : 'Swap'}</span>
             <span className="text-slate-400 font-mono">{r.used}/{r.total}</span>
           </div>
           <Pct v={r.pct} />
@@ -134,10 +136,12 @@ const Mem: React.FC<{ s: string }> = ({ s }) => {
   )
 }
 
-const ProcTable: React.FC<{ rows: { pid: string; user: string; cpu: string; mem: string; cmd: string }[] }> = ({ rows }) => (
+const ProcTable: React.FC<{ rows: { pid: string; user: string; cpu: string; mem: string; cmd: string }[] }> = ({ rows }) => {
+  const t = useT()
+  return (
   <table className="w-full text-xs">
     <thead className="text-[10px] text-slate-500 uppercase">
-      <tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">PID</th><th className="text-left py-1 pr-2">User</th><th className="text-right py-1 pr-2">CPU%</th><th className="text-right py-1 pr-2">MEM%</th><th className="text-left py-1">Komut</th></tr>
+      <tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">PID</th><th className="text-left py-1 pr-2">User</th><th className="text-right py-1 pr-2">CPU%</th><th className="text-right py-1 pr-2">MEM%</th><th className="text-left py-1">{t('mcp_cmd')}</th></tr>
     </thead>
     <tbody className="divide-y divide-white/[0.05]/20">
       {rows.map((r, i) => {
@@ -154,13 +158,15 @@ const ProcTable: React.FC<{ rows: { pid: string; user: string; cpu: string; mem:
       })}
     </tbody>
   </table>
-)
+  )
+}
 
 const Ports: React.FC<{ s: string }> = ({ s }) => {
+  const t = useT()
   const rows = parseSs(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Proto</th><th className="text-left py-1 pr-2">Yerel</th><th className="text-left py-1">Süreç</th></tr></thead>
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">{t('mcp_proto')}</th><th className="text-left py-1 pr-2">{t('mcp_local')}</th><th className="text-left py-1">{t('mcp_proc')}</th></tr></thead>
       <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
           <tr key={i} className="hover:bg-white/[0.03]">
@@ -192,10 +198,11 @@ const Dmesg: React.FC<{ s: string }> = ({ s }) => {
 }
 
 const Logins: React.FC<{ s: string }> = ({ s }) => {
+  const t = useT()
   const rows = parseLast(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Kullanıcı</th><th className="text-left py-1 pr-2">Terminal</th><th className="text-left py-1 pr-2">Kaynak</th><th className="text-left py-1 pr-2">Zaman</th><th className="text-left py-1">Durum</th></tr></thead>
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">{t('mcp_user')}</th><th className="text-left py-1 pr-2">{t('mcp_terminal')}</th><th className="text-left py-1 pr-2">{t('mcp_source')}</th><th className="text-left py-1 pr-2">{t('mcp_time')}</th><th className="text-left py-1">{t('col_status')}</th></tr></thead>
       <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
           <tr key={i} className="hover:bg-white/[0.03]">
@@ -203,7 +210,7 @@ const Logins: React.FC<{ s: string }> = ({ s }) => {
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.term}</td>
             <td className="py-0.5 pr-2 font-mono text-slate-500">{r.host}</td>
             <td className="py-0.5 pr-2 text-slate-400">{r.time}</td>
-            <td className="py-0.5"><span className={`px-1.5 rounded-full text-[10px] ${r.active ? 'bg-green-500/20 text-green-300' : 'bg-white/[0.07] text-slate-400'}`}>{r.active ? '● aktif' : 'çıktı'}</span></td>
+            <td className="py-0.5"><span className={`px-1.5 rounded-full text-[10px] ${r.active ? 'bg-green-500/20 text-green-300' : 'bg-white/[0.07] text-slate-400'}`}>{r.active ? `● ${t('mcp_active')}` : t('mcp_left')}</span></td>
           </tr>
         ))}
       </tbody>
@@ -212,10 +219,11 @@ const Logins: React.FC<{ s: string }> = ({ s }) => {
 }
 
 const Services: React.FC<{ s: string }> = ({ s }) => {
+  const t = useT()
   const rows = parseServices(s); if (!rows.length) return <Term text={s} />
   return (
     <table className="w-full text-xs">
-      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">Servis</th><th className="text-left py-1 pr-2">Durum</th><th className="text-left py-1">Açıklama</th></tr></thead>
+      <thead className="text-[10px] text-slate-500 uppercase"><tr className="border-b border-white/[0.04]"><th className="text-left py-1 pr-2">{t('mcp_svc')}</th><th className="text-left py-1 pr-2">{t('col_status')}</th><th className="text-left py-1">{t('mcp_desc')}</th></tr></thead>
       <tbody className="divide-y divide-white/[0.05]/20">
         {rows.map((r, i) => (
           <tr key={i} className="hover:bg-white/[0.03]">
@@ -250,6 +258,7 @@ const OsInfo: React.FC<{ s: string }> = ({ s }) => {
 }
 
 const UptimeCard: React.FC<{ s: string }> = ({ s }) => {
+  const t = useT()
   const line = s.split('\n')[0]
   const lm = s.match(/load average[s]?:\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/)
   const um = line.match(/up\s+([\d\s\w,]+?),\s+\d+ user/)
@@ -260,7 +269,7 @@ const UptimeCard: React.FC<{ s: string }> = ({ s }) => {
         <div className="grid grid-cols-3 gap-2">
           {['1dk', '5dk', '15dk'].map((lb, i) => {
             const v = parseFloat(lm[i + 1])
-            return <div key={i} className="bg-cyber-deep/50 rounded-lg p-2 text-center"><div className="text-[10px] text-slate-500">Yük {lb}</div><div className={`text-xl font-bold ${v > 2 ? 'text-red-300' : v > 1 ? 'text-yellow-300' : 'text-emerald-300'}`}>{lm[i + 1]}</div></div>
+            return <div key={i} className="bg-cyber-deep/50 rounded-lg p-2 text-center"><div className="text-[10px] text-slate-500">{t('mcp_load', { n: lb })}</div><div className={`text-xl font-bold ${v > 2 ? 'text-red-300' : v > 1 ? 'text-yellow-300' : 'text-emerald-300'}`}>{lm[i + 1]}</div></div>
           })}
         </div>
       )}
@@ -316,17 +325,18 @@ const ArgsForm: React.FC<{ tool: McpTool; args: Record<string, string>; onChange
 }
 
 // ─── Category config ──────────────────────────────────────────────────────────
-const CAT: Record<string, { label: string; color: string }> = {
-  system:   { label: 'Sistem',   color: 'text-cyan-400' },
-  storage:  { label: 'Depolama', color: 'text-amber-400' },
-  process:  { label: 'Süreçler', color: 'text-blue-400' },
-  network:  { label: 'Ağ',       color: 'text-blue-400' },
-  security: { label: 'Güvenlik', color: 'text-rose-400' },
-  mcp:      { label: 'MCP',      color: 'text-emerald-400' },
+const CAT: Record<string, { key: TranslationKey | null; color: string }> = {
+  system:   { key: 'mcp_cat_sys',  color: 'text-cyan-400' },
+  storage:  { key: 'mcp_cat_stor', color: 'text-amber-400' },
+  process:  { key: 'mcp_cat_proc', color: 'text-blue-400' },
+  network:  { key: 'mcp_cat_net',  color: 'text-blue-400' },
+  security: { key: 'mcp_cat_sec',  color: 'text-rose-400' },
+  mcp:      { key: null,           color: 'text-emerald-400' },
 }
 
 // ─── AI Chat panel ────────────────────────────────────────────────────────────
 const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ results, toolName }) => {
+  const t = useT()
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
@@ -347,7 +357,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      if (!resp.ok || !resp.body) { setAnswer('AI analizi başarısız'); setAnalyzing(false); return }
+      if (!resp.ok || !resp.body) { setAnswer(t('mcp_ai_fail')); setAnalyzing(false); return }
       const reader = resp.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -368,7 +378,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
         }
       }
     } catch (e) {
-      setAnswer('Bağlantı hatası: ' + String(e))
+      setAnswer(t('mcp_err_prefix') + String(e))
     } finally {
       setAnalyzing(false)
     }
@@ -385,11 +395,11 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
         className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-white hover:bg-white/[0.03] transition-colors">
         <span className="flex items-center gap-2">
           <span className="text-[10px] font-bold text-blue-400 bg-blue-500/15 border border-blue-500/30 px-1 rounded">AI</span>
-          <span>AI Analiz</span>
+          <span>{t('ai_analysis')}</span>
           {analyzing && <span className="w-3 h-3 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />}
-          {!open && answer && <span className="text-[10px] text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5">yanıt hazır</span>}
+          {!open && answer && <span className="text-[10px] text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5">{t('mcp_ready')}</span>}
         </span>
-        <span className="text-slate-400 text-xs">{open ? '▲ Kapat' : '▼ Aç'}</span>
+        <span className="text-slate-400 text-xs">{open ? `▲ ${t('mcp_collapse')}` : `▼ ${t('mcp_expand')}`}</span>
       </button>
 
       {open && (
@@ -413,11 +423,11 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
           <div className="flex gap-2 px-4 pb-3 pt-1">
             <input ref={inputRef} value={question} onChange={e => setQuestion(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !analyzing && analyze()}
-              placeholder="Soru sor... (ör. 'Disk %90 üstündeki sunucular hangileri?')"
+              placeholder={t('mcp_ask_ph')}
               className="flex-1 bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-blue-500 outline-none" />
             <button onClick={() => analyze()} disabled={analyzing}
               className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-600 hover:from-blue-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-medium transition-all">
-              {analyzing ? '...' : 'Analiz Et'}
+              {analyzing ? '...' : t('analyze')}
             </button>
           </div>
 
@@ -445,7 +455,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
               ) : (
                 <div className="flex items-center gap-2 text-slate-500 text-xs">
                   <span className="w-3 h-3 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
-                  Analiz ediliyor...
+                  {t('analyzing')}
                 </div>
               )}
             </div>
@@ -458,6 +468,7 @@ const AiPanel: React.FC<{ results: ServerResult[]; toolName: string }> = ({ resu
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 const McpTools: React.FC = () => {
+  const t = useT()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [selectedTool, setSelectedTool] = useState<McpTool | null>(null)
   const [args, setArgs] = useState<Record<string, string>>({})
@@ -488,7 +499,7 @@ const McpTools: React.FC = () => {
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/mcp/tools`)
       const b = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(b?.detail || 'MCP araç listesi alınamadı')
+      if (!r.ok) throw new Error(b?.detail || t('mcp_list_fail'))
       return { tools: (b?.tools || []) as McpTool[], warning: b?.warning || null }
     }
   })
@@ -527,13 +538,13 @@ const McpTools: React.FC = () => {
         body: JSON.stringify({ tool_name: selectedTool.name, server_ids: [...selectedIds], arguments: parsedArgs })
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body?.detail || 'Araç çalıştırılamadı')
+      if (!r.ok) throw new Error(body?.detail || t('mcp_run_fail'))
       const res: ServerResult[] = body.results || []
       setResults(res)
       setToolName(body.tool_name || selectedTool.name)
       if (res.length > 0) setActiveTab(res[0].server_id)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Bilinmeyen hata')
+      setError(e instanceof Error ? e.message : t('unknown_error'))
     } finally {
       clearInterval(timerRef.current); setRunning(false); setElapsed(Date.now() - t0)
     }
@@ -552,16 +563,16 @@ const McpTools: React.FC = () => {
         {/* Server selection */}
         <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl p-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Sunucular</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('mcp_servers')}</span>
             <div className="flex gap-1">
-              <button onClick={selectAiReady} title="AI Ready seç" className="text-xs px-2 py-1 rounded border border-cyan-700/60 text-cyan-400 hover:bg-cyan-700/20">AI</button>
-              <button onClick={selectAll} title="Tümünü seç" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">Tümü</button>
-              <button onClick={clearSel} title="Seçimi temizle" className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">✕</button>
+              <button onClick={selectAiReady} title={t('mcp_pick_ai')} className="text-xs px-2 py-1 rounded border border-cyan-700/60 text-cyan-400 hover:bg-cyan-700/20">AI</button>
+              <button onClick={selectAll} title={t('chat_select_all')} className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">{t('filter_all')}</button>
+              <button onClick={clearSel} title={t('mcp_clear_sel')} className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:bg-white/[0.06]/50">✕</button>
             </div>
           </div>
 
           {serversLoading ? (
-            <div className="text-xs text-slate-500 animate-pulse py-2">Yükleniyor...</div>
+            <div className="text-xs text-slate-500 animate-pulse py-2">{t('loading')}</div>
           ) : (
             <div className="space-y-0.5">
               {servers.map(s => {
@@ -583,7 +594,7 @@ const McpTools: React.FC = () => {
 
           {selectedIds.size > 0 && (
             <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-slate-400 text-center">
-              {selectedIds.size} sunucu seçili
+              {t('mcp_n_sel', { n: selectedIds.size })}
             </div>
           )}
         </div>
@@ -591,16 +602,21 @@ const McpTools: React.FC = () => {
         {/* Tool list */}
         <div className="bg-cyber-card/70 border border-white/[0.06] rounded-xl p-3 flex-1 overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Araçlar</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('mcp_tools')}</span>
             <button onClick={() => void refetchTools()} className="text-[10px] text-slate-500 hover:text-slate-300 border border-white/[0.06] rounded px-1.5 py-0.5">↺</button>
           </div>
           {toolsLoading ? (
-            <div className="text-xs text-slate-500 animate-pulse">Yükleniyor...</div>
+            <div className="text-xs text-slate-500 animate-pulse">{t('loading')}</div>
           ) : (
             <div className="space-y-3">
               {Object.entries(toolGroups).map(([cat, catTools]) => (
                 <div key={cat}>
-                  <div className={`text-[9px] font-bold uppercase tracking-widest mb-1 ${CAT[cat]?.color || 'text-slate-400'}`}>{CAT[cat]?.label || cat}</div>
+                  <div className={`text-[9px] font-bold uppercase tracking-widest mb-1 ${CAT[cat]?.color || 'text-slate-400'}`}>
+                    {(() => {
+                      const ck = CAT[cat]?.key
+                      return ck ? t(ck) : (cat === 'mcp' ? 'MCP' : cat)
+                    })()}
+                  </div>
                   <div className="space-y-0.5">
                     {catTools.map(t => (
                       <button key={t.name} onClick={() => { setSelectedTool(t); setArgs({}); setResults([]); setError('') }}
@@ -636,12 +652,12 @@ const McpTools: React.FC = () => {
                     <div className="text-[11px] text-slate-400">{selectedTool.description}</div>
                     {selectedIds.size > 0 ? (
                       <div className="text-[10px] text-cyan-400 mt-0.5">
-                        {selectedIds.size} sunucuda çalışacak →{' '}
+                        {t('mcp_will_run', { n: selectedIds.size })}
                         {servers.filter(s => selectedIds.has(s.id)).map(s => s.name).join(', ')}
                       </div>
                     ) : (
                       <div className="flex items-center gap-1 text-[10px] text-amber-400 mt-0.5">
-                        <AlertTriangle size={9} strokeWidth={2} /> Sol panelden sunucu seçin
+                        <AlertTriangle size={9} strokeWidth={2} /> {t('mcp_pick_left')}
                       </div>
                     )}
                   </div>
@@ -650,14 +666,14 @@ const McpTools: React.FC = () => {
                   className="shrink-0 flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-all shadow-lg shadow-blue-500/20">
                   {running
                     ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> {(elapsed / 1000).toFixed(1)}s</>
-                    : `▶ Çalıştır${selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}`
+                    : `▶ ${selectedIds.size > 1 ? t('mcp_run_n', { n: selectedIds.size }) : t('mcp_run')}`
                   }
                 </button>
               </div>
               <ArgsForm tool={selectedTool} args={args} onChange={setArg} />
             </div>
           ) : (
-            <div className="text-xs text-slate-500 py-1">Sol panelden araç seçin</div>
+            <div className="text-xs text-slate-500 py-1">{t('mcp_pick_tool')}</div>
           )}
         </div>
 
@@ -694,8 +710,8 @@ const McpTools: React.FC = () => {
                   <span className="text-cyan-400">{activeResult.host}</span>
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setRawMode(false)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${!rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>Görsel</button>
-                  <button onClick={() => setRawMode(true)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>Ham</button>
+                  <button onClick={() => setRawMode(false)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${!rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>{t('mcp_visual')}</button>
+                  <button onClick={() => setRawMode(true)} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${rawMode ? 'bg-blue-600/30 border-blue-500/40 text-blue-200' : 'border-white/[0.06] text-slate-500 hover:text-slate-300'}`}>{t('mcp_raw')}</button>
                 </div>
               </div>
             )}
@@ -719,8 +735,8 @@ const McpTools: React.FC = () => {
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center">
             <div className="w-16 h-16 bg-cyber-card/60 rounded-2xl flex items-center justify-center opacity-40"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
             <div className="space-y-1">
-              <div className="text-sm text-slate-500">Sunucu(lar) ve araç seçip çalıştırın</div>
-              <div className="text-xs text-slate-600">Çoklu sunucu seçimi destekleniyor · Paralel çalışır · AI analiz eder</div>
+              <div className="text-sm text-slate-500">{t('mcp_empty')}</div>
+              <div className="text-xs text-slate-600">{t('mcp_empty_hint')}</div>
             </div>
           </div>
         )}
@@ -730,7 +746,7 @@ const McpTools: React.FC = () => {
           <div className="flex-1 flex flex-col items-center justify-center gap-4">
             <div className="flex items-center gap-3 text-slate-400">
               <span className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
-              <span className="text-sm">{selectedIds.size} sunucuda {selectedTool?.name.replace('builtin.', '')} çalışıyor…</span>
+              <span className="text-sm">{t('mcp_running_n', { n: selectedIds.size, tool: selectedTool?.name.replace('builtin.', '') || '' })}</span>
             </div>
             <div className="flex gap-2">
               {servers.filter(s => selectedIds.has(s.id)).map(s => (

@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,29 +36,28 @@ interface SummaryCategory {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const CATEGORY_LABEL: Record<string, string> = {
-  kernel: 'Çekirdek', sysctl: 'Sysctl', os: 'İşletim Sistemi', cpu: 'CPU',
-  hardware: 'Donanım', disk: 'Disk / Mount', memory: 'Bellek', network: 'Ağ',
-  security: 'Güvenlik', packages: 'Paketler', apps: 'Uygulama Sürümleri',
-  limits: 'Sistem Limitleri', ssl: 'SSL', cron: 'Cron',
-  chat_discovery: 'Sohbet Keşfi', correction: 'Düzeltme',
-  virt_os: 'Virt OS', virt_power: 'Virt Güç', virt_tools: 'Virt Tools',
-  virt_storage: 'Virt Depolama', virt_cluster: 'Virt Cluster',
-  virt_cpu: 'Virt CPU', virt_memory: 'Virt RAM', virt_network: 'Virt Ağ',
+const CAT_KEYS: Record<string, TranslationKey> = {
+  kernel: 'kb_cat_kernel', sysctl: 'kb_cat_sysctl', os: 'kb_cat_os', cpu: 'cpu_usage',
+  hardware: 'kb_cat_hw', disk: 'kb_cat_disk', memory: 'memory', network: 'kb_cat_net',
+  security: 'kb_cat_sec', packages: 'kb_cat_pkg', apps: 'kb_cat_apps',
+  limits: 'kb_cat_limits', ssl: 'kb_cat_ssl', cron: 'kb_cat_cron',
+  chat_discovery: 'kb_cat_chat', correction: 'kb_cat_corr',
+  virt_os: 'kb_cat_virt_os', virt_power: 'kb_cat_vpower', virt_tools: 'kb_cat_virt_tools',
+  virt_storage: 'kb_cat_vstor', virt_cluster: 'kb_cat_virt_cluster',
+  virt_cpu: 'kb_cat_virt_cpu', virt_memory: 'kb_cat_virt_mem', virt_network: 'kb_cat_vnet',
+}
+const SOURCE_COLOR: Record<string, string> = {
+  ssh: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/25',
+  winrm: 'text-blue-300 bg-blue-500/10 border-blue-500/25',
+  manual: 'text-amber-300 bg-amber-500/10 border-amber-500/25',
+  virt_sync: 'text-sky-300 bg-sky-500/10 border-sky-500/25',
+  chat_tool: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25',
 }
 
-const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
-  ssh: { label: 'SSH', color: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/25' },
-  winrm: { label: 'WinRM', color: 'text-blue-300 bg-blue-500/10 border-blue-500/25' },
-  manual: { label: 'Manuel', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
-  virt_sync: { label: 'Virt Sync', color: 'text-sky-300 bg-sky-500/10 border-sky-500/25' },
-  chat_tool: { label: 'Chat Tool', color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' },
-}
-
-function fmt(dt: string | null) {
+function fmt(dt: string | null, locale: string) {
   if (!dt) return '—'
   try {
-    return new Date(dt).toLocaleString('tr-TR')
+    return new Date(dt).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR')
   } catch {
     return dt
   }
@@ -65,6 +66,16 @@ function fmt(dt: string | null) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const KnowledgeBase: React.FC = () => {
+  const t = useT()
+  const { locale } = useLocale()
+  const catLabel = (c: string) => {
+    if (c === 'cpu') return 'CPU'
+    return CAT_KEYS[c] ? t(CAT_KEYS[c]) : c
+  }
+  const srcMeta = (src: string) => ({
+    label: src === 'manual' ? t('app_src_manual') : src.replace('_', ' ').replace(/\b\w/g, ch => ch.toUpperCase()).replace('Ssh', 'SSH').replace('Winrm', 'WinRM'),
+    color: SOURCE_COLOR[src] || 'text-slate-300 bg-white/[0.05] border-white/[0.1]',
+  })
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const [serverId, setServerId] = useState<number | ''>('')
@@ -141,7 +152,7 @@ const KnowledgeBase: React.FC = () => {
   const pinMutation = useMutation({
     mutationFn: async () => {
       if (pinServerId === '' || !pinKey.trim() || !pinValue.trim()) {
-        throw new Error('Sunucu, anahtar ve değer gerekli')
+        throw new Error(t('kb_need_fields'))
       }
       const r = await fetch(`${API_BASE_URL}/knowledge/correct`, {
         method: 'POST',
@@ -162,7 +173,7 @@ const KnowledgeBase: React.FC = () => {
     onSuccess: () => {
       setPinKey('')
       setPinValue('')
-      setPinHint('Sabitlendi — RAG yeniden indekslenecek')
+      setPinHint(t('kb_pinned'))
       qc.invalidateQueries({ queryKey: ['knowledge-facts'] })
       qc.invalidateQueries({ queryKey: ['knowledge-summary'] })
     },
@@ -203,11 +214,9 @@ const KnowledgeBase: React.FC = () => {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-white">Bilgi Bankası</h1>
+        <h1 className="text-xl font-semibold text-white">{t('kb_title')}</h1>
         <p className="text-sm text-slate-400 mt-1">
-          AI&apos;nin SSH/WinRM ve hypervisor envanter sync&apos;inden öğrendiği kalıcı yapısal bilgiler.
-          Yanlış kayıtları Düzenle ile düzeltin (manuel kaynak) veya Onayla ile güçlendirin.
-          Anlık metrikler (CPU/RAM %) burada tutulmaz.
+          {t('kb_sub')}
         </p>
       </div>
 
@@ -216,14 +225,14 @@ const KnowledgeBase: React.FC = () => {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-2xl font-bold text-white">{summary.total_facts}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Toplam öğrenilmiş bilgi</div>
+            <div className="text-xs text-slate-400 mt-0.5">{t('kb_total')}</div>
           </div>
           <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
             <div className="text-2xl font-bold text-white">{summary.servers.length}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Bilgi öğrenilen sunucu</div>
+            <div className="text-xs text-slate-400 mt-0.5">{t('kb_servers')}</div>
           </div>
           <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4 col-span-2">
-            <div className="text-xs text-slate-400 mb-1.5">Kategori dağılımı</div>
+            <div className="text-xs text-slate-400 mb-1.5">{t('kb_cat_dist')}</div>
             <div className="flex flex-wrap gap-1.5">
               {summary.categories.slice(0, 8).map(c => (
                 <button
@@ -233,7 +242,7 @@ const KnowledgeBase: React.FC = () => {
                     ? 'bg-blue-500/20 border-blue-500/40 text-blue-200'
                     : 'bg-white/[0.05] border-white/[0.08] text-slate-300 hover:bg-white/[0.09]'}`}
                 >
-                  {CATEGORY_LABEL[c.category] || c.category} ({c.count})
+                  {catLabel(c.category)} ({c.count})
                 </button>
               ))}
             </div>
@@ -244,17 +253,15 @@ const KnowledgeBase: React.FC = () => {
       {/* Yeni bilgi sabitle — yalnızca admin */}
       {isAdmin ? (
       <div className="bg-cyber-card border border-amber-500/20 rounded-[10px] p-3 space-y-2">
-        <div className="text-sm text-slate-200 font-medium">Gerçeği sabitle</div>
-        <p className="text-xs text-slate-500">
-          Yalnızca admin — kalıcı manuel düzeltme (source=manual, RAG reindex). Canlı SSH ile çelişirse canlı veri esas alınır.
-        </p>
+        <div className="text-sm text-slate-200 font-medium">{t('kb_pin')}</div>
+        <p className="text-xs text-slate-500">{t('kb_pin_hint')}</p>
         <div className="flex flex-wrap gap-2 items-center">
           <select
             value={pinServerId}
             onChange={(e) => setPinServerId(e.target.value ? Number(e.target.value) : '')}
             className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 min-w-[160px]"
           >
-            <option value="">Sunucu seçin</option>
+            <option value="">{t('kb_pick_server')}</option>
             {pinServerChoices.map((s) => (
               <option key={s.server_id} value={s.server_id}>
                 {s.server_name}
@@ -264,14 +271,14 @@ const KnowledgeBase: React.FC = () => {
           <input
             value={pinKey}
             onChange={(e) => setPinKey(e.target.value)}
-            placeholder="Anahtar"
+            placeholder={t('kb_key_ph')}
             maxLength={200}
             className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 min-w-[140px]"
           />
           <input
             value={pinValue}
             onChange={(e) => setPinValue(e.target.value)}
-            placeholder="Doğru değer"
+            placeholder={t('kb_val_ph')}
             maxLength={2000}
             className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 flex-1 min-w-[160px]"
           />
@@ -284,14 +291,14 @@ const KnowledgeBase: React.FC = () => {
             }}
             className="px-3 py-1.5 text-sm bg-amber-600/90 hover:bg-amber-500 text-white rounded-lg disabled:opacity-50"
           >
-            {pinMutation.isPending ? '…' : 'Sabitle'}
+            {pinMutation.isPending ? '…' : t('kb_pin_btn')}
           </button>
           {pinHint && <span className="text-xs text-slate-400">{pinHint}</span>}
         </div>
       </div>
       ) : (
         <p className="text-xs text-slate-500">
-          Manuel bilgi sabitleme / düzenleme yalnızca yöneticilere açıktır. Onayla ve silme knowledge yetkisiyle yapılabilir.
+          {t('kb_admin_only')}
         </p>
       )}
 
@@ -299,35 +306,35 @@ const KnowledgeBase: React.FC = () => {
       <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-3 flex flex-wrap gap-2 items-center">
         <select value={serverId} onChange={e => { setOffset(0); setServerId(e.target.value ? Number(e.target.value) : '') }}
           className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 min-w-[160px]">
-          <option value="">Tüm sunucular</option>
+          <option value="">{t('app_all_servers')}</option>
           {summary?.servers.map(s => (
             <option key={s.server_id} value={s.server_id}>{s.server_name} ({s.fact_count})</option>
           ))}
         </select>
         <select value={category} onChange={e => { setOffset(0); setCategory(e.target.value) }}
           className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200">
-          <option value="">Tüm kategoriler</option>
+          <option value="">{t('app_all_cats')}</option>
           {summary?.categories.map(c => (
-            <option key={c.category} value={c.category}>{CATEGORY_LABEL[c.category] || c.category}</option>
+            <option key={c.category} value={c.category}>{catLabel(c.category)}</option>
           ))}
         </select>
         <input value={q} onChange={e => { setOffset(0); setQ(e.target.value) }}
-          placeholder="Anahtar/değerde ara..."
+          placeholder={t('kb_search')}
           className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-sm text-slate-200 flex-1 min-w-[160px]" />
         <button onClick={() => refetch()} disabled={isFetching}
           className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-50">
-          {isFetching ? '...' : '↺ Yenile'}
+          {isFetching ? '...' : t('refresh_action')}
         </button>
         {serverId !== '' && (
           <button
             onClick={() => {
-              if (confirm('Bu sunucuya ait tüm öğrenilmiş bilgiler silinsin mi? (bir sonraki taramada yeniden öğrenilir)')) {
+              if (confirm(t('kb_clear_confirm'))) {
                 clearServerMutation.mutate(Number(serverId))
               }
             }}
             className="px-3 py-1.5 text-sm bg-red-600/80 hover:bg-red-500 text-white rounded-lg"
           >
-            Sunucunun bilgisini temizle
+            {t('kb_clear_server')}
           </button>
         )}
       </div>
@@ -338,23 +345,23 @@ const KnowledgeBase: React.FC = () => {
           <table className="w-full text-sm">
             <thead className="bg-cyber-deep/60 text-slate-400 text-xs">
               <tr>
-                <th className="text-left px-3 py-2.5 font-medium">Sunucu</th>
-                <th className="text-left px-3 py-2.5 font-medium">Kategori</th>
-                <th className="text-left px-3 py-2.5 font-medium">Anahtar</th>
-                <th className="text-left px-3 py-2.5 font-medium">Değer</th>
-                <th className="text-left px-3 py-2.5 font-medium">Kaynak</th>
-                <th className="text-left px-3 py-2.5 font-medium">Son doğrulama</th>
-                <th className="text-left px-3 py-2.5 font-medium">Kez</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('col_server')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('kb_cat')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('kb_col_key')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('kb_col_value')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('inc_source')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('kb_col_confirmed')}</th>
+                <th className="text-left px-3 py-2.5 font-medium">{t('kb_times')}</th>
                 <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
               {rows.map(f => {
-                const src = SOURCE_LABEL[f.source] || { label: f.source, color: 'text-slate-300 bg-white/[0.05] border-white/[0.1]' }
+                const src = srcMeta(f.source)
                 return (
                   <tr key={f.id} className="hover:bg-white/[0.03]">
                     <td className="px-3 py-2 text-slate-200 whitespace-nowrap text-xs">{f.server_name}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-300">{CATEGORY_LABEL[f.category] || f.category}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-300">{catLabel(f.category)}</td>
                     <td className="px-3 py-2 text-slate-400 font-mono text-[11px] whitespace-nowrap">{f.key}</td>
                     <td className="px-3 py-2 text-slate-300 text-xs max-w-md truncate" title={f.value}>
                       {editing?.id === f.id ? (
@@ -375,22 +382,22 @@ const KnowledgeBase: React.FC = () => {
                     <td className="px-3 py-2">
                       <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${src.color}`}>{src.label}</span>
                     </td>
-                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{fmt(f.last_confirmed_at)}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{fmt(f.last_confirmed_at, locale)}</td>
                     <td className="px-3 py-2 text-slate-500 text-xs text-center">{f.times_confirmed}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {editing?.id !== f.id && (
                         <div className="flex gap-2 justify-end">
                           <button
                             onClick={() => confirmMutation.mutate(f.id)}
-                            className="text-slate-500 hover:text-emerald-300 text-xs">Onayla</button>
+                            className="text-slate-500 hover:text-emerald-300 text-xs">{t('kb_confirm')}</button>
                           {isAdmin && (
                             <button
                               onClick={() => { setEditing(f); setEditValue(f.value) }}
-                              className="text-slate-500 hover:text-blue-300 text-xs">Düzenle</button>
+                              className="text-slate-500 hover:text-blue-300 text-xs">{t('edit')}</button>
                           )}
                           <button
-                            onClick={() => { if (confirm('Bu bilgi silinsin mi?')) deleteMutation.mutate(f.id) }}
-                            className="text-slate-500 hover:text-red-300 text-xs">Sil</button>
+                            onClick={() => { if (confirm(t('kb_delete_one'))) deleteMutation.mutate(f.id) }}
+                            className="text-slate-500 hover:text-red-300 text-xs">{t('delete')}</button>
                         </div>
                       )}
                     </td>
@@ -399,7 +406,7 @@ const KnowledgeBase: React.FC = () => {
               })}
               {!isFetching && rows.length === 0 && (
                 <tr><td colSpan={8} className="px-3 py-10 text-center text-slate-500">
-                  Henüz öğrenilmiş bilgi yok — sohbet üzerinden SSH/WinRM ile bir sunucu sorgulandığında burada birikmeye başlar.
+                  {t('kb_empty')}
                 </td></tr>
               )}
             </tbody>
@@ -408,12 +415,12 @@ const KnowledgeBase: React.FC = () => {
 
         {/* Sayfalama */}
         <div className="flex items-center justify-between px-3 py-2.5 border-t border-white/[0.05] text-xs text-slate-400">
-          <span>{total} kayıt{total > 0 ? ` · ${offset + 1}–${Math.min(offset + limit, total)}` : ''}</span>
+          <span>{total > 0 ? t('app_n_range', { n: total, a: offset + 1, b: Math.min(offset + limit, total) }) : t('app_n_records', { n: total })}</span>
           <div className="flex gap-2">
             <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}
-              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">← Önceki</button>
+              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">← {t('page_prev')}</button>
             <button disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}
-              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">Sonraki →</button>
+              className="px-2.5 py-1 rounded-lg bg-white/[0.07] disabled:opacity-40 hover:bg-white/[0.10] text-slate-200">{t('page_next')} →</button>
           </div>
         </div>
       </div>

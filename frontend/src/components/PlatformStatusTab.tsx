@@ -1,7 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import {
+  Activity, Download, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen,
+  RefreshCw, RotateCcw, Search, Square, X,
+} from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
 
 interface PlatformContainer {
   name: string
@@ -52,29 +56,51 @@ function statusDot(status: string) {
   return 'bg-slate-500'
 }
 
-async function readError(res: Response) {
+async function readError(res: Response, fallback: string) {
   try {
     const j = await res.json()
     return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail || j)
   } catch {
-    return res.statusText || 'İstek başarısız'
+    return res.statusText || fallback
   }
 }
 
+function filterLogLines(text: string, query: string) {
+  const lines = text ? text.split('\n') : []
+  const needle = query.trim().toLowerCase()
+  const shown = needle ? lines.filter((line) => line.toLowerCase().includes(needle)) : lines
+  return { total: lines.length, shown: shown.length, display: shown.join('\n') }
+}
+
+function downloadText(filename: string, body: string) {
+  const blob = new Blob([body], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export const PlatformStatusTab: React.FC = () => {
+  const t = useT()
   const qc = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
   const [live, setLive] = useState(false)
   const [logText, setLogText] = useState('')
   const [logErr, setLogErr] = useState<string | null>(null)
+  const [logFilter, setLogFilter] = useState('')
+  const [expanded, setExpanded] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(true)
   const logBoxRef = useRef<HTMLPreElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const stickBottomRef = useRef(true)
 
   const { data, isLoading, isFetching, error, refetch } = useQuery<PlatformStatusPayload>({
     queryKey: ['platform-containers'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/platform/containers`)
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     refetchInterval: 8000,
@@ -87,7 +113,7 @@ export const PlatformStatusTab: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true }),
       })
-      if (!r.ok) throw new Error(await readError(r))
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
       return r.json()
     },
     onSuccess: () => {
@@ -97,6 +123,7 @@ export const PlatformStatusTab: React.FC = () => {
 
   const containers = data?.containers || []
   const selectedRow = containers.find((c) => c.name === selected) || null
+  const filtered = useMemo(() => filterLogLines(logText, logFilter), [logText, logFilter])
 
   useEffect(() => {
     if (!selected && containers.length) {
@@ -106,7 +133,6 @@ export const PlatformStatusTab: React.FC = () => {
     }
   }, [containers, selected])
 
-  // Tail yükle (canlı değilken)
   useEffect(() => {
     if (!selected || live) return
     let cancelled = false
@@ -116,19 +142,18 @@ export const PlatformStatusTab: React.FC = () => {
         const r = await fetch(
           `${API_BASE_URL}/platform/containers/${encodeURIComponent(selected)}/logs?tail=250`,
         )
-        if (!r.ok) throw new Error(await readError(r))
+        if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
         const body = await r.json()
         if (!cancelled) setLogText(body.logs || '')
       } catch (e) {
-        if (!cancelled) setLogErr(e instanceof Error ? e.message : 'Log alınamadı')
+        if (!cancelled) setLogErr(e instanceof Error ? e.message : t('ps_log_fail'))
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [selected, live, data?.checked_at])
+  }, [selected, live, data?.checked_at, t])
 
-  // Canlı SSE (fetch + Authorization interceptor)
   useEffect(() => {
     if (!selected || !live) {
       abortRef.current?.abort()
@@ -139,6 +164,7 @@ export const PlatformStatusTab: React.FC = () => {
     abortRef.current = ac
     setLogText('')
     setLogErr(null)
+    stickBottomRef.current = true
 
     ;(async () => {
       try {
@@ -146,7 +172,7 @@ export const PlatformStatusTab: React.FC = () => {
           `${API_BASE_URL}/platform/containers/${encodeURIComponent(selected)}/logs/stream?tail=120`,
           { signal: ac.signal },
         )
-        if (!r.ok || !r.body) throw new Error(await readError(r))
+        if (!r.ok || !r.body) throw new Error(await readError(r, t('pu_req_fail')))
         const reader = r.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
@@ -172,7 +198,6 @@ export const PlatformStatusTab: React.FC = () => {
             if (event === 'meta') continue
             setLogText((prev) => {
               const next = prev + payload + '\n'
-              // bellek sınırı
               if (next.length > 400_000) return next.slice(-300_000)
               return next
             })
@@ -180,7 +205,7 @@ export const PlatformStatusTab: React.FC = () => {
         }
       } catch (e) {
         if ((e as Error).name === 'AbortError') return
-        setLogErr(e instanceof Error ? e.message : 'Canlı log kesildi')
+        setLogErr(e instanceof Error ? e.message : t('ps_live_cut'))
         setLive(false)
       }
     })()
@@ -188,38 +213,88 @@ export const PlatformStatusTab: React.FC = () => {
     return () => {
       ac.abort()
     }
-  }, [selected, live])
+  }, [selected, live, t])
 
   useEffect(() => {
     const el = logBoxRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [logText])
+    if (!el || !stickBottomRef.current) return
+    el.scrollTop = el.scrollHeight
+  }, [filtered.display])
+
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
 
   const ainew = containers.filter((c) => c.group === 'ainew')
   const dropt = containers.filter((c) => c.group === 'dropt')
 
+  const onLogScroll = () => {
+    const el = logBoxRef.current
+    if (!el) return
+    stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  }
+
+  const exportLogs = () => {
+    const body = (logFilter.trim() ? filtered.display : logText).replace(/\s+$/, '')
+    if (!body) return
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    downloadText(`${selected || 'container'}-logs-${stamp}.txt`, body + '\n')
+  }
+
+  const confirmRestart = (n: string) => {
+    if (window.confirm(t('ps_restart_confirm', { n }))) restartMut.mutate(n)
+  }
+
+  const emptyLog = !logText
+    ? (selectedRow?.present ? t('ps_log_loading') : t('ps_log_empty'))
+    : (logFilter.trim() && filtered.shown === 0 ? t('ps_no_match') : '')
+
   return (
-    <div className="flex flex-col gap-4 h-[min(780px,calc(100vh-9rem))] min-h-[520px]">
+    <div
+      className={
+        expanded
+          ? 'fixed inset-0 z-[80] bg-[#080d16] p-4 flex flex-col gap-4'
+          : 'flex flex-col gap-4 flex-1 min-h-0 h-full overflow-hidden'
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 shrink-0">
         <div>
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
             <Activity size={20} className="text-blue-400" />
-            Platform Durumu
+            {t('set_tab_platform')}
           </h2>
-          <p className="text-sm text-slate-400 mt-1 max-w-2xl">
-            ainew ve Level 1 (Dropt) stack container&apos;larının durumu, sağlık kontrolü ve canlı logları.
-            Yalnızca yönetici erişebilir.
-          </p>
+          {!expanded && (
+            <p className="text-sm text-slate-400 mt-1 max-w-2xl">
+              {t('ps_subtitle')}
+            </p>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 hover:bg-white/[0.1] disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-          Yenile
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 hover:bg-white/[0.1] disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+            {t('refresh_action')}
+          </button>
+          {expanded && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 hover:bg-white/[0.1]"
+            >
+              <Minimize2 size={14} />
+              {t('ps_collapse')}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -230,20 +305,20 @@ export const PlatformStatusTab: React.FC = () => {
 
       {!isLoading && data && !data.available && (
         <div className="shrink-0 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          Docker API erişilemiyor. {(data.reasons || []).join(' · ')}
+          {t('ps_docker_unavailable')} {(data.reasons || []).join(' · ')}
           <div className="text-xs text-amber-200/70 mt-1">
-            Backend&apos;e <code className="font-mono">/var/run/docker.sock</code> mount edilmeli.
+            {t('ps_docker_sock_hint')}
           </div>
         </div>
       )}
 
-      {data?.summary && (
+      {data?.summary && !expanded && (
         <div className="shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Toplam', value: data.summary.total },
-            { label: 'Çalışıyor', value: data.summary.running },
-            { label: 'Sağlıksız', value: data.summary.unhealthy },
-            { label: 'Eksik', value: data.summary.missing },
+            { label: t('total'), value: data.summary.total },
+            { label: t('ps_sum_running'), value: data.summary.running },
+            { label: t('ps_sum_unhealthy'), value: data.summary.unhealthy },
+            { label: t('ps_sum_missing'), value: data.summary.missing },
           ].map((s) => (
             <div key={s.label} className="rounded-[10px] border border-white/[0.06] bg-cyber-deep/40 px-4 py-3">
               <div className="text-[11px] uppercase tracking-wide text-slate-500">{s.label}</div>
@@ -253,54 +328,95 @@ export const PlatformStatusTab: React.FC = () => {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-5 gap-4 flex-1 min-h-0">
-        <div className="lg:col-span-2 flex flex-col gap-4 min-h-0 overflow-y-auto pr-0.5">
-          <GroupList
-            title="ainew"
-            rows={ainew}
-            selected={selected}
-            onSelect={setSelected}
-            restartAllowed={!!data?.restart_allowed}
-            onRestart={(n) => {
-              if (window.confirm(`${n} yeniden başlatılsın mı?`)) restartMut.mutate(n)
-            }}
-            restarting={restartMut.isPending}
-          />
-          <GroupList
-            title="Level 1 (Dropt)"
-            rows={dropt}
-            selected={selected}
-            onSelect={setSelected}
-            restartAllowed={!!data?.restart_allowed}
-            onRestart={(n) => {
-              if (window.confirm(`${n} yeniden başlatılsın mı?`)) restartMut.mutate(n)
-            }}
-            restarting={restartMut.isPending}
-          />
-        </div>
-
-        <div className="lg:col-span-3 flex flex-col rounded-[10px] border border-white/[0.06] bg-cyber-deep/30 overflow-hidden min-h-0 h-full">
-          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.06]">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-white truncate">
-                {selectedRow ? selectedRow.name : 'Container seçin'}
-              </div>
-              {selectedRow && (
-                <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5">
-                  {selectedRow.role}
-                  {selectedRow.image ? ` · ${selectedRow.image}` : ''}
-                  {selectedRow.id ? ` · ${selectedRow.id}` : ''}
-                </div>
-              )}
+      <div className="flex gap-3 flex-1 min-h-0">
+        {drawerOpen && (
+          <div className="w-full max-w-[22rem] lg:w-[22rem] shrink-0 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 pr-0.5">
+              <GroupList
+                title="ainew"
+                rows={ainew}
+                selected={selected}
+                onSelect={setSelected}
+                restartAllowed={!!data?.restart_allowed}
+                onRestart={confirmRestart}
+                restarting={restartMut.isPending}
+                headerAction={
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen(false)}
+                    title={t('ps_drawer_hide')}
+                    aria-label={t('ps_drawer_hide')}
+                    className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.08]"
+                  >
+                    <PanelLeftClose size={15} />
+                  </button>
+                }
+              />
+              <GroupList
+                title={t('ps_group_dropt')}
+                rows={dropt}
+                selected={selected}
+                onSelect={setSelected}
+                restartAllowed={!!data?.restart_allowed}
+                onRestart={confirmRestart}
+                restarting={restartMut.isPending}
+              />
             </div>
-            <div className="flex items-center gap-2">
+          </div>
+        )}
+
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col rounded-[10px] border border-white/[0.06] bg-cyber-deep/30 overflow-hidden h-full">
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.06]">
+            <div className="min-w-0 flex items-center gap-2">
+              {!drawerOpen && (
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(true)}
+                  title={t('ps_drawer_show')}
+                  aria-label={t('ps_drawer_show')}
+                  className="inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.08]"
+                >
+                  <PanelLeftOpen size={15} />
+                </button>
+              )}
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-white truncate">
+                  {selectedRow ? selectedRow.name : t('ps_select')}
+                </div>
+                {selectedRow && (
+                  <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5">
+                    {selectedRow.role}
+                    {selectedRow.image ? ` · ${selectedRow.image}` : ''}
+                    {selectedRow.id ? ` · ${selectedRow.id}` : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button
+                type="button"
+                disabled={!logText.trim()}
+                title={!logText.trim() ? t('ps_export_empty') : t('ps_export')}
+                onClick={exportLogs}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/[0.06] text-slate-200 border border-white/[0.08] hover:bg-white/[0.1] disabled:opacity-40"
+              >
+                <Download size={12} /> {t('ps_export')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/[0.06] text-slate-200 border border-white/[0.08] hover:bg-white/[0.1]"
+              >
+                {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                {expanded ? t('ps_collapse') : t('ps_expand')}
+              </button>
               {live ? (
                 <button
                   type="button"
                   onClick={() => setLive(false)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-rose-600/20 text-rose-300 border border-rose-500/30"
                 >
-                  <Square size={12} /> Durdur
+                  <Square size={12} /> {t('stop')}
                 </button>
               ) : (
                 <button
@@ -309,19 +425,49 @@ export const PlatformStatusTab: React.FC = () => {
                   onClick={() => setLive(true)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-blue-600/20 text-blue-300 border border-blue-500/30 disabled:opacity-40"
                 >
-                  <Activity size={12} /> Canlı takip
+                  <Activity size={12} /> {t('ps_live')}
                 </button>
               )}
             </div>
           </div>
+
+          <div className="shrink-0 px-3 py-2 border-b border-white/[0.06] flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                value={logFilter}
+                onChange={(e) => setLogFilter(e.target.value)}
+                placeholder={t('ps_filter_ph')}
+                className="w-full bg-black/30 border border-white/[0.08] rounded-lg pl-8 pr-8 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/40"
+              />
+              {logFilter && (
+                <button
+                  type="button"
+                  onClick={() => setLogFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  aria-label={t('close')}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            {logText && (
+              <span className="shrink-0 text-[11px] text-slate-500 tabular-nums">
+                {t('ps_filter_n', { shown: filtered.shown, total: filtered.total })}
+              </span>
+            )}
+          </div>
+
           {logErr && (
             <div className="shrink-0 px-4 py-2 text-xs text-rose-300 bg-rose-500/10 border-b border-rose-500/20">{logErr}</div>
           )}
           <pre
             ref={logBoxRef}
+            onScroll={onLogScroll}
             className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 text-[11px] leading-relaxed font-mono text-slate-300 whitespace-pre-wrap break-all bg-black/40"
           >
-            {logText || (selectedRow?.present ? 'Log yükleniyor…' : 'Container yok veya seçilmedi.')}
+            {emptyLog || filtered.display}
           </pre>
         </div>
       </div>
@@ -330,7 +476,7 @@ export const PlatformStatusTab: React.FC = () => {
         <div className="shrink-0 text-sm text-rose-300">{(restartMut.error as Error).message}</div>
       )}
       {restartMut.isSuccess && (
-        <div className="shrink-0 text-sm text-emerald-300">Yeniden başlatma isteği gönderildi.</div>
+        <div className="shrink-0 text-sm text-emerald-300">{t('ps_restart_sent')}</div>
       )}
     </div>
   )
@@ -344,58 +490,67 @@ const GroupList: React.FC<{
   restartAllowed: boolean
   onRestart: (n: string) => void
   restarting: boolean
-}> = ({ title, rows, selected, onSelect, restartAllowed, onRestart, restarting }) => (
-  <div className="rounded-[10px] border border-white/[0.06] overflow-hidden">
-    <div className="px-3 py-2 bg-white/[0.03] border-b border-white/[0.06] text-xs font-semibold uppercase tracking-wide text-slate-400">
-      {title}
-    </div>
-    <ul className="divide-y divide-white/[0.04]">
-      {rows.map((c) => (
-        <li key={c.name}>
-          <button
-            type="button"
-            onClick={() => onSelect(c.name)}
-            className={`w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors ${
-              selected === c.name ? 'bg-blue-600/15' : 'hover:bg-white/[0.04]'
-            }`}
-          >
-            <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${statusDot(c.status)}`} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm text-white font-medium truncate">{c.name}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusColor(c.status)}`}>
-                  {c.status}
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">{c.role}</div>
-            </div>
-            {restartAllowed && c.present && (
-              <span
-                role="button"
-                tabIndex={0}
-                title="Yeniden başlat"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRestart(c.name)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.stopPropagation()
-                    onRestart(c.name)
-                  }
-                }}
-                className={`shrink-0 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.08] ${
-                  restarting ? 'opacity-40 pointer-events-none' : ''
+  headerAction?: React.ReactNode
+}> = ({ title, rows, selected, onSelect, restartAllowed, onRestart, restarting, headerAction }) => {
+  const t = useT()
+  return (
+    <div className="rounded-[10px] border border-white/[0.06] overflow-hidden shrink-0">
+      <div className="px-3 py-2 bg-white/[0.03] border-b border-white/[0.06] flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</span>
+        {headerAction}
+      </div>
+      {rows.length === 0 ? (
+        <div className="px-3 py-3 text-xs text-slate-500">{t('ps_none')}</div>
+      ) : (
+        <ul className="divide-y divide-white/[0.04]">
+          {rows.map((c) => (
+            <li key={c.name}>
+              <button
+                type="button"
+                onClick={() => onSelect(c.name)}
+                className={`w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors ${
+                  selected === c.name ? 'bg-blue-600/15' : 'hover:bg-white/[0.04]'
                 }`}
               >
-                <RotateCcw size={14} />
-              </span>
-            )}
-          </button>
-        </li>
-      ))}
-    </ul>
-  </div>
-)
+                <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${statusDot(c.status)}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-white font-medium truncate">{c.name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusColor(c.status)}`}>
+                      {c.status}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">{c.role}</div>
+                </div>
+                {restartAllowed && c.present && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title={t('ps_restart')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRestart(c.name)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.stopPropagation()
+                        onRestart(c.name)
+                      }
+                    }}
+                    className={`shrink-0 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.08] ${
+                      restarting ? 'opacity-40 pointer-events-none' : ''
+                    }`}
+                  >
+                    <RotateCcw size={14} />
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 export default PlatformStatusTab

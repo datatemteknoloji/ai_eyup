@@ -282,9 +282,10 @@ Sabitler: `NS = "openshift-mtv"`, `FORKLIFT = "/apis/forklift.konveyor.io/v1beta
 
 | Fonksiyon | Açıklama |
 |---|---|
-| `list_providers(cluster_id)` | `[{ "name", "type", "url", "ready", "error", "vddk" }]` |
+| `list_providers(cluster_id)` | `[{ "name", "type", "url", "ready", "error", "vddk", "deletable" }]` |
 | `create_vsphere_provider(cluster_id, conn_id, actor, vddk_init_image="")` | vCenter kimliğini kümede Secret olarak oluşturur, Provider CR'ını uygular |
 | `set_provider_vddk(cluster_id, provider_name, vddk_image, actor)` | VDDK init imajını tanımlar/kaldırır |
+| `delete_provider(cluster_id, provider_name, actor)` | vsphere provider + Secret; `host`/openshift silinmez; plan varsa reddeder; plansız eşleme/host temizlenir |
 
 > **VDDK kritik:** tanımlanmazsa diskler vCenter'dan HTTPS/curl ile çekilir ve
 > taşıma tipik olarak **5–10 kat yavaş** olur.
@@ -383,6 +384,7 @@ GET    /clusters/{cluster_id}/mtv/rbac
 GET    /clusters/{cluster_id}/mtv/providers
 POST   /clusters/{cluster_id}/mtv/providers                     (admin)
 PUT    /clusters/{cluster_id}/mtv/providers/{name}/vddk         (admin)
+DELETE /clusters/{cluster_id}/mtv/providers/{name}              (admin)
 GET    /clusters/{cluster_id}/mtv/targets
 POST   /clusters/{cluster_id}/mtv/source-refs
 GET    /clusters/{cluster_id}/mtv/plans

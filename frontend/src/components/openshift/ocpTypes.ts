@@ -22,17 +22,17 @@ export type OcpSection =
 
 export const SECTION_HELP: Partial<Record<OcpSection, string>> = {
   genel:
-    'Kümenin genel durumu: kapasite, node’lar, storage class ve Multus ağ tanımları. Buradan başlayın.',
+    'Cluster genel durumu: kapasite, node’lar, StorageClass ve Multus ağ tanımları. Buradan başlayın.',
   saglik:
     'ClusterOperator sağlığı ve güncelleme durumu. Bir şey bozulduğunda ilk bakılacak yer.',
   topoloji:
-    'Seçili projedeki uygulamaların görsel haritası. Düğüme tıklayınca ilişkiler sağda açılır.',
+    'Seçili projedeki uygulamaların görsel haritası. Node’a tıklayınca ilişkiler sağda açılır.',
   depolama: 'StorageClass, PVC, PV ve Multus ağ tanımları.',
   vms: 'OpenShift Virtualization (KubeVirt) — VNC konsol, güç, snapshot/klon (admin) ve canlı CPU/bellek.',
   tasima: 'VMware → OpenShift taşıma (MTV) hazırlığı ve operatör durumu.',
   kaynaklar: 'Kubernetes nesnelerini listeleyip YAML görüntüleyin; Deployment’larda ölçek ±.',
-  projeler: 'Proje seçin; iş yükü / pod / route listeleri bu bağlamda çalışır.',
-  riskler: 'CrashLoop / ImagePull / yüksek restart riskli pod’lar.',
+  projeler: 'Proje seçin; Workload / Pod / Route listeleri bu bağlamda çalışır.',
+  riskler: 'CrashLoop / ImagePull / yüksek restart riskli Pod’lar.',
   pods: 'Pod durumu, container’lar, events ve log — satırı genişletin.',
 }
 

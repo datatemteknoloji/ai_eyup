@@ -276,6 +276,9 @@ async def startup_tasks():
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(16) DEFAULT 'dark'"
             ))
             _conn.execute(_sa_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'tr'"
+            ))
+            _conn.execute(_sa_text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(20) DEFAULT 'local'"
             ))
             _conn.execute(_sa_text(

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
+import { useT } from '../i18n/LocaleProvider'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -34,13 +35,14 @@ function rgb(hex: string) {
 const card = 'bg-[#0d1422] border border-white/[0.07] rounded-[10px]'
 const inputCls = 'w-full bg-[#080d16] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#e8edf5] placeholder-slate-600 focus:outline-none focus:border-blue-500/60'
 
-const PS_EXAMPLES = [
-  { label: 'Uptime', script: '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime' },
-  { label: 'Disk Kullanımı', script: 'Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free' },
-  { label: 'Servisler (Running)', script: "Get-Service | Where-Object Status -eq 'Running' | Select-Object -First 20 Name,Status" },
+const PS_SCRIPTS = [
+  { labelKey: 'ans_ps_uptime' as const, script: '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime' },
+  { labelKey: 'ans_ps_disk' as const, script: 'Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free' },
+  { labelKey: 'ans_ps_services' as const, script: "Get-Service | Where-Object Status -eq 'Running' | Select-Object -First 20 Name,Status" },
 ]
 
 const WindowsAnsible: React.FC = () => {
+  const t = useT()
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [search, setSearch]           = useState('')
   const [script, setScript]           = useState('')
@@ -50,7 +52,7 @@ const WindowsAnsible: React.FC = () => {
     queryKey: ['windows-servers'],
     queryFn: async () => {
       const res = await fetch(`${WIN_API}/servers`)
-      if (!res.ok) throw new Error('Sunucular alınamadı')
+      if (!res.ok) throw new Error(t('ans_win_load_fail'))
       return res.json()
     },
   })
@@ -77,11 +79,11 @@ const WindowsAnsible: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_ids: selectedIds, script }),
       })
-      if (!res.ok) throw new Error('PowerShell komutu başarısız')
+      if (!res.ok) throw new Error(t('ans_ps_fail'))
       return res.json()
     },
     onSuccess: data => setResult(data),
-    onError: (err: Error) => alert(`Hata: ${err.message}`),
+    onError: (err: Error) => alert(t('ans_err', { msg: err.message })),
   })
 
   const toggle = (id: number) =>
@@ -98,8 +100,8 @@ const WindowsAnsible: React.FC = () => {
     <div className="flex flex-col gap-6 min-h-0">
       {/* Page header */}
       <div>
-        <h1 className="text-xl font-semibold text-[#e8edf5]">Windows Ansible/AWX</h1>
-        <p className="text-sm text-slate-500 mt-0.5">WinRM üzerinden Windows sunucularında toplu PowerShell çalıştırma</p>
+        <h1 className="text-xl font-semibold text-[#e8edf5]">{t('ans_win_title')}</h1>
+        <p className="text-sm text-slate-500 mt-0.5">{t('ans_win_subtitle')}</p>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-5">
@@ -107,23 +109,23 @@ const WindowsAnsible: React.FC = () => {
         <div className={`${card} flex flex-col min-h-0`}>
           <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Windows Sunucular</p>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{t('ans_win_servers')}</p>
               <p className="text-sm font-semibold text-[#e8edf5] mt-0.5">
                 {selectedIds.length > 0
-                  ? <span style={{ color: NEON.blue }}>{selectedIds.length} seçili</span>
-                  : <span className="text-slate-500">Seçilmedi</span>
+                  ? <span style={{ color: NEON.blue }}>{t('selected_n', { n: selectedIds.length })}</span>
+                  : <span className="text-slate-500">{t('ans_none_selected')}</span>
                 }
-                <span className="text-slate-600 font-normal"> / {readyServers.length} hazır</span>
+                <span className="text-slate-600 font-normal">{t('ans_n_ready', { n: readyServers.length })}</span>
               </p>
             </div>
             <div className="flex gap-1.5">
               <button onClick={() => setSelectedIds(filtered.map(s => s.id))}
                 className="px-2.5 py-1 text-xs rounded-lg text-blue-400 border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
-                Tümü
+                {t('filter_all')}
               </button>
               <button onClick={() => setSelectedIds([])}
                 className="px-2.5 py-1 text-xs rounded-lg text-slate-400 border border-white/[0.06] hover:bg-white/[0.04] transition-colors">
-                Temizle
+                {t('pkg_clear')}
               </button>
             </div>
           </div>
@@ -132,7 +134,7 @@ const WindowsAnsible: React.FC = () => {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Sunucu ara (isim, IP)..."
+              placeholder={t('ans_search')}
               className={inputCls}
             />
           </div>
@@ -140,7 +142,7 @@ const WindowsAnsible: React.FC = () => {
           <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-0.5 max-h-[320px] xl:max-h-none">
             {filtered.length === 0 ? (
               <div className="py-8 text-center text-slate-600 text-sm">
-                {search ? `"${search}" araması için sonuç yok` : 'WinRM ile hazır (AI Ready + ONLINE) Windows sunucu yok'}
+                {search ? t('ans_no_search', { q: search }) : t('ans_no_winrm')}
               </div>
             ) : filtered.map(s => {
               const sel = selectedIds.includes(s.id)
@@ -170,12 +172,12 @@ const WindowsAnsible: React.FC = () => {
           <div className={`${card} p-5 space-y-4`}>
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs text-slate-500 font-medium uppercase tracking-wider">PowerShell Script</label>
+                <label className="block text-xs text-slate-500 font-medium uppercase tracking-wider">{t('ans_ps_script')}</label>
                 <div className="flex gap-1.5">
-                  {PS_EXAMPLES.map(ex => (
-                    <button key={ex.label} onClick={() => setScript(ex.script)}
+                  {PS_SCRIPTS.map(ex => (
+                    <button key={ex.labelKey} onClick={() => setScript(ex.script)}
                       className="px-2 py-0.5 text-[11px] rounded-md text-slate-400 border border-white/[0.06] hover:bg-white/[0.04] hover:text-[#e8edf5] transition-colors">
-                      {ex.label}
+                      {t(ex.labelKey)}
                     </button>
                   ))}
                 </div>
@@ -184,7 +186,7 @@ const WindowsAnsible: React.FC = () => {
                 value={script}
                 onChange={e => setScript(e.target.value)}
                 rows={6}
-                placeholder="örn: Get-Service | Where-Object Status -eq 'Running'"
+                placeholder={t('ans_ps_ph')}
                 className={`${inputCls} font-mono text-xs leading-relaxed resize-y`}
               />
             </div>
@@ -197,10 +199,10 @@ const WindowsAnsible: React.FC = () => {
                 {runAdHoc.isPending && (
                   <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 )}
-                {runAdHoc.isPending ? 'Çalıştırılıyor...' : 'Komutu Çalıştır'}
+                {runAdHoc.isPending ? t('ans_running') : t('ans_run_cmd')}
               </button>
               {selectedIds.length === 0 && (
-                <span className="text-xs text-slate-600">Soldan sunucu seçin</span>
+                <span className="text-xs text-slate-600">{t('ans_pick_left')}</span>
               )}
             </div>
           </div>
@@ -210,17 +212,17 @@ const WindowsAnsible: React.FC = () => {
             <div className={card}>
               <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <p className="text-sm font-medium text-[#e8edf5]">Çıktılar</p>
+                  <p className="text-sm font-medium text-[#e8edf5]">{t('ans_outputs')}</p>
                   {successCount > 0 && (
                     <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                       style={{ background: `rgba(${rgb(NEON.green)},0.12)`, color: NEON.green, border: `1px solid rgba(${rgb(NEON.green)},0.25)` }}>
-                      {successCount} başarılı
+                      {t('ans_n_ok', { n: successCount })}
                     </span>
                   )}
                   {failCount > 0 && (
                     <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                       style={{ background: `rgba(${rgb(NEON.red)},0.12)`, color: NEON.red, border: `1px solid rgba(${rgb(NEON.red)},0.25)` }}>
-                      {failCount} hata
+                      {t('ans_n_err', { n: failCount })}
                     </span>
                   )}
                 </div>
@@ -240,7 +242,7 @@ const WindowsAnsible: React.FC = () => {
                       </span>
                     </div>
                     <pre className="text-[11px] font-mono text-slate-400 whitespace-pre-wrap bg-[#080d16] rounded-lg p-3 leading-relaxed">
-                      {res.stdout || res.stderr || '(çıktı yok)'}
+                      {res.stdout || res.stderr || t('ans_no_out')}
                     </pre>
                   </div>
                 ))}

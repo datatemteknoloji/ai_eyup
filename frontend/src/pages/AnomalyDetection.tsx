@@ -8,6 +8,7 @@ import {
 } from '../components/aiops/ui'
 import { BarChart3, CheckCircle2, ClipboardList, Download } from 'lucide-react'
 import type { PlatformAiopsProps } from '../utils/platformApi'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 type LogListResponse = {
   anomalies: Array<{
@@ -45,16 +46,17 @@ function formatDayLabel(isoDate: string) {
 }
 
 function PipelineFlow({ status }: { status?: AiopsStatus }) {
+  const t = useT()
   const stages = [
-    { key: 'metric', label: 'Metrikler', icon: '', color: NEON.cyan, value: status?.monitored_servers ?? 0, unit: 'sunucu' },
-    { key: 'anomaly', label: 'Anomali', icon: '', color: NEON.blue, value: status?.active_metric_anomalies ?? 0, unit: 'aktif' },
-    { key: 'event', label: 'Event', icon: '', color: NEON.blue, value: status?.active_metric_critical ?? 0, unit: 'kritik' },
-    { key: 'incident', label: 'Incident', icon: '', color: NEON.orange, value: status?.auto_open_incidents ?? 0, unit: 'otomatik' },
-    { key: 'rca', label: 'AI RCA', icon: '', color: NEON.green, value: status?.incidents_with_rca ?? 0, unit: 'analiz' },
+    { key: 'metric', label: t('ana_stage_metrics'), icon: '', color: NEON.cyan, value: status?.monitored_servers ?? 0, unit: t('ana_unit_servers') },
+    { key: 'anomaly', label: t('ana_stage_anomaly'), icon: '', color: NEON.blue, value: status?.active_metric_anomalies ?? 0, unit: t('ana_unit_active') },
+    { key: 'event', label: 'Event', icon: '', color: NEON.blue, value: status?.active_metric_critical ?? 0, unit: t('ana_unit_crit') },
+    { key: 'incident', label: 'Incident', icon: '', color: NEON.orange, value: status?.auto_open_incidents ?? 0, unit: t('ana_unit_auto') },
+    { key: 'rca', label: 'AI RCA', icon: '', color: NEON.green, value: status?.incidents_with_rca ?? 0, unit: t('ana_unit_analysis') },
   ]
   return (
-    <Section title="Otonom Döngü" accent={NEON.cyan}
-      right={<span className="text-xs hidden sm:block" style={{ color: 'rgba(148,163,184,0.45)' }}>metrik → anomali → event → incident → AI RCA</span>}>
+    <Section title={t('ana_pipeline')} accent={NEON.cyan}
+      right={<span className="text-xs hidden sm:block" style={{ color: 'rgba(148,163,184,0.45)' }}>{t('ana_pipeline_flow')}</span>}>
       <div className="p-5 flex items-stretch justify-between gap-1 sm:gap-2">
         {stages.map((s, i) => (
           <React.Fragment key={s.key}>
@@ -116,6 +118,8 @@ interface CorrelationResponse {
 const SEV_COLOR: Record<string, string> = { critical: '#ef4444', warning: '#fb923c', info: '#22d3ee', emergency: '#dc2626' }
 
 export function CorrelationTab() {
+  const t = useT()
+  const { locale } = useLocale()
   const [search, setSearch] = useState('')
   const [markLoading, setMarkLoading] = useState<number | null>(null)
   const queryClient = useQueryClient()
@@ -149,10 +153,10 @@ export function CorrelationTab() {
       {data && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Toplam Metrik', value: data.total_metrics, accent: NEON.cyan },
-            { label: 'Kronik (3+ gün)', value: data.chronic_count, accent: NEON.orange },
-            { label: 'Bastırılıyor', value: data.suppressed_count, accent: NEON.green },
-            { label: 'Düşürüldü', value: data.downgraded_count, accent: NEON.blue },
+            { label: t('ana_kpi_metrics'), value: data.total_metrics, accent: NEON.cyan },
+            { label: t('ana_kpi_chronic'), value: data.chronic_count, accent: NEON.orange },
+            { label: t('ana_kpi_suppressed'), value: data.suppressed_count, accent: NEON.green },
+            { label: t('ana_kpi_downgraded'), value: data.downgraded_count, accent: NEON.blue },
           ].map(k => (
             <div key={k.label} className="cyber-card p-3 flex flex-col gap-1">
               <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'rgba(148,163,184,0.5)' }}>{k.label}</span>
@@ -163,12 +167,12 @@ export function CorrelationTab() {
       )}
 
       {/* Arama */}
-      <SearchInput value={search} onChange={setSearch} placeholder="Metrik adı ara..." width="w-64" />
+      <SearchInput value={search} onChange={setSearch} placeholder={t('ana_search_metric')} width="w-64" />
 
       {isLoading ? (
         <div className="py-16 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" /></div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon={<BarChart3 size={28} strokeWidth={1.5} />} text="Korelasyon verisi yok — AIOps döngüsünü çalıştırın." />
+        <EmptyState icon={<BarChart3 size={28} strokeWidth={1.5} />} text={t('ana_corr_empty')} />
       ) : (
         <div className="space-y-2">
           {filtered.map(m => {
@@ -206,7 +210,7 @@ export function CorrelationTab() {
                           <span style={{ color: 'rgba(148,163,184,0.3)' }}>→</span>
                           <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold uppercase"
                             style={{ background: `color-mix(in srgb, ${effColor} 12%, transparent)`, color: effColor, border: `1px solid color-mix(in srgb, ${effColor} 20%, transparent)` }}>
-                            {m.is_suppressed ? 'bastırıldı' : m.effective_severity}
+                            {m.is_suppressed ? t('ana_suppressed_badge') : m.effective_severity}
                           </span>
                         </>
                       )}
@@ -214,12 +218,12 @@ export function CorrelationTab() {
                       {/* Kronik rozeti */}
                       {m.is_very_chronic && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.1)', color: NEON.red, border: '1px solid rgba(239,68,68,0.2)' }}>
-                          {m.recurrence_days}g kronik
+                          {t('ana_chronic_n', { n: m.recurrence_days })}
                         </span>
                       )}
                       {m.is_chronic && !m.is_very_chronic && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.1)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)' }}>
-                          {m.recurrence_days}g tekrar
+                          {t('ana_repeat_n', { n: m.recurrence_days })}
                         </span>
                       )}
                     </div>
@@ -228,17 +232,17 @@ export function CorrelationTab() {
                     {m.suppression && (
                       <div className="text-[11px] flex items-center gap-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>
                         <ClipboardList size={12} strokeWidth={2} />
-                        <span>Kural #{m.suppression.id}:</span>
-                        <span style={{ color: NEON.green }}>{m.suppression.reason || 'Suppression aktif'}</span>
+                        <span>{t('ana_rule_n', { id: m.suppression.id })}</span>
+                        <span style={{ color: NEON.green }}>{m.suppression.reason || t('ana_suppression_active')}</span>
                         {m.suppression.scope === 'global' && <span className="px-1 rounded text-[10px]" style={{ background: 'rgba(6,182,212,0.1)', color: NEON.cyan }}>global</span>}
                       </div>
                     )}
 
                     {/* İstatistik */}
                     <div className="flex gap-3 text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>
-                      <span>{m.total_count} olay</span>
-                      {m.server_count > 1 && <span>· {m.server_count} sunucu</span>}
-                      {m.last_seen && <span>· Son: {new Date(m.last_seen).toLocaleString('tr-TR')}</span>}
+                      <span>{t('ana_n_events', { n: m.total_count })}</span>
+                      {m.server_count > 1 && <span>{t('ana_n_servers', { n: m.server_count })}</span>}
+                      {m.last_seen && <span>{t('ana_last', { d: new Date(m.last_seen).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') })}</span>}
                     </div>
                   </div>
 
@@ -248,7 +252,7 @@ export function CorrelationTab() {
                       <a href={`/events?highlight=${m.last_event_id}`}
                         className="text-xs px-2 py-1 rounded transition-colors"
                         style={{ color: NEON.cyan, border: '1px solid rgba(6,182,212,0.2)', background: 'rgba(6,182,212,0.05)' }}>
-                        Event →
+                        {t('ana_events_link')}
                       </a>
                     )}
                     {!m.suppression && m.is_chronic && m.last_event_id && (
@@ -257,7 +261,7 @@ export function CorrelationTab() {
                         disabled={markLoading === m.last_event_id}
                         className="text-xs px-2 py-1 rounded transition-colors"
                         style={{ color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)' }}>
-                        {markLoading === m.last_event_id ? '...' : 'Bu Normal'}
+                        {markLoading === m.last_event_id ? '...' : t('ana_mark_normal')}
                       </button>
                     )}
                   </div>
@@ -275,6 +279,7 @@ export function LogHeatmapPanel({
   platform = 'linux',
   onScanJobStarted,
 }: PlatformAiopsProps & { onScanJobStarted?: (jobId: string) => void }) {
+  const t = useT()
   const [serverSearch, setServerSearch] = useState('')
   const [backfillDays, setBackfillDays] = useState(7)
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
@@ -297,10 +302,10 @@ export function LogHeatmapPanel({
       return r.json()
     },
     onSuccess: () => {
-      setMsg({ ok: true, text: 'Geçmiş veri yüklendi.' })
+      setMsg({ ok: true, text: t('ana_backfill_ok') })
       queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d', platform] })
     },
-    onError: () => setMsg({ ok: false, text: 'Backfill sırasında hata oluştu.' }),
+    onError: () => setMsg({ ok: false, text: t('ana_backfill_err') }),
   })
 
   const scanNowMutation = useMutation({
@@ -310,21 +315,21 @@ export function LogHeatmapPanel({
         { method: 'POST' },
       )
       const data = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Tarama başarısız')
+      if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : t('ev_scan_failed'))
       return data as { job_id?: string; message?: string; total_saved?: number; total_servers?: number }
     },
     onSuccess: (data) => {
       if (data.job_id && onScanJobStarted) {
         onScanJobStarted(data.job_id)
-        setMsg({ ok: true, text: 'Tarama başlatıldı — ilerleme penceresini izleyin.' })
+        setMsg({ ok: true, text: t('ana_scan_started') })
         return
       }
       const saved = data.total_saved ?? 0
       setMsg({
         ok: true,
         text: saved > 0
-          ? `Şimdi Tara: ${saved} yeni event (${data.total_servers ?? 0} sunucu)`
-          : (data.message || `Şimdi Tara: yeni event yok`),
+          ? t('ana_scan_n', { n: saved, s: data.total_servers ?? 0 })
+          : (data.message || t('ana_scan_none')),
       })
       queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d', platform] })
       queryClient.invalidateQueries({ queryKey: ['events'] })
@@ -332,7 +337,7 @@ export function LogHeatmapPanel({
     },
     onError: (e) => setMsg({
       ok: false,
-      text: e instanceof Error ? e.message : 'Tarama sırasında hata oluştu.',
+      text: e instanceof Error ? e.message : t('ana_scan_err'),
     }),
   })
 
@@ -349,9 +354,9 @@ export function LogHeatmapPanel({
         <div className="px-4 py-2 rounded-xl text-sm" style={{ color: msg.ok ? NEON.green : NEON.red }}>{msg.text}</div>
       )}
       <div className="flex items-center gap-2 flex-wrap">
-        <SearchInput value={serverSearch} onChange={setServerSearch} placeholder={platform === 'virt' ? 'Host / cluster ara...' : 'Sunucu ara...'} width="w-52" />
+        <SearchInput value={serverSearch} onChange={setServerSearch} placeholder={platform === 'virt' ? t('ana_search_host') : t('win_search')} width="w-52" />
       </div>
-      <Section title={platform === 'virt' ? '30 Günlük vCenter Olay Isı Haritası' : '30 Günlük Log Anomali Isı Haritası'} accent={NEON.orange}
+      <Section title={platform === 'virt' ? t('ana_heatmap_vc') : t('ana_heatmap_log')} accent={NEON.orange}
         right={
           <div className="flex items-center gap-2">
             <GhostButton
@@ -359,43 +364,43 @@ export function LogHeatmapPanel({
               onClick={() => scanNowMutation.mutate()}
               disabled={scanNowMutation.isPending || backfillMutation.isPending}
             >
-              {scanNowMutation.isPending ? 'Taranıyor...' : platform === 'virt' ? 'vCenter Sync' : 'Şimdi Tara'}
+              {scanNowMutation.isPending ? t('ev_scanning') : platform === 'virt' ? t('ana_vcenter_sync') : t('ev_scan_now')}
             </GhostButton>
             {platform !== 'virt' && (
               <>
             <Select value={String(backfillDays)} onChange={v => setBackfillDays(Number(v))}>
-              {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
+              {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{t('ana_n_days', { n: d })}</option>)}
             </Select>
             <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending || scanNowMutation.isPending}>
-              {backfillMutation.isPending ? 'Yükleniyor...' : 'Geçmiş Veri'}
+              {backfillMutation.isPending ? t('loading') : t('ana_history')}
             </GhostButton>
               </>
             )}
           </div>
         }>
         <div className="px-5 py-2.5 flex flex-wrap items-center gap-3 text-xs" style={{ borderBottom: '1px solid rgba(99,130,194,0.08)' }}>
-          <span style={{ color: 'rgba(148,163,184,0.5)' }}>Skala:</span>
-          {[{ c: 'rgba(255,255,255,0.04)', l: 'Normal' }, { c: 'rgba(234,179,8,0.4)', l: 'Düşük' }, { c: 'rgba(245,200,11,0.6)', l: 'Orta' }, { c: 'rgba(245,158,11,0.8)', l: 'Yüksek' }, { c: 'rgba(239,68,68,0.85)', l: 'Kritik' }].map(s => (
+          <span style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_scale')}</span>
+          {[{ c: 'rgba(255,255,255,0.04)', l: t('ana_scale_normal') }, { c: 'rgba(234,179,8,0.4)', l: t('ana_scale_low') }, { c: 'rgba(245,200,11,0.6)', l: t('ana_scale_med') }, { c: 'rgba(245,158,11,0.8)', l: t('ana_scale_high') }, { c: 'rgba(239,68,68,0.85)', l: t('status_critical') }].map(s => (
             <span key={s.l} className="inline-flex items-center gap-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
               <span className="w-3 h-3 rounded" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
             </span>
           ))}
         </div>
         {heatmapLoading ? (
-          <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Harita yükleniyor...</div>
+          <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_map_loading')}</div>
         ) : heatmapError ? (
-          <div className="p-6 text-sm" style={{ color: NEON.red }}>Harita verisi alınamadı.</div>
+          <div className="p-6 text-sm" style={{ color: NEON.red }}>{t('ana_map_fail')}</div>
         ) : (
           <div className="overflow-x-auto max-h-[560px]">
             <table className="min-w-full text-xs">
               <thead className="sticky top-0 z-20" style={{ background: 'var(--bg-deep)' }}>
                 <tr>
-                  <th className="sticky left-0 z-30 text-left px-3 py-2 min-w-[200px]" style={{ background: 'var(--bg-deep)', color: 'rgba(148,163,184,0.7)' }}>Sunucu</th>
+                  <th className="sticky left-0 z-30 text-left px-3 py-2 min-w-[200px]" style={{ background: 'var(--bg-deep)', color: 'rgba(148,163,184,0.7)' }}>{t('col_server')}</th>
                   {(heatmapData?.dates || []).map(d => <th key={d} className="px-1 py-2 whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.5)' }}>{formatDayLabel(d)}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>Veri bulunamadı.</td></tr>}
+                {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_no_rows')}</td></tr>}
                 {filteredHeatmapRows.map(row => (
                   <tr key={row.server_id ?? row.server_name} style={{ borderTop: '1px solid rgba(30,41,59,0.6)' }}>
                     <td className="sticky left-0 z-10 px-3 py-2 whitespace-nowrap" style={{ background: 'var(--bg-card)' }}>
@@ -404,7 +409,7 @@ export function LogHeatmapPanel({
                     </td>
                     {row.cells.map(cell => (
                       <td key={`${row.server_id ?? row.server_name}-${cell.date}`} className="px-1 py-1">
-                        <div title={cell.score > 0 ? `${row.server_name} | ${cell.date} | skor: ${cell.score}` : `${row.server_name} | ${cell.date} | normal`}
+                        <div title={cell.score > 0 ? t('ana_cell_score', { name: row.server_name, date: cell.date, score: cell.score }) : t('ana_cell_normal', { name: row.server_name, date: cell.date })}
                           className="w-6 h-6 rounded-md mx-auto transition-transform hover:scale-125 flex items-center justify-center"
                           style={{ background: heatColor(cell.score, heatmapData?.max_cell_score || 0), border: '1px solid rgba(99,130,194,0.12)' }}>
                           {cell.score === 0 && <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.3)' }}>·</span>}
@@ -423,6 +428,8 @@ export function LogHeatmapPanel({
 }
 
 const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
+  const t = useT()
+  const { locale } = useLocale()
   const [tab, setTab] = useState('metric')
   const [serverSearch, setServerSearch] = useState('')
   const [backfillDays, setBackfillDays] = useState(7)
@@ -453,11 +460,11 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
   const cycleMutation = useMutation({
     mutationFn: async () => { const r = await fetch(`${API_BASE_URL}/anomalies/run-cycle`, { method: 'POST' }); if (!r.ok) throw new Error(); return r.json() },
     onSuccess: (res) => {
-      setMsg({ ok: true, text: `Döngü çalıştı: ${res.scanned_anomalies} anomali, ${res.created} yeni event, ${res.incidents} incident, ${res.resolved} çözüldü. AI RCA arka planda.` })
+      setMsg({ ok: true, text: t('ana_cycle_ok', { a: res.scanned_anomalies, c: res.created, i: res.incidents, r: res.resolved }) })
       queryClient.invalidateQueries({ queryKey: ['aiops-status'] })
       queryClient.invalidateQueries({ queryKey: ['metric-anomalies-live'] })
     },
-    onError: () => setMsg({ ok: false, text: 'Döngü çalıştırılamadı.' }),
+    onError: () => setMsg({ ok: false, text: t('ana_cycle_fail') }),
   })
   const escalateMutation = useMutation({
     mutationFn: async (a: MetricAnomaly) => {
@@ -471,17 +478,17 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
       })
       if (!r.ok) throw new Error(); return r.json()
     },
-    onSuccess: (res) => setMsg({ ok: true, text: `Incident #${res.id} oluşturuldu. Incidents sayfasından RCA çalıştırabilirsiniz.` }),
-    onError: () => setMsg({ ok: false, text: 'Incident oluşturulamadı.' }),
+    onSuccess: (res) => setMsg({ ok: true, text: t('ana_inc_created', { id: res.id }) }),
+    onError: () => setMsg({ ok: false, text: t('ana_inc_fail') }),
   })
   const backfillMutation = useMutation({
     mutationFn: async (days: number) => { const r = await fetch(`${API_BASE_URL}/anomalies/logs/backfill?days=${days}&platform=${platform}`, { method: 'POST' }); if (!r.ok) throw new Error(); return r.json() },
     onSuccess: (result) => {
-      setMsg({ ok: true, text: `${result.backfill_days} gün backfill: ${result.total_saved ?? 0} yeni log (${result.servers_with_logs ?? 0} sunucu)` })
+      setMsg({ ok: true, text: t('ana_backfill_n', { d: result.backfill_days, n: result.total_saved ?? 0, s: result.servers_with_logs ?? 0 }) })
       queryClient.invalidateQueries({ queryKey: ['anomaly-log-heatmap-30d'] })
       queryClient.invalidateQueries({ queryKey: ['anomaly-log-list-30d'] })
     },
-    onError: () => setMsg({ ok: false, text: 'Backfill sırasında hata oluştu.' }),
+    onError: () => setMsg({ ok: false, text: t('ana_backfill_err') }),
   })
 
   const metricAnomalies = metricData?.anomalies || []
@@ -503,13 +510,13 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <PageHeader title="Anomaly Detection" subtitle="Otonom tespit · otomatik incident · yapay zeka kök neden analizi"
+      <PageHeader title={t('ana_anomaly_title')} subtitle={t('ana_anomaly_sub')}
         actions={<>
           <PrimaryButton accent={NEON.cyan} onClick={() => cycleMutation.mutate()} disabled={cycleMutation.isPending}>
-            {cycleMutation.isPending ? 'Çalışıyor...' : 'Döngüyü Çalıştır'}
+            {cycleMutation.isPending ? t('ana_running') : t('ana_run_cycle')}
           </PrimaryButton>
-          <Link to="/events"><GhostButton accent={NEON.blue}>Events →</GhostButton></Link>
-          <Link to="/incidents"><GhostButton accent={NEON.orange}>Incidents →</GhostButton></Link>
+          <Link to="/events"><GhostButton accent={NEON.blue}>{t('ana_events_link')}</GhostButton></Link>
+          <Link to="/incidents"><GhostButton accent={NEON.orange}>{t('ana_incidents_link')}</GhostButton></Link>
         </>} />
 
       {msg && (
@@ -523,41 +530,41 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
       <PipelineFlow status={aiops} />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <Kpi label="İzlenen Sunucu" value={aiops?.monitored_servers ?? 0} accent={NEON.cyan} />
-        <Kpi label="Aktif Anomali" value={aiops?.active_metric_anomalies ?? 0} accent={NEON.blue} />
-        <Kpi label="Kritik" value={aiops?.active_metric_critical ?? 0} accent={NEON.red} />
-        <Kpi label="Açık Incident" value={aiops?.open_incidents ?? 0} accent={NEON.orange} />
-        <Kpi label="RCA Tamamlanan" value={aiops?.incidents_with_rca ?? 0} accent={NEON.green} />
+        <Kpi label={t('ana_kpi_watched')} value={aiops?.monitored_servers ?? 0} accent={NEON.cyan} />
+        <Kpi label={t('ana_kpi_anom')} value={aiops?.active_metric_anomalies ?? 0} accent={NEON.blue} />
+        <Kpi label={t('status_critical')} value={aiops?.active_metric_critical ?? 0} accent={NEON.red} />
+        <Kpi label={t('ana_kpi_open_inc')} value={aiops?.open_incidents ?? 0} accent={NEON.orange} />
+        <Kpi label={t('ana_kpi_rca_done')} value={aiops?.incidents_with_rca ?? 0} accent={NEON.green} />
       </div>
 
       {/* Tabs + search */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <Tabs active={tab} onChange={setTab} tabs={[
-          { id: 'metric', label: 'Metrik Anomalileri', count: filteredMetric.length },
-          { id: 'heatmap', label: 'Log Isı Haritası' },
-          { id: 'list', label: 'Log Listesi', count: data?.total },
-          { id: 'correlation', label: 'Korelasyon' },
+          { id: 'metric', label: t('ana_tab_metric'), count: filteredMetric.length },
+          { id: 'heatmap', label: t('ana_tab_heatmap') },
+          { id: 'list', label: t('ana_tab_list'), count: data?.total },
+          { id: 'correlation', label: t('ana_tab_corr') },
         ]} />
         <div className="flex items-center gap-2">
-          <SearchInput value={serverSearch} onChange={setServerSearch} placeholder="Sunucu ara..." width="w-52" />
-          <GhostButton onClick={() => refetch()}>{isFetching ? '...' : 'Yenile'}</GhostButton>
+          <SearchInput value={serverSearch} onChange={setServerSearch} placeholder={t('win_search')} width="w-52" />
+          <GhostButton onClick={() => refetch()}>{isFetching ? '...' : t('refresh_action')}</GhostButton>
         </div>
       </div>
 
       {/* TAB: Metric */}
       {tab === 'metric' && (
-        <Section title="Canlı Metrik Anomalileri" accent={NEON.blue}
-          right={<span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>Prometheus · Z-score + eşik</span>}>
+        <Section title={t('ana_live_metrics')} accent={NEON.blue}
+          right={<span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_prometheus')}</span>}>
           {metricLoading ? (
-            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Taranıyor...</div>
+            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ev_scanning')}</div>
           ) : filteredMetric.length === 0 ? (
-            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text="Şu an metrik anomalisi yok — tüm sistemler normal aralıkta" />
+            <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.5} />} text={t('ana_no_metric')} />
           ) : (
             <div className="overflow-x-auto overflow-y-visible">
               <table className="cyber-table min-w-full text-sm">
                 <thead><tr>
-                  <th className="text-left">Severity</th><th className="text-left">Sunucu</th><th className="text-left">Metrik</th>
-                  <th className="text-left">Değer</th><th className="text-left">Z-score</th><th className="text-right">İşlem</th>
+                  <th className="text-left">Severity</th><th className="text-left">{t('col_server')}</th><th className="text-left">Metrik</th>
+                  <th className="text-left">{t('ana_col_value')}</th><th className="text-left">Z-score</th><th className="text-right">{t('actions')}</th>
                 </tr></thead>
                 <tbody>
                   {filteredMetric.map((a, idx) => (
@@ -565,9 +572,9 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
                       <td><SeverityBadge severity={a.severity} /></td>
                       <td><div className="text-white font-medium">{a.server_name}</div><div className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{a.ip_address}</div></td>
                       <td className="font-mono text-xs" style={{ color: NEON.cyan }}>{a.metric_name}</td>
-                      <td className="text-white font-semibold">{a.current_value}{a.mean_value != null && <span className="text-xs ml-1" style={{ color: 'rgba(148,163,184,0.5)' }}>(norm: {a.mean_value})</span>}</td>
+                      <td className="text-white font-semibold">{a.current_value}{a.mean_value != null && <span className="text-xs ml-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_norm', { n: a.mean_value })}</span>}</td>
                       <td>{a.z_score != null ? <span className="font-mono text-xs" style={{ color: Math.abs(a.z_score) >= 3 ? NEON.red : NEON.orange }}>{a.z_score > 0 ? '+' : ''}{a.z_score}σ</span> : <span className="text-slate-600">—</span>}</td>
-                      <td><div className="flex justify-end"><GhostButton accent={NEON.orange} onClick={() => escalateMutation.mutate(a)} disabled={escalateMutation.isPending}>Incident'a Yükselt</GhostButton></div></td>
+                      <td><div className="flex justify-end"><GhostButton accent={NEON.orange} onClick={() => escalateMutation.mutate(a)} disabled={escalateMutation.isPending}>{t('ana_escalate')}</GhostButton></div></td>
                     </tr>
                   ))}
                 </tbody>
@@ -579,50 +586,50 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
 
       {/* TAB: Heatmap */}
       {tab === 'heatmap' && (
-        <Section title="30 Günlük Log Anomali Isı Haritası" accent={NEON.orange}
+        <Section title={t('ana_heatmap_log')} accent={NEON.orange}
           right={
             <div className="flex items-center gap-2">
               <Select value={String(backfillDays)} onChange={v => setBackfillDays(Number(v))}>
-                {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{d} gün</option>)}
+                {[1, 3, 7, 14, 30].map(d => <option key={d} value={d}>{t('ana_n_days', { n: d })}</option>)}
               </Select>
               <GhostButton accent={NEON.orange} onClick={() => backfillMutation.mutate(backfillDays)} disabled={backfillMutation.isPending}>
-                {backfillMutation.isPending ? 'Yükleniyor...' : <span className="inline-flex items-center gap-1"><Download size={12} strokeWidth={2} /> Geçmiş Veri</span>}
+                {backfillMutation.isPending ? t('loading') : <span className="inline-flex items-center gap-1"><Download size={12} strokeWidth={2} /> {t('ana_history')}</span>}
               </GhostButton>
             </div>
           }>
           <div className="px-5 py-2.5 flex flex-wrap items-center gap-3 text-xs" style={{ borderBottom: '1px solid rgba(99,130,194,0.08)' }}>
-            <span style={{ color: 'rgba(148,163,184,0.5)' }}>Skala:</span>
-            {[{ c: 'rgba(255,255,255,0.04)', l: 'Normal' }, { c: 'rgba(234,179,8,0.4)', l: 'Düşük' }, { c: 'rgba(245,200,11,0.6)', l: 'Orta' }, { c: 'rgba(245,158,11,0.8)', l: 'Yüksek' }, { c: 'rgba(239,68,68,0.85)', l: 'Kritik' }].map(s => (
+            <span style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_scale')}</span>
+            {[{ c: 'rgba(255,255,255,0.04)', l: t('ana_scale_normal') }, { c: 'rgba(234,179,8,0.4)', l: t('ana_scale_low') }, { c: 'rgba(245,200,11,0.6)', l: t('ana_scale_med') }, { c: 'rgba(245,158,11,0.8)', l: t('ana_scale_high') }, { c: 'rgba(239,68,68,0.85)', l: t('status_critical') }].map(s => (
               <span key={s.l} className="inline-flex items-center gap-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
                 <span className="w-3 h-3 rounded" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
               </span>
             ))}
           </div>
           {heatmapLoading ? (
-            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Harita yükleniyor...</div>
+            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_map_loading')}</div>
           ) : heatmapError ? (
-            <div className="p-6 text-sm" style={{ color: NEON.red }}>Harita verisi alınamadı.</div>
+            <div className="p-6 text-sm" style={{ color: NEON.red }}>{t('ana_map_fail')}</div>
           ) : (
             <div className="overflow-x-auto max-h-[560px]">
               <table className="min-w-full text-xs">
                 <thead className="sticky top-0 z-20" style={{ background: 'var(--bg-deep)' }}>
                   <tr>
-                    <th className="sticky left-0 z-30 text-left px-3 py-2 min-w-[200px]" style={{ background: 'var(--bg-deep)', color: 'rgba(148,163,184,0.7)' }}>Sunucu</th>
+                    <th className="sticky left-0 z-30 text-left px-3 py-2 min-w-[200px]" style={{ background: 'var(--bg-deep)', color: 'rgba(148,163,184,0.7)' }}>{t('col_server')}</th>
                     {(heatmapData?.dates || []).map(d => <th key={d} className="px-1 py-2 whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.5)' }}>{formatDayLabel(d)}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>Veri bulunamadı.</td></tr>}
+                  {filteredHeatmapRows.length === 0 && <tr><td colSpan={(heatmapData?.dates?.length || 0) + 1} className="px-4 py-6 text-center" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_no_rows')}</td></tr>}
                   {filteredHeatmapRows.map(row => (
                     <tr key={row.server_id} style={{ borderTop: '1px solid rgba(30,41,59,0.6)' }}>
                       <td className="sticky left-0 z-10 px-3 py-2 whitespace-nowrap" style={{ background: 'var(--bg-card)' }}>
                         <div className="font-medium text-white">{row.server_name}</div>
                         <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{row.ip_address || '-'}</div>
-                        <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>Skor: {row.total_score} · Kayıt: {row.total_count}</div>
+                        <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_score_count', { s: row.total_score, c: row.total_count })}</div>
                       </td>
                       {row.cells.map(cell => (
                         <td key={`${row.server_id}-${cell.date}`} className="px-1 py-1">
-                          <div title={cell.score > 0 ? `${row.server_name} | ${cell.date} | kayıt: ${cell.count}, skor: ${cell.score}` : `${row.server_name} | ${cell.date} | normal`}
+                          <div title={cell.score > 0 ? t('ana_cell_count', { name: row.server_name, date: cell.date, c: cell.count, score: cell.score }) : t('ana_cell_normal', { name: row.server_name, date: cell.date })}
                             className="w-6 h-6 rounded-md mx-auto transition-transform hover:scale-125 flex items-center justify-center"
                             style={{ background: heatColor(cell.score, heatmapData?.max_cell_score || 0), border: '1px solid rgba(99,130,194,0.12)' }}>
                             {cell.score === 0 && <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.3)' }}>·</span>}
@@ -640,25 +647,25 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
 
       {/* TAB: List */}
       {tab === 'list' && (
-        <Section title="Log Anomali Listesi" accent={NEON.blue}
-          right={<span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{data?.generated_at ? new Date(data.generated_at).toLocaleString('tr-TR') : '-'}</span>}>
+        <Section title={t('ana_log_list')} accent={NEON.blue}
+          right={<span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{data?.generated_at ? new Date(data.generated_at).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') : '-'}</span>}>
           {isLoading ? (
-            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>Yükleniyor...</div>
+            <div className="p-6 text-sm" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('loading')}</div>
           ) : error ? (
-            <div className="p-6 text-sm" style={{ color: NEON.red }}>Veri alınamadı.</div>
+            <div className="p-6 text-sm" style={{ color: NEON.red }}>{t('ana_data_fail')}</div>
           ) : filteredAnomalies.length === 0 ? (
-            <EmptyState icon="" text="Filtreye uyan anomali yok" />
+            <EmptyState icon="" text={t('ana_filter_empty')} />
           ) : (
             <div className="overflow-x-auto max-h-[560px]">
               <table className="cyber-table min-w-full text-sm">
-                <thead><tr><th className="text-left">Tarih</th><th className="text-left">Severity</th><th className="text-left">Sunucu</th><th className="text-left">Detay</th></tr></thead>
+                <thead><tr><th className="text-left">Tarih</th><th className="text-left">Severity</th><th className="text-left">{t('col_server')}</th><th className="text-left">Detay</th></tr></thead>
                 <tbody>
                   {filteredAnomalies.map((a, idx) => (
                     <tr key={`${a.id}-${idx}`}>
-                      <td style={{ color: 'rgba(148,163,184,0.7)' }}>{a.created_at ? new Date(a.created_at).toLocaleString('tr-TR') : '-'}</td>
+                      <td style={{ color: 'rgba(148,163,184,0.7)' }}>{a.created_at ? new Date(a.created_at).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') : '-'}</td>
                       <td><SeverityBadge severity={a.severity} /></td>
                       <td className="text-white">{a.server_name || '-'}</td>
-                      <td style={{ color: 'rgba(226,232,240,0.8)' }}>{a.title || a.message || 'Detay yok'}</td>
+                      <td style={{ color: 'rgba(226,232,240,0.8)' }}>{a.title || a.message || t('ana_no_detail')}</td>
                     </tr>
                   ))}
                 </tbody>

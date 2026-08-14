@@ -10,6 +10,8 @@ import {
 } from '../components/aiops/ui'
 import { exportRcaSectionsToPrintWindow } from '../utils/pdfExport'
 import { CheckCircle2, FileText } from 'lucide-react'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ── Tipler ────────────────────────────────────────────────────────────────────
 
@@ -92,9 +94,9 @@ interface AWRAnalyzeResult {
 // ── Sabit renkler ─────────────────────────────────────────────────────────────
 
 const CONFIDENCE_COLORS = {
-  high: { bg: 'rgba(34,197,94,0.10)', border: 'rgba(34,197,94,0.25)', text: NEON.green, label: 'Yüksek Güven' },
-  medium: { bg: 'rgba(251,191,36,0.08)', border: 'rgba(251,191,36,0.25)', text: NEON.orange, label: 'Orta Güven' },
-  low: { bg: 'rgba(148,163,184,0.06)', border: 'rgba(148,163,184,0.15)', text: 'rgba(148,163,184,0.7)', label: 'Düşük Güven' },
+  high: { bg: 'rgba(34,197,94,0.10)', border: 'rgba(34,197,94,0.25)', text: NEON.green, labelKey: 'ev_conf_high' as TranslationKey },
+  medium: { bg: 'rgba(251,191,36,0.08)', border: 'rgba(251,191,36,0.25)', text: NEON.orange, labelKey: 'ev_conf_med' as TranslationKey },
+  low: { bg: 'rgba(148,163,184,0.06)', border: 'rgba(148,163,184,0.15)', text: 'rgba(148,163,184,0.7)', labelKey: 'ev_conf_low' as TranslationKey },
 } as const
 
 const MUTATING_KW = ['systemctl', 'service', 'restart', 'reboot', 'rm ', 'kill', 'pkill']
@@ -102,11 +104,12 @@ const MUTATING_KW = ['systemctl', 'service', 'restart', 'reboot', 'rm ', 'kill',
 // ── Ortak bileşenler ─────────────────────────────────────────────────────────
 
 function ConfidenceBadge({ confidence }: { confidence?: string }) {
+  const t = useT()
   const c = CONFIDENCE_COLORS[(confidence as keyof typeof CONFIDENCE_COLORS) ?? 'low'] ?? CONFIDENCE_COLORS.low
   return (
     <span className="px-2 py-0.5 rounded-full text-xs font-medium"
       style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
-      {c.label}
+      {t(c.labelKey)}
     </span>
   )
 }
@@ -142,51 +145,54 @@ function DeltaBadge({ value, pct, invert = false }: { value: number; pct?: numbe
 // ── Log Analiz Kartı ──────────────────────────────────────────────────────────
 
 function AnalysisCard({ result }: { result: LogAnalysisResult }) {
+  const t = useT()
+  const { locale } = useLocale()
+  const loc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const hasApproval = result.requires_approval || result.recommendations.some(r => MUTATING_KW.some(k => r.toLowerCase().includes(k)))
 
   return (
     <div className="space-y-3 mt-3">
       <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'rgba(148,163,184,0.55)' }}>
         <ConfidenceBadge confidence={result.confidence} />
-        <span>{result.log_lines_used} log satırı</span>
+        <span>{t('ana_log_n', { n: result.log_lines_used })}</span>
         <span>·</span><span>{result.model}</span>
-        <span>·</span><span>{new Date(result.analyzed_at).toLocaleTimeString('tr-TR')}</span>
+        <span>·</span><span>{new Date(result.analyzed_at).toLocaleTimeString(loc)}</span>
         <GhostButton
           accent={NEON.cyan}
           onClick={() => exportRcaSectionsToPrintWindow(
             [
-              { heading: 'Kök Neden', body: result.root_cause },
-              { heading: 'Etki Analizi', body: result.impact },
-              { heading: 'Önerilen Aksiyonlar', items: result.recommendations },
+              { heading: t('ops_root_cause'), body: result.root_cause },
+              { heading: t('ana_impact_analysis'), body: result.impact },
+              { heading: t('ops_recommended'), items: result.recommendations },
             ],
             {
-              title: 'Log RCA Analizi',
-              subtitle: `${result.model} · ${result.log_lines_used} log · ${new Date(result.analyzed_at).toLocaleString('tr-TR')}`,
+              title: t('ana_log_rca_pdf'),
+              subtitle: `${result.model} · ${result.log_lines_used} log · ${new Date(result.analyzed_at).toLocaleString(loc)}`,
               filename: `rca_log_${new Date().toISOString().slice(0, 10)}`,
             },
           )}
         >
-          PDF İndir
+          {t('ops_pdf_download')}
         </GhostButton>
       </div>
       <div className="p-3 rounded-[8px]" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.14)' }}>
-        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: NEON.cyan }}>Kök Neden</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: NEON.cyan }}>{t('ops_root_cause')}</div>
         <p className="text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.9)' }}>{result.root_cause}</p>
       </div>
       {result.impact && (
         <div className="p-3 rounded-[8px]" style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.12)' }}>
-          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: NEON.orange }}>Etki Analizi</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: NEON.orange }}>{t('ana_impact_analysis')}</div>
           <p className="text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.85)' }}>{result.impact}</p>
         </div>
       )}
       {result.recommendations.length > 0 && (
         <div className="p-3 rounded-[8px]" style={{ background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.12)' }}>
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: NEON.green }}>
-            Önerilen Aksiyonlar
+            {t('ops_recommended')}
             {hasApproval && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-medium normal-case"
                 style={{ background: 'rgba(251,191,36,0.12)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.25)' }}>
-                Onay Gerekli
+                {t('ev_approval_needed')}
               </span>
             )}
           </div>
@@ -209,6 +215,7 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
 // ── Compare Windows paneli ────────────────────────────────────────────────────
 
 function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }) {
+  const t = useT()
   const now = new Date()
   const fmt = (d: Date) => d.toISOString().slice(0, 16)
   const h = (n: number) => { const d = new Date(now); d.setHours(d.getHours() - n); return fmt(d) }
@@ -265,7 +272,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
       }
       setResult(await res.json())
     } catch (e: any) {
-      setError(e.message ?? 'Bağlantı hatası')
+      setError(e.message ?? t('conn_error'))
     } finally { setLoading(false) }
   }
 
@@ -290,11 +297,11 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
         <div className="cyber-card p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ background: NEON.cyan }} />
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>Sunucu A</span>
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_server_a')}</span>
           </div>
           <input value={labelA} onChange={e => setLabelA(e.target.value)}
             className={inputCls} style={inputStyle}
-            placeholder="Etiket (ör: Sorun öncesi)" />
+            placeholder={t('ana_label_before')} />
 
           {/* Arama kutusu + select */}
           <div className="space-y-1">
@@ -303,14 +310,14 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
               onChange={e => setSearchA(e.target.value)}
               className={inputCls + " text-xs"}
               style={{ ...inputStyle, fontSize: 12 }}
-              placeholder="Sunucu ara..." />
+              placeholder={t('win_search')} />
             <select
               value={serverIdA}
               onChange={e => { setServerIdA(e.target.value); setSearchA('') }}
               className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
               style={{ ...inputStyle, colorScheme: 'dark' }}
             >
-              <option value="">— Sunucu seç —</option>
+              <option value="">{t('ana_pick_server')}</option>
               {filteredServersA.map(s => (
                 <option key={s.id} value={String(s.id)}>{s.name}</option>
               ))}
@@ -324,13 +331,13 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
+              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_start')}</div>
               <input type="datetime-local" value={sinceA} onChange={e => setSinceA(e.target.value)}
                 className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
             <div>
-              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Bitiş</div>
+              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_end')}</div>
               <input type="datetime-local" value={untilA} onChange={e => setUntilA(e.target.value)}
                 className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
@@ -342,11 +349,11 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
         <div className="cyber-card p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ background: NEON.orange }} />
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.orange }}>Sunucu B</span>
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: NEON.orange }}>{t('ana_server_b')}</span>
           </div>
           <input value={labelB} onChange={e => setLabelB(e.target.value)}
             className={inputCls} style={inputStyle}
-            placeholder="Etiket (ör: Sorun sonrası)" />
+            placeholder={t('ana_label_after')} />
 
           {/* Arama kutusu + select */}
           <div className="space-y-1">
@@ -355,14 +362,14 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
               onChange={e => setSearchB(e.target.value)}
               className={inputCls + " text-xs"}
               style={{ ...inputStyle, fontSize: 12 }}
-              placeholder="Sunucu ara..." />
+              placeholder={t('win_search')} />
             <select
               value={serverIdB}
               onChange={e => { setServerIdB(e.target.value); setSearchB('') }}
               className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
               style={{ ...inputStyle, colorScheme: 'dark' }}
             >
-              <option value="">— Sunucu seç —</option>
+              <option value="">{t('ana_pick_server')}</option>
               {filteredServersB.map(s => (
                 <option key={s.id} value={String(s.id)}>{s.name}</option>
               ))}
@@ -376,13 +383,13 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Başlangıç</div>
+              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_start')}</div>
               <input type="datetime-local" value={sinceB} onChange={e => setSinceB(e.target.value)}
                 className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
             <div>
-              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Bitiş</div>
+              <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_end')}</div>
               <input type="datetime-local" value={untilB} onChange={e => setUntilB(e.target.value)}
                 className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
@@ -394,12 +401,12 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
       {/* Opsiyonel bağlam */}
       <div className="cyber-card p-4">
         <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'rgba(148,163,184,0.55)' }}>
-          Ek Bağlam (opsiyonel — AWR özeti veya incident notu)
+          {t('ana_extra_ctx')}
         </div>
         <textarea value={context} onChange={e => setContext(e.target.value)} rows={3}
           className="w-full text-sm px-3 py-2 rounded-[6px] outline-none resize-none"
           style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(226,232,240,0.8)' }}
-          placeholder="Örn: CPU yükselmesi 14:30'da başladı. Deployment 14:25'te yapıldı..." />
+          placeholder={t('ana_ctx_ph')} />
       </div>
 
       <div className="flex justify-end">
@@ -407,9 +414,9 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
           {loading
             ? <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 border border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent` }} />
-                Karşılaştırılıyor...
+                {t('ana_comparing')}
               </span>
-            : 'Karşılaştır ve Analiz Et'}
+            : t('ana_compare_run')}
         </PrimaryButton>
       </div>
 
@@ -425,18 +432,20 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
 }
 
 function CompareResultCard({ result }: { result: CompareResult }) {
+  const t = useT()
+  const { locale } = useLocale()
   const { window_a, window_b, delta, llm_analysis } = result
   return (
     <div className="space-y-4">
       {/* Delta özet */}
       <div className="cyber-card p-4">
-        <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: NEON.cyan }}>Delta Özeti</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: NEON.cyan }}>{t('ana_delta_summary')}</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Event Değişimi', value: delta.total_events_change, pct: delta.total_events_pct, invert: false },
-            { label: 'Hata Değişimi', value: delta.error_events_change, pct: delta.error_events_pct, invert: false },
-            { label: 'Pencere A Toplam', value: window_a.total_events, pct: null, invert: false },
-            { label: 'Pencere B Toplam', value: window_b.total_events, pct: null, invert: false },
+            { label: t('ana_delta_events'), value: delta.total_events_change, pct: delta.total_events_pct, invert: false },
+            { label: t('ana_delta_errors'), value: delta.error_events_change, pct: delta.error_events_pct, invert: false },
+            { label: t('ana_win_a_total'), value: window_a.total_events, pct: null, invert: false },
+            { label: t('ana_win_b_total'), value: window_b.total_events, pct: null, invert: false },
           ].map(item => (
             <div key={item.label}>
               <div className="text-[10px] mb-0.5" style={{ color: 'rgba(148,163,184,0.5)' }}>{item.label}</div>
@@ -447,10 +456,10 @@ function CompareResultCard({ result }: { result: CompareResult }) {
         {(delta.new_event_types.length > 0 || delta.disappeared_event_types.length > 0) && (
           <div className="mt-3 pt-3 border-t flex flex-wrap gap-4 text-xs" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             {delta.new_event_types.length > 0 && (
-              <span>Yeni tipler: <span style={{ color: NEON.red }}>{delta.new_event_types.join(', ')}</span></span>
+              <span>{t('ana_new_types')} <span style={{ color: NEON.red }}>{delta.new_event_types.join(', ')}</span></span>
             )}
             {delta.disappeared_event_types.length > 0 && (
-              <span>Kaybolan tipler: <span style={{ color: NEON.green }}>{delta.disappeared_event_types.join(', ')}</span></span>
+              <span>{t('ana_gone_types')} <span style={{ color: NEON.green }}>{delta.disappeared_event_types.join(', ')}</span></span>
             )}
           </div>
         )}
@@ -459,7 +468,7 @@ function CompareResultCard({ result }: { result: CompareResult }) {
       {/* LLM analizi */}
       <div className="cyber-card p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>AI Karşılaştırma Analizi</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_ai_compare')}</div>
           <div className="flex items-center gap-2">
             <ConfidenceBadge confidence={llm_analysis.confidence} />
             <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{result.model}</span>
@@ -467,15 +476,15 @@ function CompareResultCard({ result }: { result: CompareResult }) {
               accent={NEON.cyan}
               onClick={() => exportRcaSectionsToPrintWindow(
                 [
-                  { heading: 'Özet', body: llm_analysis.summary },
-                  { heading: 'Temel Farklar', items: llm_analysis.key_differences },
-                  { heading: 'Regresyon Göstergeleri', items: llm_analysis.regression_indicators },
-                  { heading: 'Öneriler', items: llm_analysis.recommendations },
+                  { heading: t('ana_summary'), body: llm_analysis.summary },
+                  { heading: t('ana_key_diffs'), items: llm_analysis.key_differences },
+                  { heading: t('ana_regressions'), items: llm_analysis.regression_indicators },
+                  { heading: t('ana_recs'), items: llm_analysis.recommendations },
                   {
-                    heading: 'Delta Özeti',
+                    heading: t('ana_delta_summary'),
                     body: [
-                      `Event değişimi: ${delta.total_events_change} (${delta.total_events_pct ?? '—'}%)`,
-                      `Hata değişimi: ${delta.error_events_change} (${delta.error_events_pct ?? '—'}%)`,
+                      `${t('ana_delta_events')}: ${delta.total_events_change} (${delta.total_events_pct ?? '—'}%)`,
+                      `${t('ana_delta_errors')}: ${delta.error_events_change} (${delta.error_events_pct ?? '—'}%)`,
                       `Pencere A: ${window_a.total_events} event`,
                       `Pencere B: ${window_b.total_events} event`,
                       delta.new_event_types?.length ? `Yeni tipler: ${delta.new_event_types.join(', ')}` : '',
@@ -484,38 +493,38 @@ function CompareResultCard({ result }: { result: CompareResult }) {
                   },
                 ],
                 {
-                  title: 'Zaman Penceresi Karşılaştırma RCA',
+                  title: t('ana_compare_pdf'),
                   subtitle: result.model || undefined,
                   filename: `rca_compare_${new Date().toISOString().slice(0, 10)}`,
                 },
               )}
             >
-              PDF İndir
+              {t('ops_pdf_download')}
             </GhostButton>
           </div>
         </div>
         {llm_analysis.summary && (
           <p className="text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.88)' }}>{llm_analysis.summary}</p>
         )}
-        <LLMSection title="Temel Farklar" items={llm_analysis.key_differences} accent={NEON.cyan} />
-        <LLMSection title="Regresyon Göstergeleri" items={llm_analysis.regression_indicators} accent={NEON.red} />
-        <LLMSection title="Öneriler" items={llm_analysis.recommendations} accent={NEON.green} />
+        <LLMSection title={t('ana_key_diffs')} items={llm_analysis.key_differences} accent={NEON.cyan} />
+        <LLMSection title={t('ana_regressions')} items={llm_analysis.regression_indicators} accent={NEON.red} />
+        <LLMSection title={t('ana_recs')} items={llm_analysis.recommendations} accent={NEON.green} />
       </div>
 
       {/* Pencere detayları */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {[
-          { w: window_a, accent: NEON.cyan, label: 'Pencere A' },
-          { w: window_b, accent: NEON.orange, label: 'Pencere B' },
+          { w: window_a, accent: NEON.cyan, label: t('ana_window_a') },
+          { w: window_b, accent: NEON.orange, label: t('ana_window_b') },
         ].map(({ w, accent, label }) => (
           <div key={label} className="cyber-card p-4">
             <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: accent }}>{label}</div>
             <div className="space-y-1.5 text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>
-              <div><span className="opacity-60">Aralık:</span> {w.since.slice(0, 16)} → {w.until.slice(0, 16)}</div>
-              <div><span className="opacity-60">Toplam:</span> <span style={{ color: accent }}>{w.total_events}</span> event</div>
-              <div><span className="opacity-60">Hata oranı:</span> <span style={{ color: w.error_rate > 0.2 ? NEON.red : 'inherit' }}>{(w.error_rate * 100).toFixed(1)}%</span></div>
-              {w.top_titles.slice(0, 3).map(t => (
-                <div key={t.title} className="truncate">▸ {t.title} <span className="opacity-50">({t.count}x)</span></div>
+              <div><span className="opacity-60">{t('ana_range')}</span> {w.since.slice(0, 16)} → {w.until.slice(0, 16)}</div>
+              <div><span className="opacity-60">{t('total')}:</span> <span style={{ color: accent }}>{w.total_events}</span></div>
+              <div><span className="opacity-60">{t('ana_error_rate')}</span> <span style={{ color: w.error_rate > 0.2 ? NEON.red : 'inherit' }}>{(w.error_rate * 100).toFixed(1)}%</span></div>
+              {w.top_titles.slice(0, 3).map(row => (
+                <div key={row.title} className="truncate">▸ {row.title} <span className="opacity-50">({row.count}x)</span></div>
               ))}
             </div>
           </div>
@@ -528,6 +537,7 @@ function CompareResultCard({ result }: { result: CompareResult }) {
 // ── AWR Analiz paneli ─────────────────────────────────────────────────────────
 
 function AWRPanel() {
+  const t = useT()
   const fileRef = useRef<HTMLInputElement>(null)
   const baselineRef = useRef<HTMLInputElement>(null)
   const [content, setContent] = useState('')
@@ -546,7 +556,7 @@ function AWRPanel() {
   }
 
   const run = async () => {
-    if (!content) { setError('AWR dosyası seçin veya yapıştırın'); return }
+    if (!content) { setError(t('ana_awr_need')); return }
     setLoading(true); setError(''); setResult(null)
     try {
       const res = await fetch(`${API_BASE_URL}/rca/awr-analyze`, {
@@ -564,7 +574,7 @@ function AWRPanel() {
       }
       setResult(await res.json())
     } catch (e: any) {
-      setError(e.message ?? 'Bağlantı hatası')
+      setError(e.message ?? t('conn_error'))
     } finally { setLoading(false) }
   }
 
@@ -573,35 +583,35 @@ function AWRPanel() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Ana AWR */}
         <div className="cyber-card p-4 space-y-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>AWR Raporu</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_awr_report')}</div>
           <button onClick={() => fileRef.current?.click()}
             className="w-full py-8 rounded-[8px] border-2 border-dashed flex flex-col items-center gap-2 transition-colors cursor-pointer hover:border-cyan-500/40"
             style={{ borderColor: content ? 'rgba(6,182,212,0.3)' : 'rgba(255,255,255,0.08)', background: content ? 'rgba(6,182,212,0.04)' : 'transparent' }}>
             {content
-              ? <><CheckCircle2 size={18} strokeWidth={2} className="text-current" /><span className="text-xs" style={{ color: NEON.cyan }}>{filename}</span><span className="text-[10px] opacity-40">{content.length.toLocaleString()} karakter yüklendi</span></>
-              : <><FileText size={22} strokeWidth={1.5} className="opacity-30" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>HTML veya Text AWR yükle</span></>
+              ? <><CheckCircle2 size={18} strokeWidth={2} className="text-current" /><span className="text-xs" style={{ color: NEON.cyan }}>{filename}</span><span className="text-[10px] opacity-40">{t('ana_chars_loaded', { n: content.length.toLocaleString() })}</span></>
+              : <><FileText size={22} strokeWidth={1.5} className="opacity-30" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_awr_upload')}</span></>
             }
           </button>
           <input ref={fileRef} type="file" accept=".html,.htm,.txt,.log" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f, setContent, setFilename) }} />
-          <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>— veya içeriği yapıştır —</div>
+          <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{t('ana_or_paste')}</div>
           <textarea value={content} onChange={e => { setContent(e.target.value); setFilename(prev => prev || 'paste.txt') }} rows={4}
             className="w-full text-xs px-3 py-2 rounded-[6px] outline-none resize-none font-mono"
             style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(226,232,240,0.7)' }}
-            placeholder="AWR içeriğini buraya yapıştır..." />
+            placeholder={t('ana_awr_paste')} />
         </div>
 
         {/* Baseline AWR (opsiyonel) */}
         <div className="cyber-card p-4 space-y-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'rgba(148,163,184,0.5)' }}>
-            Baseline AWR <span className="font-normal normal-case opacity-60">(opsiyonel karşılaştırma)</span>
+            {t('ana_awr_baseline')} <span className="font-normal normal-case opacity-60">{t('ana_awr_optional')}</span>
           </div>
           <button onClick={() => baselineRef.current?.click()}
             className="w-full py-8 rounded-[8px] border-2 border-dashed flex flex-col items-center gap-2 transition-colors cursor-pointer"
             style={{ borderColor: baselineContent ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.06)', background: baselineContent ? 'rgba(251,191,36,0.03)' : 'transparent' }}>
             {baselineContent
               ? <><CheckCircle2 size={18} strokeWidth={2} className="text-current" /><span className="text-xs" style={{ color: NEON.orange }}>{baselineFilename}</span></>
-              : <><FileText size={22} strokeWidth={1.5} className="opacity-20" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.35)' }}>Baseline AWR (sağlıklı dönem)</span></>
+              : <><FileText size={22} strokeWidth={1.5} className="opacity-20" /><span className="text-xs" style={{ color: 'rgba(148,163,184,0.35)' }}>{t('ana_awr_healthy')}</span></>
             }
           </button>
           <input ref={baselineRef} type="file" accept=".html,.htm,.txt,.log" className="hidden"
@@ -614,9 +624,9 @@ function AWRPanel() {
           {loading
             ? <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 border border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent` }} />
-                AWR parse + AI analiz...
+                {t('ana_awr_parsing')}
               </span>
-            : 'Parse Et ve Analiz Yap'}
+            : t('ana_awr_parse')}
         </PrimaryButton>
       </div>
 
@@ -632,22 +642,23 @@ function AWRPanel() {
 }
 
 function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
+  const t = useT()
   const r = result.report
   const llm = result.llm_analysis
   return (
     <div className="space-y-4">
       {/* DB bilgisi */}
       <div className="cyber-card p-4">
-        <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: NEON.cyan }}>Rapor Bilgisi</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: NEON.cyan }}>{t('ana_report_info')}</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>
           {[
             { label: 'DB', value: `${r.db_name} (${r.db_id})` },
             { label: 'Instance', value: r.instance_name || '—' },
             { label: 'Host', value: r.host_name || '—' },
-            { label: 'Versiyon', value: r.db_version || '—' },
-            { label: 'Başlangıç', value: r.snap_begin || '—' },
-            { label: 'Bitiş', value: r.snap_end || '—' },
-            { label: 'Süre', value: `${r.elapsed_minutes.toFixed(1)} dk` },
+            { label: t('ana_version'), value: r.db_version || '—' },
+            { label: t('ana_start'), value: r.snap_begin || '—' },
+            { label: t('ana_end'), value: r.snap_end || '—' },
+            { label: t('ana_duration'), value: t('ana_duration_n', { n: r.elapsed_minutes.toFixed(1) }) },
             { label: 'DB Time', value: `${r.db_time_minutes.toFixed(1)} dk` },
           ].map(item => (
             <div key={item.label}>
@@ -696,7 +707,7 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
       {(llm.summary || llm.bottlenecks?.length || llm.recommendations?.length) && (
         <div className="cyber-card p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>AI Performans Analizi</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_ai_perf')}</div>
             <div className="flex items-center gap-2">
               {llm.severity && (
                 <span className="text-xs px-2 py-0.5 rounded-full"
@@ -715,22 +726,22 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
                 onClick={() => {
                   const sections: Array<{ heading?: string; body?: string; items?: string[] }> = [
                     {
-                      heading: 'Rapor Bilgisi',
+                      heading: t('ana_report_info'),
                       body: [
                         `DB: ${r.db_name} (${r.db_id})`,
                         `Instance: ${r.instance_name || '—'}`,
                         `Host: ${r.host_name || '—'}`,
-                        `Süre: ${r.elapsed_minutes.toFixed(1)} dk · DB Time: ${r.db_time_minutes.toFixed(1)} dk`,
+                        `${t('ana_duration')}: ${r.elapsed_minutes.toFixed(1)} · DB Time: ${r.db_time_minutes.toFixed(1)}`,
                         `Buffer Hit: ${r.buffer_cache_hit_pct.toFixed(1)}% · Library Hit: ${r.library_cache_hit_pct.toFixed(1)}%`,
                       ].join('\n'),
                     },
                   ]
-                  if (llm.summary) sections.push({ heading: 'Özet', body: llm.summary })
-                  if (llm.bottlenecks?.length) sections.push({ heading: 'Darboğazlar', items: llm.bottlenecks })
-                  if (llm.top_sql_findings?.length) sections.push({ heading: 'Problematik SQL', items: llm.top_sql_findings })
-                  if (llm.wait_event_analysis?.length) sections.push({ heading: 'Wait Event Analizi', items: llm.wait_event_analysis })
-                  if (llm.recommendations?.length) sections.push({ heading: 'Öneriler', items: llm.recommendations })
-                  if (llm.baseline_comparison) sections.push({ heading: 'Baseline Karşılaştırması', body: llm.baseline_comparison })
+                  if (llm.summary) sections.push({ heading: t('ana_summary'), body: llm.summary })
+                  if (llm.bottlenecks?.length) sections.push({ heading: t('ana_bottlenecks'), items: llm.bottlenecks })
+                  if (llm.top_sql_findings?.length) sections.push({ heading: t('ana_bad_sql'), items: llm.top_sql_findings })
+                  if (llm.wait_event_analysis?.length) sections.push({ heading: t('ana_wait_events'), items: llm.wait_event_analysis })
+                  if (llm.recommendations?.length) sections.push({ heading: t('ana_recs'), items: llm.recommendations })
+                  if (llm.baseline_comparison) sections.push({ heading: t('ana_baseline_cmp'), body: llm.baseline_comparison })
                   if (r.top_wait_events?.length) {
                     sections.push({
                       heading: 'Top Wait Events',
@@ -746,18 +757,18 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
                   })
                 }}
               >
-                PDF İndir
+                {t('ops_pdf_download')}
               </GhostButton>
             </div>
           </div>
           {llm.summary && <p className="text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.88)' }}>{llm.summary}</p>}
-          <LLMSection title="Darboğazlar" items={llm.bottlenecks} accent={NEON.red} />
-          <LLMSection title="Problematik SQL" items={llm.top_sql_findings} accent={NEON.orange} />
-          <LLMSection title="Wait Event Analizi" items={llm.wait_event_analysis} accent={NEON.cyan} />
-          <LLMSection title="Öneriler" items={llm.recommendations} accent={NEON.green} />
+          <LLMSection title={t('ana_bottlenecks')} items={llm.bottlenecks} accent={NEON.red} />
+          <LLMSection title={t('ana_bad_sql')} items={llm.top_sql_findings} accent={NEON.orange} />
+          <LLMSection title={t('ana_wait_events')} items={llm.wait_event_analysis} accent={NEON.cyan} />
+          <LLMSection title={t('ana_recs')} items={llm.recommendations} accent={NEON.green} />
           {llm.baseline_comparison && (
             <div className="p-3 rounded-[8px] text-sm" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(226,232,240,0.7)' }}>
-              <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>Baseline Karşılaştırması</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_baseline_cmp')}</div>
               {llm.baseline_comparison}
             </div>
           )}
@@ -766,7 +777,7 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
 
       {r.parse_errors.length > 0 && (
         <div className="p-3 rounded-[8px] text-xs space-y-1" style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', color: NEON.orange }}>
-          <div className="font-semibold">Parse uyarıları:</div>
+          <div className="font-semibold">{t('ana_parse_warn')}</div>
           {r.parse_errors.map((e, i) => <div key={i}>! {e}</div>)}
         </div>
       )}
@@ -779,6 +790,7 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
 type Tab = 'log' | 'compare' | 'awr'
 
 const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platform = 'linux', hideHeader = false }) => {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<Tab>('log')
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
@@ -827,14 +839,14 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
     try {
       const res = await fetch(`${API_BASE_URL}/events/${event.id}/log-analyze`, { method: 'POST' })
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Bağlantı hatası' }))
+        const err = await res.json().catch(() => ({ detail: t('conn_error') }))
         setAnalyses(prev => ({ ...prev, [event.id]: { loading: false, error: err.detail || `HTTP ${res.status}` } }))
         return
       }
       const result: LogAnalysisResult = await res.json()
       setAnalyses(prev => ({ ...prev, [event.id]: { loading: false, result } }))
     } catch {
-      setAnalyses(prev => ({ ...prev, [event.id]: { loading: false, error: 'Analiz isteği başarısız.' } }))
+      setAnalyses(prev => ({ ...prev, [event.id]: { loading: false, error: t('ev_log_analyze_failed') } }))
     }
   }
 
@@ -847,21 +859,21 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
   const highConfCount = Object.values(analyses).filter(a => a.result?.confidence === 'high').length
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'log', label: 'Log Kök Neden' },
-    { id: 'compare', label: 'Karşılaştırmalı Analiz' },
-    { id: 'awr', label: 'AWR Analiz' },
+    { id: 'log', label: t('ana_tab_log_rca') },
+    { id: 'compare', label: t('ana_tab_compare') },
+    { id: 'awr', label: t('ana_tab_awr') },
   ]
 
   return (
     <div className="space-y-6">
       {!hideHeader && (
       <PageHeader
-        title="Kök Neden Analizi"
-        subtitle="Log analizi, zaman penceresi karşılaştırması ve AWR performans analizi"
+        title={t('ana_rca_title')}
+        subtitle={t('ana_rca_sub')}
         actions={
           activeTab === 'log' ? (
             <GhostButton accent={NEON.cyan} onClick={analyzeAll} disabled={events.length === 0}>
-              Toplu Analiz (ilk 5)
+              {t('ana_bulk')}
             </GhostButton>
           ) : undefined
         }
@@ -886,10 +898,10 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: 'Analize Hazır', value: events.length, accent: NEON.blue },
-              { label: 'Analiz Yapıldı', value: analyzedCount, accent: NEON.cyan },
-              { label: 'Yüksek Güven', value: highConfCount, accent: NEON.green },
-              { label: 'Onay Gerekli', value: Object.values(analyses).filter(a => a.result?.requires_approval).length, accent: NEON.orange },
+              { label: t('ana_ready'), value: events.length, accent: NEON.blue },
+              { label: t('ana_done'), value: analyzedCount, accent: NEON.cyan },
+              { label: t('ev_conf_high'), value: highConfCount, accent: NEON.green },
+              { label: t('ev_approval_needed'), value: Object.values(analyses).filter(a => a.result?.requires_approval).length, accent: NEON.orange },
             ].map(k => (
               <div key={k.label} className="cyber-card p-3 flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: 'rgba(148,163,184,0.55)' }}>{k.label}</span>
@@ -900,24 +912,24 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
 
           <Section>
             <div className="flex flex-wrap gap-3 p-4 items-center">
-              <SearchInput value={search} onChange={setSearch} placeholder="Başlık veya sunucu adı ara..." width="w-56" />
+              <SearchInput value={search} onChange={setSearch} placeholder={t('ana_search_title_srv')} width="w-56" />
               {/* Sunucu dropdown */}
               <Select value={serverFilter} onChange={setServerFilter}>
-                <option value="">Tüm sunucular</option>
+                <option value="">{t('ana_all_servers')}</option>
                 {onlineServers.map(s => (
                   <option key={s.id} value={String(s.id)}>{s.name}</option>
                 ))}
               </Select>
               <Select value={typeFilter} onChange={setTypeFilter}>
-                <option value="">Tüm tipler</option>
+                <option value="">{t('ana_all_types')}</option>
                 <option value="log_entry">Log Entry</option>
-                <option value="metric_anomaly">Metrik Anomali</option>
+                <option value="metric_anomaly">{t('ana_metric_anom')}</option>
               </Select>
               <Select value={severityFilter} onChange={setSeverityFilter}>
-                <option value="">Tüm önemler</option>
-                <option value="critical">Kritik</option>
-                <option value="warning">Uyarı</option>
-                <option value="info">Bilgi</option>
+                <option value="">{t('ana_all_sevs')}</option>
+                <option value="critical">{t('status_critical')}</option>
+                <option value="warning">{t('status_warning')}</option>
+                <option value="info">{t('ana_info')}</option>
               </Select>
               {/* Kapalı sunucu toggle */}
               <label className="flex items-center gap-2 cursor-pointer select-none ml-auto"
@@ -930,7 +942,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
                   <div className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow"
                     style={{ left: hideOffline ? '18px' : '2px' }} />
                 </div>
-                <span>Kapalı sunucuları gizle</span>
+                <span>{t('ana_hide_offline')}</span>
               </label>
             </div>
           </Section>
@@ -940,7 +952,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-cyan-400 border-white/[0.06]" />
             </div>
           ) : events.length === 0 ? (
-            <EmptyState text="Seçili filtrelere göre çözümlenmemiş event bulunamadı." />
+            <EmptyState text={t('ana_rca_empty')} />
           ) : (
             <div className="space-y-2">
               {events.map(event => {
@@ -968,13 +980,13 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
                           <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(event.id) ? n.delete(event.id) : n.add(event.id); return n })}
                             className="text-[11px] px-2 py-1 rounded transition-colors"
                             style={{ color: NEON.cyan, border: `1px solid rgba(6,182,212,0.2)`, background: 'rgba(6,182,212,0.05)' }}>
-                            {isExpanded ? 'Gizle' : 'Sonucu Gör'}
+                            {isExpanded ? t('ana_hide') : t('ana_show_result')}
                           </button>
                         )}
                         <PrimaryButton accent={state?.result ? NEON.slate : NEON.cyan} onClick={() => analyze(event)} disabled={state?.loading}>
                           {state?.loading
-                            ? <span className="flex items-center gap-1.5"><span className="w-3 h-3 border border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent` }} />Analiz...</span>
-                            : state?.result ? 'Yenile' : 'Analiz Et'}
+                            ? <span className="flex items-center gap-1.5"><span className="w-3 h-3 border border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent` }} />{t('inc_rca_running')}</span>
+                            : state?.result ? t('refresh_action') : t('analyze')}
                         </PrimaryButton>
                       </div>
                     </div>
@@ -989,7 +1001,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
                     {state?.loading && (
                       <div className="px-4 pb-3 flex items-center gap-2 text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         <div className="w-3 h-3 border border-t-transparent rounded-full animate-spin" style={{ borderColor: `${NEON.cyan} transparent ${NEON.cyan} ${NEON.cyan}` }} />
-                        Log satırları okunuyor, AI analiz yapıyor...
+                        {t('ev_log_reading')}
                       </div>
                     )}
                   </div>
@@ -1000,7 +1012,7 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
 
           <div className="text-center pt-2">
             <Link to="/events" className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>
-              Tüm eventleri görmek için Events sayfasına git
+              {t('ana_goto_events')}
             </Link>
           </div>
         </>

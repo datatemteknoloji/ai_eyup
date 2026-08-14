@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { FolderOpen, RefreshCw, Search, ArrowRight } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import type { OcpProject } from './ocpTypes'
+import { useT } from '../../i18n/LocaleProvider'
 
 export default function OcpProjectsPanel({
   clusterId,
@@ -13,6 +14,7 @@ export default function OcpProjectsPanel({
   selected: string
   onSelect: (ns: string) => void
 }) {
+  const t = useT()
   const [q, setQ] = useState('')
   const [showSystem, setShowSystem] = useState(false)
 
@@ -51,9 +53,9 @@ export default function OcpProjectsPanel({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <FolderOpen size={16} className="text-amber-400" />
-          <h2 className="text-sm font-medium text-white">Projeler</h2>
+          <h2 className="text-sm font-medium text-white">{t('ocp_projects')}</h2>
           <span className="text-xs text-slate-500">
-            {projects.length ? `${userCount} kullanıcı · ${projects.length} toplam` : ''}
+            {projects.length ? t('ocp_proj_counts', { user: userCount, total: projects.length }) : ''}
           </span>
         </div>
         <button
@@ -61,7 +63,7 @@ export default function OcpProjectsPanel({
           onClick={() => refetch()}
           className="text-xs px-2.5 py-1.5 rounded-lg border border-white/[0.08] text-slate-300 hover:bg-white/[0.04] inline-flex items-center gap-1.5"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> Yenile
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
         </button>
       </div>
 
@@ -70,7 +72,7 @@ export default function OcpProjectsPanel({
           <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
           <input
             className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-rose-500/40"
-            placeholder="proje ara…"
+            placeholder={t('ocp_search_project')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -82,15 +84,15 @@ export default function OcpProjectsPanel({
             onChange={(e) => setShowSystem(e.target.checked)}
             className="rounded border-white/20"
           />
-          Sistem projelerini göster ({projects.length - userCount})
+          {t('ocp_show_system', { n: projects.length - userCount })}
         </label>
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-slate-500 py-8 text-center">Yükleniyor…</div>
+        <div className="text-sm text-slate-500 py-8 text-center">{t('loading')}</div>
       ) : shown.length === 0 ? (
         <div className="text-sm text-slate-500 py-8 text-center">
-          {q ? 'Eşleşen proje yok' : 'Proje bulunamadı — Entegrasyonlar’dan sync deneyin.'}
+          {q ? t('ocp_no_match_proj') : t('ocp_no_proj_sync')}
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
@@ -117,7 +119,7 @@ export default function OcpProjectsPanel({
                   <span className="text-sm text-slate-100 truncate font-medium">{title}</span>
                   {p.is_system && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-500 flex-shrink-0">
-                      sistem
+                      {t('ocp_system_badge')}
                     </span>
                   )}
                   <ArrowRight
@@ -130,8 +132,8 @@ export default function OcpProjectsPanel({
                 )}
                 <p className="text-[10px] text-slate-600 mt-1.5">
                   {p.status || '—'}
-                  {p.pod_count != null ? ` · ${p.pod_count} pod` : ''}
-                  {p.deployment_count != null ? ` · ${p.deployment_count} deploy` : ''}
+                  {p.pod_count != null ? ` · ${t('ocp_n_pod', { n: p.pod_count })}` : ''}
+                  {p.deployment_count != null ? ` · ${t('ocp_n_deploy', { n: p.deployment_count })}` : ''}
                   {p.requester ? ` · ${p.requester}` : ''}
                 </p>
               </button>

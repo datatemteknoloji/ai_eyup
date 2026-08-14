@@ -17,11 +17,15 @@ import { isPoweredOn } from '../utils/powerState'
 import { OsIcon } from '../components/OsIcon'
 import { shortenOsLabel, fullOsLabel, serverTypeLabel } from '../lib/osLabel'
 import { useAuth } from '../auth/AuthContext'
+import { useT, useLocale } from '../i18n/LocaleProvider'
+import type { TranslationKey } from '../i18n/messages'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
-}) => (
+}) => {
+  const t = useT()
+  return (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
@@ -29,17 +33,18 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
           <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
-          <div className="text-sm font-semibold text-white mb-1">Onay Gerekiyor</div>
+          <div className="text-sm font-semibold text-white mb-1">{t('confirm_title')}</div>
           <div className="text-sm text-slate-300 leading-relaxed">{message}</div>
         </div>
       </div>
       <div className="flex gap-3 justify-end">
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">İptal</button>
-        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">Onayla</button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white bg-white/[0.07] hover:bg-slate-600 border border-slate-600 transition-colors">{t('cancel')}</button>
+        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 border border-red-500/50 transition-colors">{t('confirm_ok')}</button>
       </div>
     </div>
   </div>
-)
+  )
+}
 
 interface Server {
   id: number
@@ -98,9 +103,6 @@ function hasNameMismatch(s: Server): boolean {
   return _normNameToken(shortHn) !== _normNameToken(vm)
 }
 
-const SSH_CRED_HINT =
-  'SSH credential yok. Ayarlar → Global Credential veya sunucu SSH bilgisi ekleyin (vCenter kaydı yeterli değil).'
-
 // ─── AI Ready Güncelle Butonu ─────────────────────────────────────────────────
 const AiReadyUpdateButton: React.FC<{
   onDone: () => void
@@ -109,6 +111,7 @@ const AiReadyUpdateButton: React.FC<{
   selectedIds?: number[]
   sshOpsEnabled?: boolean
 }> = ({ onDone, onJobStart, asMenuItem, selectedIds = [], sshOpsEnabled = true }) => {
+  const t = useT()
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
@@ -116,16 +119,12 @@ const AiReadyUpdateButton: React.FC<{
 
   const handleClick = async () => {
     if (!sshOpsEnabled) {
-      alert(SSH_CRED_HINT)
+      alert(t('ssh_cred_hint'))
       return
     }
     const count = selectedIds.length
-    const scope = count > 0 ? `${count} seçili Linux sunucuda` : 'Tüm Linux sunucularda'
-    if (!await showConfirm(
-      `${scope} SSH kimlik doğrulaması arka planda denenecek (global/server credential). ` +
-      'Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa AD/PAM hesap kilitlemesine yol açabilir. ' +
-      'User hazır olan hostlarda çalıştırın. Windows için Windows → AI Ready Güncelle kullanın. Devam?'
-    )) return
+    const scope = count > 0 ? t('scope_selected_linux', { n: count }) : t('scope_all_linux')
+    if (!await showConfirm(t('ai_ready_confirm', { scope }))) return
 
     setLoading(true); setResult(null)
     try {
@@ -137,19 +136,19 @@ const AiReadyUpdateButton: React.FC<{
       const text = await r.text()
       let d: any = null
       try { d = text ? JSON.parse(text) : null } catch {
-        setResult(r.status === 504 || r.status === 502 ? 'Zaman aşımı — arka plan devam ediyor olabilir' : `HTTP ${r.status}`)
+        setResult(r.status === 504 || r.status === 502 ? t('timeout_bg') : `HTTP ${r.status}`)
         return
       }
       if (r.ok) {
         if (d.job_id && onJobStart) {
           onJobStart(d.job_id)
         } else {
-          setResult(d.message || `${d.tested ?? 0} kuyrukta`)
+          setResult(d.message || t('queued_n', { n: d.tested ?? 0 }))
           onDone()
           setTimeout(() => { setResult(null); onDone() }, 8000)
         }
       } else {
-        setResult(typeof d?.detail === 'string' ? d.detail : 'Hata')
+        setResult(typeof d?.detail === 'string' ? d.detail : t('error_generic'))
       }
     } finally { setLoading(false) }
   }
@@ -163,12 +162,12 @@ const AiReadyUpdateButton: React.FC<{
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title={sshOpsEnabled ? "Linux SSH ile AI Ready durumunu arka planda güncelle" : SSH_CRED_HINT}
+        title={sshOpsEnabled ? t('ai_ready_update_title') : t('ssh_cred_hint')}
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            <span>Başlatılıyor...</span>
+            <span>{t('starting')}</span>
           </>
         ) : result ? (
           <>
@@ -178,7 +177,7 @@ const AiReadyUpdateButton: React.FC<{
         ) : (
           <>
             <Wifi size={15} className="flex-shrink-0 text-slate-400" />
-            <span>AI Ready Güncelle</span>
+            <span>{t('ai_ready_update')}</span>
           </>
         )}
       </button>
@@ -194,6 +193,7 @@ const OsRefreshButton: React.FC<{
   selectedIds?: number[]
   sshOpsEnabled?: boolean
 }> = ({ onDone, onJobStart, asMenuItem, selectedIds = [], sshOpsEnabled = true }) => {
+  const t = useT()
   const [loading, setLoading] = React.useState(false)
   const [result, setResult]   = React.useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
@@ -201,15 +201,13 @@ const OsRefreshButton: React.FC<{
 
   const handleClick = async () => {
     if (!sshOpsEnabled) {
-      alert(SSH_CRED_HINT)
+      alert(t('ssh_cred_hint'))
       return
     }
     const ids = selectedIds.length > 0 ? selectedIds : undefined
 
     const confirmed = await showConfirm(
-      ids
-        ? `${ids.length} Linux sunucuda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?`
-        : 'Tüm Linux sunucularda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?'
+      ids ? t('os_refresh_confirm_sel', { n: ids.length }) : t('os_refresh_confirm_all')
     )
     if (!confirmed) return
 
@@ -223,19 +221,19 @@ const OsRefreshButton: React.FC<{
       const text = await r.text()
       let d: any = null
       try { d = text ? JSON.parse(text) : null } catch {
-        setResult(r.status === 504 || r.status === 502 ? 'Zaman aşımı' : `HTTP ${r.status}`)
+        setResult(r.status === 504 || r.status === 502 ? t('timeout') : `HTTP ${r.status}`)
         return
       }
       if (r.ok) {
         if (d.job_id && onJobStart) {
           onJobStart(d.job_id)
         } else {
-          setResult(d.message || `${d.updated ?? 0} kuyrukta`)
+          setResult(d.message || t('queued_n', { n: d.updated ?? 0 }))
           onDone()
           setTimeout(() => { setResult(null); onDone() }, 8000)
         }
       } else {
-        setResult(typeof d?.detail === 'string' ? d.detail : 'Hata')
+        setResult(typeof d?.detail === 'string' ? d.detail : t('error_generic'))
       }
     } finally {
       setLoading(false)
@@ -251,12 +249,12 @@ const OsRefreshButton: React.FC<{
         className={asMenuItem
           ? "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 text-left"
           : "inline-flex items-center gap-2 px-3 py-2 bg-white/[0.07] border border-slate-600 text-slate-200 rounded-lg hover:bg-slate-600 hover:border-slate-500 transition-all disabled:opacity-50 text-sm"}
-        title={sshOpsEnabled ? "Linux sunucuların OS/Kernel/CPU/RAM bilgisini SSH ile arka planda güncelle" : SSH_CRED_HINT}
+        title={sshOpsEnabled ? t('os_refresh_title') : t('ssh_cred_hint')}
       >
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
-            <span>Başlatılıyor...</span>
+            <span>{t('starting')}</span>
           </>
         ) : result ? (
           <>
@@ -266,7 +264,7 @@ const OsRefreshButton: React.FC<{
         ) : (
           <>
             <RefreshCw size={15} className="flex-shrink-0 text-slate-400" />
-            <span>OS Bilgisini Yenile</span>
+            <span>{t('os_refresh')}</span>
           </>
         )}
       </button>
@@ -282,6 +280,7 @@ const ActionsDropdown: React.FC<{
   setBulkJobId: (id: string | null) => void
   sshOpsEnabled: boolean
 }> = ({ refetch, selectedIds, bulkJobId, setBulkJobId, sshOpsEnabled }) => {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [checkLoading, setCheckLoading] = useState(false)
   const [checkResult, setCheckResult] = useState<string | null>(null)
@@ -315,14 +314,14 @@ const ActionsDropdown: React.FC<{
         if (d.job_id) {
           startJob(d.job_id)
         } else {
-          setCheckResult(`${d.stats?.checked || 0} kontrol · ${d.stats?.updated || 0} güncellendi`)
+          setCheckResult(t('check_stats', { checked: d.stats?.checked || 0, updated: d.stats?.updated || 0 }))
           refetch()
           setTimeout(() => setCheckResult(null), 5000)
         }
       } else {
-        setCheckResult('Hata: ' + (d.detail || '?'))
+        setCheckResult(t('error_generic') + ': ' + (d.detail || '?'))
       }
-    } catch { setCheckResult('Bağlantı hatası') }
+    } catch { setCheckResult(t('conn_error')) }
     finally { setCheckLoading(false) }
   }
 
@@ -345,13 +344,13 @@ const ActionsDropdown: React.FC<{
         className="inline-flex items-center gap-2 px-3 py-2 bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all text-sm"
       >
         <Settings2 size={15} />
-        <span>İşlemler</span>
+        <span>{t('actions')}</span>
         <ChevronDown size={13} className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <div className="absolute right-0 top-full mt-1.5 bg-slate-800 border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 z-50 w-56 p-1.5 flex flex-col gap-0.5">
-          <p className="text-[10px] text-slate-500 px-3 pt-1 pb-0.5 uppercase tracking-wider font-medium">Toplu İşlemler</p>
+          <p className="text-[10px] text-slate-500 px-3 pt-1 pb-0.5 uppercase tracking-wider font-medium">{t('bulk_actions')}</p>
 
           {/* Durumları Kontrol Et */}
           <button
@@ -368,7 +367,7 @@ const ActionsDropdown: React.FC<{
             ) : (
               <Activity size={15} className="text-slate-400 flex-shrink-0" />
             )}
-            <span className="truncate">{checkResult ?? (checkLoading ? 'Başlatılıyor...' : 'Durumları Kontrol Et')}</span>
+            <span className="truncate">{checkResult ?? (checkLoading ? t('starting') : t('check_health'))}</span>
           </button>
 
           <AiReadyUpdateButton onDone={refetch} onJobStart={startJob} asMenuItem selectedIds={selectedIds} sshOpsEnabled={sshOpsEnabled} />
@@ -412,14 +411,14 @@ interface EventGroup {
   is_acknowledged?: boolean
 }
 
-function fmtUptime(seconds: number | null): string {
+function fmtUptime(seconds: number | null, t: (key: TranslationKey, vars?: Record<string, string | number>) => string): string {
   if (!seconds) return '-'
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return `${d}g ${h}s`
-  if (h > 0) return `${h}s ${m}dk`
-  return `${m}dk`
+  if (d > 0) return t('uptime_dh', { d, h })
+  if (h > 0) return t('uptime_hm', { h, m })
+  return t('uptime_m', { m })
 }
 
 function MetricBar({ label, value, colorClass }: { label: string; value: number | null; colorClass: string }) {
@@ -453,21 +452,25 @@ const TIER_COLORS: Record<string, string> = {
 }
 // Renk kodlaması zaten TIER_COLORS'taki bg/text/border ile sağlanıyor —
 // eskiden ek olarak duran 🔴/🟡/🟢/⚪ emoji önekleri kaldırıldı (DESIGN.md: "Emoji kullanılmaz").
-const TIER_LABELS: Record<string, string> = {
-  production: 'Production',
-  staging: 'Staging',
-  development: 'Development',
-  unknown: 'Belirsiz',
-}
 function TierBadge({ tier }: { tier: string }) {
+  const t = useT()
+  const labels: Record<string, string> = {
+    production: 'Production',
+    staging: 'Staging',
+    development: 'Development',
+    unknown: t('tier_unknown'),
+  }
   return (
     <span className={`text-xs px-2 py-0.5 rounded-md border font-medium ${TIER_COLORS[tier] || TIER_COLORS['unknown']}`}>
-      {TIER_LABELS[tier] || tier}
+      {labels[tier] || tier}
     </span>
   )
 }
 
 export function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
+  const t = useT()
+  const { locale } = useLocale()
+  const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const [tab, setTab] = useState<'info' | 'events' | 'perf'>('info')
   const [analyzeText, setAnalyzeText] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -604,7 +607,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
         }
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError') setAnalyzeText('**Analiz başarısız.**')
+      if (e?.name !== 'AbortError') setAnalyzeText(t('analyze_failed_md'))
     } finally { setIsAnalyzing(false) }
   }
 
@@ -647,7 +650,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   `ssh-${server.id}`,
                   'width=1200,height=700,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
                 )
-                if (!w) alert('Popup engellendi — tarayıcı ayarlarınızdan popup iznini açın.')
+                if (!w) alert(t('popup_blocked'))
               }}
               className="flex items-center gap-1 px-2.5 py-1 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono flex-shrink-0"
               title="SSH Terminal"
@@ -660,7 +663,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
         {/* Tabs */}
         <div className="flex border-b border-white/[0.06] bg-cyber-card/30">
-          {([['info', 'Bilgi'], ['perf', 'Performans'], ['events', 'Eventler']] as const).map(([id, label]) => (
+          {([['info', t('tab_info')], ['perf', t('tab_perf')], ['events', t('tab_events')]] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${tab === id ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'}`}>
               {label}
@@ -676,27 +679,27 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  ['Sunucu Adı', server.name],
-                  ['IP Adresi', server.ip_address || '-'],
+                  [t('label_server_name'), server.name],
+                  [t('label_ip'), server.ip_address || '-'],
                   ['Hostname', server.hostname || '-'],
                   ...(server.hypervisor_name ? [['Hypervisor', server.hypervisor_name]] : []),
-                  ['Tip', server.server_type || '-'],
-                  ['OS Dağıtım', server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
-                  ['OS Sürüm', server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
+                  [t('label_type'), server.server_type || '-'],
+                  [t('label_os_distro'), server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
+                  [t('label_os_version'), server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
                   ['Kernel', server.kernel_version || '-'],
-                  ['CPU', server.cpu_cores ? `${server.cpu_cores} çekirdek` : '-'],
-                  ['RAM', server.memory_gb ? `${server.memory_gb} GB` : '-'],
-                  ['SSH Kullanıcı', sshUser || '-'],
-                  ['AI Ready', '__AI_READY_TOGGLE__'],
-                  ['Ortam Tieri', '__TIER_SELECT__'],
-                  ['Node Exporter', server.node_exporter?.running ? 'Çalışıyor' : server.node_exporter?.installed ? 'Kurulu/Durdurulmuş' : 'Kurulu Değil'],
+                  ['CPU', server.cpu_cores ? t('n_cores', { n: server.cpu_cores }) : '-'],
+                  [t('memory'), server.memory_gb ? `${server.memory_gb} GB` : '-'],
+                  [t('label_ssh_user'), sshUser || '-'],
+                  [t('ai_ready'), '__AI_READY_TOGGLE__'],
+                  [t('label_tier'), '__TIER_SELECT__'],
+                  ['Node Exporter', server.node_exporter?.running ? t('node_exporter_running') : server.node_exporter?.installed ? t('ne_installed_stopped') : t('node_exporter_missing')],
                 ].map(([label, value]) => (
                   <div key={label} className="bg-cyber-card/50 rounded-lg p-3 border border-white/[0.06]/50">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">{label}</p>
                     {value === '__AI_READY_TOGGLE__' ? (
                       <div className="flex items-center justify-between mt-0.5">
                         <span className={`text-sm font-medium ${server.ai_ready ? 'text-green-400' : 'text-slate-400'}`}>
-                          {server.ai_ready ? 'AI Ready' : 'AI Ready Değil'}
+                          {server.ai_ready ? t('ai_ready') : t('ai_ready_not')}
                         </span>
                         <button
                           onClick={async () => {
@@ -714,7 +717,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                               : 'text-green-400 border-green-500/40 hover:bg-green-500/10'
                           }`}
                         >
-                          {server.ai_ready ? 'Kaldır' : 'Ekle'}
+                          {server.ai_ready ? t('ai_ready_remove') : t('ai_ready_add')}
                         </button>
                       </div>
                     ) : value === '__TIER_SELECT__' ? (
@@ -734,7 +737,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           <option value="production">Production</option>
                           <option value="staging">Staging</option>
                           <option value="development">Development</option>
-                          <option value="unknown">Belirsiz</option>
+                          <option value="unknown">{t('tier_unknown')}</option>
                         </select>
                       </div>
                     ) : (
@@ -748,10 +751,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {updateHistory && (updateHistory.history.length > 0 || updateHistory.pending_reboot) && (
                 <div className={`rounded-xl border p-4 space-y-2 ${updateHistory.pending_reboot ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-cyber-card/50 border-white/[0.06]'}`}>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-white">Güncelleme Geçmişi</h3>
+                    <h3 className="text-sm font-medium text-white">{t('update_history')}</h3>
                     {updateHistory.pending_reboot && (
                       <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full animate-pulse">
-                        Reboot Gerekiyor
+                        {t('reboot_needed')}
                       </span>
                     )}
                   </div>
@@ -766,13 +769,13 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <span className="text-slate-500 ml-2">{h.update_type}</span>
                       </div>
                       <span className="text-slate-400 flex-shrink-0">
-                        {h.packages_updated} paket
+                        {t('packages_n', { n: h.packages_updated })}
                       </span>
                       {h.reboot_required && !h.rebooted && (
                         <span className="text-yellow-400 flex-shrink-0 font-bold">!</span>
                       )}
                       <span className="text-slate-500 flex-shrink-0">
-                        {h.completed_at ? new Date(h.completed_at).toLocaleDateString('tr-TR') : '—'}
+                        {h.completed_at ? new Date(h.completed_at).toLocaleDateString(dateLoc) : '—'}
                       </span>
                     </div>
                   ))}
@@ -784,10 +787,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-medium text-white flex items-center gap-1.5">
-                      VM Detayları
+                      {t('vm_details')}
                       {vmDetails?.vm_last_sync && (
                         <span className="text-[10px] text-slate-500 font-normal">
-                          son sync: {new Date(vmDetails.vm_last_sync).toLocaleString('tr-TR')}
+                          {t('last_sync')}: {new Date(vmDetails.vm_last_sync).toLocaleString(dateLoc)}
                         </span>
                       )}
                     </h3>
@@ -796,11 +799,11 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       onClick={handleSearchVm}
                       disabled={vmSearching}
                       className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
-                      title="VM bilgilerini hypervisor'dan yenile"
+                      title={t('refresh_vm_title')}
                     >
                       {vmSearching
-                        ? <><span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" /> Yenileniyor...</>
-                        : '↻ Yenile'
+                        ? <><span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" /> {t('refreshing')}</>
+                        : `↻ ${t('refresh_action')}`
                       }
                     </button>
                   </div>
@@ -809,16 +812,16 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {vmDetails?.hypervisor_vm_id ? (
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                       {[
-                        { label: 'VM ID',       val: vmDetails.hypervisor_vm_id },
-                        { label: 'VM Adı',      val: vmDetails.vm_name },
-                        { label: 'Guest Host',  val: vmDetails.vm_guest_hostname },
-                        { label: 'Guest IP',    val: vmDetails.vm_guest_ip },
-                        { label: 'vCPU',        val: vmDetails.vm_cpu_count != null ? `${vmDetails.vm_cpu_count} core` : undefined },
-                        { label: 'RAM',         val: vmDetails.vm_memory_mb != null ? `${(vmDetails.vm_memory_mb / 1024).toFixed(1)} GB` : undefined },
-                        { label: 'Disk',        val: vmDetails.vm_disk_gb != null ? `${vmDetails.vm_disk_gb} GB` : undefined },
-                        { label: 'Cluster',     val: vmDetails.vm_cluster },
-                        { label: 'Datastore',   val: vmDetails.vm_datastore },
-                        { label: 'HW Versiyonu',val: vmDetails.vm_hardware_version },
+                        { label: 'VM ID',              val: vmDetails.hypervisor_vm_id },
+                        { label: t('label_vm_name'),   val: vmDetails.vm_name },
+                        { label: 'Guest Host',         val: vmDetails.vm_guest_hostname },
+                        { label: 'Guest IP',           val: vmDetails.vm_guest_ip },
+                        { label: 'vCPU',               val: vmDetails.vm_cpu_count != null ? `${vmDetails.vm_cpu_count} core` : undefined },
+                        { label: t('memory'),           val: vmDetails.vm_memory_mb != null ? `${(vmDetails.vm_memory_mb / 1024).toFixed(1)} GB` : undefined },
+                        { label: 'Disk',               val: vmDetails.vm_disk_gb != null ? `${vmDetails.vm_disk_gb} GB` : undefined },
+                        { label: 'Cluster',            val: vmDetails.vm_cluster },
+                        { label: 'Datastore',          val: vmDetails.vm_datastore },
+                        { label: t('hw_version'),      val: vmDetails.vm_hardware_version },
                       ].map(({ label, val }) => val ? (
                         <div key={label} className="flex gap-1.5">
                           <span className="text-slate-500 flex-shrink-0 w-24">{label}</span>
@@ -829,7 +832,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       {/* Güç durumu */}
                       {vmDetails.vm_power_state && (
                         <div className="flex gap-1.5 col-span-2">
-                          <span className="text-slate-500 w-24 flex-shrink-0">Güç Durumu</span>
+                          <span className="text-slate-500 w-24 flex-shrink-0">{t('power_state')}</span>
                           <span className={`font-medium ${
                             isPoweredOn(vmDetails.vm_power_state) ? 'text-green-400' : 'text-red-400'
                           }`}>
@@ -840,14 +843,14 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     </div>
                   ) : (
                     <p className="text-xs text-slate-500 italic">
-                      VM ID henüz kaydedilmemiş. "VM Ara &amp; Kaydet" ile hypervisor'dan çekin.
+                      {t('vm_id_not_saved')}
                     </p>
                   )}
 
                   {/* Ağ adaptörleri */}
                   {(vmDetails?.vm_network_info?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Ağ Adaptörleri</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{t('network_adapters')}</p>
                       <div className="space-y-1">
                         {vmDetails!.vm_network_info!.map((nic, i) => (
                           <div key={i} className="flex items-start gap-2 text-xs bg-white/[0.02] rounded px-2 py-1.5">
@@ -892,17 +895,17 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           onChange={e => setSnapRetention(e.target.value)}
                           className="text-xs bg-white/[0.07] border border-slate-600 text-slate-300 rounded px-1.5 py-0.5"
                         >
-                          <option value="1d">1 Gün</option>
-                          <option value="1w">1 Hafta</option>
-                          <option value="1m">1 Ay</option>
-                          <option value="indefinite">Süresiz</option>
+                          <option value="1d">{t('retention_1d')}</option>
+                          <option value="1w">{t('retention_1w')}</option>
+                          <option value="1m">{t('retention_1m')}</option>
+                          <option value="indefinite">{t('retention_indefinite')}</option>
                         </select>
                       )}
                       {/* Snapshot Al butonu — VM ID yoksa backend otomatik arar */}
                       {server.hypervisor_id && (
                         <button
                           disabled={snapCreating}
-                          title="Snapshot al (arka planda çalışır)"
+                          title={t('snapshot_take_title')}
                           onClick={async () => {
                             setSnapCreating(true)
                             try {
@@ -919,7 +922,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                                 const poll = setInterval(() => { refetchSnapshots() }, 5000)
                                 setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
                               } else {
-                                alert(data.detail || 'Snapshot başlatılamadı')
+                                alert(data.detail || t('snapshot_start_failed'))
                               }
                             } finally {
                               // Buton 3sn sonra tekrar aktif olsun
@@ -929,8 +932,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           className="flex items-center gap-1 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50"
                         >
                           {snapCreating
-                            ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Başlatılıyor...</>
-                            : '+ Snapshot Al'
+                            ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> {t('starting')}</>
+                            : t('snapshot_take')
                           }
                         </button>
                       )}
@@ -941,19 +944,19 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {vmSnapshots?.vm_id_missing && !snapCreating && (
                     <div className="flex items-start gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/20 rounded-lg px-3 py-2">
                       <AlertTriangle size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
-                      <span>VM ID bilinmiyor. "Ara &amp; Snapshot Al" tıklandığında vCenter/oVirt üzerinde arama yapılır ve ID kaydedilir.</span>
+                      <span>{t('vm_id_unknown_hint')}</span>
                     </div>
                   )}
 
                   {/* Hypervisor bağlı değil */}
                   {!vmSnapshots?.hypervisor_connected && (
-                    <p className="text-xs text-slate-500">Fiziksel sunucu — snapshot desteklenmiyor.</p>
+                    <p className="text-xs text-slate-500">{t('physical_no_snapshot')}</p>
                   )}
 
                   {/* Uygulama tarafından takip edilen snapshotlar */}
                   {(vmSnapshots?.tracked?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Kayıtlı</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">{t('tracked_snapshots')}</p>
                       <div className="space-y-1.5 max-h-48 overflow-y-auto">
                         {vmSnapshots!.tracked.map(s => (
                           <div key={s.id} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
@@ -972,24 +975,24 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-200 truncate font-mono">{s.snapshot_name}</div>
                               <div className="text-slate-500 text-[10px] flex items-center gap-1.5">
-                                {s.status === 'pending' && <span className="text-yellow-400">vCenter'da oluşturuluyor...</span>}
-                                {s.status === 'failed' && <span className="text-red-400">Başarısız</span>}
-                                <span>{s.retention} · {new Date(s.created_at).toLocaleString('tr-TR')}</span>
-                                {s.expires_at && <span>· bitiş {new Date(s.expires_at).toLocaleDateString('tr-TR')}</span>}
+                                {s.status === 'pending' && <span className="text-yellow-400">{t('creating_on_vcenter')}</span>}
+                                {s.status === 'failed' && <span className="text-red-400">{t('failed')}</span>}
+                                <span>{s.retention} · {new Date(s.created_at).toLocaleString(dateLoc)}</span>
+                                {s.expires_at && <span>· {t('expires_on', { date: new Date(s.expires_at).toLocaleDateString(dateLoc) })}</span>}
                               </div>
                             </div>
                             {s.status !== 'pending' && (
                               <button
                                 onClick={async () => {
-                                  if (!await showConfirm('Snapshot silinsin mi? (Hypervisor\'dan da kaldırılır)')) return
+                                  if (!await showConfirm(t('snapshot_delete_confirm'))) return
                                   const r = await fetch(`${API_BASE_URL}/snapshots/${s.id}`, { method: 'DELETE' })
                                   if (r.ok) refetchSnapshots()
-                                  else { const e = await r.json().catch(() => ({})); alert(e.detail || 'Silinemedi') }
+                                  else { const e = await r.json().catch(() => ({})); alert(e.detail || t('delete_failed')) }
                                 }}
                                 className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
-                                title="Snapshot'u sil"
+                                title={t('snapshot_delete_title')}
                               >
-                                Sil
+                                {t('delete')}
                               </button>
                             )}
                           </div>
@@ -1001,7 +1004,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* Hypervisor'dan doğrudan okunan harici snapshotlar */}
                   {(vmSnapshots?.external?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Hypervisor'daki Tüm Snapshotlar</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">{t('all_hv_snapshots')}</p>
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
                         {vmSnapshots!.external.map((s, i) => (
                           <div key={s.id || i} className="flex items-center gap-2 text-xs bg-white/[0.02] rounded-lg px-3 py-2 border border-white/[0.04]">
@@ -1009,7 +1012,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-300 truncate">{s.name}</div>
                               {s.description && <div className="text-slate-500 text-[10px] truncate">{s.description}</div>}
-                              {s.created && <div className="text-slate-500 text-[10px]">{new Date(s.created).toLocaleString('tr-TR')}</div>}
+                              {s.created && <div className="text-slate-500 text-[10px]">{new Date(s.created).toLocaleString(dateLoc)}</div>}
                             </div>
                           </div>
                         ))}
@@ -1019,7 +1022,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
                   {/* Hiç snapshot yok */}
                   {(vmSnapshots?.tracked?.length ?? 0) === 0 && (vmSnapshots?.external?.length ?? 0) === 0 && vmSnapshots?.hypervisor_connected && (
-                    <p className="text-xs text-slate-500">Kayıtlı snapshot yok.</p>
+                    <p className="text-xs text-slate-500">{t('no_snapshots')}</p>
                   )}
                 </div>
               )}
@@ -1027,10 +1030,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {/* AI Analiz */}
               <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-white">AI Analiz</h3>
+                  <h3 className="text-sm font-medium text-white">{t('ai_analysis')}</h3>
                   <button onClick={startAnalyze} disabled={isAnalyzing}
                     className="px-3 py-1 text-xs bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-600/40 disabled:opacity-50">
-                    {isAnalyzing ? 'Analiz ediliyor...' : analyzeText ? 'Yeniden' : 'Analiz Et'}
+                    {isAnalyzing ? t('analyzing') : analyzeText ? t('analyze_again') : t('analyze')}
                   </button>
                 </div>
                 {analyzeText ? (
@@ -1041,10 +1044,10 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 ) : isAnalyzing ? (
                   <div className="flex items-center gap-2 text-slate-400 text-xs">
                     <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                    <span>AI analiz yapıyor...</span>
+                    <span>{t('ai_analyzing')}</span>
                   </div>
                 ) : (
-                  <p className="text-slate-500 text-xs">Sunucu hakkında AI analizi başlatmak için yukarıdaki butona tıklayın.</p>
+                  <p className="text-slate-500 text-xs">{t('ai_analyze_hint')}</p>
                 )}
               </div>
             </div>
@@ -1056,14 +1059,14 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {metricsLoading ? (
                 <div className="flex items-center gap-2 text-slate-400 text-sm py-8 justify-center">
                   <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  <span>Metrikler yükleniyor...</span>
+                  <span>{t('lm_loading')}</span>
                 </div>
               ) : (!metrics?.has_node_exporter && !metrics?.source) ? (
                 <div className="text-center py-10 text-slate-500">
                   <Radio size={32} strokeWidth={1.5} className="mx-auto mb-3" />
-                  <p className="text-sm">Node Exporter kurulu değil ve vCenter'dan veri alınamadı.</p>
+                  <p className="text-sm">{t('ne_no_metrics')}</p>
                   {server.server_type === 'VIRTUAL' && (
-                    <p className="text-xs text-slate-600 mt-1">Ayarlar → Hypervisors'dan vCenter bağlantısını kontrol edin.</p>
+                    <p className="text-xs text-slate-600 mt-1">{t('check_hypervisor')}</p>
                   )}
                 </div>
               ) : (
@@ -1079,7 +1082,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       const isOn = isPoweredOn(metrics.power_state)
                       return (
                         <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${isOn ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-                          {isOn ? 'Açık' : 'Kapalı'}
+                          {isOn ? t('power_on') : t('power_off')}
                         </span>
                       )
                     })()}
@@ -1089,7 +1092,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   <div className="grid grid-cols-3 gap-3">
                     {[
                       { label: 'CPU', value: metrics.cpu_percent, icon: '', color: 'text-yellow-400' },
-                      { label: 'RAM', value: metrics.mem_percent, icon: '', color: 'text-blue-400' },
+                      { label: t('memory'), value: metrics.mem_percent, icon: '', color: 'text-blue-400' },
                       { label: 'Disk', value: metrics.disk_percent, icon: '', color: 'text-blue-400' },
                     ].map(({ label, value, icon, color }) => (
                       <div key={label} className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-3 text-center">
@@ -1103,21 +1106,21 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
                   {/* Progress bars */}
                   <div className="bg-cyber-card/50 rounded-xl border border-white/[0.06] p-4 space-y-3">
-                    <MetricBar label="CPU Kullanımı" value={metrics.cpu_percent} colorClass={cpuColor(metrics.cpu_percent)} />
-                    <MetricBar label={`RAM  ${metrics.mem_used_gb != null ? `(${metrics.mem_used_gb}/${metrics.mem_total_gb} GB)` : ''}`} value={metrics.mem_percent} colorClass={memColor(metrics.mem_percent)} />
-                    <MetricBar label={`Disk  ${metrics.disk_avail_gb != null ? `(${metrics.disk_avail_gb} GB boş / ${metrics.disk_total_gb} GB)` : ''}`} value={metrics.disk_percent} colorClass={diskColor(metrics.disk_percent)} />
+                    <MetricBar label={t('cpu_usage')} value={metrics.cpu_percent} colorClass={cpuColor(metrics.cpu_percent)} />
+                    <MetricBar label={`${t('memory')}  ${metrics.mem_used_gb != null ? `(${metrics.mem_used_gb}/${metrics.mem_total_gb} GB)` : ''}`} value={metrics.mem_percent} colorClass={memColor(metrics.mem_percent)} />
+                    <MetricBar label={`Disk  ${metrics.disk_avail_gb != null ? `(${t('disk_free_of', { avail: metrics.disk_avail_gb, total: metrics.disk_total_gb ?? '-' })})` : ''}`} value={metrics.disk_percent} colorClass={diskColor(metrics.disk_percent)} />
                   </div>
 
                   {/* Extra info */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
                       metrics.source === 'vcenter'
-                        ? ['vCPU Sayısı', metrics.cpu_num !== null ? String(metrics.cpu_num) : '-']
+                        ? [t('vcpu_count'), metrics.cpu_num !== null ? String(metrics.cpu_num) : '-']
                         : ['Load 1m', metrics.load1 !== null ? String(metrics.load1) : '-'],
                       metrics.source === 'vcenter'
-                        ? ['RAM (Toplam)', metrics.mem_total_gb !== null ? `${metrics.mem_total_gb} GB` : '-']
+                        ? [t('ram_total'), metrics.mem_total_gb !== null ? `${metrics.mem_total_gb} GB` : '-']
                         : ['Load 5m', metrics.load5 !== null ? String(metrics.load5) : '-'],
-                      ['Uptime', fmtUptime(metrics.uptime_seconds)],
+                      ['Uptime', fmtUptime(metrics.uptime_seconds, t)],
                     ].map(([label, value]) => (
                       <div key={label} className="bg-cyber-card/50 rounded-lg p-3 border border-white/[0.06]/50 text-center">
                         <p className="text-xs text-slate-500 mb-0.5">{label}</p>
@@ -1136,12 +1139,12 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {eventsLoading ? (
                 <div className="flex items-center gap-2 text-slate-400 text-sm py-8 justify-center">
                   <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  <span>Eventler yükleniyor...</span>
+                  <span>{t('events_loading')}</span>
                 </div>
               ) : !eventsData?.groups?.length ? (
                 <div className="text-center py-10 text-slate-500">
                   <p className="text-2xl font-bold text-green-400 mb-3">✓</p>
-                  <p className="text-sm">Bu sunucuya ait aktif event bulunmuyor.</p>
+                  <p className="text-sm">{t('no_active_events')}</p>
                 </div>
               ) : (
                 eventsData.groups.map((grp, i) => (
@@ -1157,7 +1160,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                           <span className="text-[10px] text-slate-500">{grp.count}×</span>
                           {grp.latest_created_at && (
                             <span className="text-[10px] text-slate-500">
-                              {new Date(grp.latest_created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              {new Date(grp.latest_created_at).toLocaleString(dateLoc, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                             </span>
                           )}
                         </div>
@@ -1178,6 +1181,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
 
 const Servers: React.FC = () => {
+  const t = useT()
   const { user, hasModule } = useAuth()
   const canSeeNameMismatch = Boolean(user?.is_admin || user?.role === 'admin' || hasModule('linux'))
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
@@ -1290,20 +1294,17 @@ const Servers: React.FC = () => {
     const d = await r.json()
     if (r.ok && d.job_id) startBulkJob(d.job_id)
     else if (r.ok) refetch()
-    else alert(typeof d?.detail === 'string' ? d.detail : 'Durum kontrolü başarısız')
+    else alert(typeof d?.detail === 'string' ? d.detail : t('health_failed'))
   }
 
   const runAiReadyUpdate = async (ids?: number[]) => {
     if (!sshOpsEnabled) {
-      alert(SSH_CRED_HINT)
+      alert(t('ssh_cred_hint'))
       return
     }
     const count = ids?.length ?? 0
-    const scope = count > 0 ? `${count} seçili Linux sunucuda` : 'Tüm Linux sunucularda'
-    if (!await showConfirm(
-      `${scope} SSH kimlik doğrulaması arka planda denenecek (global/server credential). ` +
-      'Otomasyon kullanıcısı hedefte yoksa veya şifre yanlışsa AD/PAM hesap kilitlemesine yol açabilir. Devam?'
-    )) return
+    const scope = count > 0 ? t('scope_selected_linux', { n: count }) : t('scope_all_linux')
+    if (!await showConfirm(t('ai_ready_confirm', { scope }))) return
     const body = count > 0 ? JSON.stringify({ server_ids: ids }) : undefined
     const r = await fetch(`${API_BASE_URL}/servers/update-ai-ready`, {
       method: 'POST',
@@ -1312,17 +1313,17 @@ const Servers: React.FC = () => {
     const d = await r.json().catch(() => ({}))
     if (r.ok && d.job_id) startBulkJob(d.job_id)
     else if (r.ok) refetch()
-    else alert(typeof d?.detail === 'string' ? d.detail : 'AI Ready güncelleme başarısız')
+    else alert(typeof d?.detail === 'string' ? d.detail : t('ai_ready_failed'))
   }
 
   const runOsRefresh = async (ids?: number[]) => {
     if (!sshOpsEnabled) {
-      alert(SSH_CRED_HINT)
+      alert(t('ssh_cred_hint'))
       return
     }
     const msg = ids && ids.length > 0
-      ? `${ids.length} Linux sunucuda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?`
-      : 'Tüm Linux sunucularda OS/Kernel/CPU/RAM bilgisi arka planda güncellenecek. Devam?'
+      ? t('os_refresh_confirm_sel', { n: ids.length })
+      : t('os_refresh_confirm_all')
     if (!await showConfirm(msg)) return
     const r = await fetch('/api/v1/servers/refresh-os-info', {
       method: 'POST',
@@ -1332,7 +1333,7 @@ const Servers: React.FC = () => {
     const d = await r.json().catch(() => ({}))
     if (r.ok && d.job_id) startBulkJob(d.job_id)
     else if (r.ok) refetch()
-    else alert(typeof d?.detail === 'string' ? d.detail : 'OS yenileme başarısız')
+    else alert(typeof d?.detail === 'string' ? d.detail : t('os_refresh_failed'))
   }
 
   const openSsh = (server: Server) => {
@@ -1533,7 +1534,7 @@ const Servers: React.FC = () => {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-        <p className="text-slate-400">Sunucular yükleniyor...</p>
+        <p className="text-slate-400">{t('servers_loading')}</p>
       </div>
     )
   }
@@ -1541,15 +1542,15 @@ const Servers: React.FC = () => {
   if (isError && servers.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4 p-6">
-        <p className="text-red-400 font-medium">Sunucular yüklenemedi</p>
+        <p className="text-red-400 font-medium">{t('servers_load_failed')}</p>
         <p className="text-slate-400 text-sm text-center max-w-md">
-          {error instanceof Error ? error.message : 'Backend bağlantısını kontrol edin. API adresi: ' + API_BASE_URL}
+          {error instanceof Error ? error.message : t('servers_backend_hint', { url: API_BASE_URL })}
         </p>
         <button
           onClick={() => refetch()}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
         >
-          Tekrar dene
+          {t('retry')}
         </button>
       </div>
     )
@@ -1570,7 +1571,7 @@ const Servers: React.FC = () => {
       {/* Platform tabs */}
       <div className="flex items-center gap-1 bg-slate-800/60 rounded-xl p-1 w-fit border border-slate-700/60">
         {([
-          { key: 'all', label: 'Tümü', count: platformCounts.all },
+          { key: 'all', label: t('filter_all'), count: platformCounts.all },
           { key: 'linux', label: 'Linux', count: platformCounts.linux },
         ] as const).map(tab => (
           <button key={tab.key}
@@ -1593,16 +1594,16 @@ const Servers: React.FC = () => {
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
       {isError && servers.length > 0 && (
         <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2.5 text-sm">
-          <span className="text-red-400">Yenileme hatası:</span>
-          <span className="text-red-300">{error instanceof Error ? error.message : 'Bilinmeyen hata'}</span>
-          <button onClick={() => refetch()} className="ml-auto text-xs text-red-400 underline">Tekrar dene</button>
+          <span className="text-red-400">{t('refresh_error')}</span>
+          <span className="text-red-300">{error instanceof Error ? error.message : t('unknown_error')}</span>
+          <button onClick={() => refetch()} className="ml-auto text-xs text-red-400 underline">{t('retry')}</button>
         </div>
       )}
       {/* Arka plan yenileme göstergesi */}
       {isFetching && !isLoading && (
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <div className="animate-spin rounded-full h-3 w-3 border-b border-slate-400"></div>
-          Yenileniyor...
+          {t('refreshing')}
         </div>
       )}
       {/* Header */}
@@ -1613,7 +1614,7 @@ const Servers: React.FC = () => {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Hostname, VM adı veya IP..."
+                placeholder={t('search_host_vm_ip')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-72 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -1628,10 +1629,10 @@ const Servers: React.FC = () => {
                 onChange={(e) => setShowOffline(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
               />
-              <span className="text-sm text-slate-300">Çevrimdışıları Göster</span>
+              <span className="text-sm text-slate-300">{t('filter_show_offline')}</span>
             </label>
             {canSeeNameMismatch && (
-              <label className="flex items-center space-x-2 cursor-pointer" title="VM adı ile OS hostname uyuşmayanlar">
+              <label className="flex items-center space-x-2 cursor-pointer" title={t('filter_name_mismatch_hint')}>
                 <input
                   type="checkbox"
                   checked={nameMismatchFilter}
@@ -1639,7 +1640,7 @@ const Servers: React.FC = () => {
                   className="w-4 h-4 text-amber-500 bg-white/[0.07] border-slate-600 rounded focus:ring-amber-500"
                 />
                 <span className="text-sm text-slate-300">
-                  İsim uyumsuz
+                  {t('filter_name_mismatch')}
                   {typeof linuxSummary?.name_mismatch === 'number' ? (
                     <span className="ml-1 text-amber-400/90">({linuxSummary.name_mismatch})</span>
                   ) : null}
@@ -1653,11 +1654,11 @@ const Servers: React.FC = () => {
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="all">Tüm Durumlar</option>
-                <option value="ONLINE">Çevrimiçi</option>
-                <option value="OFFLINE">Çevrimdışı</option>
-                <option value="WARNING">Uyarı</option>
-                <option value="CRITICAL">Kritik</option>
+                <option value="all">{t('filter_all_status')}</option>
+                <option value="ONLINE">{t('status_online')}</option>
+                <option value="OFFLINE">{t('status_offline')}</option>
+                <option value="WARNING">{t('status_warning')}</option>
+                <option value="CRITICAL">{t('status_critical')}</option>
               </select>
             )}
             {/* AI Ready Filter */}
@@ -1666,9 +1667,9 @@ const Servers: React.FC = () => {
               onChange={(e) => setAiReadyFilter(e.target.value)}
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">Tümü</option>
-              <option value="true">AI Ready</option>
-              <option value="false">AI Ready Değil</option>
+              <option value="all">{t('filter_all')}</option>
+              <option value="true">{t('ai_ready')}</option>
+              <option value="false">{t('ai_ready_not')}</option>
             </select>
             {/* Type Filter */}
             <select
@@ -1676,7 +1677,7 @@ const Servers: React.FC = () => {
               onChange={(e) => setTypeFilter(e.target.value)}
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">Tüm Tipler</option>
+              <option value="all">{t('filter_all_types')}</option>
               <option value="VIRTUAL">Virtual</option>
               <option value="PHYSICAL">Physical</option>
             </select>
@@ -1686,9 +1687,9 @@ const Servers: React.FC = () => {
               onChange={(e) => setOsFilter(e.target.value)}
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">Tüm OS</option>
+              <option value="all">{t('filter_all_os')}</option>
               <option value="linux">Linux</option>
-              <option value="other">Diğer / Bilinmiyor</option>
+              <option value="other">{t('filter_os_other')}</option>
             </select>
             {/* Node Exporter Filter */}
             <select
@@ -1696,17 +1697,17 @@ const Servers: React.FC = () => {
               onChange={(e) => setNodeExporterFilter(e.target.value)}
               className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">Node Exporter: Tümü</option>
-              <option value="running">Çalışıyor</option>
-              <option value="installed">Kurulu</option>
-              <option value="not_installed">Kurulu Değil</option>
+              <option value="all">{t('node_exporter_all')}</option>
+              <option value="running">{t('node_exporter_running')}</option>
+              <option value="installed">{t('node_exporter_installed')}</option>
+              <option value="not_installed">{t('node_exporter_missing')}</option>
             </select>
 
           </div>
           <div className="flex items-center gap-2">
             {selectedIds.size > 0 && (
               <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/25 px-2.5 py-1 rounded-lg">
-                {selectedIds.size} seçili
+                {t('selected_n', { n: selectedIds.size })}
               </span>
             )}
             <ActionsDropdown
@@ -1722,7 +1723,7 @@ const Servers: React.FC = () => {
 
       {!sshOpsEnabled && (
         <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
-          {SSH_CRED_HINT} Durum kontrolü (TCP) credential gerektirmez.
+          {t('ssh_cred_hint')} {t('ssh_cred_tcp_ok')}
         </div>
       )}
 
@@ -1743,7 +1744,7 @@ const Servers: React.FC = () => {
                     checked={pageAllSelected}
                     onChange={toggleSelectAllPage}
                     className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
-                    title="Sayfadaki tümünü seç"
+                    title={t('select_page_all')}
                   />
                   <div
                     className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-col-resize group/rz hover:bg-blue-500/10"
@@ -1753,12 +1754,12 @@ const Servers: React.FC = () => {
                   </div>
                 </th>
                 {([
-                  { key: 'name',   label: 'Sunucu',      sortable: true,  sortKey: 'hostname' },
-                  { key: 'tip',    label: 'Tip',         sortable: true,  sortKey: 'type'   },
-                  { key: 'status', label: 'Durum',       sortable: true,  sortKey: 'status' },
+                  { key: 'name',   label: t('col_server'),     sortable: true,  sortKey: 'hostname' },
+                  { key: 'tip',    label: t('col_type'),       sortable: true,  sortKey: 'type'   },
+                  { key: 'status', label: t('col_status'),     sortable: true,  sortKey: 'status' },
                   { key: 'os',     label: 'OS',          sortable: true,  sortKey: 'os'     },
-                  { key: 'cpu',    label: 'CPU / RAM',   sortable: true,  sortKey: 'cpu'    },
-                  { key: 'izleme', label: 'İzleme',      sortable: true,  sortKey: 'ai'     },
+                  { key: 'cpu',    label: `CPU / ${t('memory')}`,   sortable: true,  sortKey: 'cpu'    },
+                  { key: 'izleme', label: t('col_monitoring'),  sortable: true,  sortKey: 'ai'     },
                   { key: 'action', label: '',           sortable: false, sortKey: '' },
                 ] as Array<{key: string; label: string; sortable: boolean; sortKey?: string}>).map((col, ci) => (
                   <th key={col.key}
@@ -1796,8 +1797,8 @@ const Servers: React.FC = () => {
               {sortedServers.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
-                    <p className="font-medium">Henüz sunucu yok</p>
-                    <p className="text-sm mt-1">Sunucu eklemek için Entegrasyonlar modülünü kullanın (UCMDB import, hypervisor sync veya manuel host ekleme).</p>
+                    <p className="font-medium">{t('servers_empty')}</p>
+                    <p className="text-sm mt-1">{t('servers_empty_hint')}</p>
                     <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
                   </td>
                 </tr>
@@ -1858,10 +1859,10 @@ const Servers: React.FC = () => {
                           {canSeeNameMismatch && hasNameMismatch(server) && (
                             <span
                               className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded"
-                              title={`VM adı: ${server.vm_name || server.name}`}
+                              title={t('vm_name_title', { name: server.vm_name || server.name })}
                             >
                               <AlertTriangle size={10} strokeWidth={2} />
-                              İsim
+                              {t('name_mismatch_short')}
                             </span>
                           )}
                         </div>
@@ -1884,7 +1885,11 @@ const Servers: React.FC = () => {
 
                   {/* ── Tip ── */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <span className="text-sm text-slate-300">{serverTypeLabel(server.server_type)}</span>
+                    <span className="text-sm text-slate-300">{
+                      (server.server_type || '').toUpperCase() === 'PHYSICAL' ? t('type_physical')
+                        : (server.server_type || '').toUpperCase() === 'VIRTUAL' ? t('type_virtual')
+                          : serverTypeLabel(server.server_type)
+                    }</span>
                   </td>
 
                   {/* ── Durum ── */}
@@ -1892,12 +1897,12 @@ const Servers: React.FC = () => {
                     {server.status === 'ONLINE' ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
                         <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                        Aktif
+                        {t('status_online')}
                       </span>
                     ) : server.status === 'OFFLINE' ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/[0.07]/50 text-slate-400 border border-slate-600/50">
                         <span className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
-                        Çevrimdışı
+                        {t('status_offline')}
                       </span>
                     ) : (
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusBadge(server.status)}`}>
@@ -1927,21 +1932,21 @@ const Servers: React.FC = () => {
                     </div>
                   </td>
 
-                  {/* ── CPU / RAM ── */}
+                  {/* ── CPU / Memory ── */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="space-y-1">
                       {server.cpu_cores > 0 ? (
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-slate-400 w-7">CPU</span>
                           <span className="text-sm font-medium text-white">{server.cpu_cores}</span>
-                          <span className="text-xs text-slate-500">çekirdek</span>
+                          <span className="text-xs text-slate-500">{t('cores')}</span>
                         </div>
                       ) : (
                         <div className="text-xs text-slate-600">—</div>
                       )}
                       {server.memory_gb > 0 && (
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-400 w-7">RAM</span>
+                          <span className="text-xs text-slate-400 w-14">{t('memory')}</span>
                           <span className="text-sm font-medium text-white">{server.memory_gb}</span>
                           <span className="text-xs text-slate-500">GB</span>
                         </div>
@@ -1955,17 +1960,17 @@ const Servers: React.FC = () => {
                       {server.ai_ready ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 w-fit">
                           <ShieldCheck size={11} />
-                          AI Ready
+                          {t('ai_ready')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-slate-500/10 text-slate-400 border border-slate-600/40 w-fit">
-                          AI Ready değil
+                          {t('ai_ready_not')}
                         </span>
                       )}
                       {server.node_exporter?.running || server.node_exporter?.installed ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/25 w-fit">
                           <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                          Metrik
+                          {t('metric_badge')}
                         </span>
                       ) : null}
                     </div>
@@ -1978,7 +1983,7 @@ const Servers: React.FC = () => {
                         <button
                           onClick={() => openSsh(server)}
                           className="px-2.5 py-1.5 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono"
-                          title="SSH Terminal Aç (Yeni Pencere)"
+                          title={t('ssh_terminal_title')}
                         >
                           SSH
                         </button>
@@ -1986,20 +1991,20 @@ const Servers: React.FC = () => {
                       <button
                         onClick={() => setSelectedServer(server)}
                         className="px-2.5 py-1.5 text-xs bg-white/[0.07] hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
-                        title="Detay"
+                        title={t('detail')}
                       >
-                        Detay
+                        {t('detail')}
                       </button>
                       <button
                         onClick={async () => {
-                          if (await showConfirm('Bu sunucuyu silmek istediğinize emin misiniz?')) {
+                          if (await showConfirm(t('delete_server_confirm'))) {
                             deleteMutation.mutate(server.id)
                           }
                         }}
                         className="px-2.5 py-1.5 text-xs text-red-400 hover:text-white hover:bg-red-700 rounded-lg transition-colors"
-                        title="Sil"
+                        title={t('delete')}
                       >
-                        Sil
+                        {t('delete')}
                       </button>
                     </div>
                   </td>
@@ -2012,8 +2017,8 @@ const Servers: React.FC = () => {
         {sortedServers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
             {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all' || nameMismatchFilter
-              ? 'Filtreye uygun sunucu bulunamadı'
-              : 'Henüz sunucu yok — envanter Entegrasyonlar üzerinden eklenir'}
+              ? t('servers_filter_empty')
+              : t('servers_none_integrations')}
           </div>
         )}
         {totalServers > 0 && (
@@ -2028,7 +2033,7 @@ const Servers: React.FC = () => {
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="px-3 py-1 rounded-lg bg-white/[0.05] border border-white/[0.08] disabled:opacity-40 hover:bg-white/[0.08]"
               >
-                Önceki
+                {t('page_prev')}
               </button>
               <span className="text-slate-500">
                 {page} / {totalPages}
@@ -2039,7 +2044,7 @@ const Servers: React.FC = () => {
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="px-3 py-1 rounded-lg bg-white/[0.05] border border-white/[0.08] disabled:opacity-40 hover:bg-white/[0.08]"
               >
-                Sonraki
+                {t('page_next')}
               </button>
             </div>
           </div>
@@ -2075,7 +2080,7 @@ const Servers: React.FC = () => {
                 <div className="truncate font-mono text-[11px] text-slate-400">
                   {contextMenu.server.ip_address || '—'}
                   {getContextOpIds(contextMenu.server).length > 1
-                    ? ` · ${getContextOpIds(contextMenu.server).length} seçili`
+                    ? ` · ${t('selected_n', { n: getContextOpIds(contextMenu.server).length })}`
                     : ''}
                 </div>
               </div>
@@ -2084,25 +2089,25 @@ const Servers: React.FC = () => {
 
           <div className="py-1.5">
             <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              İşlemler
+              {t('actions')}
             </div>
             {([
               {
-                label: 'Durum kontrolü',
-                hint: 'TCP erişilebilirlik',
+                label: t('ctx_check_health'),
+                hint: t('ctx_check_health_hint'),
                 icon: Activity,
                 action: () => { setContextMenu(null); runCheckHealth(getContextOpIds(contextMenu.server)) },
               },
               {
-                label: 'AI Ready Güncelle',
-                hint: 'SSH kimlik doğrulama',
+                label: t('ai_ready_update'),
+                hint: t('ai_ready_update_hint'),
                 icon: ShieldCheck,
                 disabled: !sshOpsEnabled,
                 action: () => { setContextMenu(null); runAiReadyUpdate(getContextOpIds(contextMenu.server)) },
               },
               {
-                label: 'OS Bilgisini Yenile',
-                hint: 'OS / Kernel / CPU / RAM',
+                label: t('os_refresh'),
+                hint: t('os_refresh_hint'),
                 icon: HardDrive,
                 disabled: !sshOpsEnabled,
                 action: () => { setContextMenu(null); runOsRefresh(getContextOpIds(contextMenu.server)) },
@@ -2112,7 +2117,7 @@ const Servers: React.FC = () => {
                 key={item.label}
                 type="button"
                 disabled={item.disabled}
-                title={item.disabled ? SSH_CRED_HINT : item.hint}
+                title={item.disabled ? t('ssh_cred_hint') : item.hint}
                 onClick={item.action}
                 className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -2140,8 +2145,8 @@ const Servers: React.FC = () => {
                   <Terminal size={14} />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-sm text-slate-100">SSH Terminal</span>
-                  <span className="block text-[11px] text-slate-500">Yeni pencerede aç</span>
+                  <span className="block text-sm text-slate-100">{t('ssh_terminal')}</span>
+                  <span className="block text-[11px] text-slate-500">{t('ssh_terminal_hint')}</span>
                 </span>
               </button>
             )}
@@ -2154,8 +2159,8 @@ const Servers: React.FC = () => {
                 <Info size={14} />
               </span>
               <span className="min-w-0">
-                <span className="block text-sm text-slate-100">Detay</span>
-                <span className="block text-[11px] text-slate-500">Sunucu paneli</span>
+                <span className="block text-sm text-slate-100">{t('detail')}</span>
+                <span className="block text-[11px] text-slate-500">{t('detail_hint')}</span>
               </span>
             </button>
           </div>
@@ -2169,8 +2174,8 @@ const Servers: React.FC = () => {
                 const ids = getContextOpIds(contextMenu.server)
                 setContextMenu(null)
                 const msg = ids.length > 1
-                  ? `${ids.length} sunucuyu silmek istediğinize emin misiniz?`
-                  : 'Bu sunucuyu silmek istediğinize emin misiniz?'
+                  ? t('delete_servers_confirm', { n: ids.length })
+                  : t('delete_server_confirm')
                 if (!await showConfirm(msg)) return
                 for (const id of ids) await deleteMutation.mutateAsync(id)
               }}
@@ -2180,8 +2185,8 @@ const Servers: React.FC = () => {
                 <Trash2 size={14} />
               </span>
               <span className="min-w-0">
-                <span className="block text-sm text-red-300">Sil</span>
-                <span className="block text-[11px] text-red-400/70">Kalıcı olarak kaldır</span>
+                <span className="block text-sm text-red-300">{t('delete')}</span>
+                <span className="block text-[11px] text-red-400/70">{t('delete_hint')}</span>
               </span>
             </button>
           </div>

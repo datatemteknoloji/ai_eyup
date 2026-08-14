@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Cpu, MemoryStick, Clock, RefreshCw, AlertTriangle, Activity } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { useT, useLocale } from '../i18n/LocaleProvider'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -29,12 +30,6 @@ interface LiveMetricsResponse {
   avg_cpu_pct: number | null
   avg_mem_pct: number | null
 }
-
-const REFRESH_OPTIONS = [
-  { label: '10 sn', value: 10_000 },
-  { label: '30 sn', value: 30_000 },
-  { label: '1 dk', value: 60_000 },
-]
 
 const barColor = (pct: number) => (pct >= 90 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#3b82f6')
 
@@ -63,34 +58,43 @@ const SummaryCard: React.FC<{ icon: React.ReactNode; label: string; value: strin
 )
 
 const WindowsLiveMetrics: React.FC = () => {
+  const t = useT()
+  const { locale } = useLocale()
   const [refreshMs, setRefreshMs] = useState(30_000)
 
   const { data, isLoading, isFetching, dataUpdatedAt, refetch } = useQuery<LiveMetricsResponse>({
     queryKey: ['windows-live-metrics'],
     queryFn: async () => {
       const r = await fetch(`${WIN_API}/live-metrics`)
-      if (!r.ok) throw new Error('Canlı metrikler alınamadı')
+      if (!r.ok) throw new Error(t('lm_not_found'))
       return r.json()
     },
     refetchInterval: refreshMs,
   })
 
   const servers = data?.servers || []
-  const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('tr-TR') : '—'
+  const lastUpdated = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString(locale === 'en' ? 'en-GB' : 'tr-TR')
+    : '—'
+  const refreshOptions = [
+    { label: t('wlm_refresh_10s'), value: 10_000 },
+    { label: t('wlm_refresh_30s'), value: 30_000 },
+    { label: t('lm_interval_1m'), value: 60_000 },
+  ]
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">Windows Canlı Metrikler</h1>
+          <h1 className="text-xl font-bold text-white">{t('wlm_title')}</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            WinRM üzerinden AI Ready sunuculardan gerçek zamanlı CPU / RAM / Disk kullanımı
+            {t('wlm_subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
-            {REFRESH_OPTIONS.map(opt => (
+            {refreshOptions.map(opt => (
               <button
                 key={opt.value}
                 onClick={() => setRefreshMs(opt.value)}
@@ -102,33 +106,32 @@ const WindowsLiveMetrics: React.FC = () => {
           </div>
           <button onClick={() => refetch()}
             className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors">
-            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} /> Yenile
+            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
           </button>
         </div>
       </div>
 
       {/* Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard icon={<Activity size={18} />} label="Canlı Sunucu" value={`${data?.online ?? 0} / ${data?.total ?? 0}`} accent="#22d3ee" />
-        <SummaryCard icon={<Cpu size={18} />} label="Ortalama CPU" value={data?.avg_cpu_pct != null ? `%${data.avg_cpu_pct}` : '—'} accent="#3b82f6" />
-        <SummaryCard icon={<MemoryStick size={18} />} label="Ortalama RAM" value={data?.avg_mem_pct != null ? `%${data.avg_mem_pct}` : '—'} accent="#38bdf8" />
-        <SummaryCard icon={<Clock size={18} />} label="Son Güncelleme" value={lastUpdated} accent="#94a3b8" />
+        <SummaryCard icon={<Activity size={18} />} label={t('wlm_live_servers')} value={`${data?.online ?? 0} / ${data?.total ?? 0}`} accent="#22d3ee" />
+        <SummaryCard icon={<Cpu size={18} />} label={t('wlm_avg_cpu')} value={data?.avg_cpu_pct != null ? `%${data.avg_cpu_pct}` : '—'} accent="#3b82f6" />
+        <SummaryCard icon={<MemoryStick size={18} />} label={t('wlm_avg_ram')} value={data?.avg_mem_pct != null ? `%${data.avg_mem_pct}` : '—'} accent="#38bdf8" />
+        <SummaryCard icon={<Clock size={18} />} label={t('wlm_last_update')} value={lastUpdated} accent="#94a3b8" />
       </div>
 
       {/* Table */}
       {isLoading ? (
         <div className="flex items-center justify-center h-40 gap-3 text-slate-400">
           <div className="w-5 h-5 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-          Yükleniyor...
+          {t('loading')}
         </div>
       ) : servers.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-52 bg-slate-800 border border-slate-700 rounded-xl gap-3">
           <AlertTriangle size={40} className="text-slate-600" />
-          <p className="text-slate-400 font-medium">AI Ready Windows sunucu bulunamadı</p>
+          <p className="text-slate-400 font-medium">{t('wlm_none')}</p>
           <p className="text-slate-500 text-sm text-center max-w-sm">
-            Canlı metrik görebilmek için önce{' '}
-            <Link to="/windows" className="text-blue-400 hover:underline">Windows Sunucular</Link> sayfasından
-            "AI Ready Güncelle" ile WinRM bağlantısını doğrulayın.
+            {t('wlm_none_hint')}{' '}
+            <Link to="/windows" className="text-blue-400 hover:underline">{t('win_title')}</Link>
           </p>
         </div>
       ) : (
@@ -136,7 +139,7 @@ const WindowsLiveMetrics: React.FC = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/80">
-                {['Sunucu', 'CPU', 'RAM', 'Disk (en dolu)', 'Uptime', ''].map(h => (
+                {[t('col_server'), 'CPU', t('memory'), t('wlm_disk_fullest'), 'Uptime', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -179,12 +182,12 @@ const WindowsLiveMetrics: React.FC = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {srv.uptime_days != null ? `${srv.uptime_days} gün` : '—'}
+                      {srv.uptime_days != null ? t('wlm_days', { n: srv.uptime_days }) : '—'}
                     </td>
                     <td className="px-4 py-3">
                       {srv.error && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-amber-400" title={srv.error}>
-                          <AlertTriangle size={10} /> {srv.ai_ready ? 'Sorgu hatası' : 'AI Ready değil'}
+                          <AlertTriangle size={10} /> {srv.ai_ready ? t('wlm_query_error') : t('ai_ready_not')}
                         </span>
                       )}
                     </td>
