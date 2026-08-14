@@ -11,7 +11,7 @@ import {
   previewJob,
   ServerPublic,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import {
@@ -67,16 +67,6 @@ function NetworkBackBar({ onBack }: { onBack: () => void }) {
         <span aria-hidden className="text-[var(--text-secondary,var(--color-muted-foreground))]">←</span>
         {t("network_back_to_choice")}
       </button>
-    </div>
-  );
-}
-
-function EmbeddedServerChip({ hostname, serverId }: { hostname?: string; serverId: string }) {
-  const t = useT();
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset,var(--bg-deep))] px-3 py-2">
-      <p className="text-[11px] text-[var(--color-muted-foreground)]">{t("server")}</p>
-      <p className="mt-0.5 font-mono text-sm text-[var(--color-foreground)]">{hostname || serverId}</p>
     </div>
   );
 }
@@ -336,9 +326,6 @@ function AddNetworkForm() {
     }
   }
 
-  const hostName =
-    servers.find((s) => String(s.id) === effectiveServerId)?.hostname || effectiveServerId;
-
   return (
     <>
       <h2 className="text-lg font-semibold tracking-tight text-[var(--color-foreground)]">
@@ -362,16 +349,12 @@ function AddNetworkForm() {
           />
         </div>
 
-        {!embedded ? (
-          <ServerPicker
-            servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
-          />
-        ) : (
-          <EmbeddedServerChip hostname={hostName} serverId={String(effectiveServerId || "")} />
-        )}
+        <SingleServerField
+          locked={Boolean(qServerId) || embedded}
+          servers={servers}
+          serverId={String(effectiveServerId || "")}
+          onChange={setServerId}
+        />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -707,19 +690,12 @@ function IpChangeForm() {
           />
         </div>
 
-        {!embedded ? (
-          <ServerPicker
-            servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
-          />
-        ) : (
-          <EmbeddedServerChip
-            hostname={servers.find((s) => String(s.id) === effectiveServerId)?.hostname}
-            serverId={String(effectiveServerId || "")}
-          />
-        )}
+        <SingleServerField
+          locked={Boolean(qServerId) || embedded}
+          servers={servers}
+          serverId={String(effectiveServerId || "")}
+          onChange={setServerId}
+        />
 
         {inv ? (
           <p className="text-xs text-[var(--color-muted-foreground)]">

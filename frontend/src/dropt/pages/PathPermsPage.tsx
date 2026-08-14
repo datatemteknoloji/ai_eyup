@@ -7,7 +7,7 @@ import {
   previewJob,
   ServerPublic,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Checkbox } from "@dropt/components/ui/checkbox";
 import { Input } from "@dropt/components/ui/input";
@@ -94,11 +94,11 @@ export function PathPermsPage() {
           onChange={(e) => setTalepId(e.target.value)}
           required
         />
-        <ServerPicker
+        <SingleServerField
+          locked={Boolean(qServerId)}
           servers={servers}
-          value={serverId ? [Number(serverId)] : []}
-          onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-          multiple={false}
+          serverId={serverId}
+          onChange={setServerId}
         />
         <div>
           <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Path</label>

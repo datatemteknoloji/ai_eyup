@@ -29,7 +29,6 @@ type WizardAction =
   | "lock"
   | "unlock"
   | "delete"
-  | "bulk_lock"
   | "password_reset"
   | "set_expire";
 
@@ -37,15 +36,15 @@ export function LocalUsersPage() {
   const token = getToken()!;
   const afterPreview = useAfterPreview();
   const t = useT();
-  const { serverId: qServerId, serverIds: qServerIds } = useServerQuery();
+  const { serverIds: qServerIds } = useServerQuery();
   const qServerIdsKey = qServerIds.join(",");
   const [servers, setServers] = useState<ServerPublic[]>([]);
-  const [serverId, setServerId] = useState<string>("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [users, setUsers] = useState<LocalUserPublic[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [action, setAction] = useState<WizardAction>(qServerIds.length > 1 ? "bulk_lock" : "lock");
+  const [action, setAction] = useState<WizardAction>("lock");
   const [talepId, setTalepId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -54,26 +53,33 @@ export function LocalUsersPage() {
   const [removeHome, setRemoveHome] = useState(false);
   const [backupHome, setBackupHome] = useState(false);
   const [expireDate, setExpireDate] = useState("");
-  const [bulkServerIds, setBulkServerIds] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
+
+  const tableServerId = selectedIds.length === 1 ? selectedIds[0] : null;
 
   useEffect(() => {
     void listServers(token, { page: 1, page_size: 200, status: "ready" }).then((d) => {
       setServers(d.items);
-      if (qServerId) setServerId(qServerId);
-      else if (d.items[0]) setServerId(String(d.items[0].id));
-      if (qServerIds.length > 1) setBulkServerIds(qServerIds.map(Number));
+      if (qServerIds.length) {
+        const wanted = new Set(qServerIds.map(Number).filter((id) => Number.isFinite(id)));
+        setSelectedIds(d.items.filter((s) => wanted.has(s.id)).map((s) => s.id));
+      } else if (d.items[0]) {
+        setSelectedIds([d.items[0].id]);
+      }
     });
-  }, [token, qServerId, qServerIdsKey]);
+  }, [token, qServerIdsKey]);
 
   useEffect(() => {
-    if (!serverId || action === "bulk_lock") return;
+    if (tableServerId == null) {
+      setUsers([]);
+      return;
+    }
     setLoadingUsers(true);
-    void listLocalUsers(token, Number(serverId))
+    void listLocalUsers(token, tableServerId)
       .then(setUsers)
-      .catch((err) => setError(err instanceof Error ? err.message : "Liste alınamadı"))
+      .catch((err) => setError(err instanceof Error ? err.message : t("list_failed")))
       .finally(() => setLoadingUsers(false));
-  }, [token, serverId, action]);
+  }, [token, tableServerId, t]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,14 +90,7 @@ export function LocalUsersPage() {
       if (!tid) throw new Error("Talep ID zorunlu");
       const uname = username.trim();
       if (!uname) throw new Error("Kullanıcı adı zorunlu");
-
-      const server_ids =
-        action === "bulk_lock"
-          ? bulkServerIds
-          : serverId
-            ? [Number(serverId)]
-            : [];
-      if (server_ids.length === 0) throw new Error("Sunucu seçin");
+      if (selectedIds.length === 0) throw new Error("Sunucu seçin");
 
       const payload: Record<string, unknown> = { username: uname };
       if (action === "create") {
@@ -120,7 +119,7 @@ export function LocalUsersPage() {
       const job = await createJob(token, {
         action,
         talep_id: tid,
-        server_ids,
+        server_ids: selectedIds,
         payload,
       });
       afterPreview(await previewJob(token, job.id));
@@ -134,34 +133,31 @@ export function LocalUsersPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_local_users")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-        Hedef sunucudaki OS kullanıcıları · Talep ID + önizleme zorunlu
-      </p>
+      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("local_users_sub")}</p>
 
       <form
         onSubmit={onSubmit}
         className="mt-6 max-w-2xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
       >
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">İşlem</label>
+          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("local_users_action")}</label>
           <Select value={action} onValueChange={(v) => setAction(v as WizardAction)}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="create">Kullanıcı oluştur</SelectItem>
-              <SelectItem value="lock">Kilitle</SelectItem>
-              <SelectItem value="unlock">Kilit aç</SelectItem>
-              <SelectItem value="password_reset">Şifre sıfırla</SelectItem>
-              <SelectItem value="set_expire">Süreyi ayarla</SelectItem>
-              <SelectItem value="delete">Sil</SelectItem>
-              <SelectItem value="bulk_lock">Birden fazla sunucuda kilitle</SelectItem>
+              <SelectItem value="create">{t("local_users_op_create")}</SelectItem>
+              <SelectItem value="lock">{t("local_users_op_lock")}</SelectItem>
+              <SelectItem value="unlock">{t("local_users_op_unlock")}</SelectItem>
+              <SelectItem value="password_reset">{t("local_users_op_password")}</SelectItem>
+              <SelectItem value="set_expire">{t("local_users_op_expire")}</SelectItem>
+              <SelectItem value="delete">{t("local_users_op_delete")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
+          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
           <Input
             value={talepId}
             onChange={(e) => setTalepId(e.target.value)}
@@ -170,27 +166,18 @@ export function LocalUsersPage() {
           />
         </div>
 
-        {action !== "bulk_lock" ? (
-          <ServerPicker
-            servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
-            label="Sunucu"
-          />
-        ) : (
-          <ServerPicker
-            servers={servers}
-            value={bulkServerIds}
-            onChange={setBulkServerIds}
-            multiple
-            label="Hedef sunucular"
-          />
-        )}
+        <ServerPicker
+          servers={servers}
+          value={selectedIds}
+          onChange={setSelectedIds}
+          multiple
+          label={t("local_users_targets")}
+        />
+        <p className="-mt-2 text-xs text-[var(--color-muted-foreground)]">{t("local_users_multi_hint")}</p>
 
         <div>
           <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
-            Kullanıcı adı
+            {t("local_users_username")}
           </label>
           <Input
             className="font-mono"
@@ -203,7 +190,7 @@ export function LocalUsersPage() {
         {action === "create" || action === "password_reset" ? (
           <>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Parola</label>
+              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("password")}</label>
               <Input
                 type="password"
                 value={password}
@@ -215,14 +202,14 @@ export function LocalUsersPage() {
             {action === "create" ? (
               <div>
                 <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
-                  Gruplar (virgülle)
+                  {t("local_users_groups")}
                 </label>
                 <Input value={groups} onChange={(e) => setGroups(e.target.value)} placeholder="wheel,devops" />
               </div>
             ) : null}
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={forceChange} onCheckedChange={(v) => setForceChange(!!v)} />
-              İlk girişte şifre değiştirilsin
+              {t("local_users_force_change")}
             </label>
           </>
         ) : null}
@@ -230,7 +217,7 @@ export function LocalUsersPage() {
         {action === "set_expire" ? (
           <div>
             <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
-              Expire tarihi (YYYY-MM-DD)
+              {t("local_users_expire")}
             </label>
             <Input
               className="font-mono"
@@ -246,11 +233,11 @@ export function LocalUsersPage() {
           <>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={removeHome} onCheckedChange={(v) => setRemoveHome(!!v)} />
-              Ev dizinini de sil
+              {t("local_users_remove_home")}
             </label>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={backupHome} onCheckedChange={(v) => setBackupHome(!!v)} />
-              Ev dizinini yedekle (tar)
+              {t("local_users_backup_home")}
             </label>
           </>
         ) : null}
@@ -258,25 +245,25 @@ export function LocalUsersPage() {
         {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
 
         <Button type="submit" disabled={busy}>
-          {busy ? "Önizleme hazırlanıyor…" : "Değişiklikleri Önizle"}
+          {busy ? t("local_users_preview_busy") : t("preview")}
         </Button>
       </form>
 
-      {action !== "bulk_lock" && serverId ? (
+      {tableServerId != null ? (
         <div className="mt-8 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
           <div className="border-b border-[var(--color-border)] px-4 py-3 text-sm font-medium">
-            Sunucudaki kullanıcılar
+            {t("local_users_list_title")}
           </div>
           {loadingUsers ? (
-            <p className="px-4 py-6 text-sm text-[var(--color-muted-foreground)]">Yükleniyor…</p>
+            <p className="px-4 py-6 text-sm text-[var(--color-muted-foreground)]">{t("loading")}</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="text-[var(--color-muted-foreground)]">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">Kullanıcı</th>
+                  <th className="px-3 py-2 text-left font-medium">{t("local_users_col_user")}</th>
                   <th className="px-3 py-2 text-left font-medium">UID</th>
-                  <th className="px-3 py-2 text-left font-medium">Gruplar</th>
-                  <th className="px-3 py-2 text-left font-medium">Durum</th>
+                  <th className="px-3 py-2 text-left font-medium">{t("local_users_col_groups")}</th>
+                  <th className="px-3 py-2 text-left font-medium">{t("local_users_col_status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -292,7 +279,7 @@ export function LocalUsersPage() {
                       {u.username}
                       {u.protected ? (
                         <Badge className="ml-2" variant="muted">
-                          korunan
+                          {t("local_users_protected")}
                         </Badge>
                       ) : null}
                     </td>
@@ -309,7 +296,9 @@ export function LocalUsersPage() {
             </table>
           )}
         </div>
-      ) : null}
+      ) : (
+        <p className="mt-6 text-sm text-[var(--color-muted-foreground)]">{t("local_users_list_hidden")}</p>
+      )}
     </div>
   );
 }

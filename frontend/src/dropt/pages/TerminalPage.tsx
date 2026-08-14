@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { listServers, ServerPublic, terminalWsUrl } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import { useServerQuery } from "@dropt/hooks/useServerQuery";
@@ -144,11 +144,11 @@ export function TerminalPage() {
           className="mb-4 max-w-xl space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
         >
           <p className="text-sm text-amber-200/90">{t("terminal_warning")}</p>
-          <ServerPicker
+          <SingleServerField
+            locked={Boolean(qServerId)}
             servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
+            serverId={serverId}
+            onChange={setServerId}
           />
           <Input
             className="font-mono"

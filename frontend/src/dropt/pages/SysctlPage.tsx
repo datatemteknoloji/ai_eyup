@@ -7,7 +7,7 @@ import {
   previewJob,
   ServerPublic,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import { useServerQuery } from "@dropt/hooks/useServerQuery";
@@ -182,21 +182,12 @@ export function SysctlPage() {
         >
           <Input placeholder={t("talep_id")} value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
 
-          {!embedded ? (
-            <ServerPicker
-              servers={servers}
-              value={serverId ? [Number(serverId)] : []}
-              onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-              multiple={false}
-            />
-          ) : (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              {t("server")}:{" "}
-              <span className="font-mono text-[var(--color-foreground)]">
-                {servers.find((s) => String(s.id) === effectiveServerId)?.hostname || effectiveServerId}
-              </span>
-            </p>
-          )}
+          <SingleServerField
+            locked={Boolean(qServerId) || embedded}
+            servers={servers}
+            serverId={effectiveServerId}
+            onChange={setServerId}
+          />
 
           <div>
             <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Hazır parametre</label>

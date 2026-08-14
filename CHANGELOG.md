@@ -11,6 +11,13 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.25] - 2026-08-14
+
+### Level 1 / Operasyon merkezi
+- Tek-host sihirbazlar (hostname, reboot, terminal, servis, path, log, sysctl, limits, network, VLAN): Ops Center / konsol `serverId` ile açılınca sunucu listesi yok; `hostname · IP` özeti.
+- Yerel kullanıcılar: tüm işlemler çoklu sunucuda; ayrı `bulk_lock` menü öğesi kalktı. Kullanıcı tablosu yalnızca tek sunucu seçiliyken görünür.
+- ASM ve Mail Config çoklu seçici olarak kaldı.
+
 ### OpenShift MTV / Explorer
 - MTV sağlayıcı silme; aranabilir proje seçici; daraltılabilir explorer nav; VM snapshot drawer.
 
@@ -24,8 +31,6 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 - `install-rhel.sh` / `update-rhel.sh` DATA_DIR’i kanonik yola zorlar.
 - Doküman (`deployment.md`, `INSTALL_RHEL.md`) aynı kurala güncellendi.
 - Dev `docker-compose.yml`: tüm ana servislere `restart: unless-stopped` (reboot sonrası Dropt ile aynı otomatik kalkış; prod zaten vardı).
-
-## [1.0.9.25] - 2026-08-13
 
 ### Remote LLM / Bifrost kimlik
 - Çift yol netleştirildi: **Virtual Key → `x-bf-vk`** (Bifrost `sk-bf-…`, API Key boş = curl ile aynı); **API Key → `Authorization`** (eski yol). İkisi birlikte de gönderilebilir.

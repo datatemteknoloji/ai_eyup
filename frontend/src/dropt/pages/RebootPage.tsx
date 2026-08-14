@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { createJob, listServers, previewJob, ServerPublic } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import { useServerQuery } from "@dropt/hooks/useServerQuery";
@@ -74,11 +74,11 @@ export function RebootPage() {
           <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
           <Input className="h-9" value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
         </div>
-        <ServerPicker
+        <SingleServerField
+          locked={Boolean(qServerId)}
           servers={servers}
-          value={serverId ? [Number(serverId)] : []}
-          onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-          multiple={false}
+          serverId={serverId}
+          onChange={setServerId}
           label="Sunucu"
         />
         <div>

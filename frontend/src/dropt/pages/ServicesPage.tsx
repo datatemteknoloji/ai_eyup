@@ -7,7 +7,7 @@ import {
   ServerPublic,
   SystemServiceRow,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Badge } from "@dropt/components/ui/badge";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
@@ -109,11 +109,11 @@ export function ServicesPage() {
           <Input value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
         </div>
 
-        <ServerPicker
+        <SingleServerField
+          locked={Boolean(qServerId)}
           servers={servers}
-          value={serverId ? [Number(serverId)] : []}
-          onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-          multiple={false}
+          serverId={serverId}
+          onChange={setServerId}
           label={t("server")}
         />
 

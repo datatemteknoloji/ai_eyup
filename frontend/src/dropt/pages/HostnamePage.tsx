@@ -7,7 +7,7 @@ import {
   previewJob,
   ServerPublic,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import { useServerQuery } from "@dropt/hooks/useServerQuery";
@@ -138,11 +138,11 @@ export function HostnamePage() {
             </div>
           </div>
 
-          <ServerPicker
+          <SingleServerField
+            locked={Boolean(qServerId)}
             servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
+            serverId={serverId}
+            onChange={setServerId}
             label="Sunucu"
             listClassName="max-h-36"
           />

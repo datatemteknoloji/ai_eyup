@@ -7,7 +7,7 @@ import {
   previewJob,
   ServerPublic,
 } from "@dropt/api";
-import { ServerPicker } from "@dropt/components/ServerPicker";
+import { SingleServerField } from "@dropt/components/OpsLockedServer";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import {
@@ -200,21 +200,12 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
           />
         </div>
 
-        {!embedded ? (
-          <ServerPicker
-            servers={servers}
-            value={serverId ? [Number(serverId)] : []}
-            onChange={(ids) => setServerId(ids[0] ? String(ids[0]) : "")}
-            multiple={false}
-          />
-        ) : (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset,var(--bg-deep))] px-3 py-2">
-            <p className="text-[11px] text-[var(--color-muted-foreground)]">{t("server")}</p>
-            <p className="mt-0.5 font-mono text-sm text-[var(--color-foreground)]">
-              {servers.find((s) => String(s.id) === effectiveServerId)?.hostname || effectiveServerId}
-            </p>
-          </div>
-        )}
+        <SingleServerField
+          locked={Boolean(qServerId) || embedded}
+          servers={servers}
+          serverId={String(effectiveServerId || "")}
+          onChange={setServerId}
+        />
 
         <div>
           <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Interface</label>
