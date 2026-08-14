@@ -589,11 +589,18 @@ async def get_rag_context_for_message(
     met_k = settings.RAG_METRICS_TOP_K
     kn_k = settings.RAG_KNOWLEDGE_TOP_K
 
-    runbook, incidents, metrics, knowledge = await _asyncio.gather(
-        _format_collection_context(message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"),
-        _format_collection_context(message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"),
-        _format_collection_context(message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"),
-        _format_collection_context(message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"),
+    # Sıralı sorgu: tek Chroma client + kilit; gather aynı anda 4 PersistentClient açıyordu.
+    runbook = await _format_collection_context(
+        message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"
+    )
+    incidents = await _format_collection_context(
+        message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"
+    )
+    metrics = await _format_collection_context(
+        message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"
+    )
+    knowledge = await _format_collection_context(
+        message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"
     )
     if include_server_facts and db is not None and server_ids:
         try:

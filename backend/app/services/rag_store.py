@@ -4,8 +4,12 @@ Embedding'ler dışarıdan verilir (Ollama async çağrı ile).
 """
 import logging
 import os
+import threading
 import uuid
 from typing import List, Optional, Any
+
+# Chroma 0.4.x PostHog telemetry'yi import'tan önce kapat (aksi halde ClientStartEvent ERROR)
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -13,6 +17,10 @@ from chromadb.config import Settings as ChromaSettings
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Path başına tek PersistentClient — her query'de yeni client DuckDB kilidinde asılıyor
+_client_lock = threading.RLock()
+_clients: dict = {}
 
 COLLECTION_RUNBOOK = "runbook"
 COLLECTION_INCIDENTS = "incidents"
@@ -64,12 +72,18 @@ def _knowledge_chroma_path() -> str:
 
 
 def _get_client(path: Optional[str] = None):
-    path = path or settings.RAG_CHROMA_PATH
+    """Path başına tek PersistentClient (kilit altında çağırın)."""
+    path = os.path.abspath(path or settings.RAG_CHROMA_PATH)
     os.makedirs(path, exist_ok=True)
-    return chromadb.PersistentClient(
-        path=path,
-        settings=ChromaSettings(anonymized_telemetry=False),
-    )
+    client = _clients.get(path)
+    if client is None:
+        client = chromadb.PersistentClient(
+            path=path,
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+        _clients[path] = client
+        logger.info("RAG chroma client opened path=%s", path)
+    return client
 
 
 def _client_for_collection(name: str):
@@ -78,8 +92,7 @@ def _client_for_collection(name: str):
     return _get_client()
 
 
-def get_collection(name: str):
-    """Collection al veya oluştur. Embedding boyutu ilk add'da belirlenir."""
+def _collection_unlocked(name: str):
     client = _client_for_collection(name)
     try:
         return client.get_collection(name=name)
@@ -88,6 +101,12 @@ def get_collection(name: str):
             name=name,
             metadata={"hnsw:space": "cosine"},
         )
+
+
+def get_collection(name: str):
+    """Collection al veya oluştur. Embedding boyutu ilk add'da belirlenir."""
+    with _client_lock:
+        return _collection_unlocked(name)
 
 
 def add_chunks(
@@ -102,15 +121,16 @@ def add_chunks(
         return
     if embeddings is not None and len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    coll = get_collection(collection_name)
     if metadatas is None:
         metadatas = [{}] * len(ids)
-    coll.add(
-        ids=ids,
-        documents=documents,
-        metadatas=metadatas,
-        embeddings=embeddings,
-    )
+    with _client_lock:
+        coll = _collection_unlocked(collection_name)
+        coll.add(
+            ids=ids,
+            documents=documents,
+            metadatas=metadatas,
+            embeddings=embeddings,
+        )
     logger.info(f"RAG store: added {len(ids)} chunks to {collection_name}")
 
 
@@ -126,15 +146,16 @@ def upsert_chunks(
         return
     if embeddings is not None and len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    coll = get_collection(collection_name)
     if metadatas is None:
         metadatas = [{}] * len(ids)
-    coll.upsert(
-        ids=ids,
-        documents=documents,
-        metadatas=metadatas,
-        embeddings=embeddings,
-    )
+    with _client_lock:
+        coll = _collection_unlocked(collection_name)
+        coll.upsert(
+            ids=ids,
+            documents=documents,
+            metadatas=metadatas,
+            embeddings=embeddings,
+        )
     logger.info(f"RAG store: upserted {len(ids)} chunks to {collection_name}")
 
 
@@ -147,11 +168,21 @@ def query_collection(
     """
     Benzer dokümanları getir. Her öğe: {"id", "document", "metadata", "distance"}.
     """
-    coll = get_collection(collection_name)
-    kwargs = {"query_embeddings": [query_embedding], "n_results": min(n_results, 100)}
-    if where:
-        kwargs["where"] = where
-    result = coll.query(**kwargs)
+    with _client_lock:
+        coll = _collection_unlocked(collection_name)
+        try:
+            total = int(coll.count() or 0)
+        except Exception:
+            total = 0
+        if total <= 0:
+            return []
+        kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": min(max(1, n_results), total, 100),
+        }
+        if where:
+            kwargs["where"] = where
+        result = coll.query(**kwargs)
     out = []
     if result["ids"] and result["ids"][0]:
         for i, id_ in enumerate(result["ids"][0]):
@@ -166,15 +197,16 @@ def query_collection(
 
 def clear_collection(collection_name: str) -> None:
     """Collection içeriğini sil (collection'ı silip yeniden oluşturur)."""
-    client = _client_for_collection(collection_name)
-    try:
-        client.delete_collection(name=collection_name)
-    except Exception:
-        pass
-    client.create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
+    with _client_lock:
+        client = _client_for_collection(collection_name)
+        try:
+            client.delete_collection(name=collection_name)
+        except Exception:
+            pass
+        client.create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
     logger.info(f"RAG store: cleared {collection_name}")
 
 
@@ -183,13 +215,13 @@ def delete_chunk_ids(collection_name: str, ids: List[str]) -> int:
     if not ids:
         return 0
     try:
-        coll = get_collection(collection_name)
-        # Chroma batch limit — parçala
         n = 0
-        for i in range(0, len(ids), 400):
-            batch = ids[i : i + 400]
-            coll.delete(ids=batch)
-            n += len(batch)
+        with _client_lock:
+            coll = _collection_unlocked(collection_name)
+            for i in range(0, len(ids), 400):
+                batch = ids[i : i + 400]
+                coll.delete(ids=batch)
+                n += len(batch)
         logger.info("RAG store: deleted %s ids from %s", n, collection_name)
         return n
     except Exception as e:
@@ -206,11 +238,12 @@ def prune_ids_not_in_keep(
 ) -> int:
     """Collection'da id_prefix ile başlayan, keep_ids dışında kalan kayıtları sil (stale RAG)."""
     try:
-        coll = get_collection(collection_name)
-        total = coll.count()
-        if total == 0:
-            return 0
-        result = coll.get(include=[], limit=min(scan_limit, max(total, 1)))
+        with _client_lock:
+            coll = _collection_unlocked(collection_name)
+            total = coll.count()
+            if total == 0:
+                return 0
+            result = coll.get(include=[], limit=min(scan_limit, max(total, 1)))
         existing = result.get("ids") or []
         to_delete = [
             i for i in existing
@@ -227,8 +260,8 @@ def prune_ids_not_in_keep(
 def count_collection(collection_name: str) -> int:
     """Collection'daki kayıt sayısı."""
     try:
-        coll = get_collection(collection_name)
-        return coll.count()
+        with _client_lock:
+            return _collection_unlocked(collection_name).count()
     except Exception:
         return 0
 
@@ -239,14 +272,15 @@ def list_runbook_documents(limit: int = 5000) -> List[dict]:
     Dönen her öğe: {"title": str, "chunk_count": int, "chunk_ids": list}.
     """
     try:
-        coll = get_collection(COLLECTION_RUNBOOK)
-        total = coll.count()
-        if total == 0:
-            return []
-        result = coll.get(
-            include=["metadatas"],
-            limit=min(limit, total),
-        )
+        with _client_lock:
+            coll = _collection_unlocked(COLLECTION_RUNBOOK)
+            total = coll.count()
+            if total == 0:
+                return []
+            result = coll.get(
+                include=["metadatas"],
+                limit=min(limit, total),
+            )
         ids = result.get("ids") or []
         metadatas = result.get("metadatas") or []
         by_title: dict = {}
@@ -274,8 +308,9 @@ def delete_runbook_by_title(title: str) -> int:
             if d.get("title") == title:
                 count = d.get("chunk_count", 0)
                 break
-        coll = get_collection(COLLECTION_RUNBOOK)
-        coll.delete(where={"title": title})
+        with _client_lock:
+            coll = _collection_unlocked(COLLECTION_RUNBOOK)
+            coll.delete(where={"title": title})
         logger.info(f"RAG store: deleted runbook document title={title!r} ({count} chunks)")
         return count
     except Exception as e:

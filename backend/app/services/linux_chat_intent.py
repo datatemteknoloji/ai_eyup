@@ -145,7 +145,9 @@ _INVENTORY_PATTERNS = [
     r"hostname.{0,20}(ve|ile|&|/|,).{0,20}ip",
     r"makine\s*adi.{0,40}ip",
     r"ip\s*(adres|bilgi)",
-    r"sunucu(lar(in|imizin)?)?\s*(listesi|envanter)",
+    r"sunucu(lar(in|imizin|imi|imiz)?)?\s*(listesi|envanter|listele)",
+    r"sunucu.{0,40}listele",
+    r"listele.{0,40}sunucu",
     r"(hangi|tum|butun)\s+sunucu",
     r"sunucu(lar)?\s*(adi|isim|hostname|ip)",
     r"(fqdn|host\s*adi).{0,30}ip",
@@ -189,8 +191,7 @@ def is_fleet_inventory_query(msg: str) -> bool:
         if re.search(pat, m):
             return True
     if re.search(r"sunucu", m) and re.search(r"(bilgi|liste|neler|hangileri|kayit|kayıt)", m):
-        if re.search(r"(hostname|fqdn|ip|adres|isim|\bad)", m):
-            return True
+        return True
     if re.search(r"sunucu", m) and re.search(r"\bip\b", m):
         if re.search(r"(hostname|fqdn|isim|\bad|adlar|makine)", m):
             return True

@@ -936,7 +936,7 @@ def update_server(
 
 
 class BulkConnectionTestIn(BaseModel):
-    server_ids: list[int] = Field(default_factory=list, min_length=1, max_length=500)
+    server_ids: list[int] = Field(default_factory=list, min_length=1, max_length=10000)
     refresh_facts: bool = False
     workers: int | None = Field(default=None, ge=1, le=40)
 

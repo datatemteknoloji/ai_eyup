@@ -242,18 +242,23 @@ def _full_overview(db: Session) -> str:
     ]
     if ocp_lines:
         lines.append(f"- OpenShift cluster: {len(ocp_lines)} adet")
+    _NAME_CAP = 40
     if linux_ai:
         lines.append("\nAI Ready Linux sunucular:")
-        for s in linux_ai:
+        for s in linux_ai[:_NAME_CAP]:
             lines.append(
                 f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Linux'}, Durum={s.status}"
             )
+        if len(linux_ai) > _NAME_CAP:
+            lines.append(f"- … ve {len(linux_ai) - _NAME_CAP} diger")
     if windows_ai:
         lines.append("\nAI Ready Windows sunucular:")
-        for s in windows_ai:
+        for s in windows_ai[:_NAME_CAP]:
             lines.append(
                 f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Windows'}, Durum={s.status}"
             )
+        if len(windows_ai) > _NAME_CAP:
+            lines.append(f"- … ve {len(windows_ai) - _NAME_CAP} diger")
     if hypervisors:
         lines.append("\nHypervisorlar:")
         for h in hypervisors:

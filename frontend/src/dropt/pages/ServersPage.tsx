@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import {
@@ -16,6 +16,7 @@ import {
   ArrowUpDown,
   CloudDownload,
   FileSpreadsheet,
+  GripVertical,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -195,6 +196,18 @@ export function ServersPage({
   const [bulkTestCurrent, setBulkTestCurrent] = useState("");
   const [bulkTestItems, setBulkTestItems] = useState<BulkTestItem[]>([]);
   const [bulkTestFinished, setBulkTestFinished] = useState(false);
+  const [bulkTestConfirmOpen, setBulkTestConfirmOpen] = useState(false);
+  const [bulkTestConfirmCount, setBulkTestConfirmCount] = useState(0);
+  const [bulkTestConfirmLoading, setBulkTestConfirmLoading] = useState(false);
+  const [chipPos, setChipPos] = useState<{ left: number; top: number } | null>(null);
+  const chipRef = useRef<HTMLDivElement>(null);
+  const chipDrag = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origLeft: number;
+    origTop: number;
+  } | null>(null);
 
   const [ctxMenu, setCtxMenu] = useState<{ open: boolean; x: number; y: number; target: OpsTarget | null }>({
     open: false,
@@ -569,44 +582,73 @@ export function ServersPage({
     setBulkTestCurrent("");
     setBulkTestDone(0);
     setBulkTestTotal(0);
+    setChipPos(null);
   }
 
-  async function onBulkTest() {
-    if (selected.length === 0 || bulkTesting) return;
+  async function fetchAllInventoryServers(): Promise<{ id: number; hostname: string }[]> {
+    const pageSizeAll = 200;
+    const first = await withAuth((token) =>
+      listServers(token, { page: 1, page_size: pageSizeAll }),
+    );
+    const acc: { id: number; hostname: string }[] = first.items.map((s) => ({
+      id: s.id,
+      hostname: s.hostname,
+    }));
+    const totalAll = first.total;
+    let pageNum = 2;
+    while (acc.length < totalAll) {
+      const data = await withAuth((token) =>
+        listServers(token, { page: pageNum, page_size: pageSizeAll }),
+      );
+      if (!data.items.length) break;
+      acc.push(...data.items.map((s) => ({ id: s.id, hostname: s.hostname })));
+      pageNum += 1;
+    }
+    return acc;
+  }
+
+  async function runBulkTest(targets: { id: number; hostname: string }[]) {
+    if (targets.length === 0 || bulkTesting) return;
     if (!automationOpsEnabled) {
       setError(AUTOMATION_CRED_HINT);
       return;
     }
-    const targets = [...selected];
     setInfo(null);
     setError(null);
-    setBulkTestMinimized(false);
-    setBulkTestOpen(true);
+    setBulkTestOpen(false);
+    setBulkTestMinimized(true);
     setBulkTesting(true);
     setBulkTestFinished(false);
     setBulkTestDone(0);
     setBulkTestTotal(targets.length);
-    setBulkTestCurrent("");
+    setBulkTestCurrent(t("bulk_test_parallel", { total: targets.length }));
     setBulkTestItems([]);
     try {
-      setBulkTestCurrent(t("bulk_test_parallel", { total: targets.length }));
-      const r = await withAuth((tok) =>
-        testServerConnectionsBulk(
-          tok,
-          targets.map((s) => s.id),
-        ),
-      );
-      const results: BulkTestItem[] = r.items.map((it) => ({
-        id: it.id,
-        hostname: it.hostname || targets.find((s) => s.id === it.id)?.hostname || String(it.id),
-        ok: it.ok,
-        message: it.message || (it.ok ? "OK" : "Fail"),
-      }));
-      setBulkTestItems(results);
-      setBulkTestDone(r.total);
-      setBulkTestCurrent("");
+      const CHUNK = 500;
+      const results: BulkTestItem[] = [];
+      let okSum = 0;
+      for (let i = 0; i < targets.length; i += CHUNK) {
+        const chunk = targets.slice(i, i + CHUNK);
+        const r = await withAuth((tok) =>
+          testServerConnectionsBulk(
+            tok,
+            chunk.map((s) => s.id),
+          ),
+        );
+        for (const it of r.items) {
+          results.push({
+            id: it.id,
+            hostname: it.hostname || chunk.find((s) => s.id === it.id)?.hostname || String(it.id),
+            ok: it.ok,
+            message: it.message || (it.ok ? "OK" : "Fail"),
+          });
+        }
+        okSum += r.ok;
+        setBulkTestItems([...results]);
+        setBulkTestDone(results.length);
+      }
       setBulkTestFinished(true);
-      setInfo(t("bulk_test_summary", { ok: r.ok, total: r.total }));
+      setInfo(t("bulk_test_summary", { ok: okSum, total: results.length }));
       await load();
     } catch (err) {
       setBulkTestFinished(true);
@@ -614,6 +656,79 @@ export function ServersPage({
     } finally {
       setBulkTesting(false);
       setBulkTestCurrent("");
+    }
+  }
+
+  function onBulkTest() {
+    if (selected.length === 0 || bulkTesting) return;
+    void runBulkTest(selected.map((s) => ({ id: s.id, hostname: s.hostname })));
+  }
+
+  async function onBulkTestClick() {
+    if (bulkTesting || !automationOpsEnabled) return;
+    if (selected.length > 0) {
+      onBulkTest();
+      return;
+    }
+    setBulkTestConfirmLoading(true);
+    try {
+      const first = await withAuth((token) => listServers(token, { page: 1, page_size: 1 }));
+      if (first.total < 1) {
+        setError(t("no_records"));
+        return;
+      }
+      setBulkTestConfirmCount(first.total);
+      setBulkTestConfirmOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("list_failed"));
+    } finally {
+      setBulkTestConfirmLoading(false);
+    }
+  }
+
+  async function confirmBulkTestAll() {
+    setBulkTestConfirmOpen(false);
+    try {
+      const all = await fetchAllInventoryServers();
+      if (all.length === 0) {
+        setError(t("no_records"));
+        return;
+      }
+      await runBulkTest(all);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("list_failed"));
+    }
+  }
+
+  function onChipPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest("button")) return;
+    const el = chipRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    chipDrag.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origLeft: rect.left,
+      origTop: rect.top,
+    };
+    setChipPos({ left: rect.left, top: rect.top });
+    el.setPointerCapture(e.pointerId);
+  }
+
+  function onChipPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const drag = chipDrag.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const w = chipRef.current?.offsetWidth ?? 360;
+    const h = chipRef.current?.offsetHeight ?? 80;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, drag.origLeft + (e.clientX - drag.startX)));
+    const top = Math.max(8, Math.min(window.innerHeight - h - 8, drag.origTop + (e.clientY - drag.startY)));
+    setChipPos({ left, top });
+  }
+
+  function onChipPointerUp(e: PointerEvent<HTMLDivElement>) {
+    if (chipDrag.current?.pointerId === e.pointerId) {
+      chipDrag.current = null;
     }
   }
 
@@ -924,7 +1039,7 @@ export function ServersPage({
               borderColor:
                 selected.length > 0
                   ? "color-mix(in srgb, var(--color-primary) 45%, var(--color-border))"
-                  : "transparent",
+                  : "color-mix(in srgb, var(--color-border) 80%, transparent)",
               background:
                 selected.length > 0
                   ? "color-mix(in srgb, var(--color-primary) 12%, transparent)"
@@ -932,38 +1047,30 @@ export function ServersPage({
             }}
             aria-live="polite"
           >
-            {selected.length > 0 ? (
-              <>
-                <span className="whitespace-nowrap text-sm font-medium">
-                  {t("selected_servers", { n: selected.length })}
-                </span>
-                {canTestConnection ? (
-                  <IconButton
-                    icon={Wifi}
-                    label={t("bulk_test")}
-                    disabled={bulkTesting || !automationOpsEnabled}
-                    onClick={() => void onBulkTest()}
-                  />
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-8 gap-2"
-                  disabled={!automationOpsEnabled}
-                  onClick={(e) => {
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    openOpsFor(selected, rect.left, rect.bottom + 4);
-                  }}
-                >
-                  <Wrench className="h-4 w-4" />
-                  {t("operations")}
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-[var(--color-muted-foreground)] opacity-0 select-none">
-                —
-              </span>
-            )}
+            <span className="whitespace-nowrap text-sm font-medium">
+              {t("selected_servers", { n: selected.length })}
+            </span>
+            {canTestConnection ? (
+              <IconButton
+                icon={Wifi}
+                label={selected.length > 0 ? t("bulk_test") : t("bulk_test_all")}
+                disabled={bulkTesting || !automationOpsEnabled || bulkTestConfirmLoading}
+                onClick={() => void onBulkTestClick()}
+              />
+            ) : null}
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-8 gap-2"
+              disabled={!automationOpsEnabled || selected.length === 0}
+              onClick={(e) => {
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                openOpsFor(selected, rect.left, rect.bottom + 4);
+              }}
+            >
+              <Wrench className="h-4 w-4" />
+              {t("operations")}
+            </Button>
           </div>
 
           <Select
@@ -1251,6 +1358,25 @@ export function ServersPage({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={bulkTestConfirmOpen} onOpenChange={setBulkTestConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("bulk_test_all_confirm_title")}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {t("bulk_test_all_confirm", { n: bulkTestConfirmCount })}
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setBulkTestConfirmOpen(false)}>
+              {t("cancel")}
+            </Button>
+            <Button type="button" onClick={() => void confirmBulkTestAll()}>
+              {t("bulk_test_all_confirm_ok")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={bulkTestOpen}
         onOpenChange={(open) => {
@@ -1335,37 +1461,54 @@ export function ServersPage({
       </Dialog>
 
       {bulkTestMinimized && (bulkTesting || bulkTestFinished) ? (
-        <div className="fixed bottom-4 right-4 z-50 w-[min(360px,calc(100vw-2rem))] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/95 p-3 shadow-lg backdrop-blur">
-          <button
-            type="button"
-            className="w-full text-left"
-            onClick={expandBulkTest}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium">
-                {bulkTestFinished
-                  ? t("bulk_test_done_title")
-                  : t("bulk_test_chip_running", {
-                      done: bulkTestDone,
-                      total: bulkTestTotal || "…",
-                    })}
-              </p>
-              <span className="text-xs text-[var(--color-primary)]">{t("bulk_test_show")}</span>
+        <div
+          ref={chipRef}
+          className="fixed z-50 w-[min(360px,calc(100vw-2rem))] cursor-grab rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/95 p-3 shadow-lg backdrop-blur active:cursor-grabbing"
+          style={
+            chipPos
+              ? { left: chipPos.left, top: chipPos.top, right: "auto", bottom: "auto" }
+              : { right: 16, bottom: 16 }
+          }
+          onPointerDown={onChipPointerDown}
+          onPointerMove={onChipPointerMove}
+          onPointerUp={onChipPointerUp}
+          onPointerCancel={onChipPointerUp}
+        >
+          <div className="flex items-start gap-2">
+            <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {bulkTestFinished
+                    ? t("bulk_test_done_title")
+                    : t("bulk_test_chip_running", {
+                        done: bulkTestDone,
+                        total: bulkTestTotal || "…",
+                      })}
+                </p>
+                <button
+                  type="button"
+                  className="shrink-0 text-xs text-[var(--color-primary)] hover:underline"
+                  onClick={expandBulkTest}
+                >
+                  {t("bulk_test_show")}
+                </button>
+              </div>
+              {!bulkTestFinished && bulkTestCurrent ? (
+                <p className="mt-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
+                  {bulkTestCurrent}
+                </p>
+              ) : null}
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-muted)]">
+                <div
+                  className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
+                  style={{
+                    width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
+                  }}
+                />
+              </div>
             </div>
-            {!bulkTestFinished && bulkTestCurrent ? (
-              <p className="mt-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
-                {bulkTestCurrent}
-              </p>
-            ) : null}
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-muted)]">
-              <div
-                className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
-                style={{
-                  width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
-                }}
-              />
-            </div>
-          </button>
+          </div>
           {bulkTestFinished ? (
             <div className="mt-2 flex justify-end">
               <Button type="button" size="sm" variant="secondary" onClick={dismissBulkTest}>

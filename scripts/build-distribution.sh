@@ -99,6 +99,7 @@ rsync -a \
   --exclude '.venv/' \
   --exclude 'venv/' \
   --exclude '.env' \
+  --exclude 'data/' \
   --exclude 'dist/' \
   --exclude 'ainew/' \
   --exclude 'canvas/' \

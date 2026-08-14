@@ -994,14 +994,6 @@ async def test_remote_llm(
         raise HTTPException(status_code=400, detail="Gateway URL gerekli")
     if not model:
         raise HTTPException(status_code=400, detail="Model adı gerekli")
-    if not api_key and not virtual_key:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Kimlik gerekli: Bifrost için Virtual Key (x-bf-vk / sk-bf-…) "
-                "veya eski yol için API Key (Authorization) alanlarından en az biri."
-            ),
-        )
 
     verify: bool | str = verify_ssl
     if ca_bundle:

@@ -195,8 +195,14 @@ def get_guard_model(db) -> str:
 
 
 def remote_llm_enabled() -> bool:
-    """Uzak (OpenAI-uyumlu) LLM gateway aktif mi — URL + API key ayarlı olmalı."""
-    return bool(settings.REMOTE_LLM_ENABLED and settings.REMOTE_LLM_URL and settings.REMOTE_LLM_API_KEY)
+    """Uzak gateway aktif mi — açık bayrak + URL yeterli. Model kayıttan/isteten gelir.
+
+    API Key ve Virtual Key isteğe bağlıdır (açık gateway, kurum içi auth'suz vs.).
+    """
+    return bool(
+        settings.REMOTE_LLM_ENABLED
+        and (settings.REMOTE_LLM_URL or "").strip()
+    )
 
 
 def _parse_job_list(raw: Optional[str], default: List[str]) -> List[str]:

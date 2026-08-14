@@ -13,6 +13,23 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [1.0.9.25] - 2026-08-14
 
+### Düzeltildi — Chat / RAG donması
+- Chroma path başına tek `PersistentClient` + kilit; her koleksiyon için yeni client DuckDB kilidinde sohbeti (Linux dahil) asıyordu.
+- RAG koleksiyon sorguları sıralı. Boş indekste query atlanır.
+- Tüm Altyapı: “sunucuları listele / kaç sunucu var” DB envanter kısayolu (RAG/SSH yok). “listeler misin” kalıbı tanınır.
+- Unified envanter özeti AI Ready adlarını 40 ile sınırlar.
+
+### Uzak AI
+- Zorunlu alanlar yalnızca Gateway URL + Model. Virtual Key ve API Key isteğe bağlı (test/kayıt “Kimlik gerekli” 400 kalkar).
+- `remote_llm_enabled()` artık API key istemez; açık + URL yeterli.
+
+### Dağıtım paketi
+- `build-distribution.sh` çalışma ağacındaki `data/` (Postgres/Dropt envanteri) tar’a koymaz.
+
+### Level 1 / Operasyon merkezi
+- Seçim çubuğu (Wi‑Fi + İşlemler) her zaman görünür. Seçim yokken İşlemler kapalı; bağlantı testi tüm envanteri (onay sonrası) tarar. Seçim varken eski davranış: yalnızca seçilenler + İşlemler menüsü.
+- Toplu bağlantı testi varsayılan arka planda başlar; özet kutusu sürüklenebilir.
+
 ### Düzeltildi — kurulum / Dropt Postgres şifresi
 - Eski `data/dropt/postgres` (veya ainew Timescale) + yeni `.env` şifresi: `install-rhel.sh` / `update-rhel.sh` önce yalnızca DB/Redis açar, unix/local trust ile `ALTER USER`, sonra `dropt-api` (ağ scram). `set -e` yüzünden ALTER’a hiç gelmeme tuzağı kalktı.
 - Timescale/PG data paket imajıyla açılmazsa silinmez; `*.bak-incompatible-*` olarak kenara alınıp boş küme init edilir.

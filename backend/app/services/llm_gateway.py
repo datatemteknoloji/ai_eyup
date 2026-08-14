@@ -2,9 +2,10 @@
 LLM Gateway — yerel Ollama ile uzak, OpenAI-uyumlu bir sağlayıcı (örn. Bifrost) arasında
 tek bir arayüz üzerinden yönlendirme yapar.
 
-settings.REMOTE_LLM_ENABLED=true ve URL+API key ayarlıysa, TÜM chat/agent/analiz
+settings.REMOTE_LLM_ENABLED=true ve URL ayarlıysa, TÜM chat/agent/analiz
 çağrıları REMOTE_LLM_URL'deki OpenAI-uyumlu `/v1/chat/completions` endpoint'ine gider;
-aksi halde davranış değişmeden yerel Ollama'ya (OLLAMA_URL) gider.
+aksi halde davranış değişmeden yerel Ollama'ya (OLLAMA_URL) gider. API Key / Virtual Key
+isteğe bağlıdır.
 
 Bu modül, çağıran kodun mevcut Ollama şekilli beklentilerini (generate: {"response","done"},
 chat: {"message": {"content","tool_calls"}}) korur — böylece tüm call-site'lar minimal

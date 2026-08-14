@@ -519,6 +519,48 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 yield _sse({"done": True, "session_id": session_id})
                 return
 
+            from app.services.linux_chat_intent import (
+                is_fleet_inventory_query,
+                is_inventory_status_query,
+                format_fleet_inventory_answer,
+            )
+            if is_inventory_status_query(message) or is_fleet_inventory_query(message):
+                from app.services.infra_summary import build_infra_overview_text
+                ml = (message or "").lower()
+                linux_only = any(k in ml for k in ("linux", "rhel", "centos", "ubuntu", "debian"))
+                win_only = any(k in ml for k in ("windows", "winrm"))
+                if is_inventory_status_query(message):
+                    plat = None
+                    if linux_only and not win_only:
+                        plat = "linux"
+                    elif win_only and not linux_only:
+                        plat = "windows"
+                    answer_text = build_infra_overview_text(db, platform=plat)
+                else:
+                    if win_only and not linux_only:
+                        servers = _windows_ai_ready_servers(db)
+                        title = "Windows sunucu envanteri (kayıtlı)"
+                    else:
+                        servers = _linux_ai_ready_servers(db)
+                        title = "Linux sunucu envanteri (kayıtlı)"
+                    answer_text = format_fleet_inventory_answer(servers, title=title)
+                logger.info(
+                    "[UnifiedChat] inventory fast-path summary=%s linux_only=%s win_only=%s",
+                    is_inventory_status_query(message), linux_only, win_only,
+                )
+                yield _sse({"phase": "answering"})
+                _timing.note_ttft()
+                for i in range(0, len(answer_text or ""), 8):
+                    yield _sse({"token": answer_text[i:i + 8]})
+                db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text or ""))
+                s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if s:
+                    s.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                _timing.finish(cache_hit=False, extra={"path": "inventory"})
+                yield _sse({"done": True, "session_id": session_id})
+                return
+
             # Kullanıcı 1/2/3 veya kapsam seçtiyse pending temizle
             if resolve_planning_scope(message):
                 clear_planning_clarification_pending(session_id, platform="unified")
