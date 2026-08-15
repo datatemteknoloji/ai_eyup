@@ -23,7 +23,7 @@ _PERF = (
     "cpu", "ram", "memory", "bellek", "disk", "iowait", "latency", "iops",
     "performans", "performance", "yavaş", "yavas", "yük", "load", "swap",
     "network", "ağ", "ag", "throughput", "kullanım", "usage",
-    "metrik", "metrics", "uptime",
+    "metrik", "metrics", "uptime", "kaynak", "detay", "kapsamlı", "kapsamli",
 )
 _INVENTORY = (
     "listele", "kaç", "kac", "how many", "envanter", "inventory", "özet", "ozet",

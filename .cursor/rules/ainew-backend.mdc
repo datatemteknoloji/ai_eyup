@@ -22,9 +22,12 @@ alwaysApply: false
 
 - Context: `monitoring/prometheus_metrics.py` → `get_metrics_context_for_ai`
 - Instance: `up` map + `match_prometheus_instance` (FQDN:9100 **veya** hostname:9100; `IP:9100` uydurma)
+- Host seçimi: tam ad **ve** kısa ad öneki (`oprbigdata` → oprbigdata3/5/13)
 - CPU: `avg by (instance) (rate(...[5m]))` — çıplak `avg()` labels düşürür (`None`)
 - Tek selector: `{mode="idle",instance="…"}` — iki `{}` birleştirme **geçersiz PromQL**
-- Preset kaynak: Canlı Metrikler (CPU/RAM/disk `/`/load/RX+TX)
+- Context **tek JOIN tablosu** (instance satır); ayrı CPU/RAM top-listesi yok. Boş hücre ≠ scrape yok
+- Üç katman: kısa ad = Canlı Metrikler **preset**; `detay` = aile (CPU mode, mount, swap…); `kapsamlı` = `node_*` isim + named host’ta örnek seri
+- Preset kaynak: Canlı Metrikler (CPU/RAM/disk `/`/load/RX+TX/MemAvail/Disk R+W)
 - Planner: `chat_source_planner.py` `_PERF`
 
 ## Diğer

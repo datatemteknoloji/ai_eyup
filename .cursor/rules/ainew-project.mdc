@@ -39,6 +39,6 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 
 - Uygulama verisini (DB, `.env`, volume) izinsiz değiştirme/silme
 - AI: yerel Ollama veya `REMOTE_LLM_*`; harici cloud varsayılan değil
-- Sohbet Prometheus: **yalnızca PromQL**; scrape / `prometheus.yml` / target JSON’a dokunma
+- Sohbet Prometheus: **yalnızca PromQL**; scrape / `prometheus.yml` / target JSON’a dokunma. Context = instance JOIN tablosu (preset / aile detayı / `node_*`).
 - UI ve API hataları çoğunlukla Türkçe
 - Ürün asistan prompt’ları: `.cursor/rules/ainew-assistant-prompts.mdc`

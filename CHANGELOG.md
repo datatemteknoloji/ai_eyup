@@ -11,6 +11,13 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.27] - 2026-08-15
+
+### Chat / Prometheus
+- Sohbet metrikleri **instance JOIN**: tek tablo, bir satır = bir scrape `instance`. Ayrı CPU/RAM sıralamalarını modelin birleştirmesi yok; boş hücre “exporter yok” uydurması değil.
+- Üç katman: kısa ad (`cpu`/`ram`/`disk`/ağ) = Canlı Metrikler preset; `detay` = aile (CPU mode, mount, swap, load5/15); `kapsamlı` = `node_*` isimleri + az sayıda named host’ta örnek seri (filo dump yok).
+- Çok sunucu × çok metrik aynı tabloda. Hostname **öneki** (`oprbigdata` → oprbigdata3/5/13). Scrape / `prometheus.yml` / target JSON değişmedi.
+
 ## [1.0.9.26] - 2026-08-15
 
 ### Chat / RAG mimarisi

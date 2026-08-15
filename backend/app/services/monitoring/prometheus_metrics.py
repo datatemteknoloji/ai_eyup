@@ -1,10 +1,11 @@
 """
 Prometheus Metrics Service - Tüm metrikleri çekmek ve AI'a context sağlamak için
 """
+import asyncio
 import httpx
 import logging
 import re
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from app.core.config import settings, promql_job_matcher
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,62 @@ def match_prometheus_instance(
 
 _HOST_TOKEN_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}")
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_METRIC_STOPWORDS = {
+    "cpu", "ram", "disk", "load", "net", "node", "job", "http", "https", "all",
+    "memory", "bellek", "swap", "network", "trafik", "traffic", "usage",
+    "kullanım", "kullanim", "metrik", "metrics", "preset", "prometheus",
+    "kaynak", "detay", "sunucu", "sunucular", "host", "server",
+}
+
+_FAMILY_KEYWORDS = {
+    "cpu": ("cpu",),
+    "memory": ("ram", "memory", "bellek", "swap"),
+    "disk": ("disk",),
+    "network": ("network", "ağ", "ag", "trafik", "traffic", "bandwidth", "rx", "tx"),
+    "load": ("load", "yük", "yuk"),
+}
+_ALL_PRESET_FAMILIES = ("cpu", "memory", "disk", "load", "network")
+_PRESET_COLS = {
+    "cpu": [("cpu", "CPU%")],
+    "memory": [("memory", "RAM%"), ("mem_avail", "MemAvail")],
+    "disk": [("disk", "Disk/%"), ("disk_read", "DiskRead"), ("disk_write", "DiskWrite")],
+    "load": [("load", "Load1")],
+    "network": [("net_rx", "RX"), ("net_tx", "TX")],
+}
+_FAMILY_EXTRA_COLS = {
+    "cpu": [
+        ("cpu_user", "user%"),
+        ("cpu_system", "sys%"),
+        ("cpu_iowait", "iowait%"),
+        ("cpu_steal", "steal%"),
+        ("cpu_softirq", "softirq%"),
+    ],
+    "memory": [
+        ("mem_total", "MemTotal"),
+        ("mem_cached", "Cached"),
+        ("mem_buffers", "Buffers"),
+        ("swap_pct", "Swap%"),
+    ],
+    "load": [("load5", "Load5"), ("load15", "Load15")],
+}
+_ALL_NODE_PREFIXES = {
+    "cpu": ("node_cpu_",),
+    "memory": ("node_memory_",),
+    "disk": ("node_filesystem_", "node_disk_"),
+    "network": ("node_network_",),
+    "load": ("node_load",),
+}
+
+
+def chat_metric_col_keys(families, *, depth: str) -> List[Tuple[str, str]]:
+    keys: List[Tuple[str, str]] = []
+    for fam in _ALL_PRESET_FAMILIES:
+        if fam not in families:
+            continue
+        keys.extend(_PRESET_COLS.get(fam) or [])
+        if depth in ("family", "all_node"):
+            keys.extend(_FAMILY_EXTRA_COLS.get(fam) or [])
+    return keys
 
 
 def _escape_promql_label(value: str) -> str:
@@ -162,9 +219,9 @@ def resolve_prometheus_instances_from_message(
     message: str,
     up_map: Dict[str, str],
 ) -> List[str]:
-    """Kullanıcı metnindeki hostname/FQDN/IP → Prometheus'taki gerçek instance etiketi.
+    """Kullanıcı metnindeki hostname/FQDN/IP/önek → scrape'deki gerçek instance.
 
-    Scrape FQDN:9100 veya kısa-ad:9100 olabilir; uydurulmaz, up map'ten okunur.
+    `oprbigdata` → oprbigdata3/5/13… (kısa ad öneki, min 5 karakter).
     """
     if not (message or "").strip() or not up_map:
         return []
@@ -187,14 +244,24 @@ def resolve_prometheus_instances_from_message(
         if host and host in ml:
             _add(inst)
             continue
-        if short in {"cpu", "ram", "disk", "load", "net", "node", "job", "http", "all"}:
+        if short in _METRIC_STOPWORDS:
             continue
         if _word_in_text(ml, short):
             _add(inst)
 
+    tokens = [t.lower() for t in _HOST_TOKEN_RE.findall(message)]
+    for tok in tokens:
+        if tok in _METRIC_STOPWORDS or len(tok) < 5:
+            continue
+        for inst in up_map.keys():
+            host = inst.rsplit(":", 1)[0].lower()
+            short = host.split(".")[0]
+            if short.startswith(tok) or host.startswith(tok):
+                _add(inst)
+
     if not found:
-        for tok in _HOST_TOKEN_RE.findall(message):
-            if tok.lower() in ("cpu", "ram", "disk", "http", "https"):
+        for tok in tokens:
+            if tok in _METRIC_STOPWORDS:
                 continue
             inst, _up = match_prometheus_instance(
                 up_map, hostname=tok, name=tok, ip=tok if _IPV4_RE.fullmatch(tok) else None,
@@ -202,6 +269,41 @@ def resolve_prometheus_instances_from_message(
             _add(inst)
 
     return found
+
+
+def parse_prom_chat_intent(message: str) -> Dict[str, Any]:
+    """Soru → aileler + derinlik (preset | family | all_node)."""
+    ml = (message or "").lower()
+    families = {fam for fam, kws in _FAMILY_KEYWORDS.items() if any(k in ml for k in kws)}
+    all_node = any(
+        k in ml
+        for k in (
+            "en detay", "en kapsam", "kapsamlı", "kapsamli", "tüm metrik", "tum metrik",
+            "bütün metrik", "butun metrik", "ham metrik", "her metrik", "tüm node",
+            "tum node", "node_*", "node_exporter tüm",
+        )
+    )
+    family_detail = (not all_node) and any(
+        k in ml for k in ("detay", "ayrıntı", "ayrinti", "iowait", "mount", "iops", "inode")
+    )
+    general = any(
+        k in ml
+        for k in ("kaynak", "performans", "genel kullanım", "genel kaynak", "resource")
+    )
+    if all_node:
+        depth = "all_node"
+        if not families:
+            families = set(_ALL_PRESET_FAMILIES)
+    elif family_detail:
+        depth = "family"
+        if not families:
+            families = set(_ALL_PRESET_FAMILIES)
+    elif families and not general:
+        depth = "preset"
+    else:
+        depth = "preset"
+        families = set(_ALL_PRESET_FAMILIES)
+    return {"families": families, "depth": depth}
 
 
 def linux_promql_selector(instances: Optional[List[str]] = None) -> str:
@@ -237,7 +339,146 @@ def linux_live_preset_queries(selector: str) -> Dict[str, str]:
         "net_tx": (
             f'sum by (instance) (rate(node_network_transmit_bytes_total{{device!~"lo",{selector}}}[5m]))'
         ),
+        "mem_avail": f'node_memory_MemAvailable_bytes{{{selector}}}',
+        "disk_read": (
+            f'sum by (instance) (rate(node_disk_read_bytes_total{{{selector}}}[5m]))'
+        ),
+        "disk_write": (
+            f'sum by (instance) (rate(node_disk_written_bytes_total{{{selector}}}[5m]))'
+        ),
     }
+
+
+def linux_family_detail_queries(selector: str) -> Dict[str, Dict[str, str]]:
+    """Aile detayı (cpu user/system/iowait, bellek/swap, disk mount + IO)."""
+    cpu_mode = (
+        lambda mode: f'avg by (instance) (rate(node_cpu_seconds_total{{mode="{mode}",{selector}}}[5m])) * 100'
+    )
+    return {
+        "cpu": {
+            "cpu_user": cpu_mode("user"),
+            "cpu_system": cpu_mode("system"),
+            "cpu_iowait": cpu_mode("iowait"),
+            "cpu_steal": cpu_mode("steal"),
+            "cpu_softirq": cpu_mode("softirq"),
+        },
+        "memory": {
+            "mem_total": f'node_memory_MemTotal_bytes{{{selector}}}',
+            "mem_cached": f'node_memory_Cached_bytes{{{selector}}}',
+            "mem_buffers": f'node_memory_Buffers_bytes{{{selector}}}',
+            "swap_pct": (
+                f'(1 - node_memory_SwapFree_bytes{{{selector}}} '
+                f'/ (node_memory_SwapTotal_bytes{{{selector}}} + 1)) * 100'
+            ),
+        },
+        "disk": {
+            "disk_mount_pct": (
+                f'(1 - (node_filesystem_avail_bytes{{fstype!~"tmpfs|devtmpfs|squashfs|overlay",{selector}}} '
+                f'/ node_filesystem_size_bytes{{fstype!~"tmpfs|devtmpfs|squashfs|overlay",{selector}}})) * 100'
+            ),
+        },
+        "network": {},
+        "load": {
+            "load5": f'node_load5{{{selector}}}',
+            "load15": f'node_load15{{{selector}}}',
+        },
+    }
+
+
+def join_series_by_instance(
+    columns: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Kolon adı → [{instance, value}] listelerini instance satırında birleştir."""
+    rows: Dict[str, Dict[str, Any]] = {}
+    for col, series in (columns or {}).items():
+        for item in series or []:
+            inst = item.get("instance") or "?"
+            rows.setdefault(inst, {})[col] = item.get("value")
+            if item.get("mountpoint"):
+                rows[inst].setdefault("_mounts", {})[str(item.get("mountpoint"))] = item.get("value")
+    return rows
+
+
+def format_joined_metric_table(
+    rows: Dict[str, Dict[str, Any]],
+    col_keys: List[tuple],
+    *,
+    max_rows: int = 80,
+    sort_key: str = "cpu",
+) -> str:
+    """Markdown tablo; boş hücre scrape yok demek değildir."""
+    if not rows:
+        return ""
+    items = list(rows.items())
+    items.sort(key=lambda kv: float(kv[1].get(sort_key) or -1), reverse=True)
+    truncated = max(0, len(items) - max_rows)
+    items = items[:max_rows]
+    headers = ["instance"] + [h for _k, h in col_keys]
+    lines = [
+        "KURAL: Tek tablo, instance JOIN. Boş hücre = bu seride anlık değer yok; "
+        "node-exporter/scrape yok uydurma. Ayrı CPU ve RAM listelerini birleştirme.",
+        "",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for inst, row in items:
+        cells = [inst]
+        for key, _h in col_keys:
+            val = row.get(key)
+            if val is None:
+                cells.append("")
+            elif key in ("net_rx", "net_tx", "disk_read", "disk_write", "mem_avail", "mem_total",
+                         "mem_cached", "mem_buffers"):
+                cells.append(PrometheusMetricsService._fmt_rate_bps(float(val)) if key in (
+                    "net_rx", "net_tx", "disk_read", "disk_write"
+                ) else _fmt_bytes(float(val)))
+            elif key.startswith("load"):
+                cells.append(f"{float(val):.2f}")
+            else:
+                cells.append(f"{float(val):.1f}")
+        lines.append("| " + " | ".join(cells) + " |")
+    if truncated:
+        lines.append(f"\n(Toplam {truncated + max_rows} instance; ilk {max_rows} {sort_key} azalan.)")
+    return "\n".join(lines) + "\n"
+
+
+def _fmt_bytes(n: float) -> str:
+    if n >= 1024 ** 3:
+        return f"{n / 1024 ** 3:.1f} GiB"
+    if n >= 1024 ** 2:
+        return f"{n / 1024 ** 2:.0f} MiB"
+    return f"{n:.0f} B"
+
+
+def format_disk_mount_table(
+    rows: Dict[str, Dict[str, Any]],
+    *,
+    max_lines: int = 80,
+) -> str:
+    """Aile detayı: mountpoint JOIN (kök dışı volume'lar)."""
+    lines = [
+        "Disk mount kullanımı (%). Boş satır = o mount bu anlık sorguda yok.",
+        "",
+        "| instance | mountpoint | % |",
+        "| --- | --- | --- |",
+    ]
+    n = 0
+    for inst, row in sorted(rows.items(), key=lambda kv: kv[0]):
+        mounts = row.get("_mounts") or {}
+        for mp, val in sorted(
+            mounts.items(),
+            key=lambda x: -float(x[1] or 0),
+        ):
+            try:
+                pct = f"{float(val):.1f}"
+            except (TypeError, ValueError):
+                pct = ""
+            lines.append(f"| {inst} | {mp} | {pct} |")
+            n += 1
+            if n >= max_lines:
+                lines.append(f"\n(Mount listesi kesildi; ilk {max_lines}.)")
+                return "\n".join(lines) + "\n"
+    return ("\n".join(lines) + "\n") if n else ""
 
 
 def sync_node_exporter_running_from_prometheus(db) -> Dict[str, int]:
@@ -586,16 +827,52 @@ class PrometheusMetricsService:
             logger.error(f"Query hatası: {e}")
         return None
     
-    def _instant_series(self, data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _instant_series(
+        self,
+        data: Optional[Dict[str, Any]],
+        extra_labels: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        extra_labels = extra_labels or []
         if not data or data.get("status") != "success":
             return []
         out: List[Dict[str, Any]] = []
         for r in (data.get("data") or {}).get("result") or []:
             try:
-                inst = (r.get("metric") or {}).get("instance") or "?"
-                out.append({"instance": inst, "value": float(r["value"][1])})
+                metric = r.get("metric") or {}
+                inst = metric.get("instance") or "?"
+                row: Dict[str, Any] = {
+                    "instance": inst,
+                    "value": float(r["value"][1]),
+                }
+                if metric.get("__name__"):
+                    row["__name__"] = metric.get("__name__")
+                for lab in extra_labels:
+                    row[lab] = metric.get(lab) or ""
+                out.append(row)
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
+        return out
+
+    async def _query_columns(
+        self,
+        queries: Dict[str, str],
+        extra_labels: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        extra_labels = extra_labels or {}
+        if not queries:
+            return {}
+        keys = list(queries.keys())
+        results = await asyncio.gather(
+            *[self.query_metric(queries[k]) for k in keys],
+            return_exceptions=True,
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for k, res in zip(keys, results):
+            if isinstance(res, Exception):
+                logger.debug("PromQL kolon hatası %s: %s", k, res)
+                out[k] = []
+            else:
+                out[k] = self._instant_series(res, extra_labels=extra_labels.get(k))
         return out
 
     @staticmethod
@@ -663,7 +940,7 @@ class PrometheusMetricsService:
         *,
         instances: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Canlı Metrikler preset'leri: CPU/RAM/disk/load/RX/TX, instance bazlı."""
+        """Canlı Metrikler preset'leri: CPU/RAM/disk/load/RX/TX + avail/IO, instance bazlı."""
         metrics: Dict[str, Any] = {}
         resolved = [i for i in (instances or []) if i]
         try:
@@ -683,120 +960,163 @@ class PrometheusMetricsService:
                 "load": "load1",
                 "net_rx": "network_rx",
                 "net_tx": "network_tx",
+                "mem_avail": "mem_avail",
+                "disk_read": "disk_read",
+                "disk_write": "disk_write",
             }
+            columns = await self._query_columns({qk: queries[qk] for qk in key_map})
             for qk, mk in key_map.items():
-                data = await self.query_metric(queries[qk])
-                metrics[mk] = self._instant_series(data)
+                metrics[mk] = columns.get(qk) or []
         except Exception as e:
             logger.error(f"Sunucu metrikleri hatası: {e}")
         return metrics
 
     async def get_metrics_context_for_ai(self, message: str) -> str:
-        """AI için metrik context — scrape etiketini uydurmadan, preset PromQL."""
-        context = ""
+        """AI context: instance JOIN tablosu (preset / aile detayı / node_*)."""
         ml = (message or "").lower()
         want_uptime = any(
             kw in ml for kw in ("uptime", "çalışma süresi", "calisma suresi", "boot", "restart")
         )
+        intent = parse_prom_chat_intent(message)
+        families = intent["families"]
+        depth = intent["depth"]
 
         up_map = get_node_exporter_up_map()
         named = resolve_prometheus_instances_from_message(message, up_map)
+        selector = linux_promql_selector(named or None)
 
+        parts: List[str] = []
         if named:
-            context += (
-                "\n📈 Prometheus Node Exporter (instance etiketi scrape'den birebir; "
-                "FQDN veya hostname hangisiyse o):\n"
+            parts.append(
+                "Prometheus Node Exporter — scrape instance etiketi birebir "
+                f"({len(named)} host). Kısa ad öneki (örn. oprbigdata → oprbigdata3/5/…). "
+                "Tek tablo, instance JOIN."
             )
+        else:
+            parts.append(
+                "Prometheus filo (tüm node-exporter instance). Tek tablo JOIN; "
+                "ayrı CPU/RAM sıralamalarını birleştirme. Boş hücre = bu seride anlık değer yok."
+            )
+
+        try:
+            preset_q = linux_live_preset_queries(selector)
+            queries: Dict[str, str] = {}
+            extra_labels: Dict[str, List[str]] = {}
+            col_keys = chat_metric_col_keys(families, depth=depth)
+            for key, _h in col_keys:
+                if key in preset_q:
+                    queries[key] = preset_q[key]
+            if depth in ("family", "all_node"):
+                fam_q = linux_family_detail_queries(selector)
+                for fam in families:
+                    for key, q in (fam_q.get(fam) or {}).items():
+                        queries[key] = q
+                        if key == "disk_mount_pct":
+                            extra_labels[key] = ["mountpoint"]
+            columns = await self._query_columns(queries, extra_labels)
+            joined = join_series_by_instance(columns)
+            if named:
+                rows = {inst: dict(joined.get(inst) or {}) for inst in named}
+                for inst, data in joined.items():
+                    if inst not in rows:
+                        rows[inst] = data
+            else:
+                rows = joined
+            table = format_joined_metric_table(
+                rows,
+                col_keys,
+                max_rows=80 if named else 80,
+                sort_key=col_keys[0][0] if col_keys else "cpu",
+            )
+            if table:
+                parts.append(table)
+            if depth in ("family", "all_node") and "disk" in families:
+                mounts = format_disk_mount_table(rows)
+                if mounts:
+                    parts.append(mounts)
+        except Exception as e:
+            logger.error(f"Prometheus chat JOIN hatası: {e}")
+
+        if depth == "all_node":
             try:
-                metrics = await self.get_server_metrics(instances=named)
-                by_host: Dict[str, Dict[str, Optional[float]]] = {
-                    inst: {} for inst in named
-                }
-                for key, field in (
-                    ("cpu_usage", "cpu"),
-                    ("memory_usage", "mem"),
-                    ("disk_usage", "disk"),
-                    ("load1", "load"),
-                    ("network_rx", "rx"),
-                    ("network_tx", "tx"),
-                ):
-                    for item in metrics.get(key) or []:
-                        inst = item.get("instance") or "?"
-                        by_host.setdefault(inst, {})[field] = item.get("value")
-                for inst in named:
-                    row = by_host.get(inst) or {}
-                    context += f"  {inst}\n"
-                    if row.get("cpu") is not None:
-                        context += f"    CPU: {row['cpu']:.1f}%\n"
-                    if row.get("mem") is not None:
-                        context += f"    RAM: {row['mem']:.1f}%\n"
-                    if row.get("disk") is not None:
-                        context += f"    Disk (/): {row['disk']:.1f}%\n"
-                    if row.get("load") is not None:
-                        context += f"    Load1: {row['load']:.2f}\n"
-                    if row.get("rx") is not None:
-                        context += f"    Net RX: {self._fmt_rate_bps(row['rx'])}\n"
-                    if row.get("tx") is not None:
-                        context += f"    Net TX: {self._fmt_rate_bps(row['tx'])}\n"
-                    if not row:
-                        context += "    (bu instance için seri yok)\n"
-            except Exception:
-                pass
-            if want_uptime:
-                context += await self._uptime_context(named)
-            return context
-
-        try:
-            overview = await self.get_system_overview()
-            context += (
-                "\n📊 Filo ortalaması (tüm instance'ların avg'i — tek sunucu değil):\n"
-            )
-            if overview.get("cpu", {}).get("average") is not None:
-                context += f"  - Ortalama CPU: {overview['cpu']['average']:.2f}%\n"
-            if overview.get("memory", {}).get("usage_percent") is not None:
-                context += f"  - Ortalama RAM: {overview['memory']['usage_percent']:.2f}%\n"
-            if overview.get("disk", {}).get("usage_percent") is not None:
-                context += f"  - Ortalama Disk (/): {overview['disk']['usage_percent']:.2f}%\n"
-            if overview.get("load", {}).get("1min") is not None:
-                context += f"  - Load Average (1 dk): {overview['load']['1min']:.2f}\n"
-        except Exception:
-            pass
-
-        try:
-            metrics = await self.get_server_metrics()
-            context += (
-                "\n📈 Sunucu bazlı (Prometheus instance etiketi, değere göre yüksekten düşüğe):\n"
-            )
-            if metrics.get("cpu_usage"):
-                context += "  CPU:\n"
-                for item in self._top(metrics["cpu_usage"]):
-                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
-            if metrics.get("memory_usage"):
-                context += "  RAM:\n"
-                for item in self._top(metrics["memory_usage"]):
-                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
-            if metrics.get("disk_usage"):
-                context += "  Disk (/):\n"
-                for item in self._top(metrics["disk_usage"]):
-                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
-            if metrics.get("load1"):
-                context += "  Load1:\n"
-                for item in self._top(metrics["load1"]):
-                    context += f"    {item['instance']}: {item['value']:.2f}\n"
-            if metrics.get("network_rx"):
-                context += "  Network RX:\n"
-                for item in self._top(metrics["network_rx"]):
-                    context += f"    {item['instance']}: {self._fmt_rate_bps(item['value'])}\n"
-            if metrics.get("network_tx"):
-                context += "  Network TX:\n"
-                for item in self._top(metrics["network_tx"]):
-                    context += f"    {item['instance']}: {self._fmt_rate_bps(item['value'])}\n"
-        except Exception:
-            pass
+                parts.append(await self._all_node_context(selector, families, named))
+            except Exception as e:
+                logger.debug("all_node context: %s", e)
 
         if want_uptime:
-            context += await self._uptime_context(None)
-        return context
+            parts.append(await self._uptime_context(named or None))
+
+        return "\n".join(p for p in parts if p)
+
+    async def _all_node_context(
+        self,
+        selector: str,
+        families,
+        named: Optional[List[str]],
+    ) -> str:
+        """Ham node_* — filo için yalnızca isim; named host'ta örnek seri (kapalı)."""
+        prefixes: List[str] = []
+        for fam in families or _ALL_PRESET_FAMILIES:
+            prefixes.extend(_ALL_NODE_PREFIXES.get(fam) or ())
+        if not prefixes:
+            prefixes = ["node_"]
+
+        names = await self.get_node_exporter_metrics()
+        filtered = [
+            n for n in names
+            if any(n.startswith(p) for p in prefixes)
+        ]
+        filtered = filtered[:80]
+        lines = [
+            "Ham node_* (Canlı Metrikler raw grubu). Filo geneli binlerce seri dump edilmez.",
+            "İsimler:",
+            ", ".join(filtered) if filtered else "(isim alınamadı)",
+        ]
+        if not named or len(named) > 12:
+            if named and len(named) > 12:
+                lines.append(
+                    f"{len(named)} host seçili — ham seri dump yok (isim listesi). "
+                    "Daha az host veya aile detayı sorun."
+                )
+            else:
+                lines.append(
+                    "Belirli hostname yazınca bu aile için örnek seriler de gelir."
+                )
+            return "\n".join(lines) + "\n"
+
+        alts = "|".join(re.escape(p.rstrip("_")) + ".*" for p in prefixes)
+        query = f'{{__name__=~"{alts}",{selector}}}'
+        data = await self.query_metric(query)
+        series = self._instant_series(data, extra_labels=["mode", "device", "mountpoint"])
+        if not series:
+            return "\n".join(lines) + "\n"
+
+        lines.append("")
+        lines.append("| instance | metrik | etiket | değer |")
+        lines.append("| --- | --- | --- | --- |")
+        seen: Dict[tuple, int] = {}
+        shown = 0
+        for item in series:
+            name = item.get("__name__") or "?"
+            inst = item.get("instance") or "?"
+            key = (inst, name)
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] > 3:
+                continue
+            tags = []
+            for lab in ("mode", "device", "mountpoint"):
+                if item.get(lab):
+                    tags.append(f"{lab}={item[lab]}")
+            try:
+                val = f"{float(item['value']):.4g}"
+            except (TypeError, ValueError, KeyError):
+                val = ""
+            lines.append(f"| {inst} | {name} | {','.join(tags)} | {val} |")
+            shown += 1
+            if shown >= 80:
+                lines.append("(örnek seri kesildi; max 80)")
+                break
+        return "\n".join(lines) + "\n"
 
     async def _uptime_context(self, instances: Optional[List[str]]) -> str:
         try:

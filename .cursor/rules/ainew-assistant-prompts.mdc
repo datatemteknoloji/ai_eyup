@@ -22,7 +22,7 @@ Uygulama içi sohbet (Unified / Linux / Virt / OpenShift) kuralları **backend p
 
 Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend`.
 
-Canlı metrik **değerleri** prompt’ta değil; `prometheus_metrics.get_metrics_context_for_ai` (scrape’e dokunma).
+Canlı metrik **değerleri** prompt’ta değil; `prometheus_metrics.get_metrics_context_for_ai` (scrape’e dokunma). Tek JOIN tablosu; kısa ad=preset, `detay`=aile, `kapsamlı`=`node_*`.
 
 ## Sabit ürün kuralı — OpenShift Virtualization
 
