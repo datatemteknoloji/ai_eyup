@@ -359,9 +359,8 @@ const UnifiedChat: React.FC<{
   }
 
   const streamBelongsHere =
-    pendingUserMessage != null &&
-    (stream.sessionId === selectedSessionId ||
-      (stream.isLoading && (stream.sessionId == null || stream.sessionId === selectedSessionId)))
+    (pendingUserMessage != null || Boolean(streamingText)) &&
+    (stream.sessionId == null || stream.sessionId === selectedSessionId)
 
 
   const formatDate = (dateString: string) => {
@@ -442,8 +441,8 @@ const UnifiedChat: React.FC<{
               <div className="max-w-3xl mx-auto space-y-4">
                 {[
                   ...messages,
-                  ...(streamBelongsHere
-                    ? [{ id: -1, role: 'user' as const, content: pendingUserMessage!, created_at: new Date().toISOString() }]
+                  ...(pendingUserMessage && streamBelongsHere
+                    ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
                 ].map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -549,6 +548,16 @@ const UnifiedChat: React.FC<{
                         </div>
                       )}
                       {thinkingPhase === 'streaming' && !streamingText && <ThinkingDots />}
+                    </div>
+                  </div>
+                )}
+
+                {!isLoading && streamBelongsHere && streamingText && (
+                  <div className="flex justify-start">
+                    <div className={`${nlAssistantBubbleClass} max-w-[min(85%,48rem)] w-full`}>
+                      <div className={chatResponseBody}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
+                      </div>
                     </div>
                   </div>
                 )}

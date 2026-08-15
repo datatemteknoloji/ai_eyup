@@ -11,6 +11,11 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### RAG seed (ilk kurulum)
+- Gömülü runbook’lar `docs/rag_seed/*.md` + `manifest.json`; tar ve prod compose `./docs/rag_seed:/app/docs/rag_seed:ro`.
+- Backend açılışında Ollama embedding hazır olana kadar seed yeniden denenir (chunk’lar `{DATA_DIR}/chroma`).
+- Dağıtım imajına `docs/rag_seed` kopyalanır (volume yoksa bile).
+
 ## [1.0.9.25] - 2026-08-14
 
 ### Düzeltildi — Chat / RAG donması

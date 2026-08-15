@@ -75,7 +75,12 @@ if [ "$1" = "uvicorn" ]; then
   W="${UVICORN_WORKERS:-1}"
   case "$W" in ''|*[!0-9]*) W=1 ;; esac
   [ "$W" -lt 1 ] && W=1
-  [ "$W" -gt 8 ] && W=8
+  # Chroma PersistentClient (DuckDB) process-safe değil — 2+ uvicorn worker
+  # aynı chroma yolunda kilit / zombie worker / tüm API'nin ölmesine yol açar.
+  if [ "$W" -gt 1 ]; then
+    echo "entrypoint: UVICORN_WORKERS=$W → 1 (Chroma tek-process; 2+ worker API'yi kilitler)"
+    W=1
+  fi
   ARGS=""
   SKIP=0
   for a in "$@"; do

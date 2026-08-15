@@ -97,11 +97,14 @@ postgres_data/
 backend/static/node_exporter/
 .gstack/
 
-# RAG seed: büyük vendor PDF'leri repo'ya girmesin (README + manifest kalır)
+# RAG seed: büyük vendor PDF'leri repo'ya girmesin; gömülü .md runbook'lar commit edilir
 docs/rag_seed/**
 !docs/rag_seed/README.md
 !docs/rag_seed/manifest.json
 !docs/rag_seed/.gitkeep
+!docs/rag_seed/*.md
+# build-distribution geçici kopyası (kaynak: docs/rag_seed)
+/backend/docs/
 
 # Runtime kalıcı veri ($INSTALL_DIR/data) — asla commit etme
 /data/

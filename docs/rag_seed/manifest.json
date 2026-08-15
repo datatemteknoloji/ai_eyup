@@ -1,3 +1,14 @@
 {
-  "documents": []
+  "documents": [
+    {"title": "OCP-4.18-Authentication-authorization", "file": "OpenShift_Container_Platform-4.18-Authentication_and_authorization-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Machine-management", "file": "OpenShift_Container_Platform-4.18-Machine_management-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Monitoring", "file": "OpenShift_Container_Platform-4.18-Monitoring-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.21-Advanced-networking", "file": "OpenShift_Container_Platform-4.21-Advanced_networking-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Operators", "file": "OpenShift_Container_Platform-4.18-Operators-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Scalability-performance", "file": "OpenShift_Container_Platform-4.18-Scalability_and_performance-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Storage", "file": "OpenShift_Container_Platform-4.18-Storage-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "OCP-4.18-Updating-clusters", "file": "OpenShift_Container_Platform-4.18-Updating_clusters-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "RHEL9-HA-clusters", "file": "Red_Hat_Enterprise_Linux-9-Configuring_and_managing_high_availability_clusters-en-US.pdf", "version": "1", "enabled": true},
+    {"title": "Huawei-eSDK-CSI-4.12", "file": "eSDK Huawei Storage Kubernetes CSI Plugins V4.12.0 User Guide 01.pdf", "version": "1", "enabled": true}
+  ]
 }

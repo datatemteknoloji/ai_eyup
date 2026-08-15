@@ -267,19 +267,34 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
       }
     }
 
-    // Reader bitti ama done gelmedi
+    // Reader bitti ama done gelmedi (proxy kopması, uzak LLM erken kapanış)
     if (!ctrl.signal.aborted) {
+      const prevText = getChatStream(channel).streamingText || ''
+      const isErr =
+        prevText.startsWith('**Hata:') || prevText.startsWith('**Bağlantı')
       try {
         await onDone?.(activeSessionId)
       } catch {
         /* */
       }
-      finishIdle(channel, { sessionId: activeSessionId })
+      finishIdle(channel, {
+        sessionId: activeSessionId,
+        streamingText: isErr
+          ? prevText
+          : accumulated
+            ? ''
+            : '**Bağlantı hatası.** Tekrar deneyin.',
+      })
     }
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       finishIdle(channel, { sessionId: activeSessionId })
       return
+    }
+    try {
+      await onDone?.(activeSessionId)
+    } catch {
+      /* refetch */
     }
     finishIdle(channel, {
       sessionId: activeSessionId,

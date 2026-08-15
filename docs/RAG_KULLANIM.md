@@ -103,8 +103,8 @@ Config (opsiyonel):
 
 ## Seed dizini (`docs/rag_seed`)
 
-İlk kurulum / her backend açılışında (idempotent) bu dizindeki PDF/md/txt runbook RAG’e yazılır.
-Ayrıntı: [docs/rag_seed/README.md](rag_seed/README.md). Ayarlar → RAG ile manuel yükleme de çalışmaya devam eder.
+Paket `docs/rag_seed` içeriğini taşır; backend ilk açılışta (Ollama `nomic-embed-text` hazırsa)
+Chroma runbook koleksiyonuna chunk'lar. Ek PDF aynı dizine konur. Ayrıntı: [docs/rag_seed/README.md](rag_seed/README.md).
 
 ## Docker
 

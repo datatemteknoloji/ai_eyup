@@ -165,6 +165,11 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   echo "▶ Backend imajı derleniyor (${PLATFORM})..."
   # Sürüm bilgisini imaja göm (UI /health / public API)
   cp -f VERSION backend/VERSION 2>/dev/null || true
+  # RAG seed (docs/rag_seed) imaja göm — volume yoksa bile ilk açılışta chunk'lanır
+  mkdir -p backend/docs/rag_seed
+  if [[ -d docs/rag_seed ]]; then
+    cp -a docs/rag_seed/. backend/docs/rag_seed/
+  fi
   docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false \
     --build-arg "APP_VERSION=${VERSION}" \
     -t "ainew-backend:${VERSION}" --load ./backend

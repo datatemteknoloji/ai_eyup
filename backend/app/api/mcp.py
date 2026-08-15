@@ -195,7 +195,7 @@ async def analyze_results(payload: AnalyzeRequest, db: Session = Depends(get_db)
             async with httpx.AsyncClient(timeout=120) as client:
                 async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
                     if chunk.get("error"):
-                        yield f"data: {json.dumps({'error': chunk['error']})}\n\n"
+                        yield f"data: {json.dumps({'error': chunk['error'], 'done': True})}\n\n"
                         return
                     yield f"data: {json.dumps(chunk)}\n\n"
                     if chunk.get("done"):

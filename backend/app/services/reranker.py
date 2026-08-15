@@ -28,16 +28,20 @@ _load_failed = False
 _lock = threading.Lock()
 
 
-def _load_model(model_name: str):
+def _load_model(model_name: str, *, allow_download: bool = False):
     global _model, _model_name, _load_failed
     with _lock:
         if _model is not None and _model_name == model_name:
             return _model
         if _load_failed and _model_name == model_name:
             return None
+        # Chat isteği sırasında HF Hub'a gitme — worker'ı bloklar / öldürür.
+        if not allow_download:
+            logger.debug("[Reranker] model henüz yüklenmedi, bu istekte atlanıyor")
+            return None
         try:
             from sentence_transformers import CrossEncoder
-            logger.info("[Reranker] model yükleniyor: %s (ilk çağrıda birkaç saniye sürebilir)", model_name)
+            logger.info("[Reranker] model yükleniyor: %s (arka plan / ilk warmup)", model_name)
             _model = CrossEncoder(model_name, max_length=512)
             _model_name = model_name
             _load_failed = False
@@ -48,6 +52,25 @@ def _load_model(model_name: str):
             _model_name = model_name
             _load_failed = True
     return _model
+
+
+def warmup_in_background() -> None:
+    """Startup'ta reranker'ı chat yolunun dışında yükle (HF indirme chat'i kilitlemesin)."""
+    if not is_enabled():
+        return
+    try:
+        from app.services import runtime_settings
+        model_name = runtime_settings.get_str("rag_reranker_model") or "BAAI/bge-reranker-v2-m3"
+    except Exception:
+        model_name = "BAAI/bge-reranker-v2-m3"
+
+    def _run():
+        try:
+            _load_model(model_name, allow_download=True)
+        except Exception as e:
+            logger.warning("[Reranker] arka plan warmup başarısız: %s", e)
+
+    threading.Thread(target=_run, name="reranker-warmup", daemon=True).start()
 
 
 def is_enabled() -> bool:

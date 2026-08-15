@@ -536,9 +536,8 @@ const Chat: React.FC<{
     <ServerIcon size={24} className="text-white" />
 
   const streamBelongsHere =
-    pendingUserMessage != null &&
-    (stream.sessionId === selectedSessionId ||
-      (stream.isLoading && (stream.sessionId == null || stream.sessionId === selectedSessionId)))
+    (pendingUserMessage != null || Boolean(streamingText)) &&
+    (stream.sessionId == null || stream.sessionId === selectedSessionId)
   const hasMessages =
     messages.length > 0 ||
     localInventoryMessages.length > 0 ||
@@ -787,6 +786,16 @@ const Chat: React.FC<{
                         </div>
                       )}
                       {thinkingPhase === 'streaming' && !streamingText && <ThinkingDots />}
+                    </div>
+                  </div>
+                )}
+
+                {!isLoading && streamBelongsHere && streamingText && (
+                  <div className="flex justify-start mb-4">
+                    <div className={nlAssistantBubbleClass}>
+                      <div className={chatResponseBody}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
+                      </div>
                     </div>
                   </div>
                 )}

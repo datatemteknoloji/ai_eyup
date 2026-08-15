@@ -3,13 +3,22 @@
 Bu dizin uygulama köküne göredir:
 
 ```text
-{kurulum}/docs/rag_seed/     örn. /dttadvance/app/docs/rag_seed
+{kurulum}/docs/rag_seed/     örn. /data/app/docs/rag_seed
 ```
 
-Backend açılışında (idempotent) Chroma **runbook** koleksiyonuna yüklenir.
-Chroma indeksi ayrı kalır (`/app/chroma` volume).
+Container içinde: `/app/docs/rag_seed` (`RAG_SEED_PATH`).
+Chunk/indeks: `{DATA_DIR}/chroma` → `/app/chroma` (kalıcı volume).
 
-## Nasıl kullanılır?
+Paket (tar) bu dizini içerir. Backend **ilk açılışta** (ve her restart’ta, idempotent)
+dosyaları Chroma **runbook** koleksiyonuna chunk’lar. Embedding için Ollama
+`nomic-embed-text` gerekir; hazır değilse birkaç dakika yeniden dener.
+
+## Gömülü runbook’lar
+
+Linux / virt / OpenShift operasyon özetleri (`LINUX-*.md`, `VIRT-*.md`, `OCP-*.md`).
+Vendor PDF’leri (Red Hat, Broadcom, …) lisansı gereği pakete konmaz — aşağıdaki gibi ekleyin.
+
+## Nasıl eklenir?
 
 1. PDF (veya `.md` / `.txt`) dosyalarını buraya koyun.
 2. `manifest.json` içine kaydedin (önerilir) **veya** dosya adını title olarak kullanın.
@@ -38,8 +47,8 @@ Başlık standardı (öneri): `RHEL9-multipath`, `OCP4-pending-pods`, `VSPHERE-h
 
 ## Docker
 
-`docker-compose.yml` içinde:
+`docker-compose.yml` / prod:
 
 `./docs/rag_seed:/app/docs/rag_seed:ro`
 
-Env (opsiyonel): `RAG_SEED_PATH=/app/docs/rag_seed`
+Env: `RAG_SEED_PATH=/app/docs/rag_seed`

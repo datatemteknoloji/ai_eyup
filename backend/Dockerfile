@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 COPY . .
 
 RUN mkdir -p /app/static/node_exporter && mkdir -p /app/uploads/packages && mkdir -p /app/repos \
-    && mkdir -p /app/chroma
+    && mkdir -p /app/chroma && mkdir -p /app/docs/rag_seed
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /app appuser \
     && chown -R appuser:appgroup /app \

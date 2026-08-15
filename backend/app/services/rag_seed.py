@@ -145,7 +145,7 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
         "errors": [],
     }
     if root is None:
-        logger.info("RAG seed: dizin yok, atlandı")
+        logger.warning("RAG seed: dizin yok (RAG_SEED_PATH / docs/rag_seed), atlandı")
         return summary
 
     docs = _load_manifest_docs(root)
@@ -158,7 +158,8 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
     state_file = _state_path(root)
     state = _load_state(state_file)
 
-    from app.services.rag_service import ingest_runbook_append, delete_runbook_by_title
+    from app.services.rag_service import ingest_runbook_append
+    from app.services.rag_store import delete_runbook_by_title
 
     for doc in docs:
         title = doc["title"]

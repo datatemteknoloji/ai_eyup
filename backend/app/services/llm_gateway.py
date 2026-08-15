@@ -278,8 +278,9 @@ async def stream_generate(
             # Not: CALLER'ın client'ı (yerel Ollama için verify=True ile oluşturulmuş) yerine
             # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz —
             # kurumsal self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
-            async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
-                async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout) as resp:
+            req_timeout = timeout if timeout is not None else 180.0
+            async with httpx.AsyncClient(verify=remote_llm_ssl_verify(), timeout=req_timeout) as remote_client:
+                async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=req_timeout) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()
                         yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}

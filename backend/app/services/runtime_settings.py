@@ -64,9 +64,9 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "restart_target": "worker",
     },
     "uvicorn_workers": {
-        "default": 1, "type": "int", "min": 1, "max": 8,
+        "default": 1, "type": "int", "min": 1, "max": 1,
         "group": "process", "label": "Uvicorn workers (API)",
-        "help": "HTTP API process sayısı. Ağır BG Celery’de; 2–4 güvenli. Scheduler tek worker’da kalır. Uygulamak için backend recreate gerekir.",
+        "help": "HTTP API process sayısı. Chroma/DuckDB aynı anda tek process destekler; 2+ worker sohbet/RAG sırasında API’yi kilitler. Celery paralelliği ayrı ayardır. Uygulamak için backend recreate gerekir.",
         "env": "UVICORN_WORKERS",
         "requires_restart": True,
         "restart_target": "backend",
@@ -713,7 +713,8 @@ def write_process_workers_env_file(*, celery_concurrency: Any = None, uvicorn_wo
         uvicorn_workers = get_setting("uvicorn_workers")
 
     current["CELERY_CONCURRENCY"] = str(int(celery_concurrency))
-    current["UVICORN_WORKERS"] = str(int(uvicorn_workers))
+    # Chroma tek-process — 2+ uvicorn worker kaydı yazılsa bile 1'e sıkıştır
+    current["UVICORN_WORKERS"] = "1"
 
     body = (
         "# ainew process workers — docker-entrypoint okur; container recreate gerekir\n"

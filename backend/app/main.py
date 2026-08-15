@@ -526,21 +526,49 @@ async def startup_tasks():
             logger.debug(f"RAG metrics seed skipped (Ollama/Chroma): {e}")
     asyncio.create_task(_rag_seed_metrics())
 
-    # RAG: docs/rag_seed → runbook (idempotent; PDF/md/txt + manifest.json)
+    try:
+        from app.services.reranker import warmup_in_background
+        warmup_in_background()
+    except Exception as e:
+        logger.debug("Reranker warmup atlandı: %s", e)
+
+    # RAG: docs/rag_seed → runbook (idempotent). İlk kurulumda Ollama embedding
+    # backend'den sonra ayağa kalkabilir — birkaç dakika dene, sonra vazgeç
+    # (sonraki restart yine dener).
     async def _rag_seed_docs():
-        try:
-            from app.services.rag_seed import seed_rag_from_directory
-            summary = await seed_rag_from_directory()
-            logger.info(
-                "RAG docs seed: dir=%s added=%s updated=%s skipped=%s errors=%s",
-                summary.get("seed_dir"),
-                len(summary.get("added") or []),
-                len(summary.get("updated") or []),
-                len(summary.get("skipped") or []),
-                len(summary.get("errors") or []),
-            )
-        except Exception as e:
-            logger.debug(f"RAG docs seed skipped: {e}")
+        from app.services.rag_seed import seed_rag_from_directory, resolve_rag_seed_dir
+        last = None
+        for attempt in range(1, 37):
+            try:
+                root = resolve_rag_seed_dir()
+                if root is None:
+                    logger.warning(
+                        "RAG docs seed: docs/rag_seed yok (compose volume / paket docs/rag_seed)"
+                    )
+                    return
+                summary = await seed_rag_from_directory()
+                errs = summary.get("errors") or []
+                logger.info(
+                    "RAG docs seed attempt=%s dir=%s added=%s updated=%s skipped=%s errors=%s",
+                    attempt,
+                    summary.get("seed_dir"),
+                    len(summary.get("added") or []),
+                    len(summary.get("updated") or []),
+                    len(summary.get("skipped") or []),
+                    len(errs),
+                )
+                embed_fail = any(
+                    any(k in str(e).lower() for k in ("embed", "ollama", "sıfır", "sifir", "zero"))
+                    for e in errs
+                )
+                if not errs or not embed_fail:
+                    return
+                last = errs
+            except Exception as e:
+                last = e
+                logger.warning("RAG docs seed attempt=%s: %s", attempt, e)
+            await asyncio.sleep(10)
+        logger.warning("RAG docs seed vazgeçildi (embedding hazır değil?): %s", last)
     asyncio.create_task(_rag_seed_docs())
 
 @app.on_event("shutdown")

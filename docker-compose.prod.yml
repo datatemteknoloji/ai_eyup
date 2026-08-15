@@ -134,7 +134,9 @@ services:
       - HOST_ETC_HOSTS=/host-etc-hosts
       - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
     volumes:
+      - ./docs/rag_seed:/app/docs/rag_seed:ro
       - ./backend/static:/app/static:Z
       - ./VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets:Z

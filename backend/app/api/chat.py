@@ -2335,10 +2335,12 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
                 else:
                     # Ollama (varsayılan) veya REMOTE_LLM_ENABLED ise uzak gateway
-                    async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt):
+                    llm_err = None
+                    async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt, timeout=180.0):
                         if chunk.get("error"):
-                            yield _sse({"error": chunk["error"]})
-                            return
+                            llm_err = str(chunk["error"])
+                            yield _sse({"error": llm_err})
+                            break
                         token = chunk.get("response", "")
                         if token:
                             full_response += token
@@ -2348,6 +2350,8 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             yield _sse({"token": token})
                         if chunk.get("done"):
                             break
+                    if llm_err and not full_response:
+                        full_response = f"(Hata: {llm_err})"
 
             # ── 7. Kaydet + Cache ─────────────────────────────────────────
             from app.services.answer_sanitize import sanitize_llm_answer
@@ -2384,6 +2388,22 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
         except Exception as e:
             logger.error(f"Stream error: {e}", exc_info=True)
             yield _sse({"error": str(e)})
+            try:
+                _sid = locals().get("session_id")
+                if _sid and not locals().get("ephemeral"):
+                    db.rollback()
+                    db.add(ChatMessage(session_id=_sid, role="assistant", content=f"(Hata: {e})"))
+                    s = db.query(ChatSession).filter(ChatSession.id == _sid).first()
+                    if s:
+                        from datetime import datetime, timezone
+                        s.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    yield _sse({"done": True, "session_id": _sid})
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
         finally:
             try:
                 _tok = locals().get("_fleet_scan_token")
