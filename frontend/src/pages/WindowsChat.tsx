@@ -21,6 +21,7 @@ import {
   abortChatStream,
   loadPersistedSessionId,
   persistSessionId,
+  restoreChatTurn,
 } from '../lib/chatStreamStore'
 import { useChatStickToBottom } from '../lib/chatScroll'
 import { useT, useLocale } from '../i18n/LocaleProvider'
@@ -220,6 +221,23 @@ const WindowsChat: React.FC<{
   }, [serverDropdownOpen])
 
   const queryClient = useQueryClient()
+
+  useEffect(() => {
+    void restoreChatTurn({
+      channel: streamChannel,
+      onSessionId: (id) => {
+        persistSessionId(streamChannel, id)
+        setSelectedSessionId(id)
+      },
+      onDone: async (sid) => {
+        if (sid) {
+          await queryClient.invalidateQueries({ queryKey: ['windows-chat-messages', sid] })
+          await queryClient.invalidateQueries({ queryKey: ['windows-chat-sessions'] })
+        }
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamChannel])
 
   const { data: servers = [] } = useQuery<Server[]>({
     queryKey: ['ai-ready-servers', 'windows-chat'],

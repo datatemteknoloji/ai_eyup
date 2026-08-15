@@ -132,8 +132,11 @@ services:
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
       - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
       - HOST_ETC_HOSTS=/host-etc-hosts
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - AINEW_SERVICE_ROLE=${AINEW_SERVICE_ROLE:-all}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
       - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
     volumes:
       - ./docs/rag_seed:/app/docs/rag_seed:ro
@@ -180,7 +183,9 @@ services:
       - DATA_DIR=${DATA_DIR:-./data}
       - HOST_ETC_HOSTS=/host-etc-hosts
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./VERSION:/app/VERSION:ro
       - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro

@@ -1,112 +1,106 @@
 """
-RAG vector store - ChromaDB ile runbook, incident ve metrik açıklamaları.
-Embedding'ler dışarıdan verilir (Ollama async çağrı ile).
+RAG vector store — pgvector (TimescaleDB/Postgres).
+
+Chroma PersistentClient process-safe olmadığı için runtime yolu tamamen
+PostgreSQL `rag_embeddings` tablosudur. Eski Chroma verisi startup'ta
+bir kez `rag_chroma_migrate` ile taşınır; chroma volume silinmez.
 """
+from __future__ import annotations
+
+import json
 import logging
-import os
 import threading
-import uuid
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
-# Chroma 0.4.x PostHog telemetry'yi import'tan önce kapat (aksi halde ClientStartEvent ERROR)
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+from sqlalchemy import text
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
-
-from app.core.config import settings
+from app.core.database import engine
 
 logger = logging.getLogger(__name__)
-
-# Path başına tek PersistentClient — her query'de yeni client DuckDB kilidinde asılıyor
-_client_lock = threading.RLock()
-_clients: dict = {}
 
 COLLECTION_RUNBOOK = "runbook"
 COLLECTION_INCIDENTS = "incidents"
 COLLECTION_METRICS = "metric_descriptions"
 COLLECTION_KNOWLEDGE = "knowledge_facts"
 
-# nomic-embed-text
 EMBEDDING_DIM = 768
 
-# Bilgi Bankası için ayrı path: ana chroma çoğu kurulumda root-owned olup
-# appuser yazamaz; uploads yazılabilir. Runbook/incident ana path'te kalır.
-_KNOWLEDGE_CHROMA_FALLBACK = "/app/uploads/chroma_knowledge"
-_cached_knowledge_path: Optional[str] = None
+_schema_lock = threading.Lock()
+_schema_ready = False
 
 
-def _path_is_writable(path: str) -> bool:
-    try:
-        os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".write_probe")
-        with open(probe, "w") as f:
-            f.write("1")
-        os.remove(probe)
-        return True
-    except Exception:
-        return False
+def _vec_literal(embedding: List[float]) -> str:
+    if not embedding:
+        return "[" + ",".join(["0"] * EMBEDDING_DIM) + "]"
+    if len(embedding) != EMBEDDING_DIM:
+        # nomic-embed-text 768; sapma varsa kırp/pad
+        if len(embedding) > EMBEDDING_DIM:
+            embedding = embedding[:EMBEDDING_DIM]
+        else:
+            embedding = list(embedding) + [0.0] * (EMBEDDING_DIM - len(embedding))
+    return "[" + ",".join(str(float(x)) for x in embedding) + "]"
 
 
-def _knowledge_chroma_path() -> str:
-    global _cached_knowledge_path
-    if _cached_knowledge_path:
-        return _cached_knowledge_path
-    env = (os.getenv("RAG_KNOWLEDGE_CHROMA_PATH") or "").strip()
-    if env:
-        os.makedirs(env, exist_ok=True)
-        _cached_knowledge_path = env
-        return env
-    primary = settings.RAG_CHROMA_PATH
-    if _path_is_writable(primary):
-        _cached_knowledge_path = primary
-        return primary
-    os.makedirs(_KNOWLEDGE_CHROMA_FALLBACK, exist_ok=True)
-    logger.warning(
-        "RAG chroma primary path not writable (%s); knowledge store → %s",
-        primary,
-        _KNOWLEDGE_CHROMA_FALLBACK,
-    )
-    _cached_knowledge_path = _KNOWLEDGE_CHROMA_FALLBACK
-    return _cached_knowledge_path
+def ensure_schema() -> None:
+    """Idempotent DDL — init_timescale da çağırır; store ilk kullanımda da güvence."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        ddl = [
+            "CREATE EXTENSION IF NOT EXISTS vector",
+            """
+            CREATE TABLE IF NOT EXISTS rag_embeddings (
+                id TEXT PRIMARY KEY,
+                collection TEXT NOT NULL,
+                document TEXT NOT NULL,
+                embedding vector(768) NOT NULL,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_rag_embeddings_collection ON rag_embeddings (collection)",
+            "CREATE INDEX IF NOT EXISTS ix_rag_embeddings_metadata_gin ON rag_embeddings USING gin (metadata jsonb_path_ops)",
+            "CREATE INDEX IF NOT EXISTS ix_rag_embeddings_id_prefix ON rag_embeddings (collection, id text_pattern_ops)",
+            """
+            CREATE TABLE IF NOT EXISTS rag_seed_state (
+                title TEXT PRIMARY KEY,
+                version TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """,
+        ]
+        with engine.begin() as conn:
+            for sql in ddl:
+                conn.execute(text(sql))
+            try:
+                conn.execute(text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_rag_embeddings_hnsw
+                    ON rag_embeddings USING hnsw (embedding vector_cosine_ops)
+                    """
+                ))
+            except Exception as e:
+                logger.warning("RAG HNSW index atlandı: %s", e)
+        _schema_ready = True
+        logger.info("RAG pgvector schema hazır")
 
 
-def _get_client(path: Optional[str] = None):
-    """Path başına tek PersistentClient (kilit altında çağırın)."""
-    path = os.path.abspath(path or settings.RAG_CHROMA_PATH)
-    os.makedirs(path, exist_ok=True)
-    client = _clients.get(path)
-    if client is None:
-        client = chromadb.PersistentClient(
-            path=path,
-            settings=ChromaSettings(anonymized_telemetry=False),
-        )
-        _clients[path] = client
-        logger.info("RAG chroma client opened path=%s", path)
-    return client
-
-
-def _client_for_collection(name: str):
-    if name == COLLECTION_KNOWLEDGE:
-        return _get_client(_knowledge_chroma_path())
-    return _get_client()
-
-
-def _collection_unlocked(name: str):
-    client = _client_for_collection(name)
-    try:
-        return client.get_collection(name=name)
-    except Exception:
-        return client.create_collection(
-            name=name,
-            metadata={"hnsw:space": "cosine"},
-        )
-
-
-def get_collection(name: str):
-    """Collection al veya oluştur. Embedding boyutu ilk add'da belirlenir."""
-    with _client_lock:
-        return _collection_unlocked(name)
+def _meta_json(metadatas: Optional[List[dict]], n: int) -> List[str]:
+    if not metadatas:
+        return ["{}"] * n
+    out = []
+    for m in metadatas:
+        if not isinstance(m, dict):
+            out.append("{}")
+        else:
+            out.append(json.dumps(m, ensure_ascii=False, default=str))
+    if len(out) < n:
+        out.extend(["{}"] * (n - len(out)))
+    return out[:n]
 
 
 def add_chunks(
@@ -116,22 +110,31 @@ def add_chunks(
     metadatas: Optional[List[dict]] = None,
     embeddings: Optional[List[List[float]]] = None,
 ) -> None:
-    """Chunk'ları collection'a ekle. embeddings verilmezse Chroma embed yapmaz; mutlaka verilmeli."""
     if not ids or not documents:
         return
-    if embeddings is not None and len(embeddings) != len(documents):
+    if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    if metadatas is None:
-        metadatas = [{}] * len(ids)
-    with _client_lock:
-        coll = _collection_unlocked(collection_name)
-        coll.add(
-            ids=ids,
-            documents=documents,
-            metadatas=metadatas,
-            embeddings=embeddings,
-        )
-    logger.info(f"RAG store: added {len(ids)} chunks to {collection_name}")
+    ensure_schema()
+    metas = _meta_json(metadatas, len(ids))
+    with engine.begin() as conn:
+        for i, cid in enumerate(ids):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO rag_embeddings (id, collection, document, embedding, metadata, updated_at)
+                    VALUES (:id, :coll, :doc, CAST(:emb AS vector), CAST(:meta AS jsonb), now())
+                    ON CONFLICT (id) DO NOTHING
+                    """
+                ),
+                {
+                    "id": str(cid),
+                    "coll": collection_name,
+                    "doc": documents[i] or "",
+                    "emb": _vec_literal(embeddings[i]),
+                    "meta": metas[i],
+                },
+            )
+    logger.info("RAG store: added %s chunks to %s", len(ids), collection_name)
 
 
 def upsert_chunks(
@@ -141,22 +144,36 @@ def upsert_chunks(
     metadatas: Optional[List[dict]] = None,
     embeddings: Optional[List[List[float]]] = None,
 ) -> None:
-    """Chunk'ları ekle veya aynı id ile güncelle (incremental reindex için)."""
     if not ids or not documents:
         return
-    if embeddings is not None and len(embeddings) != len(documents):
+    if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    if metadatas is None:
-        metadatas = [{}] * len(ids)
-    with _client_lock:
-        coll = _collection_unlocked(collection_name)
-        coll.upsert(
-            ids=ids,
-            documents=documents,
-            metadatas=metadatas,
-            embeddings=embeddings,
-        )
-    logger.info(f"RAG store: upserted {len(ids)} chunks to {collection_name}")
+    ensure_schema()
+    metas = _meta_json(metadatas, len(ids))
+    with engine.begin() as conn:
+        for i, cid in enumerate(ids):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO rag_embeddings (id, collection, document, embedding, metadata, updated_at)
+                    VALUES (:id, :coll, :doc, CAST(:emb AS vector), CAST(:meta AS jsonb), now())
+                    ON CONFLICT (id) DO UPDATE SET
+                        collection = EXCLUDED.collection,
+                        document = EXCLUDED.document,
+                        embedding = EXCLUDED.embedding,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = now()
+                    """
+                ),
+                {
+                    "id": str(cid),
+                    "coll": collection_name,
+                    "doc": documents[i] or "",
+                    "emb": _vec_literal(embeddings[i]),
+                    "meta": metas[i],
+                },
+            )
+    logger.info("RAG store: upserted %s chunks to %s", len(ids), collection_name)
 
 
 def query_collection(
@@ -165,68 +182,144 @@ def query_collection(
     n_results: int = 5,
     where: Optional[dict] = None,
 ) -> List[dict]:
+    ensure_schema()
+    k = min(max(1, int(n_results or 5)), 100)
+    sql = """
+        SELECT id, document, metadata,
+               (embedding <=> CAST(:emb AS vector)) AS distance
+        FROM rag_embeddings
+        WHERE collection = :coll
     """
-    Benzer dokümanları getir. Her öğe: {"id", "document", "metadata", "distance"}.
-    """
-    with _client_lock:
-        coll = _collection_unlocked(collection_name)
-        try:
-            total = int(coll.count() or 0)
-        except Exception:
-            total = 0
-        if total <= 0:
-            return []
-        kwargs = {
-            "query_embeddings": [query_embedding],
-            "n_results": min(max(1, n_results), total, 100),
-        }
-        if where:
-            kwargs["where"] = where
-        result = coll.query(**kwargs)
-    out = []
-    if result["ids"] and result["ids"][0]:
-        for i, id_ in enumerate(result["ids"][0]):
+    params: dict[str, Any] = {
+        "emb": _vec_literal(query_embedding),
+        "coll": collection_name,
+        "k": k,
+    }
+    if where:
+        sql += " AND metadata @> CAST(:where AS jsonb)"
+        params["where"] = json.dumps(where, ensure_ascii=False)
+    sql += " ORDER BY embedding <=> CAST(:emb AS vector) LIMIT :k"
+    out: List[dict] = []
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), params)
+        for row in rows:
+            meta = row[2] or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
             out.append({
-                "id": id_,
-                "document": (result["documents"][0][i] if result.get("documents") else "") or "",
-                "metadata": (result["metadatas"][0][i] if result.get("metadatas") else {}) or {},
-                "distance": (result["distances"][0][i] if result.get("distances") else 0),
+                "id": row[0],
+                "document": row[1] or "",
+                "metadata": meta if isinstance(meta, dict) else {},
+                "distance": float(row[3] or 0),
             })
     return out
 
 
-def clear_collection(collection_name: str) -> None:
-    """Collection içeriğini sil (collection'ı silip yeniden oluşturur)."""
-    with _client_lock:
-        client = _client_for_collection(collection_name)
-        try:
-            client.delete_collection(name=collection_name)
-        except Exception:
-            pass
-        client.create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
+def lexical_search_collection(
+    collection_name: str,
+    query: str,
+    n_results: int = 8,
+) -> List[dict]:
+    """Embedding yokken ILIKE yedek arama."""
+    q = (query or "").strip()
+    if not q:
+        return []
+    ensure_schema()
+    k = min(max(1, int(n_results or 8)), 40)
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    out: List[dict] = []
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, document, metadata, 0.35 AS distance
+                FROM rag_embeddings
+                WHERE collection = :coll
+                  AND document ILIKE :like ESCAPE '\\'
+                ORDER BY length(document) ASC
+                LIMIT :k
+                """
+            ),
+            {"coll": collection_name, "like": like, "k": k},
         )
-    logger.info(f"RAG store: cleared {collection_name}")
+        for row in rows:
+            meta = row[2] or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
+            out.append({
+                "id": row[0],
+                "document": row[1] or "",
+                "metadata": meta if isinstance(meta, dict) else {},
+                "distance": float(row[3] or 0.35),
+            })
+    return out
+
+
+def format_runbook_hits(hits: List[dict]) -> List[dict]:
+    """UI kartları: title, sayfa, cosine benzerlik, snippet."""
+    out: List[dict] = []
+    for h in hits or []:
+        meta = h.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        dist = float(h.get("distance") or 0)
+        sim = max(0.0, min(1.0, 1.0 - dist))
+        page = meta.get("page")
+        try:
+            page_n = int(page) if page is not None and str(page).strip() != "" else None
+        except (TypeError, ValueError):
+            page_n = None
+        text = (h.get("document") or "").strip().replace("\x00", "")
+        snippet = text[:420] + ("…" if len(text) > 420 else "")
+        idx = meta.get("index")
+        try:
+            chunk_index = int(idx) if idx is not None else None
+        except (TypeError, ValueError):
+            chunk_index = None
+        out.append({
+            "id": h.get("id"),
+            "title": str(meta.get("title") or "İsimsiz")[:300],
+            "page": page_n,
+            "chunk_index": chunk_index,
+            "similarity": round(sim, 3),
+            "snippet": snippet,
+        })
+    return out
+
+
+def clear_collection(collection_name: str) -> None:
+    ensure_schema()
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM rag_embeddings WHERE collection = :coll"),
+            {"coll": collection_name},
+        )
+    logger.info("RAG store: cleared %s", collection_name)
 
 
 def delete_chunk_ids(collection_name: str, ids: List[str]) -> int:
-    """Belirli chunk id'lerini sil. Dönüş: silinen adet (best-effort)."""
     if not ids:
         return 0
-    try:
-        n = 0
-        with _client_lock:
-            coll = _collection_unlocked(collection_name)
-            for i in range(0, len(ids), 400):
-                batch = ids[i : i + 400]
-                coll.delete(ids=batch)
-                n += len(batch)
-        logger.info("RAG store: deleted %s ids from %s", n, collection_name)
-        return n
-    except Exception as e:
-        logger.warning("RAG delete_chunk_ids failed (%s): %s", collection_name, e)
-        return 0
+    ensure_schema()
+    n = 0
+    with engine.begin() as conn:
+        for i in range(0, len(ids), 400):
+            batch = [str(x) for x in ids[i : i + 400]]
+            res = conn.execute(
+                text(
+                    "DELETE FROM rag_embeddings WHERE collection = :coll AND id = ANY(:ids)"
+                ),
+                {"coll": collection_name, "ids": batch},
+            )
+            n += int(res.rowcount or 0)
+    logger.info("RAG store: deleted %s ids from %s", n, collection_name)
+    return n
 
 
 def prune_ids_not_in_keep(
@@ -236,83 +329,112 @@ def prune_ids_not_in_keep(
     id_prefix: str,
     scan_limit: int = 20000,
 ) -> int:
-    """Collection'da id_prefix ile başlayan, keep_ids dışında kalan kayıtları sil (stale RAG)."""
-    try:
-        with _client_lock:
-            coll = _collection_unlocked(collection_name)
-            total = coll.count()
-            if total == 0:
-                return 0
-            result = coll.get(include=[], limit=min(scan_limit, max(total, 1)))
-        existing = result.get("ids") or []
-        to_delete = [
-            i for i in existing
-            if str(i).startswith(id_prefix) and i not in keep_ids
-        ]
+    ensure_schema()
+    keep = {str(x) for x in (keep_ids or set())}
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id FROM rag_embeddings
+                WHERE collection = :coll AND id LIKE :pfx
+                LIMIT :lim
+                """
+            ),
+            {"coll": collection_name, "pfx": f"{id_prefix}%", "lim": int(scan_limit)},
+        )
+        existing = [r[0] for r in rows]
+        to_delete = [i for i in existing if i not in keep]
         if not to_delete:
             return 0
-        return delete_chunk_ids(collection_name, to_delete)
-    except Exception as e:
-        logger.warning("RAG prune failed (%s %s): %s", collection_name, id_prefix, e)
-        return 0
+    return delete_chunk_ids(collection_name, to_delete)
 
 
 def count_collection(collection_name: str) -> int:
-    """Collection'daki kayıt sayısı."""
     try:
-        with _client_lock:
-            return _collection_unlocked(collection_name).count()
+        ensure_schema()
+        with engine.connect() as conn:
+            n = conn.execute(
+                text("SELECT COUNT(*) FROM rag_embeddings WHERE collection = :coll"),
+                {"coll": collection_name},
+            ).scalar()
+            return int(n or 0)
     except Exception:
         return 0
 
 
 def list_runbook_documents(limit: int = 5000) -> List[dict]:
-    """
-    Runbook collection'daki dokümanları başlığa göre grupla.
-    Dönen her öğe: {"title": str, "chunk_count": int, "chunk_ids": list}.
-    """
     try:
-        with _client_lock:
-            coll = _collection_unlocked(COLLECTION_RUNBOOK)
-            total = coll.count()
-            if total == 0:
-                return []
-            result = coll.get(
-                include=["metadatas"],
-                limit=min(limit, total),
+        ensure_schema()
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT COALESCE(metadata->>'title', 'İsimsiz') AS title,
+                           COUNT(*) AS chunk_count,
+                           array_agg(id) AS chunk_ids
+                    FROM rag_embeddings
+                    WHERE collection = :coll
+                    GROUP BY 1
+                    ORDER BY 1
+                    LIMIT :lim
+                    """
+                ),
+                {"coll": COLLECTION_RUNBOOK, "lim": int(limit)},
             )
-        ids = result.get("ids") or []
-        metadatas = result.get("metadatas") or []
-        by_title: dict = {}
-        for id_, meta in zip(ids, metadatas):
-            title = (meta or {}).get("title") or "İsimsiz"
-            if title not in by_title:
-                by_title[title] = {"title": title, "chunk_count": 0, "chunk_ids": []}
-            by_title[title]["chunk_count"] += 1
-            by_title[title]["chunk_ids"].append(id_)
-        return list(by_title.values())
+            return [
+                {
+                    "title": r[0],
+                    "chunk_count": int(r[1] or 0),
+                    "chunk_ids": list(r[2] or []),
+                }
+                for r in rows
+            ]
     except Exception as e:
-        logger.warning(f"list_runbook_documents error: {e}")
+        logger.warning("list_runbook_documents error: %s", e)
         return []
 
 
 def delete_runbook_by_title(title: str) -> int:
-    """Runbook'da verilen başlıktaki tüm chunk'ları sil. Silinen chunk sayısını döndürür."""
     if not title or not title.strip():
         return 0
     title = title.strip()
+    ensure_schema()
+    with engine.begin() as conn:
+        res = conn.execute(
+            text(
+                """
+                DELETE FROM rag_embeddings
+                WHERE collection = :coll AND metadata->>'title' = :title
+                """
+            ),
+            {"coll": COLLECTION_RUNBOOK, "title": title},
+        )
+        n = int(res.rowcount or 0)
+    logger.info("RAG store: deleted runbook document title=%r (%s chunks)", title, n)
+    return n
+
+
+def load_seed_state() -> dict:
+    ensure_schema()
     try:
-        docs = list_runbook_documents()
-        count = 0
-        for d in docs:
-            if d.get("title") == title:
-                count = d.get("chunk_count", 0)
-                break
-        with _client_lock:
-            coll = _collection_unlocked(COLLECTION_RUNBOOK)
-            coll.delete(where={"title": title})
-        logger.info(f"RAG store: deleted runbook document title={title!r} ({count} chunks)")
-        return count
-    except Exception as e:
-        logger.warning(f"delete_runbook_by_title error: {e}")
-        return 0
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT title, version FROM rag_seed_state"))
+            return {str(r[0]): str(r[1]) for r in rows}
+    except Exception:
+        return {}
+
+
+def save_seed_state(state: dict) -> None:
+    ensure_schema()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM rag_seed_state"))
+        for title, version in (state or {}).items():
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO rag_seed_state (title, version, updated_at)
+                    VALUES (:t, :v, now())
+                    """
+                ),
+                {"t": str(title), "v": str(version)},
+            )

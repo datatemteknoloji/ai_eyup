@@ -11,9 +11,18 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.26] - 2026-08-15
+
+### Chat / RAG mimarisi
+- RAG araması Postgres `rag_embeddings` (pgvector). `$DATA_DIR/chroma` volume eski Chroma için (migrate/rollback); silinmez.
+- Sohbet turları (`chat_turns`) + Redis olay günlüğü + FIFO AI kapısı; 2 uvicorn worker API’yi uzun SSE sırasında kilitlemez.
+- Varsayılanlar kod/compose/`.env.example`: `UVICORN_WORKERS=2`, `AINEW_SERVICE_ROLE=all`, `CHAT_AI_MAX_CONCURRENT=3`, `DB_POOL_SIZE=20`, `DB_MAX_OVERFLOW=30`. Kurulum dizinine bağlı host yolu yok; `RAG_CHROMA_PATH` container içi `/app/chroma`.
+- Prod `docker-compose` ve entrypoint aynı default’u kullanır (`install-rhel.sh` bu sayıları `.env`’e kazımaz).
+- Ayarlar → RAG: eklenen runbook listesi ilk 5 satır + kaydırma; doküman içi arama (başlık, sayfa, benzerlik, alıntı).
+
 ### RAG seed (ilk kurulum)
 - Gömülü runbook’lar `docs/rag_seed/*.md` + `manifest.json`; tar ve prod compose `./docs/rag_seed:/app/docs/rag_seed:ro`.
-- Backend açılışında Ollama embedding hazır olana kadar seed yeniden denenir (chunk’lar `{DATA_DIR}/chroma`).
+- Backend açılışında embedding hazır olana kadar seed yeniden denenir (chunk’lar Postgres).
 - Dağıtım imajına `docs/rag_seed` kopyalanır (volume yoksa bile).
 
 ## [1.0.9.25] - 2026-08-14

@@ -103,6 +103,13 @@ def init_timescaledb():
                 ok_substrings=("already exists", "does not exist"),
             )
 
+            try:
+                from app.services.rag_store import ensure_schema
+                ensure_schema()
+                logger.info("✅ rag_embeddings (pgvector) hazır")
+            except Exception as e:
+                logger.warning("⚠️  rag_embeddings: %s", e)
+
             logger.info("🎉 TimescaleDB initialization complete")
 
     except Exception as e:

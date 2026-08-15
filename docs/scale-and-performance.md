@@ -67,11 +67,12 @@ okunur (çoğu **restart gerektirmez**):
 | `bulk_tcp_workers` | 100 | 1-256 | Toplu TCP health check |
 | `vcenter_sync_workers` | 10 | 1-64 | VM detay çekme |
 | **`celery_concurrency`** | 2 | 1-32 | Filo kuyruğu — **worker recreate** |
-| **`uvicorn_workers`** | 1 | 1-8 | HTTP API — **backend recreate** |
+| **`uvicorn_workers`** | 2 | 1-8 | HTTP API — **backend recreate** |
 
 Process ayarları kaydedilince `/app/uploads/ainew_process_workers.env` yazılır;
 entrypoint bir sonraki recreate’de `CELERY_CONCURRENCY` / `UVICORN_WORKERS`
-uygular. Multi-uvicorn’da arka plan scheduler yalnızca bir process’te çalışır
+uygular. RAG pgvector ile 2+ uvicorn worker güvenlidir (eski Chroma/DuckDB kilidi yok).
+Multi-uvicorn’da arka plan scheduler yalnızca bir process’te çalışır
 (fcntl lock).
 
 ## Metrik senkronizasyonu: batch PromQL sorguları

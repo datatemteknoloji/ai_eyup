@@ -19,6 +19,7 @@ import {
   startChatStream,
   abortChatStream,
   clearChatClarify,
+  restoreChatTurn,
   loadPersistedSessionId,
   persistSessionId,
 } from '../lib/chatStreamStore'
@@ -161,6 +162,8 @@ const UnifiedChat: React.FC<{
   const thinkingPhase = stream.thinkingPhase
   const toolCalls = stream.toolCalls
   const clarifyOptions = stream.clarifyOptions
+  const suggestions = stream.suggestions
+  const queueMessage = stream.queueMessage
 
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(() =>
     loadPersistedSessionId(streamChannel),
@@ -189,6 +192,23 @@ const UnifiedChat: React.FC<{
   }, [stream.isLoading, stream.sessionId])
 
   const queryClient = useQueryClient()
+
+  useEffect(() => {
+    void restoreChatTurn({
+      channel: streamChannel,
+      onSessionId: (id) => {
+        persistSessionId(streamChannel, id)
+        setSelectedSessionId(id)
+      },
+      onDone: async (sid) => {
+        if (sid) {
+          await queryClient.invalidateQueries({ queryKey: ['unified-chat-messages', sid] })
+          await queryClient.invalidateQueries({ queryKey: ['unified-chat-sessions'] })
+        }
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamChannel])
 
   const { data: modelsData, isFetched: modelsFetched } = useQuery<{
     success: boolean
@@ -579,6 +599,21 @@ const UnifiedChat: React.FC<{
                     className="text-left text-xs px-3 py-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 hover:border-sky-400/60 transition-colors"
                   >
                     {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {suggestions && suggestions.length > 0 && !isLoading && (
+              <div className="px-1 pb-2 flex flex-wrap gap-2">
+                {suggestions.map((s, i) => (
+                  <button
+                    key={`${s.label}-${i}`}
+                    type="button"
+                    onClick={() => sendMessage(s.label)}
+                    className="text-left text-xs px-3 py-2 rounded-lg border border-slate-600 bg-slate-800/60 text-slate-200 hover:bg-slate-700 transition-colors"
+                  >
+                    {s.type === 'verify' ? 'Doğrula: ' : s.type === 'inspect' ? 'İncele: ' : s.type === 'apply' ? 'Uygula: ' : ''}
+                    {s.label}
                   </button>
                 ))}
               </div>

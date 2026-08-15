@@ -62,6 +62,13 @@ def _state_path(seed_dir: Path) -> Path:
 
 def _load_state(path: Path) -> Dict[str, str]:
     try:
+        from app.services.rag_store import load_seed_state
+        db_state = load_seed_state()
+        if db_state:
+            return db_state
+    except Exception as e:
+        logger.debug("rag_seed DB state: %s", e)
+    try:
         if path.is_file():
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
@@ -72,6 +79,11 @@ def _load_state(path: Path) -> Dict[str, str]:
 
 
 def _save_state(path: Path, state: Dict[str, str]) -> None:
+    try:
+        from app.services.rag_store import save_seed_state
+        save_seed_state(state)
+    except Exception as e:
+        logger.debug("rag_seed DB state yazılamadı: %s", e)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

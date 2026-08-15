@@ -47,7 +47,10 @@ Changing `/etc/hosts` does not require recreating containers (read-only bind mou
 | `REMOTE_LLM_VERIFY_SSL` | `true` | Set `false` only if the gateway uses a self-signed cert you trust and you have no CA bundle to give it |
 | `REMOTE_LLM_CA_BUNDLE` | _(empty)_ | Path (inside the backend container) to a PEM file for the gateway's self-signed/internal CA cert — keeps verification **on** while trusting that one extra cert. Takes precedence over `REMOTE_LLM_VERIFY_SSL`. Drop the PEM in `${DATA_DIR}/certs/` on the host (already bind-mounted to `/app/certs` in `docker-compose.prod.yml`) and point this at e.g. `/app/certs/remote-llm-ca.pem` |
 | `CELERY_CONCURRENCY` | `2` | Filo Celery worker paralelliği (entrypoint + Gelişmiş Ayarlar; recreate gerekir) |
-| `UVICORN_WORKERS` | `1` | API HTTP process sayısı (entrypoint + Gelişmiş Ayarlar; recreate gerekir) |
+| `UVICORN_WORKERS` | `2` | API HTTP process sayısı (1–8; entrypoint + Gelişmiş Ayarlar; recreate gerekir). `.env` yoksa compose/kod default’u 2 |
+| `AINEW_SERVICE_ROLE` | `all` | `all`: API hem istek kabul eder hem sohbet turunu çalıştırır. Ayrı chat container yok |
+| `CHAT_AI_MAX_CONCURRENT` | `3` | Aynı anda LLM üretimi; fazlası FIFO kuyruk (Gelişmiş Ayarlar) |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `20` / `30` | SQLAlchemy havuzu (process başına). 2 uvicorn worker için PG bağlantısı makul kalır |
 
 > `docker-compose.prod.yml` and `docker-compose.yml` load the backend's environment via `env_file: .env` —
 > any variable in `.env` reaches the container automatically, so new settings never require a compose file change.
@@ -95,7 +98,7 @@ Used as a task queue backend (Celery) and for ephemeral caching.
 | `/app/app` | `./backend/app` | Live-reload in dev |
 | `/app/static` | `./backend/static` | Static file serving |
 | `/prometheus/targets` | `./prometheus/targets` | Prometheus target files |
-| `/app/chroma` | `$DATA_DIR/chroma` | ChromaDB vector store |
+| `/app/chroma` | `$DATA_DIR/chroma` | Eski Chroma volume (bir kerelik migrate / rollback). Asıl RAG indeksi Postgres `rag_embeddings` (pgvector) |
 | `/app/repos` | `$DATA_DIR/repos` | Local RPM/DEB repo files |
 | `/app/uploads` | `$DATA_DIR/uploads` | Uploaded package files (+ `ainew_process_workers.env`) |
 | `/app/updates` | `$DATA_DIR/updates` | Platform self-update packages (prod) |
@@ -247,10 +250,10 @@ Gereksinimler (prod compose’da varsayılan):
 ## Backup
 
 ```bash
-# Backup PostgreSQL
+# Backup PostgreSQL (RAG vektörleri rag_embeddings dahil)
 docker exec server_management_db pg_dump -U postgres server_management > backup.sql
 
-# Backup ChromaDB / repos — DATA_DIR'ı .env'den alın
+# Repos (+ isteğe bağlı eski Chroma volume) — DATA_DIR'ı .env'den alın
 # shellcheck: source=.env
 DATA_DIR="${DATA_DIR:-$(grep '^DATA_DIR=' .env | cut -d= -f2-)}"
 tar czf chroma-backup.tar.gz "$DATA_DIR/chroma"

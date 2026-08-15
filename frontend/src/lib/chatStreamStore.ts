@@ -3,22 +3,28 @@
  * Sayfa değişince abort edilmez; geri dönünce aynı channel state'i okunur.
  */
 import { useSyncExternalStore } from 'react'
+import { API_BASE_URL } from '../config/api'
 
-export type ThinkingPhase = 'idle' | 'context' | 'tools' | 'streaming'
+export type ThinkingPhase = 'idle' | 'queued' | 'context' | 'tools' | 'streaming'
 
 export type ToolCallProgress = { tool: string; label: string; done: boolean }
 
 export type ClarifyOption = { id: string; label: string; prompt: string }
 
+export type ChatSuggestion = { type?: string; label: string }
+
 export type ChatStreamSnapshot = {
   channel: string
   sessionId: number | null
+  turnId: string | null
   pendingUserMessage: string | null
   streamingText: string
   thinkingPhase: ThinkingPhase
   isLoading: boolean
   toolCalls: ToolCallProgress[]
   clarifyOptions: ClarifyOption[] | null
+  suggestions: ChatSuggestion[] | null
+  queueMessage: string | null
 }
 
 type Entry = {
@@ -32,12 +38,15 @@ const entries = new Map<string, Entry>()
 const emptySnap = (channel: string): ChatStreamSnapshot => ({
   channel,
   sessionId: null,
+  turnId: null,
   pendingUserMessage: null,
   streamingText: '',
   thinkingPhase: 'idle',
   isLoading: false,
   toolCalls: [],
   clarifyOptions: null,
+  suggestions: null,
+  queueMessage: null,
 })
 
 function ensure(channel: string): Entry {
@@ -90,6 +99,15 @@ export function useChatStream(channel: string): ChatStreamSnapshot {
 export function abortChatStream(channel: string) {
   const e = entries.get(channel)
   if (!e) return
+  const turnId = e.snap.turnId || loadPersistedTurnId(channel)
+  if (turnId) {
+    try {
+      fetch(`${API_BASE_URL}/chat-turns/${turnId}/cancel`, { method: 'POST' }).catch(() => undefined)
+    } catch {
+      /* */
+    }
+    persistTurnId(channel, null)
+  }
   e.abort?.abort()
   e.abort = null
   e.snap = {
@@ -126,6 +144,7 @@ export type StartChatStreamOpts = {
   sessionId: number | null
   message: string
   initialPhase?: ThinkingPhase
+  method?: 'POST' | 'GET'
   /** Yeni session_id SSE'den gelince */
   onSessionId?: (id: number) => void
   /** Stream başarıyla bittiğinde (mesajlar refetch için) */
@@ -144,6 +163,7 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     sessionId,
     message,
     initialPhase = 'streaming',
+    method = 'POST',
     onSessionId,
     onDone,
   } = opts
@@ -168,9 +188,9 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
 
   try {
     const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
     })
 
@@ -199,6 +219,10 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
           const chunk = JSON.parse(jsonStr)
 
           if (chunk.start) {
+            if (chunk.turn_id) {
+              persistTurnId(channel, String(chunk.turn_id))
+              patch(channel, { turnId: String(chunk.turn_id) })
+            }
             if (chunk.session_id) {
               activeSessionId = Number(chunk.session_id)
               patch(channel, { sessionId: activeSessionId, thinkingPhase: 'streaming' })
@@ -206,6 +230,13 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
             } else {
               patch(channel, { thinkingPhase: 'streaming' })
             }
+          }
+          if (chunk.queued) {
+            const pos = chunk.position
+            const msg =
+              chunk.message ||
+              (pos != null ? `Sıradasınız: ${pos}` : 'Kuyrukta…')
+            patch(channel, { thinkingPhase: 'queued', queueMessage: String(msg) })
           }
           if (chunk.phase === 'collecting') patch(channel, { thinkingPhase: 'context' })
           if (chunk.phase === 'tools') patch(channel, { thinkingPhase: 'tools' })
@@ -241,6 +272,14 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
             patch(channel, { clarifyOptions: chunk.clarify_options as ClarifyOption[] })
           }
 
+          if (Array.isArray(chunk.suggestions) && chunk.suggestions.length) {
+            patch(channel, {
+              suggestions: chunk.suggestions.map((s: any) =>
+                typeof s === 'string' ? { label: s } : { type: s.type, label: s.label || String(s) },
+              ),
+            })
+          }
+
           if (chunk.error) {
             patch(channel, {
               streamingText: `**Hata:** ${chunk.error}`,
@@ -258,7 +297,8 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
             } catch {
               /* refetch hatası stream'i bozmasın */
             }
-            finishIdle(channel, { sessionId: activeSessionId })
+            persistTurnId(channel, null)
+            finishIdle(channel, { sessionId: activeSessionId, turnId: null })
             return
           }
         } catch {
@@ -315,6 +355,23 @@ export function loadPersistedSessionId(channel: string): number | null {
   }
 }
 
+export function persistTurnId(channel: string, id: string | null) {
+  try {
+    if (!id) sessionStorage.removeItem(`ainew.chat.turn.${channel}`)
+    else sessionStorage.setItem(`ainew.chat.turn.${channel}`, id)
+  } catch {
+    /* */
+  }
+}
+
+export function loadPersistedTurnId(channel: string): string | null {
+  try {
+    return sessionStorage.getItem(`ainew.chat.turn.${channel}`)
+  } catch {
+    return null
+  }
+}
+
 export function persistSessionId(channel: string, id: number | null) {
   try {
     if (id == null) sessionStorage.removeItem(`ainew.chat.session.${channel}`)
@@ -322,4 +379,26 @@ export function persistSessionId(channel: string, id: number | null) {
   } catch {
     /* */
   }
+}
+
+/** Sayfa yenilemede devam eden turn'e yeniden bağlan. */
+export async function restoreChatTurn(opts: {
+  channel: string
+  onSessionId?: (id: number) => void
+  onDone?: (sessionId: number | null) => void | Promise<void>
+}): Promise<boolean> {
+  const turnId = loadPersistedTurnId(opts.channel)
+  if (!turnId) return false
+  await startChatStream({
+    channel: opts.channel,
+    url: `${API_BASE_URL}/chat-turns/${turnId}/events`,
+    body: {},
+    sessionId: loadPersistedSessionId(opts.channel),
+    message: getChatStream(opts.channel).pendingUserMessage || '',
+    initialPhase: 'streaming',
+    method: 'GET',
+    onSessionId: opts.onSessionId,
+    onDone: opts.onDone,
+  })
+  return true
 }

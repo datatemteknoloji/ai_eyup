@@ -114,8 +114,11 @@ services:
       - HOST_ETC_HOSTS=/host-etc-hosts
       # Restore: migration-secrets → host .env yazımı
       - AINEW_INSTALL_MOUNT=/ainew-install
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - AINEW_SERVICE_ROLE=${AINEW_SERVICE_ROLE:-all}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./backend/app:/app/app
       - ./backend/static:/app/static
@@ -160,7 +163,9 @@ services:
       - APP_VERSION=${APP_VERSION:-}
       - HOST_ETC_HOSTS=/host-etc-hosts
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./backend/app:/app/app
       - ./backend/VERSION:/app/VERSION:ro

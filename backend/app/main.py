@@ -10,7 +10,10 @@ from app.core.config import settings
 from app.core.version import get_app_version
 import logging
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
+
+_RAG_SEED_LOCK_FH = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -186,7 +189,31 @@ async def startup_tasks():
     # Tabloları oluştur
     from app.core.database import engine, Base
     import app.models  # noqa: F401 - modelleri Base.metadata'ya kaydetmek için
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        if "already exists" in str(e).lower() or "DuplicateTable" in type(e).__name__:
+            logger.warning("create_all yarış (çok worker): %s", e)
+        else:
+            raise
+
+    _role = (os.getenv("AINEW_SERVICE_ROLE") or "all").strip().lower()
+
+    try:
+        from app.services.rag_store import ensure_schema
+        ensure_schema()
+        if _role in ("all", "chat", ""):
+            from app.services.rag_chroma_migrate import migrate_chroma_if_needed
+            summary = migrate_chroma_if_needed()
+            logger.info("RAG Chroma→pgvector migrate: %s", summary)
+    except Exception as e:
+        logger.warning("RAG pgvector init: %s", e)
+
+    try:
+        from app.services.chat_orchestrator.service import start_consumer_if_needed
+        start_consumer_if_needed()
+    except Exception as e:
+        logger.warning("Chat orchestrator: %s", e)
 
     # Hafif şema güncellemeleri (mevcut tablolara eksik kolon ekle — idempotent)
     try:
@@ -515,6 +542,22 @@ async def startup_tasks():
     except Exception as e:
         logger.warning(f"Repo sync cleanup hatası: {e}")
 
+    global _RAG_SEED_LOCK_FH
+    _RAG_SEED_LOCK_FH = None
+    _do_rag_seed = False
+    try:
+        import fcntl
+        _fh = open("/tmp/ainew_rag_seed.lock", "a+")
+        fcntl.flock(_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _RAG_SEED_LOCK_FH = _fh
+        _do_rag_seed = True
+    except OSError:
+        logger.info("RAG seed başka worker'da — bu process atlanıyor")
+        try:
+            _fh.close()
+        except Exception:
+            pass
+
     # RAG: Varsayılan metrik açıklamalarını arka planda seed et (Ollama hazır olmayabilir)
     async def _rag_seed_metrics():
         try:
@@ -524,11 +567,13 @@ async def startup_tasks():
             logger.info(f"RAG metrics seed: {n} chunks added")
         except Exception as e:
             logger.debug(f"RAG metrics seed skipped (Ollama/Chroma): {e}")
-    asyncio.create_task(_rag_seed_metrics())
+    if _role in ("all", "chat", "") and _do_rag_seed:
+        asyncio.create_task(_rag_seed_metrics())
 
     try:
-        from app.services.reranker import warmup_in_background
-        warmup_in_background()
+        if _do_rag_seed:
+            from app.services.reranker import warmup_in_background
+            warmup_in_background()
     except Exception as e:
         logger.debug("Reranker warmup atlandı: %s", e)
 
@@ -569,7 +614,8 @@ async def startup_tasks():
                 logger.warning("RAG docs seed attempt=%s: %s", attempt, e)
             await asyncio.sleep(10)
         logger.warning("RAG docs seed vazgeçildi (embedding hazır değil?): %s", last)
-    asyncio.create_task(_rag_seed_docs())
+    if _role in ("all", "chat", "") and _do_rag_seed:
+        asyncio.create_task(_rag_seed_docs())
 
 @app.on_event("shutdown")
 async def shutdown_tasks():

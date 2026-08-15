@@ -12,8 +12,8 @@ Your message
     ▼
 /api/v1/chat/stream (POST, SSE response)
     │
-    ├──► RAG: ChromaDB similarity search
-    │    query → top-5 matching chunks from runbooks, metric descriptions
+    ├──► RAG: Postgres pgvector similarity search
+    │    query → top-k matching chunks from runbooks, metric descriptions
     │
     ├──► Server context: fetch live metrics for selected servers
     │    (CPU, memory, disk, last seen, hostname, OS)
@@ -71,7 +71,7 @@ Example: select `web-01` and `db-01`, then ask "Which server is using more memor
 
 The **RAG** toggle enables semantic search over your knowledge base. When on:
 1. Your message is embedded (text → vector)
-2. ChromaDB finds the most relevant chunks (runbooks, SOPs, incident history, metric descriptions)
+2. Postgres `rag_embeddings` (pgvector) finds the most relevant chunks (runbooks, SOPs, incident history, metric descriptions)
 3. These chunks are included in the system prompt
 
 This lets the AI reference your actual runbooks when answering questions like "What do I do when disk is above 90%?"

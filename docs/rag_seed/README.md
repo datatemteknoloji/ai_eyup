@@ -7,10 +7,11 @@ Bu dizin uygulama köküne göredir:
 ```
 
 Container içinde: `/app/docs/rag_seed` (`RAG_SEED_PATH`).
-Chunk/indeks: `{DATA_DIR}/chroma` → `/app/chroma` (kalıcı volume).
+Chunk/indeks: Postgres `rag_embeddings` (pgvector). Eski Chroma volume
+`${DATA_DIR}/chroma` → container `/app/chroma` (migrate / rollback; silmeyin).
 
 Paket (tar) bu dizini içerir. Backend **ilk açılışta** (ve her restart’ta, idempotent)
-dosyaları Chroma **runbook** koleksiyonuna chunk’lar. Embedding için Ollama
+dosyaları **runbook** koleksiyonuna chunk’lar. Embedding için Ollama
 `nomic-embed-text` gerekir; hazır değilse birkaç dakika yeniden dener.
 
 ## Gömülü runbook’lar

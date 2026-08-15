@@ -31,6 +31,7 @@ import {
   abortChatStream,
   loadPersistedSessionId,
   persistSessionId,
+  restoreChatTurn,
 } from '../lib/chatStreamStore'
 import { useChatStickToBottom } from '../lib/chatScroll'
 import { useT, useLocale } from '../i18n/LocaleProvider'
@@ -239,6 +240,23 @@ const Chat: React.FC<{
 
 
   const queryClient = useQueryClient()
+
+  useEffect(() => {
+    void restoreChatTurn({
+      channel: streamChannel,
+      onSessionId: (id) => {
+        persistSessionId(streamChannel, id)
+        setSelectedSessionId(id)
+      },
+      onDone: async (sid) => {
+        if (sid) {
+          await queryClient.invalidateQueries({ queryKey: ['chat-messages', sid] })
+          await queryClient.invalidateQueries({ queryKey: ['chat-sessions', inventoryPlatform] })
+        }
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamChannel])
 
   const { data: servers = [] } = useQuery<Server[]>({
     queryKey: ['ai-ready-servers', inventoryPlatform],

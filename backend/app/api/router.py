@@ -77,6 +77,12 @@ try:
 except Exception as e:
     logger.error(f"Could not load unified_chat router: {e}", exc_info=True)
 
+try:
+    from app.api import chat_turns
+    api_router.include_router(chat_turns.router, prefix="/chat-turns", tags=["chat-turns"])
+except Exception as e:
+    logger.error(f"Could not load chat_turns router: {e}", exc_info=True)
+
 # Alerts
 try:
     from app.api import alerts

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -91,6 +91,15 @@ interface RunbookDocument {
   chunk_ids?: string[]
 }
 
+interface RunbookSearchHit {
+  id?: string
+  title: string
+  page?: number | null
+  chunk_index?: number | null
+  similarity: number
+  snippet: string
+}
+
 interface RemoteLlmSettings {
   enabled: boolean
   url: string
@@ -122,6 +131,9 @@ const RagTab: React.FC = () => {
   const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfTitle, setPdfTitle] = useState('')
+  const [rbQuery, setRbQuery] = useState('')
+  const [rbHits, setRbHits] = useState<RunbookSearchHit[] | null>(null)
+  const [rbSearchErr, setRbSearchErr] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmState, setConfirmState] = React.useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
@@ -226,6 +238,21 @@ const RagTab: React.FC = () => {
       }
       return res.json()
     }
+  })
+  const searchRunbook = useMutation({
+    mutationFn: async (query: string) => {
+      const q = query.trim()
+      if (!q) throw new Error(t('set_rb_search_empty'))
+      const res = await fetch(`${API_BASE_URL}/rag/runbook/search?q=${encodeURIComponent(q)}&limit=8`)
+      const r = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : t('set_rb_search_err'))
+      return r as { success: boolean; hits: RunbookSearchHit[]; mode?: string }
+    },
+    onSuccess: (d) => { setRbHits(d.hits || []); setRbSearchErr(null) },
+    onError: (e) => {
+      setRbHits(null)
+      setRbSearchErr(e instanceof Error ? e.message : t('set_rb_search_err'))
+    },
   })
   const deleteRunbookDoc = useMutation({
     mutationFn: async (title: string) => {
@@ -337,11 +364,55 @@ const RagTab: React.FC = () => {
       <div className="mb-6 p-5 bg-cyber-deep/50 rounded-xl border border-white/[0.06]">
         <h3 className="text-base font-semibold text-white mb-3 flex items-center gap-2">
           {t('set_rb_docs')}
+          {runbookDocs.length > 0 && (
+            <span className="text-xs font-normal text-slate-500">{t('set_rb_doc_count', { n: runbookDocs.length })}</span>
+          )}
         </h3>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <input
+            type="search"
+            value={rbQuery}
+            onChange={(e) => setRbQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') searchRunbook.mutate(rbQuery) }}
+            placeholder={t('set_rb_search_ph')}
+            className="flex-1 min-w-[200px] bg-cyber-card border border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => searchRunbook.mutate(rbQuery)}
+            disabled={searchRunbook.isPending || !rbQuery.trim()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2"
+          >
+            <Search size={16} strokeWidth={2} />
+            {searchRunbook.isPending ? t('set_rb_searching') : t('set_rb_search')}
+          </button>
+        </div>
+        {rbSearchErr && (
+          <p className="text-red-400 text-xs mb-3">{rbSearchErr}</p>
+        )}
+        {rbHits !== null && (
+          <div className="space-y-2 mb-4">
+            {rbHits.length === 0 ? (
+              <p className="text-slate-500 text-sm">{t('set_rb_no_hits')}</p>
+            ) : (
+              rbHits.map((h, i) => (
+                <div key={h.id || `${h.title}-${i}`} className="rounded-lg border border-white/[0.08] bg-cyber-card/70 p-3">
+                  <div className="text-emerald-400 text-xs font-medium mb-1.5 truncate">
+                    {h.title}
+                    {h.page != null && h.page > 0 ? ` s.${h.page}` : ''}
+                    {' · '}
+                    {t('set_rb_similarity', { score: Number(h.similarity || 0).toFixed(3) })}
+                  </div>
+                  <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{h.snippet}</p>
+                </div>
+              ))
+            )}
+          </div>
+        )}
         {runbookDocs.length === 0 ? (
           <p className="text-slate-500 text-sm">{t('set_rb_none')}</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: '16.5rem' }}>
             {runbookDocs.map((doc) => (
               <li
                 key={doc.title}

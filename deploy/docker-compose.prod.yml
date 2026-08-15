@@ -134,6 +134,11 @@ services:
       - HOST_ETC_HOSTS=/host-etc-hosts
       - AINEW_INSTALL_MOUNT=/ainew-install
       - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - AINEW_SERVICE_ROLE=${AINEW_SERVICE_ROLE:-all}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./docs/rag_seed:/app/docs/rag_seed:ro
       - ./backend/static:/app/static:Z
@@ -181,6 +186,10 @@ services:
       - APP_VERSION=${APP_VERSION:-}
       - DATA_DIR=${DATA_DIR:-./data}
       - HOST_ETC_HOSTS=/host-etc-hosts
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./VERSION:/app/VERSION:ro
       - ${DATA_DIR:-./data}/chroma:/app/chroma:Z

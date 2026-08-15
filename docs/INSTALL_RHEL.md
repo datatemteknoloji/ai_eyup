@@ -99,7 +99,7 @@ Arayüz         : https://<sunucu-ip>
 Kullanıcı      : admin
 Parola         : <otomatik üretilen parola>
 Kurulum dizini : /data  (paket + .env)
-Veri dizini    : /data/data  (= $INSTALL_DIR/data — DB, Redis, Chroma, uploads, certs, Ollama)
+Veri dizini    : /data/data  (= $INSTALL_DIR/data — DB, Redis, uploads, certs, Ollama; RAG indeksi Postgres'te)
 ```
 
 **Tarayıcı "bağlantı güvenli değil" uyarısı verecektir** — bu normaldir, çünkü

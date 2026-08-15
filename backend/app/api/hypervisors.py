@@ -1309,6 +1309,48 @@ def ask_hypervisor_question(
         raise HTTPException(status_code=500, detail=f"Sorgulama hatası: {str(e)}")
 
 
+@router.post("/ask/stream")
+async def ask_hypervisor_stream(req: HypervisorAskRequest, db: Session = Depends(get_db)):
+    """Reconnectable SSE — mevcut senkron ask mantığını arka planda çalıştırır."""
+    import json as _json
+    payload = req.model_dump()
+    payload["message"] = req.question
+
+    async def pipeline(payload: dict, db: Session):
+        inner = HypervisorAskRequest(
+            question=payload.get("question") or payload.get("message") or "",
+            model=payload.get("model"),
+            history=payload.get("history"),
+            session_id=payload.get("session_id"),
+        )
+
+        def _sse(obj: dict) -> str:
+            return "data: " + _json.dumps(obj, ensure_ascii=False, default=str) + "\n\n"
+
+        yield _sse({"phase": "collecting"})
+        import asyncio
+        result = await asyncio.to_thread(ask_hypervisor_question, inner, db)
+        result = result or {}
+        sid = result.get("session_id")
+        answer = result.get("answer") or result.get("error") or ""
+        yield _sse({"session_id": sid, "start": True})
+        yield _sse({"phase": "answering"})
+        for i in range(0, len(answer), 8):
+            yield _sse({"token": answer[i:i + 8]})
+        if result.get("error") and not result.get("answer"):
+            yield _sse({"error": result.get("error")})
+        yield _sse({"done": True, "session_id": sid})
+
+    from app.services.chat_orchestrator.http_bridge import attach_and_stream
+    return attach_and_stream(
+        platform="hypervisor",
+        payload=payload,
+        message=req.question,
+        session_id=req.session_id,
+        pipeline=pipeline,
+    )
+
+
 @router.get("/ask/quick-stats")
 async def get_quick_stats(db: Session = Depends(get_db)):
     """Üst bar için anlık özet istatistikler."""

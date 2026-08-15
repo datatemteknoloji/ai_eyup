@@ -64,12 +64,18 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "restart_target": "worker",
     },
     "uvicorn_workers": {
-        "default": 1, "type": "int", "min": 1, "max": 1,
+        "default": 2, "type": "int", "min": 1, "max": 8,
         "group": "process", "label": "Uvicorn workers (API)",
-        "help": "HTTP API process sayısı. Chroma/DuckDB aynı anda tek process destekler; 2+ worker sohbet/RAG sırasında API’yi kilitler. Celery paralelliği ayrı ayardır. Uygulamak için backend recreate gerekir.",
+        "help": "HTTP API process sayısı. RAG pgvector ile 2+ worker güvenlidir. Celery paralelliği ayrı ayardır. Uygulamak için backend recreate gerekir.",
         "env": "UVICORN_WORKERS",
         "requires_restart": True,
         "restart_target": "backend",
+    },
+    "chat_ai_max_concurrent": {
+        "default": 3, "type": "int", "min": 1, "max": 8,
+        "group": "process", "label": "Eşzamanlı AI üretimi",
+        "help": "Aynı anda en fazla kaç LLM çağrısı. Fazlası FIFO kuyruğa alınır; sohbette sıra gösterilir.",
+        "env": "CHAT_AI_MAX_CONCURRENT",
     },
     # ── SSH ─────────────────────────────────────────────────────────
     "ssh_connect_timeout_sec": {
@@ -713,8 +719,7 @@ def write_process_workers_env_file(*, celery_concurrency: Any = None, uvicorn_wo
         uvicorn_workers = get_setting("uvicorn_workers")
 
     current["CELERY_CONCURRENCY"] = str(int(celery_concurrency))
-    # Chroma tek-process — 2+ uvicorn worker kaydı yazılsa bile 1'e sıkıştır
-    current["UVICORN_WORKERS"] = "1"
+    current["UVICORN_WORKERS"] = str(max(1, min(8, int(uvicorn_workers))))
 
     body = (
         "# ainew process workers — docker-entrypoint okur; container recreate gerekir\n"

@@ -8,7 +8,7 @@
 - **Tüm Altyapı:** çapraz özet; “listele” canlı tarama değildir.
 
 ## RAG
-Kurulum `docs/rag_seed` PDF/md dosyalarını açılışta Chroma runbook’a chunk’lar.
+Kurulum `docs/rag_seed` PDF/md dosyalarını açılışta Postgres `rag_embeddings` (pgvector) runbook koleksiyonuna chunk’lar.
 Gömme (embedding) yerel Ollama `nomic-embed-text` ister. Chat modeli uzak gateway olabilir.
 Ayarlar → RAG: ek PDF. Incident/event/bilgi bankası ayrı koleksiyon.
 

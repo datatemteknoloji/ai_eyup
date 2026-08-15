@@ -1,6 +1,7 @@
 """
 Database configuration and session management
 """
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -21,8 +22,8 @@ from app.core.config import settings
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=50,
-    max_overflow=100,
+    pool_size=max(5, min(40, int(os.getenv("DB_POOL_SIZE", "20")))),
+    max_overflow=max(5, min(80, int(os.getenv("DB_MAX_OVERFLOW", "30")))),
     pool_timeout=30,
     pool_recycle=1800,
     echo=False

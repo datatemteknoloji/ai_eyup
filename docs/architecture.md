@@ -45,8 +45,8 @@ ainew follows a monolithic-backend + SPA-frontend pattern deployed via Docker Co
 │ PG15 │  │ Redis │  │    Ollama    │  │  Prometheus +         │
 │ Time │  │  7    │  │ (local LLM)  │  │  Pushgateway          │
 │ Scale│  │       │  │              │  │  Node Exporter        │
-│  DB  │  │       │  │ ChromaDB     │  │  (on managed servers) │
-└──────┘  └───────┘  │ (RAG store)  │  └──────────────────────┘
+│  DB  │  │       │  │ pgvector RAG │  │  (on managed servers) │
+└──────┘  └───────┘  │ (+ Ollama)   │  └──────────────────────┘
                      └──────────────┘
 ```
 
@@ -118,7 +118,7 @@ User message
     ▼
 /api/v1/chat/stream (SSE)
     │
-    ├──► ChromaDB similarity search (top-k chunks)
+    ├──► Postgres pgvector similarity search (top-k chunks)
     │    (runbooks, metric descriptions, incident history)
     │
     ├──► Server context fetch (selected servers' live metrics)

@@ -14,6 +14,8 @@ from app.services.rag_store import (
     add_chunks,
     upsert_chunks,
     query_collection,
+    lexical_search_collection,
+    format_runbook_hits,
     clear_collection,
     count_collection,
     prune_ids_not_in_keep,
@@ -135,8 +137,68 @@ async def ingest_runbook(title: str, content: str) -> int:
     return len(chunks)
 
 
+async def ingest_runbook_pages(title: str, pages: Sequence[Tuple[int, str]]) -> int:
+    """PDF sayfa numarası metadata.page olarak saklanır (arama kartında s.N)."""
+    if not pages:
+        return 0
+    all_chunks: List[str] = []
+    metadatas: List[dict] = []
+    for page_no, text in pages:
+        if not (text or "").strip():
+            continue
+        try:
+            pn = int(page_no)
+        except (TypeError, ValueError):
+            pn = 0
+        for i, chunk in enumerate(chunk_text(text.strip())):
+            all_chunks.append(chunk)
+            metadatas.append({"title": title or "Runbook", "index": i, "page": pn})
+    if not all_chunks:
+        return 0
+    from app.services.embedding import get_embeddings_batch, get_last_embed_error
+    logger.info(
+        "RAG runbook pages ingest: title=%r pages=%s chunks=%s",
+        (title or "")[:80], len(pages), len(all_chunks),
+    )
+    embeddings = await get_embeddings_batch(all_chunks)
+    ids = [str(__import__("uuid").uuid4()) for _ in all_chunks]
+    all_chunks, embeddings, metadatas, ids = _filter_valid_embeddings(
+        all_chunks, embeddings, metadatas, ids
+    )
+    if not all_chunks:
+        detail = get_last_embed_error() or "Ollama embedding sıfır vektör döndü"
+        model = getattr(settings, "OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        url = getattr(settings, "OLLAMA_URL", "")
+        raise RuntimeError(
+            f"Embedding başarısız ({url} / {model}). {detail}. "
+            f"Kontrol: `ollama pull {model}` ve OLLAMA_URL erişimi. Runbook eklenemedi."
+        )
+    add_chunks(COLLECTION_RUNBOOK, ids=ids, documents=all_chunks, metadatas=metadatas, embeddings=embeddings)
+    return len(all_chunks)
+
+
 async def ingest_runbook_append(title: str, content: str) -> int:
     return await ingest_runbook(title, content)
+
+
+async def search_runbook_documents(query: str, top_k: int = 8) -> dict:
+    """Ayarlar RAG: semantik arama; embedding yoksa ILIKE yedek."""
+    q = (query or "").strip()
+    if not q:
+        return {"hits": [], "mode": "empty"}
+    k = min(max(1, int(top_k or 8)), 20)
+    mode = "vector"
+    hits: List[dict] = []
+    try:
+        emb = await get_embedding(q)
+        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
+            raise RuntimeError("zero embedding")
+        hits = query_collection(COLLECTION_RUNBOOK, emb, n_results=k)
+    except Exception as e:
+        logger.info("Runbook vektör arama atlandı, metin araması: %s", e)
+        mode = "lexical"
+        hits = lexical_search_collection(COLLECTION_RUNBOOK, q, n_results=k)
+    return {"hits": format_runbook_hits(hits), "mode": mode}
 
 
 def _incident_to_text(incident) -> str:
@@ -562,6 +624,7 @@ async def get_rag_context_for_message(
     db: Optional[Session] = None,
     server_ids: Optional[Sequence[int]] = None,
     include_server_facts: bool = False,
+    collections: Optional[Sequence[str]] = None,
 ) -> dict:
     """
     Chat RAG: runbook (PDF), incidents, metrics, knowledge (Bilgi Bankası semantik).
@@ -588,20 +651,28 @@ async def get_rag_context_for_message(
     inc_k = settings.RAG_INCIDENTS_TOP_K
     met_k = settings.RAG_METRICS_TOP_K
     kn_k = settings.RAG_KNOWLEDGE_TOP_K
+    want = set(collections) if collections else None
 
-    # Sıralı sorgu: tek Chroma client + kilit; gather aynı anda 4 PersistentClient açıyordu.
-    runbook = await _format_collection_context(
-        message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"
-    )
-    incidents = await _format_collection_context(
-        message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"
-    )
-    metrics = await _format_collection_context(
-        message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"
-    )
-    knowledge = await _format_collection_context(
-        message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"
-    )
+    runbook = ""
+    incidents = ""
+    metrics = ""
+    knowledge = ""
+    if want is None or "runbook" in want:
+        runbook = await _format_collection_context(
+            message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"
+        )
+    if want is None or "incidents" in want:
+        incidents = await _format_collection_context(
+            message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"
+        )
+    if want is None or "metric_descriptions" in want or "metrics" in (want or ()):
+        metrics = await _format_collection_context(
+            message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"
+        )
+    if want is None or "knowledge_facts" in want or "knowledge" in (want or ()):
+        knowledge = await _format_collection_context(
+            message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"
+        )
     if include_server_facts and db is not None and server_ids:
         try:
             direct = format_knowledge_facts_for_servers(db, server_ids)

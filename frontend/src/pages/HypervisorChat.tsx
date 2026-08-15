@@ -16,6 +16,7 @@ import {
   NlModelUnavailableBanner, NlChatInput,
 } from '../components/nlChatUi'
 import { useChatStickToBottom } from '../lib/chatScroll'
+import { useChatStream, startChatStream, abortChatStream, restoreChatTurn } from '../lib/chatStreamStore'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 
@@ -329,10 +330,11 @@ export default function HypervisorChat({
   const t = useT()
   const { locale } = useLocale()
   const queryClient = useQueryClient()
+  const stream = useChatStream('hypervisor')
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
+  const loading = stream.isLoading
   const [selectedModel, setSelectedModel] = useState<string>(
     () => localStorage.getItem('virt_chat_selected_model') || localStorage.getItem('chat_selected_model') || 'llama3:70b',
   )
@@ -506,41 +508,25 @@ export default function HypervisorChat({
     }
     setMessages(prev => [...prev, userMsg])
     setInput('')
-    setLoading(true)
 
     try {
-      const res = await fetch(`${API_BASE_URL}/hypervisors/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await startChatStream({
+        channel: 'hypervisor',
+        url: `${API_BASE_URL}/hypervisors/ask/stream`,
+        body: {
           question: q.trim(),
           session_id: activeSessionId,
           model: selectedModel,
-        }),
+        },
+        sessionId: activeSessionId,
+        message: q.trim(),
+        initialPhase: 'context',
+        onSessionId: (id) => setSelectedSessionId(id),
+        onDone: async (sid) => {
+          queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
+          if (sid) await loadSessionMessages(sid)
+        },
       })
-      const data = await res.json().catch(() => ({}))
-
-      if (!res.ok) {
-        // Eski/silinmiş bir oturum kimliğiyle isteği tekrar denemeyelim ki
-        // aynı hataya sonsuza dek çarpmasın; kullanıcı görünür bir hata alsın.
-        if (activeSessionId) setSelectedSessionId(null)
-        setMessages(prev => [...prev, {
-          id: `tmp-${Date.now() + 1}`,
-          role: 'assistant',
-          content: data?.detail || t('chat_req_fail', { n: res.status }),
-          error: 'http_error',
-          timestamp: new Date(),
-        }])
-        return
-      }
-
-      if (data.session_id) {
-        setSelectedSessionId(data.session_id)
-      }
-      queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
-      if (data.session_id) {
-        await loadSessionMessages(data.session_id)
-      }
     } catch {
       setMessages(prev => [...prev, {
         id: `tmp-${Date.now() + 1}`,
@@ -549,8 +535,6 @@ export default function HypervisorChat({
         error: 'connection_error',
         timestamp: new Date(),
       }])
-    } finally {
-      setLoading(false)
     }
   }, [loading, selectedSessionId, selectedModel, queryClient, loadSessionMessages, sessions, debouncedSearch])
 

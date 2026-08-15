@@ -13,11 +13,13 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.services.rag_service import (
     ingest_runbook_append,
+    ingest_runbook_pages,
     ingest_incidents_from_db,
     ingest_events_from_db,
     ingest_metric_descriptions,
     ingest_knowledge_from_db,
     get_rag_context_for_message,
+    search_runbook_documents,
 )
 from app.services.rag_store import (
     count_collection,
@@ -68,6 +70,22 @@ async def rag_runbook_list_documents():
         return {"success": True, "documents": docs}
     except Exception as e:
         logger.exception("Runbook list failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runbook/search")
+async def rag_runbook_search(q: str = "", limit: int = 8):
+    """Runbook dokümanlarında semantik (veya yedek metin) arama."""
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q gerekli")
+    if len(query) > 500:
+        raise HTTPException(status_code=400, detail="sorgu çok uzun")
+    try:
+        result = await search_runbook_documents(query, top_k=limit)
+        return {"success": True, "query": query, **result}
+    except Exception as e:
+        logger.exception("Runbook search failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -152,13 +170,13 @@ async def rag_runbook_ingest_pdf(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Sadece .pdf dosyası yükleyebilirsiniz.")
     try:
-        from app.services.pdf_parser import extract_text_from_pdf
+        from app.services.pdf_parser import extract_pages_from_pdf
 
         pdf_bytes = await file.read()
         if len(pdf_bytes) > 50 * 1024 * 1024:  # 50 MB
             raise HTTPException(status_code=400, detail="PDF en fazla 50 MB olabilir.")
-        text = extract_text_from_pdf(pdf_bytes)
-        if not text or not text.strip():
+        pages = extract_pages_from_pdf(pdf_bytes)
+        if not pages:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -170,11 +188,11 @@ async def rag_runbook_ingest_pdf(
         if doc_title.endswith(".pdf"):
             doc_title = doc_title[:-4]
         logger.info(
-            "PDF runbook ingest start: file=%s title=%r bytes=%s text_chars=%s",
-            file.filename, doc_title, len(pdf_bytes), len(text),
+            "PDF runbook ingest start: file=%s title=%r bytes=%s pages=%s",
+            file.filename, doc_title, len(pdf_bytes), len(pages),
         )
-        n = await ingest_runbook_append(title=doc_title, content=text)
-        return {"success": True, "chunks_added": n, "title": doc_title, "pages_extracted": True}
+        n = await ingest_runbook_pages(title=doc_title, pages=pages)
+        return {"success": True, "chunks_added": n, "title": doc_title, "pages_extracted": len(pages)}
     except HTTPException:
         raise
     except Exception as e:

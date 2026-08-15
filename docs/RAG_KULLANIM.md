@@ -68,7 +68,7 @@ Projede üç tür RAG kullanılıyor; hepsi AI Chat yanıtlarına ek context sa�
       -d '{"items": [{"name": "node_cpu_seconds_total", "description": "CPU saniye cinsinden..."}]}'
     ```
 - **UI:** Ayarlar → RAG → "Metrik Açıklamalarını Yükle (varsayılan)".
-- **Startup:** Backend açılışında varsayılan metrik listesi arka planda bir kez seed edilir (Ollama/Chroma hazır değilse sessizce atlanır).
+- **Startup:** Backend açılışında varsayılan metrik listesi arka planda bir kez seed edilir (Ollama/embedding hazır değilse sessizce atlanır).
 
 ## Durum ve Test
 
@@ -96,23 +96,23 @@ Her chat mesajında:
 
 Config (opsiyonel):
 
-- `RAG_CHROMA_PATH`: Chroma veri dizini (varsayılan: `/app/chroma`)
+- `RAG_CHROMA_PATH`: Eski Chroma dizininin **container içi** yolu (varsayılan: `/app/chroma`). Host tarafı `${DATA_DIR}/chroma` (kurulum dizinine göre değişir); bu değişken host yolu değildir.
 - `RAG_SEED_PATH`: Kurulumla gelen runbook PDF/metin dizini (varsayılan: `/app/docs/rag_seed`; host’ta `{kurulum}/docs/rag_seed`)
 - `RAG_RUNBOOK_TOP_K`, `RAG_INCIDENTS_TOP_K`, `RAG_METRICS_TOP_K`: Her collection’dan kaç chunk alınacağı (varsayılan 3, 3, 5)
 - `OLLAMA_EMBED_MODEL`: Embedding modeli (varsayılan: `nomic-embed-text`)
 
 ## Seed dizini (`docs/rag_seed`)
 
-Paket `docs/rag_seed` içeriğini taşır; backend ilk açılışta (Ollama `nomic-embed-text` hazırsa)
-Chroma runbook koleksiyonuna chunk'lar. Ek PDF aynı dizine konur. Ayrıntı: [docs/rag_seed/README.md](rag_seed/README.md).
+Paket `docs/rag_seed` içeriğini taşır; backend ilk açılışta (embedding modeli hazırsa)
+Postgres `rag_embeddings` (pgvector) runbook koleksiyonuna chunk'lar. Ek PDF aynı dizine konur. Ayrıntı: [docs/rag_seed/README.md](rag_seed/README.md).
 
 ## Docker
 
-Chroma kalıcılığı için backend volume’da dizin kullanılıyor:
+Asıl indeks Timescale/Postgres’tedir. `$DATA_DIR/chroma` volume eski Chroma verisi ve bir kerelik migrate içindir (silmeyin):
 
 ```yaml
 volumes:
-  - /app/chroma:/app/chroma
+  - ${DATA_DIR:-./data}/chroma:/app/chroma
 ```
 
-Bu dizinin yazılabilir olduğundan emin olun.
+`DATA_DIR` kurulum dizinine göredir (`$INSTALL_DIR/data`). Container içi yol her ortamda `/app/chroma` kalır.
