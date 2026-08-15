@@ -624,31 +624,32 @@ export function ServersPage({
     setBulkTestCurrent(t("bulk_test_parallel", { total: targets.length }));
     setBulkTestItems([]);
     try {
-      const CHUNK = 500;
-      const results: BulkTestItem[] = [];
-      let okSum = 0;
-      for (let i = 0; i < targets.length; i += CHUNK) {
-        const chunk = targets.slice(i, i + CHUNK);
-        const r = await withAuth((tok) =>
-          testServerConnectionsBulk(
-            tok,
-            chunk.map((s) => s.id),
-          ),
-        );
-        for (const it of r.items) {
-          results.push({
-            id: it.id,
-            hostname: it.hostname || chunk.find((s) => s.id === it.id)?.hostname || String(it.id),
-            ok: it.ok,
-            message: it.message || (it.ok ? "OK" : "Fail"),
-          });
-        }
-        okSum += r.ok;
-        setBulkTestItems([...results]);
-        setBulkTestDone(results.length);
-      }
+      const hostById = new Map(targets.map((s) => [s.id, s.hostname]));
+      const r = await withAuth((tok) =>
+        testServerConnectionsBulk(
+          tok,
+          targets.map((s) => s.id),
+          {
+            onProgress: (p) => {
+              setBulkTestDone(p.done);
+              setBulkTestTotal(p.total);
+              setBulkTestItems(
+                p.items.map((it) => ({
+                  id: it.id,
+                  hostname: it.hostname || hostById.get(it.id) || String(it.id),
+                  ok: it.ok,
+                  message: it.message || (it.ok ? "OK" : "Fail"),
+                })),
+              );
+              if (p.current) {
+                setBulkTestCurrent(p.current);
+              }
+            },
+          },
+        ),
+      );
       setBulkTestFinished(true);
-      setInfo(t("bulk_test_summary", { ok: okSum, total: results.length }));
+      setInfo(t("bulk_test_summary", { ok: r.ok, total: r.total }));
       await load();
     } catch (err) {
       setBulkTestFinished(true);
@@ -1409,14 +1410,9 @@ export function ServersPage({
             ) : null}
             <div className="h-2 overflow-hidden rounded-full bg-[var(--color-muted)]">
               <div
-                className={`h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300 ${
-                  bulkTesting && !bulkTestFinished && bulkTestDone === 0 ? "w-1/3 animate-pulse" : ""
-                }`}
+                className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
                 style={{
-                  width:
-                    bulkTesting && !bulkTestFinished && bulkTestDone === 0
-                      ? undefined
-                      : `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
+                  width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
                 }}
               />
             </div>

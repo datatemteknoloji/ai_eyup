@@ -6,31 +6,35 @@ alwaysApply: false
 
 # Deploy & ops
 
-## Compose dosyaları
+## Compose
 
-- `docker-compose.yml` — **dev**: source mount, bilinen admin şifresi riski
-- `docker-compose.prod.yml` — müşteri/prod (localhost bind, TLS, random secrets)
-- `docker-compose.build.yml` — imaj build
+- `docker-compose.yml` — **dev**: backend source mount; frontend baked
+- `deploy/docker-compose.prod.yml` — müşteri/prod (baked backend, TLS, rastgele sırlar)
+- Prod hedefte backend **imaja gömülü** (source mount yok) → yama: `docker cp` + `docker commit` (veya yeni tar)
 
-## Kritik davranış
+## Bu host’ta değişiklik nasıl yansır
 
-- Backend: `network_mode: host` (SSH erişimi için); `env_file: .env`
-- Veri volume'ları host'ta `/data/data/...`
-- Ollama servisi `profiles: [ollama]` — profil yoksa çalışmaz
-- Prometheus bu ortamda down olabilir; Pushgateway ayakta olabilir
+- Python: mount var ama workers=2 → `docker restart server_management_backend`
+- Frontend: `docker compose build frontend && docker compose up -d frontend`
+- Dropt API: `dropt/backend` baked → Dropt imajını rebuild/recreate
+- `prometheus.yml` / `prometheus/targets/*.json` / exporter: sohbet metriği için **değiştirme**
 
-## Kurulum script'leri
+## Paket / Release
 
-- Dev: `./scripts/dev-setup.sh` → `docker compose up -d`
-- Prod paket: `scripts/build-distribution.sh` → `install-rhel.sh` / `update-rhel.sh`
-- Offline Ollama: `install-ollama-runtime.sh`, `--ollama-files`
+- Ollamasız (müşteri varsayılan): `./scripts/build-distribution.sh` → `dist/ainew-<v>-linux-amd64.tar.gz`
+- `--with-ollama` işaret; `--bundle-ollama` imaj+model gömer (~+3.5GB)
+- Yayın: commit + `gh release upload v<v> dist/ainew-…tar.gz* --clobber` (mevcut sürüm) veya `scripts/publish-github-release.sh`
+- Tar’ı git’e ekleme; LFS yok
+
+## Kurulum
+
+- Dev: `./scripts/dev-setup.sh`
+- Prod: paket içi `install-rhel.sh` / `update-rhel.sh`; veri `$INSTALL_DIR/data`
+- Ollama ayrı: `install-ollama-runtime.sh`, `--ollama-files`
 
 ## Güvenlik
 
-- `SECRET_KEY` ve `POSTGRES_PASSWORD` zorunlu
-- Prod'da `ADMIN_DEFAULT_PASSWORD` rastgele üretilir; dev default `admin123`
-- `.env` ve credential'ları asla commit etme / chat'e yapıştırma
+- `SECRET_KEY`, `POSTGRES_PASSWORD` zorunlu; `.env` commit yok
+- Prod admin şifresi rastgele; volume/DB silme izinsiz yok
 
-## Doküman
-
-Önce: `docs/deployment.md`, `docs/INSTALL_RHEL.md`, `docs/scale-and-performance.md`
+Önce: `docs/INSTALL_RHEL.md`, `docs/deployment.md`

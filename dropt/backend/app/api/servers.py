@@ -1,6 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+import logging
 import os
+import threading
+import time
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -33,6 +37,7 @@ from app.services.ssh_probe import (
 )
 
 router = APIRouter(prefix="/servers", tags=["servers"])
+logger = logging.getLogger(__name__)
 
 
 def _public(
@@ -300,6 +305,22 @@ class HostEnsureIn(BaseModel):
     description: str = Field(default="", max_length=512)
     skip_connection_test: bool = True
     ainew_ai_ready: Optional[bool] = None
+    os_pretty: str = Field(default="", max_length=255)
+    machine_type: str = Field(default="", max_length=32)
+    virtualization: str = Field(default="", max_length=64)
+
+
+def _apply_ensure_inventory_meta(server: TargetServer, body: HostEnsureIn) -> None:
+    """Ainew envanter OS/tip — SSH facts yoksa (skip_connection_test) boş bırakılmasın."""
+    pretty = (body.os_pretty or "").strip()
+    if pretty and not (server.os_pretty or "").strip():
+        server.os_pretty = pretty[:255]
+    mt = (body.machine_type or "").strip().lower()
+    if mt in ("physical", "virtual") and not (server.machine_type or "").strip():
+        server.machine_type = mt[:32]
+    virt = (body.virtualization or "").strip()
+    if virt and not (server.virtualization or "").strip():
+        server.virtualization = virt[:64]
 
 
 @router.post("/ensure-host", response_model=ServerPublic)
@@ -332,6 +353,7 @@ def ensure_host_from_ainew(
             existing.description = body.description[:512]
         if body.ainew_ai_ready is not None:
             existing.ainew_ai_ready = bool(body.ainew_ai_ready)
+        _apply_ensure_inventory_meta(existing, body)
         existing.updated_at = datetime.now(UTC)
         # Refresh automation creds so Level 1 Settings password changes apply
         cred = session.get(Credential, existing.credentials_id) if existing.credentials_id else None
@@ -397,6 +419,7 @@ def ensure_host_from_ainew(
         created_at=now,
         updated_at=now,
     )
+    _apply_ensure_inventory_meta(server, body)
     if not body.skip_connection_test and password != "ainew-pending":
         _bootstrap_connection(
             session, server, host=ip, port=body.port, username=username, password=password
@@ -481,6 +504,7 @@ def ensure_hosts_bulk_from_ainew(
                     existing.description = host.description[:512]
                 if host.ainew_ai_ready is not None:
                     existing.ainew_ai_ready = bool(host.ainew_ai_ready)
+                _apply_ensure_inventory_meta(existing, host)
                 existing.updated_at = datetime.now(UTC)
                 cred = session.get(Credential, existing.credentials_id) if existing.credentials_id else None
                 if cred is None:
@@ -533,6 +557,7 @@ def ensure_hosts_bulk_from_ainew(
                     created_at=now,
                     updated_at=now,
                 )
+                _apply_ensure_inventory_meta(server, host)
                 if not host.skip_connection_test and password != "ainew-pending":
                     _bootstrap_connection(
                         session, server, host=ip, port=host.port, username=username, password=password
@@ -590,6 +615,85 @@ def ensure_hosts_bulk_from_ainew(
         errors=errors[:50],
         items=items_out,
     )
+
+
+def _ainew_id_from_description(desc: str) -> int | None:
+    """'ainew:123' veya 'ainew:123 hostname' → 123."""
+    raw = (desc or "").strip()
+    if not raw.lower().startswith("ainew:"):
+        return None
+    token = raw.split()[0][6:]
+    try:
+        return int(token)
+    except ValueError:
+        return None
+
+
+def _delete_target_server_row(session: Session, server: TargetServer) -> None:
+    cred_id = server.credentials_id
+    session.delete(server)
+    session.flush()
+    if cred_id:
+        cred = session.get(Credential, cred_id)
+        if cred is not None:
+            session.delete(cred)
+            session.flush()
+
+
+class HostDeleteBulkIn(BaseModel):
+    ainew_server_ids: list[int] = Field(default_factory=list, max_length=10000)
+    ips: list[str] = Field(default_factory=list, max_length=10000)
+
+
+class HostDeleteBulkOut(BaseModel):
+    deleted: int = 0
+    ids: list[int] = Field(default_factory=list)
+
+
+@router.post("/delete-hosts-bulk", response_model=HostDeleteBulkOut)
+def delete_hosts_bulk_from_ainew(
+    body: HostDeleteBulkIn,
+    _user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> HostDeleteBulkOut:
+    """Remove Dropt hosts that were projected from ainew (vCenter/Linux delete)."""
+    id_set = {int(x) for x in body.ainew_server_ids if x}
+    ip_set = {ip.strip() for ip in body.ips if (ip or "").strip()}
+    if not id_set and not ip_set:
+        return HostDeleteBulkOut()
+
+    seen: set[int] = set()
+    targets: list[TargetServer] = []
+
+    if ip_set:
+        for row in session.exec(select(TargetServer).where(col(TargetServer.ip).in_(list(ip_set)))).all():
+            if row.id is not None and row.id not in seen:
+                seen.add(row.id)
+                targets.append(row)
+
+    if id_set:
+        for row in session.exec(
+            select(TargetServer).where(col(TargetServer.description).like("ainew:%"))
+        ).all():
+            aid = _ainew_id_from_description(row.description or "")
+            if aid in id_set and row.id is not None and row.id not in seen:
+                seen.add(row.id)
+                targets.append(row)
+
+    deleted_ids: list[int] = []
+    for row in targets:
+        rid = int(row.id)  # type: ignore[arg-type]
+        try:
+            with session.begin_nested():
+                _delete_target_server_row(session, row)
+            deleted_ids.append(rid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dropt bulk delete skip id=%s: %s", rid, exc)
+
+    session.commit()
+    if deleted_ids:
+        invalidate_server_index()
+    return HostDeleteBulkOut(deleted=len(deleted_ids), ids=deleted_ids)
 
 
 @router.get("/{server_id}", response_model=ServerPublic)
@@ -958,6 +1062,124 @@ class BulkConnectionTestOut(BaseModel):
     items: list[BulkConnectionTestItemOut] = Field(default_factory=list)
 
 
+class BulkConnectionTestJobStart(BaseModel):
+    job_id: str
+    status: str
+    total: int
+    workers: int
+
+
+class BulkConnectionTestJobOut(BaseModel):
+    job_id: str
+    status: str
+    total: int
+    done: int
+    workers: int
+    ok: int = 0
+    failed: int = 0
+    error: str = ""
+    items: list[BulkConnectionTestItemOut] = Field(default_factory=list)
+
+
+class _BulkTestJob:
+    def __init__(self, job_id: str, total: int, workers: int) -> None:
+        self.job_id = job_id
+        self.status = "running"
+        self.total = total
+        self.done = 0
+        self.workers = workers
+        self.ok = 0
+        self.failed = 0
+        self.error = ""
+        self.items: list[BulkConnectionTestItemOut] = []
+        self.created_at = time.time()
+        self.lock = threading.Lock()
+
+
+_BULK_TEST_JOBS: dict[str, _BulkTestJob] = {}
+_BULK_TEST_JOBS_LOCK = threading.Lock()
+_BULK_TEST_JOB_TTL_SEC = 3600
+_BULK_TEST_JOB_MAX = 64
+
+
+def _gc_bulk_test_jobs() -> None:
+    now = time.time()
+    with _BULK_TEST_JOBS_LOCK:
+        stale = [
+            jid
+            for jid, job in _BULK_TEST_JOBS.items()
+            if now - job.created_at > _BULK_TEST_JOB_TTL_SEC
+        ]
+        for jid in stale:
+            _BULK_TEST_JOBS.pop(jid, None)
+        overflow = len(_BULK_TEST_JOBS) - _BULK_TEST_JOB_MAX
+        if overflow > 0:
+            finished = sorted(
+                (
+                    (jid, job)
+                    for jid, job in _BULK_TEST_JOBS.items()
+                    if job.status != "running"
+                ),
+                key=lambda pair: pair[1].created_at,
+            )
+            for jid, _job in finished[:overflow]:
+                _BULK_TEST_JOBS.pop(jid, None)
+
+
+def _snapshot_bulk_test_job(job: _BulkTestJob) -> BulkConnectionTestJobOut:
+    with job.lock:
+        return BulkConnectionTestJobOut(
+            job_id=job.job_id,
+            status=job.status,
+            total=job.total,
+            done=job.done,
+            workers=job.workers,
+            ok=job.ok,
+            failed=job.failed,
+            error=job.error,
+            items=list(job.items),
+        )
+
+
+def _execute_bulk_test_job(
+    job: _BulkTestJob,
+    ids: list[int],
+    *,
+    username: str,
+    settings_password: str | None,
+    refresh_facts: bool,
+) -> None:
+    try:
+        with ThreadPoolExecutor(
+            max_workers=job.workers,
+            thread_name_prefix="dropt-bulk-test",
+        ) as pool:
+            futures = {
+                pool.submit(
+                    _run_one_connection_test,
+                    sid,
+                    username=username,
+                    settings_password=settings_password,
+                    refresh_facts=refresh_facts,
+                ): sid
+                for sid in ids
+            }
+            for fut in as_completed(futures):
+                item = fut.result()
+                with job.lock:
+                    job.items.append(item)
+                    job.done = len(job.items)
+                    job.ok = sum(1 for it in job.items if it.ok)
+                    job.failed = job.done - job.ok
+        invalidate_server_index()
+        with job.lock:
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        with job.lock:
+            job.status = "error"
+            job.error = str(exc)[:1024]
+
+
 def _run_one_connection_test(
     server_id: int,
     *,
@@ -1026,13 +1248,10 @@ def _run_one_connection_test(
             )
 
 
-@router.post("/test-connections", response_model=BulkConnectionTestOut)
-def test_connections_bulk(
+def _prepare_bulk_connection_test(
     body: BulkConnectionTestIn,
-    _admin: User = Depends(require_admin),
-    session: Session = Depends(get_session),
-) -> BulkConnectionTestOut:
-    """Parallel connection tests for Level 1 Ops Center (SSH probe; facts optional)."""
+    session: Session,
+) -> tuple[list[int], str, str | None, int]:
     from app.services.bootstrap import automation_password_is_set
 
     if not automation_password_is_set(session):
@@ -1042,7 +1261,6 @@ def test_connections_bulk(
             "(vCenter / Linux envanter kaydı yeterli değildir).",
         )
 
-    # Dedupe while preserving order
     seen: set[int] = set()
     ids: list[int] = []
     for sid in body.server_ids:
@@ -1054,37 +1272,84 @@ def test_connections_bulk(
     settings_password = get_automation_password(session)
     workers = body.workers or _default_bulk_test_workers()
     workers = max(1, min(workers, len(ids), 40))
-
-    # Prefetch portal key once in parent thread
     ensure_portal_keypair()
+    return ids, username, settings_password, workers
 
-    items: list[BulkConnectionTestItemOut] = []
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dropt-bulk-test") as pool:
-        futures = {
-            pool.submit(
-                _run_one_connection_test,
-                sid,
-                username=username,
-                settings_password=settings_password,
-                refresh_facts=body.refresh_facts,
-            ): sid
-            for sid in ids
-        }
-        for fut in as_completed(futures):
-            items.append(fut.result())
 
-    # Stable order matching request
-    by_id = {it.id: it for it in items}
-    ordered = [by_id[sid] for sid in ids if sid in by_id]
-    ok_count = sum(1 for it in ordered if it.ok)
-    invalidate_server_index()
-    return BulkConnectionTestOut(
-        total=len(ordered),
-        ok=ok_count,
-        failed=len(ordered) - ok_count,
+@router.post("/test-connections")
+def test_connections_bulk(
+    body: BulkConnectionTestIn,
+    wait: bool = Query(
+        True,
+        description="True: tüm testler bitince sonuç. False: job_id döner, GET ile ilerleme.",
+    ),
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> BulkConnectionTestJobStart | BulkConnectionTestOut:
+    """Parallel connection tests for Level 1 Ops Center (SSH probe; facts optional)."""
+    ids, username, settings_password, workers = _prepare_bulk_connection_test(body, session)
+
+    _gc_bulk_test_jobs()
+    job_id = uuid.uuid4().hex
+    job = _BulkTestJob(job_id=job_id, total=len(ids), workers=workers)
+    with _BULK_TEST_JOBS_LOCK:
+        _BULK_TEST_JOBS[job_id] = job
+
+    if wait:
+        _execute_bulk_test_job(
+            job,
+            ids,
+            username=username,
+            settings_password=settings_password,
+            refresh_facts=body.refresh_facts,
+        )
+        snap = _snapshot_bulk_test_job(job)
+        if snap.status == "error":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=snap.error or "Toplu bağlantı testi başarısız",
+            )
+        return BulkConnectionTestOut(
+            total=snap.total,
+            ok=snap.ok,
+            failed=snap.failed,
+            workers=snap.workers,
+            items=snap.items,
+        )
+
+    threading.Thread(
+        target=_execute_bulk_test_job,
+        args=(job, ids),
+        kwargs={
+            "username": username,
+            "settings_password": settings_password,
+            "refresh_facts": body.refresh_facts,
+        },
+        name=f"dropt-bulk-test-{job_id[:8]}",
+        daemon=True,
+    ).start()
+
+    return BulkConnectionTestJobStart(
+        job_id=job_id,
+        status="running",
+        total=len(ids),
         workers=workers,
-        items=ordered,
     )
+
+
+@router.get("/test-connections/{job_id}", response_model=BulkConnectionTestJobOut)
+def test_connections_bulk_status(
+    job_id: str,
+    _admin: User = Depends(require_admin),
+) -> BulkConnectionTestJobOut:
+    with _BULK_TEST_JOBS_LOCK:
+        job = _BULK_TEST_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bağlantı testi işi bulunamadı",
+        )
+    return _snapshot_bulk_test_job(job)
 
 
 @router.post("/{server_id}/test-connection", response_model=ServerPublic)
@@ -1138,12 +1403,6 @@ def delete_server(
     session: Session = Depends(get_session),
 ) -> None:
     server = _get_server_or_404(session, server_id)
-    cred_id = server.credentials_id
-    session.delete(server)
+    _delete_target_server_row(session, server)
     session.commit()
-    if cred_id:
-        cred = session.get(Credential, cred_id)
-        if cred is not None:
-            session.delete(cred)
-            session.commit()
     invalidate_server_index()

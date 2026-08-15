@@ -38,6 +38,8 @@ interface SyncJob {
   vms_total?: number
   error?: string
   synced_count?: number
+  started_at?: string
+  updated_at?: string
 }
 
 interface VM {
@@ -995,15 +997,18 @@ const SyncScanningOverlay = ({
   const [vmCount, setVmCount] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
   const startedAtRef = React.useRef(Date.now())
+  const serverStartedAtRef = React.useRef<number | null>(null)
 
   const onDoneRef = React.useRef(onDone)
   onDoneRef.current = onDone
 
   useEffect(() => {
     startedAtRef.current = Date.now()
+    serverStartedAtRef.current = null
     setElapsedSec(0)
     const tick = setInterval(() => {
-      setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000))
+      const origin = serverStartedAtRef.current ?? startedAtRef.current
+      setElapsedSec(Math.max(0, Math.floor((Date.now() - origin) / 1000)))
     }, 1000)
     return () => clearInterval(tick)
   }, [hypervisorId])
@@ -1021,6 +1026,10 @@ const SyncScanningOverlay = ({
         if (!r.ok || cancelled) return
         const data = await r.json()
         const j: SyncJob = data.sync_job || {}
+        if (j.started_at) {
+          const ts = Date.parse(j.started_at)
+          if (!Number.isNaN(ts)) serverStartedAtRef.current = ts
+        }
         setJob(j.status ? j : { status: 'running', percent: 3, message: tr('hv_connecting') })
         setVmCount(data.vm_count_in_db || 0)
         if (j.status === 'done' || j.status === 'error') {

@@ -287,48 +287,26 @@ def update_ai_ready(body: dict = None, db: Session = Depends(get_db)):
     logger.info("update-ai-ready (arka plan kuyruk): %s sunucu, workers=%s job=%s throttled=%s", queued, workers, job_id, throttled)
 
     def _bg() -> None:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from app.services.ssh_manager import SSHManager
         from app.services.ai_ready_guard import clear_auth_fail_backoff, set_auth_fail_backoff
+        from app.services.ai_ready_probe import probe_linux_snapshots
 
         if not server_snapshots:
             jobs.finish(job_id, status="done", message="Test edilecek Linux sunucu bulunamadı.", result={"tested": 0})
             return
 
-        def _test_one(snap: dict) -> tuple:
-            try:
-                ssh = SSHManager(
-                    host=snap["ip"],
-                    username=snap["username"],
-                    password=snap["password"],
-                    private_key=snap["private_key"],
-                    port=snap["port"],
-                )
-                ok = bool(ssh.connect())
-                if ok:
-                    ssh.close()
-                return snap["id"], ok
-            except Exception:
-                return snap["id"], False
+        def _on_progress(done: int, total: int, ok: bool, message: str) -> None:
+            jobs.tick(
+                job_id,
+                done=done,
+                total=total,
+                ok_delta=1 if ok else 0,
+                fail_delta=0 if ok else 1,
+                message=message,
+            )
+            if done % 100 == 0 or done == total:
+                logger.info("AI Ready (arka plan) %s/%s (%s)", done, total, message)
 
-        results = {}
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-ready") as pool:
-            futs = [pool.submit(_test_one, s) for s in server_snapshots]
-            done = 0
-            for f in as_completed(futs):
-                sid, ok = f.result()
-                results[sid] = ok
-                done += 1
-                jobs.tick(
-                    job_id,
-                    done=done,
-                    total=len(server_snapshots),
-                    ok_delta=1 if ok else 0,
-                    fail_delta=0 if ok else 1,
-                    message=f"SSH test: {done}/{len(server_snapshots)}",
-                )
-                if done % 100 == 0 or done == len(server_snapshots):
-                    logger.info("AI Ready (arka plan) %s/%s", done, len(server_snapshots))
+        results = probe_linux_snapshots(server_snapshots, on_progress=_on_progress)
 
         thread_db = SessionLocal()
         try:

@@ -122,6 +122,8 @@ def list_linux_servers_for_level1(
             "status": s.status,
             "os_version": s.os_version,
             "os_type": s.os_type,
+            "os_pretty": ((s.os_version or "").strip() or (s.vm_guest_os_full or "").strip()),
+            "server_type": s.server_type,
             "tier": s.tier,
             "ai_ready": bool(s.ai_ready),
         })
@@ -246,6 +248,8 @@ def sync_all_linux_servers_to_dropt(
         desc = f"ainew:{row.get('id')}"
         if ainew_name:
             desc = f"{desc} {ainew_name}"[:512]
+        st = (row.get("server_type") or "").upper()
+        machine_type = "virtual" if st == "VIRTUAL" else ("physical" if st == "PHYSICAL" else "")
         hosts_payload.append({
             "hostname": hostname,
             "ip": ip,
@@ -254,6 +258,8 @@ def sync_all_linux_servers_to_dropt(
             # Sync maliyeti / banner timeout: ainew AI Ready yeter; Dropt SSH bootstrap yok
             "skip_connection_test": True,
             "ainew_ai_ready": bool(row.get("ai_ready")),
+            "os_pretty": (row.get("os_pretty") or row.get("os_version") or "").strip()[:255],
+            "machine_type": machine_type,
         })
 
     if not hosts_payload:

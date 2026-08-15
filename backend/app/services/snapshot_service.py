@@ -109,6 +109,8 @@ def _apply_vm_details_to_server(server: Server, details: dict, db: Session) -> N
     # Eğer server'ın kendi OS bilgisi yoksa hypervisor'dan al
     if not server.os_type and details.get("os_type"):
         server.os_type = details["os_type"]
+    if not (server.os_version or "").strip() and details.get("vm_guest_os_full"):
+        server.os_version = str(details["vm_guest_os_full"])[:255]
 
     db.add(server)
     db.commit()

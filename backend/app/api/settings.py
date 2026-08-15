@@ -283,39 +283,29 @@ async def apply_credential_to_servers(credential_id: int, request: ApplyCredenti
         workers = bulk_ssh_workers()
 
         def _bg_ssh_ai_ready() -> None:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            from app.services.ssh_manager import SSHManager
+            from app.services.ai_ready_probe import probe_linux_snapshots
 
-            def _one(snap: dict) -> tuple:
-                try:
-                    ssh = SSHManager(
-                        host=snap["ip"],
-                        username=username,
-                        password=plain_password,
-                        private_key=plain_key,
-                        port=port,
-                    )
-                    ok = bool(ssh.connect())
-                    ssh.close()
-                    return snap["id"], ok
-                except Exception:
-                    return snap["id"], False
-
+            snaps = [
+                {
+                    "id": t["id"],
+                    "ip": t["ip"],
+                    "username": username,
+                    "password": plain_password,
+                    "private_key": plain_key,
+                    "port": port,
+                }
+                for t in targets_snap
+            ]
             logger.info(
-                "Credential apply SSH (arka plan): %s sunucu, workers=%s",
-                len(targets_snap),
-                workers,
+                "Credential apply SSH (arka plan): %s sunucu (TCP ön tarama + SSH)",
+                len(snaps),
             )
-            results: dict = {}
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cred-apply-ssh") as pool:
-                futs = [pool.submit(_one, t) for t in targets_snap]
-                done = 0
-                for fut in as_completed(futs):
-                    sid, ok = fut.result()
-                    results[sid] = ok
-                    done += 1
-                    if done % 100 == 0 or done == len(targets_snap):
-                        logger.info("Credential SSH (arka plan) %s/%s", done, len(targets_snap))
+
+            def _on_progress(done: int, total: int, ok: bool, message: str) -> None:
+                if done % 100 == 0 or done == total:
+                    logger.info("Credential SSH (arka plan) %s/%s (%s)", done, total, message)
+
+            results = probe_linux_snapshots(snaps, on_progress=_on_progress)
 
             bg = SessionLocal()
             try:

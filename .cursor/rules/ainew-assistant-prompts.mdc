@@ -20,7 +20,9 @@ Uygulama içi sohbet (Unified / Linux / Virt / OpenShift) kuralları **backend p
 | Linux / Windows chat | `backend/app/api/chat.py`, `backend/app/api/windows_chat.py` |
 | Agent (LangGraph) | `backend/app/services/agent/orchestrator.py` |
 
-Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend` (source mount varsa çoğu zaman reload yeter).
+Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend`.
+
+Canlı metrik **değerleri** prompt’ta değil; `prometheus_metrics.get_metrics_context_for_ai` (scrape’e dokunma).
 
 ## Sabit ürün kuralı — OpenShift Virtualization
 

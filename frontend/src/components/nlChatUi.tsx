@@ -2,10 +2,12 @@
  * Sanallaştırma (HypervisorChat) NL asistan UI kalıpları —
  * Linux / Windows / Unified / OpenShift / Exadata sohbetlerinde ortak kullanılır.
  */
-import React, { useRef } from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import {
-  History, Plus, Trash2, Search, Loader2, Send, Lightbulb,
+  History, Plus, Trash2, Search, Loader2, Send, Lightbulb, ChevronLeft, ChevronRight,
 } from 'lucide-react'
+
+const HISTORY_COLLAPSE_KEY = 'ainew.nl-history-collapsed'
 
 export type NlChatSession = {
   id: number
@@ -65,8 +67,54 @@ export function NlHistorySidebar({
   onClearAll: () => void
   loading?: boolean
 }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(HISTORY_COLLAPSE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+
+  const setCollapsedPersist = (next: boolean) => {
+    setCollapsed(next)
+    try {
+      localStorage.setItem(HISTORY_COLLAPSE_KEY, next ? '1' : '0')
+    } catch { /* ignore */ }
+  }
+
+  if (collapsed) {
+    return (
+      <div className="nl-history-sidebar w-12 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col items-center py-3 gap-2 min-h-0 transition-[width] duration-300">
+        <button
+          type="button"
+          onClick={() => setCollapsedPersist(false)}
+          className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          title="Geçmişi aç"
+        >
+          <ChevronRight size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setCollapsedPersist(false)}
+          className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          title="Geçmiş"
+        >
+          <History size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={onNew}
+          className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+          title="Yeni sohbet"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="nl-history-sidebar w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0">
+    <div className="nl-history-sidebar w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0 transition-[width] duration-300">
       <div className="p-3 border-b border-slate-700/50 space-y-2 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]">
@@ -74,6 +122,14 @@ export function NlHistorySidebar({
             Geçmiş
           </div>
           <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setCollapsedPersist(true)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              title="Geçmişi gizle"
+            >
+              <ChevronLeft size={14} />
+            </button>
             <button
               type="button"
               onClick={onNew}
@@ -290,6 +346,16 @@ export function NlEmptyState({
   )
 }
 
+/** Mesaj sütunu — tablolar sığsın diye 48rem yerine sayfanın büyük kısmı */
+export const nlChatColumnClass = 'w-full max-w-7xl mx-auto'
+
+/** Kullanıcı balonu dar kalır; asistan cevabı sütunun tamamını kullanır */
+export const nlUserBubbleClass =
+  'min-w-0 max-w-[min(72%,42rem)] rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-blue-600 text-white'
+
+export const nlAssistantBubbleClass =
+  'min-w-0 w-full max-w-full rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-slate-800 text-slate-100 border border-slate-700/50'
+
 export function NlChatInput({
   value,
   onChange,
@@ -311,6 +377,13 @@ export function NlChatInput({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [value])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -319,7 +392,7 @@ export function NlChatInput({
   }
 
   return (
-    <div className="px-4 pb-4 max-w-3xl mx-auto w-full flex-shrink-0">
+    <div className={`px-4 pb-4 ${nlChatColumnClass} flex-shrink-0`}>
       {extra}
       <div className="flex items-end gap-2 bg-slate-800 border border-slate-700/50 rounded-2xl px-4 py-3 focus-within:border-blue-500/50 transition-colors">
         <textarea
@@ -331,7 +404,7 @@ export function NlChatInput({
           rows={1}
           disabled={!!loading && !onAbort}
           className="flex-1 bg-transparent text-white placeholder-slate-500 text-sm resize-none focus:outline-none leading-relaxed disabled:opacity-70"
-          style={{ maxHeight: '120px', overflowY: 'auto' }}
+          style={{ minHeight: '24px', maxHeight: '160px', overflowY: 'auto' }}
         />
         {loading && onAbort ? (
           <button
@@ -360,13 +433,6 @@ export function NlChatInput({
     </div>
   )
 }
-
-/** Virt tarzı kullanıcı / asistan balon kabuğu */
-export const nlUserBubbleClass =
-  'min-w-0 max-w-[min(85%,48rem)] rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-blue-600 text-white'
-
-export const nlAssistantBubbleClass =
-  'min-w-0 max-w-[min(85%,48rem)] rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-slate-800 text-slate-100 border border-slate-700/50'
 
 export function NlTypingRow({ label = 'Altyapı analiz ediliyor...' }: { label?: string }) {
   return (

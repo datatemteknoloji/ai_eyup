@@ -2,6 +2,7 @@
 Hypervisors API endpoints
 """
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -32,7 +33,8 @@ def _mask_hv_config(cfg: dict | None) -> dict:
 
 
 def _hv_to_response(h: Hypervisor) -> dict:
-    from app.services.inventory_sync_service import get_sync_job
+    from app.services.inventory_sync_service import get_sync_job, expire_stale_sync_job
+    job = expire_stale_sync_job(h.id, get_sync_job(h))
     return {
         "id": h.id,
         "name": h.name,
@@ -43,7 +45,7 @@ def _hv_to_response(h: Hypervisor) -> dict:
         "username": h.username,
         "connection_config": _mask_hv_config(h.connection_config),
         "status": h.status,
-        "sync_job": get_sync_job(h) or None,
+        "sync_job": job or None,
         "created_at": h.created_at,
         "updated_at": h.updated_at,
     }
@@ -370,9 +372,9 @@ async def hypervisor_sync_status(hypervisor_id: int, db: Session = Depends(get_d
     hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
     if not hv:
         raise HTTPException(status_code=404, detail="Hypervisor not found")
-    from app.services.inventory_sync_service import get_sync_job
+    from app.services.inventory_sync_service import get_sync_job, expire_stale_sync_job
     vm_count = db.query(Server).filter(Server.hypervisor_id == hypervisor_id).count()
-    job = get_sync_job(hv)
+    job = expire_stale_sync_job(hv.id, get_sync_job(hv))
     return {
         "hypervisor_id": hv.id,
         "hypervisor_name": hv.name,
@@ -509,11 +511,12 @@ def sync_hypervisor_vms(
             sync_hypervisor_vms as _sync_vms,
             update_sync_job,
             get_sync_job,
+            job_is_stale_running,
         )
 
         if background:
             job = get_sync_job(hypervisor)
-            if job.get("status") == "running":
+            if job.get("status") == "running" and not job_is_stale_running(job):
                 return {
                     "success": True,
                     "started": False,
@@ -524,6 +527,7 @@ def sync_hypervisor_vms(
                     "sync_job": job,
                 }
 
+            started_at = datetime.now(timezone.utc).isoformat()
             update_sync_job(
                 hypervisor.id,
                 status="running",
@@ -533,6 +537,7 @@ def sync_hypervisor_vms(
                 vms_done=0,
                 vms_total=0,
                 error=None,
+                started_at=started_at,
             )
 
             import threading

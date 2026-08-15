@@ -13,7 +13,7 @@ import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '..
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
-  NlModelUnavailableBanner, NlChatInput,
+  NlModelUnavailableBanner, NlChatInput, nlChatColumnClass,
 } from '../components/nlChatUi'
 import { useChatStickToBottom } from '../lib/chatScroll'
 import { useChatStream, startChatStream, abortChatStream, restoreChatTurn } from '../lib/chatStreamStore'
@@ -228,7 +228,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
           <Server size={14} className="text-white" />
         </div>
       )}
-      <div className={`min-w-0 max-w-[min(85%,48rem)] ${isUser ? 'order-first' : ''}`}>
+      <div className={`min-w-0 ${isUser ? 'max-w-[min(72%,42rem)] order-first' : 'w-full max-w-full'}`}>
         <div
           className={`rounded-2xl px-4 py-3 text-sm leading-relaxed overflow-hidden ${
             isUser
@@ -619,7 +619,7 @@ export default function HypervisorChat({
             )}
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto">
+          <div className={nlChatColumnClass}>
             {messages.map((msg, i) => {
               let question = ''
               if (msg.role === 'assistant') {
@@ -639,7 +639,7 @@ export default function HypervisorChat({
       </div>
 
       {!isEmpty && suggestions && (
-        <div className="px-4 pb-2 max-w-3xl mx-auto w-full flex-shrink-0">
+        <div className={`px-4 pb-2 ${nlChatColumnClass} flex-shrink-0`}>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {(suggestions.report_suggestions || []).slice(0, 2).concat(suggestions.suggestions.slice(0, 3)).map(s => (
               <button

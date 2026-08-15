@@ -939,6 +939,19 @@ export default function OpenShiftDashboard({
     else setSearchParams({ tab: next }, { replace: true })
   }
 
+  const nodeRoleCounts = useMemo(() => {
+    let master = 0
+    let worker = 0
+    let other = 0
+    for (const n of nodes) {
+      const role = (n.role || '').toLowerCase()
+      if (role.includes('master') || role.includes('control')) master += 1
+      else if (role.includes('worker')) worker += 1
+      else other += 1
+    }
+    return { master, worker, other }
+  }, [nodes])
+
   if (clustersLoading) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
@@ -953,19 +966,6 @@ export default function OpenShiftDashboard({
   const risks = risksData?.risks || []
   const projectTotal = projectsData?.total || 0
   const workloadTotal = workloadsData?.total || 0
-
-  const nodeRoleCounts = useMemo(() => {
-    let master = 0
-    let worker = 0
-    let other = 0
-    for (const n of nodes) {
-      const role = (n.role || '').toLowerCase()
-      if (role.includes('master') || role.includes('control')) master += 1
-      else if (role.includes('worker')) worker += 1
-      else other += 1
-    }
-    return { master, worker, other }
-  }, [nodes])
 
   const nsTotal = liveOverview?.namespaces?.total
   const userProjects = liveOverview?.namespaces?.user?.length

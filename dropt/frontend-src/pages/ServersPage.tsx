@@ -461,6 +461,23 @@ export function ServersPage() {
       const r = await testServerConnectionsBulk(
         token,
         targets.map((s) => s.id),
+        {
+          onProgress: (p) => {
+            setBulkTestDone(p.done);
+            setBulkTestTotal(p.total);
+            setBulkTestItems(
+              p.items.map((it) => ({
+                id: it.id,
+                hostname: it.hostname || targets.find((s) => s.id === it.id)?.hostname || String(it.id),
+                ok: it.ok,
+                message: it.message || (it.ok ? "OK" : "Fail"),
+              })),
+            );
+            if (p.current) {
+              setBulkTestCurrent(p.current);
+            }
+          },
+        },
       );
       const results: BulkTestItem[] = r.items.map((it) => ({
         id: it.id,

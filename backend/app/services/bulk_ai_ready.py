@@ -3,7 +3,6 @@ Bulk AI Ready Service - Tüm sunucuları tarayıp SSH bağlantısı yapılabilen
 3000–4000 sunucu ölçeği için paralel SSH testi kullanır.
 """
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -11,10 +10,9 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.server import Server
 from app.models.credential import GlobalCredential
-from app.services.bulk_concurrency import bulk_ssh_workers
 from app.services.platform_scope import is_linux_server
 from app.services.ssh_credentials import resolve_ssh_creds
-from app.services.ssh_manager import SSHManager
+from app.services.bulk_concurrency import bulk_ssh_workers
 
 logger = logging.getLogger(__name__)
 
@@ -75,63 +73,26 @@ class BulkAIReadyService:
                 "sudo_password": creds["sudo_password"],
             })
 
-        workers = bulk_ssh_workers()
+        from app.services.ai_ready_probe import probe_linux_snapshots
+
         logger.info(
-            "🔍 %s sunucu taranacak (credential: %s, workers=%s)",
+            "🔍 %s sunucu taranacak (credential: %s, TCP ön tarama + SSH)",
             len(snapshots),
             credential.name,
-            workers,
         )
 
-        def _test_one(snap: dict) -> dict:
-            try:
-                ssh = SSHManager(
-                    host=snap["ip"],
-                    username=snap["username"],
-                    password=snap["password"],
-                    private_key=snap["private_key"],
-                    port=snap["port"],
-                    sudo_password=snap["sudo_password"],
-                )
-                test_result = ssh.test_connection()
-                ssh.close()
-                if test_result.get("success"):
-                    return {
-                        "server_id": snap["id"],
-                        "server_name": snap["name"],
-                        "ip_address": snap["ip"],
-                        "ok": True,
-                        "message": "SSH bağlantısı başarılı",
-                        "details": test_result.get("details", {}),
-                    }
-                detail = test_result.get("message") or ""
-                return {
-                    "server_id": snap["id"],
-                    "server_name": snap["name"],
-                    "ip_address": snap["ip"],
-                    "ok": False,
-                    "message": "SSH bağlantısı başarısız",
-                    "details": detail,
-                }
-            except Exception as e:
-                return {
-                    "server_id": snap["id"],
-                    "server_name": snap["name"],
-                    "ip_address": snap["ip"],
-                    "ok": False,
-                    "message": f"Hata: {e}",
-                    "details": "",
-                }
-
+        by_ok = probe_linux_snapshots(snapshots)
         test_rows: List[dict] = []
-        done = 0
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bulk-ai-ready") as pool:
-            futures = [pool.submit(_test_one, s) for s in snapshots]
-            for fut in as_completed(futures):
-                test_rows.append(fut.result())
-                done += 1
-                if done % 100 == 0 or done == len(snapshots):
-                    logger.info("AI Ready tarama ilerlemesi %s/%s", done, len(snapshots))
+        for snap in snapshots:
+            ok = bool(by_ok.get(snap["id"]))
+            test_rows.append({
+                "server_id": snap["id"],
+                "server_name": snap["name"],
+                "ip_address": snap["ip"],
+                "ok": ok,
+                "message": "SSH bağlantısı başarılı" if ok else "SSH bağlantısı başarısız",
+                "details": {},
+            })
 
         by_id = {s.id: s for s in servers}
         marked = failed = 0
@@ -182,6 +143,6 @@ class BulkAIReadyService:
             "scanned": len(snapshots),
             "ai_ready_marked": marked,
             "failed": failed,
-            "workers": workers,
+            "workers": bulk_ssh_workers(),
             "results": detail_results,
         }

@@ -3,6 +3,7 @@ Prometheus Metrics Service - Tüm metrikleri çekmek ve AI'a context sağlamak i
 """
 import httpx
 import logging
+import re
 from typing import Dict, List, Optional, Any
 from app.core.config import settings, promql_job_matcher
 
@@ -131,6 +132,112 @@ def match_prometheus_instance(
                 return inst, val == "1"
 
     return None, False
+
+
+_HOST_TOKEN_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}")
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def _escape_promql_label(value: str) -> str:
+    return (value or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _promql_regex_literal(value: str) -> str:
+    """PromQL =~ alternation için özel karakterleri karakter sınıfına al."""
+    special = "^.$*+?{}[]|()\\"
+    return "".join(f"[{c}]" if c in special else c for c in (value or ""))
+
+
+def _word_in_text(text: str, token: str) -> bool:
+    """Hostname kısa adı mesajda geçiyor mu (Türkçe ek / noktalama toleranslı)."""
+    if not text or not token or len(token) < 3:
+        return False
+    return re.search(
+        r"(?<![a-z0-9])" + re.escape(token.lower()) + r"(?![a-z0-9])",
+        text.lower(),
+    ) is not None
+
+
+def resolve_prometheus_instances_from_message(
+    message: str,
+    up_map: Dict[str, str],
+) -> List[str]:
+    """Kullanıcı metnindeki hostname/FQDN/IP → Prometheus'taki gerçek instance etiketi.
+
+    Scrape FQDN:9100 veya kısa-ad:9100 olabilir; uydurulmaz, up map'ten okunur.
+    """
+    if not (message or "").strip() or not up_map:
+        return []
+    ml = message.lower()
+    found: List[str] = []
+    seen = set()
+
+    def _add(inst: Optional[str]) -> None:
+        if inst and inst not in seen:
+            seen.add(inst)
+            found.append(inst)
+
+    for ip in _IPV4_RE.findall(message):
+        inst, _up = match_prometheus_instance(up_map, ip=ip)
+        _add(inst)
+
+    for inst in up_map.keys():
+        host = inst.rsplit(":", 1)[0].lower()
+        short = host.split(".")[0]
+        if host and host in ml:
+            _add(inst)
+            continue
+        if short in {"cpu", "ram", "disk", "load", "net", "node", "job", "http", "all"}:
+            continue
+        if _word_in_text(ml, short):
+            _add(inst)
+
+    if not found:
+        for tok in _HOST_TOKEN_RE.findall(message):
+            if tok.lower() in ("cpu", "ram", "disk", "http", "https"):
+                continue
+            inst, _up = match_prometheus_instance(
+                up_map, hostname=tok, name=tok, ip=tok if _IPV4_RE.fullmatch(tok) else None,
+            )
+            _add(inst)
+
+    return found
+
+
+def linux_promql_selector(instances: Optional[List[str]] = None) -> str:
+    """Canlı Metrikler ile aynı: job matcher + varsa birebir instance etiketi."""
+    job = promql_job_matcher(kind="linux")
+    insts = [i for i in (instances or []) if i]
+    if not insts:
+        return job
+    if len(insts) == 1:
+        return f'{job},instance="{_escape_promql_label(insts[0])}"'
+    alts = "|".join(_promql_regex_literal(i) for i in insts)
+    return f'{job},instance=~"{alts}"'
+
+
+def linux_live_preset_queries(selector: str) -> Dict[str, str]:
+    """Canlı Metrikler preset PromQL (instance bazlı)."""
+    return {
+        "cpu": (
+            f'100 - (avg by (instance) (rate(node_cpu_seconds_total{{mode="idle",{selector}}}[5m])) * 100)'
+        ),
+        "memory": (
+            f'(1 - (node_memory_MemAvailable_bytes{{{selector}}} '
+            f'/ node_memory_MemTotal_bytes{{{selector}}})) * 100'
+        ),
+        "disk": (
+            f'(1 - (node_filesystem_avail_bytes{{mountpoint="/",{selector}}} '
+            f'/ node_filesystem_size_bytes{{mountpoint="/",{selector}}})) * 100'
+        ),
+        "load": f'node_load1{{{selector}}}',
+        "net_rx": (
+            f'sum by (instance) (rate(node_network_receive_bytes_total{{device!~"lo",{selector}}}[5m]))'
+        ),
+        "net_tx": (
+            f'sum by (instance) (rate(node_network_transmit_bytes_total{{device!~"lo",{selector}}}[5m]))'
+        ),
+    }
 
 
 def sync_node_exporter_running_from_prometheus(db) -> Dict[str, int]:
@@ -479,8 +586,32 @@ class PrometheusMetricsService:
             logger.error(f"Query hatası: {e}")
         return None
     
+    def _instant_series(self, data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not data or data.get("status") != "success":
+            return []
+        out: List[Dict[str, Any]] = []
+        for r in (data.get("data") or {}).get("result") or []:
+            try:
+                inst = (r.get("metric") or {}).get("instance") or "?"
+                out.append({"instance": inst, "value": float(r["value"][1])})
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+        return out
+
+    @staticmethod
+    def _top(items: List[Dict[str, Any]], n: int = 12) -> List[Dict[str, Any]]:
+        return sorted(items, key=lambda x: float(x.get("value") or 0), reverse=True)[:n]
+
+    @staticmethod
+    def _fmt_rate_bps(bps: float) -> str:
+        if bps >= 1024 * 1024:
+            return f"{bps / 1024 / 1024:.2f} MB/s"
+        if bps >= 1024:
+            return f"{bps / 1024:.1f} KB/s"
+        return f"{bps:.0f} B/s"
+
     async def get_system_overview(self) -> Dict[str, Any]:
-        """Sistem genel bakış metrikleri"""
+        """Filo ortalaması (tek sayı). Instance bazlı değerler get_server_metrics'te."""
         overview = {
             "cpu": {},
             "memory": {},
@@ -488,155 +619,198 @@ class PrometheusMetricsService:
             "network": {},
             "load": {}
         }
-        
+        job = promql_job_matcher(kind="linux")
         try:
-            # CPU metrikleri
-            cpu_query = "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[15m])) * 100)"
+            cpu_query = (
+                f'100 - (avg(rate(node_cpu_seconds_total{{mode="idle",{job}}}[5m])) * 100)'
+            )
             cpu_data = await self.query_metric(cpu_query)
-            if cpu_data and cpu_data.get("status") == "success":
-                results = cpu_data.get("data", {}).get("result", [])
-                if results:
-                    overview["cpu"]["average"] = float(results[0]["value"][1])
-            
-            # Memory metrikleri
-            memory_query = '(1 - (avg(node_memory_MemAvailable_bytes) / avg(node_memory_MemTotal_bytes))) * 100'
+            series = self._instant_series(cpu_data)
+            if series:
+                overview["cpu"]["average"] = series[0]["value"]
+
+            memory_query = (
+                f'(1 - (avg(node_memory_MemAvailable_bytes{{{job}}}) '
+                f'/ avg(node_memory_MemTotal_bytes{{{job}}}))) * 100'
+            )
             memory_data = await self.query_metric(memory_query)
-            if memory_data and memory_data.get("status") == "success":
-                results = memory_data.get("data", {}).get("result", [])
-                if results:
-                    overview["memory"]["usage_percent"] = float(results[0]["value"][1])
-            
-            # Disk metrikleri
-            disk_query = '(1 - (avg(node_filesystem_avail_bytes{mountpoint="/"}) / avg(node_filesystem_size_bytes{mountpoint="/"}))) * 100'
+            series = self._instant_series(memory_data)
+            if series:
+                overview["memory"]["usage_percent"] = series[0]["value"]
+
+            disk_query = (
+                f'(1 - (avg(node_filesystem_avail_bytes{{mountpoint="/",{job}}}) '
+                f'/ avg(node_filesystem_size_bytes{{mountpoint="/",{job}}}))) * 100'
+            )
             disk_data = await self.query_metric(disk_query)
-            if disk_data and disk_data.get("status") == "success":
-                results = disk_data.get("data", {}).get("result", [])
-                if results:
-                    overview["disk"]["usage_percent"] = float(results[0]["value"][1])
-            
-            # Load average
-            load_query = 'avg(node_load1)'
+            series = self._instant_series(disk_data)
+            if series:
+                overview["disk"]["usage_percent"] = series[0]["value"]
+
+            load_query = f'avg(node_load1{{{job}}})'
             load_data = await self.query_metric(load_query)
-            if load_data and load_data.get("status") == "success":
-                results = load_data.get("data", {}).get("result", [])
-                if results:
-                    overview["load"]["1min"] = float(results[0]["value"][1])
-            
+            series = self._instant_series(load_data)
+            if series:
+                overview["load"]["1min"] = series[0]["value"]
         except Exception as e:
             logger.error(f"Sistem overview hatası: {e}")
-        
+
         return overview
-    
-    async def get_server_metrics(self, server_ip: Optional[str] = None) -> Dict[str, Any]:
-        """Belirli bir sunucu veya tüm sunucular için metrikler"""
-        metrics = {}
-        
+
+    async def get_server_metrics(
+        self,
+        server_ip: Optional[str] = None,
+        *,
+        instances: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Canlı Metrikler preset'leri: CPU/RAM/disk/load/RX/TX, instance bazlı."""
+        metrics: Dict[str, Any] = {}
+        resolved = [i for i in (instances or []) if i]
         try:
-            # Instance filter
-            instance_filter = f'{{instance="{server_ip}:9100"}}' if server_ip else ""
-            
-            # CPU
-            cpu_query = f'100 - (avg(rate(node_cpu_seconds_total{{mode="idle"}}{instance_filter}[15m])) * 100)'
-            cpu_data = await self.query_metric(cpu_query)
-            if cpu_data and cpu_data.get("status") == "success":
-                results = cpu_data.get("data", {}).get("result", [])
-                metrics["cpu_usage"] = [{"instance": r.get("metric", {}).get("instance"), "value": float(r["value"][1])} for r in results]
-            
-            # Memory
-            memory_query = f'(1 - (node_memory_MemAvailable_bytes{instance_filter} / node_memory_MemTotal_bytes{instance_filter})) * 100'
-            memory_data = await self.query_metric(memory_query)
-            if memory_data and memory_data.get("status") == "success":
-                results = memory_data.get("data", {}).get("result", [])
-                metrics["memory_usage"] = [{"instance": r.get("metric", {}).get("instance"), "value": float(r["value"][1])} for r in results]
-            
-            # Disk
-            disk_query = f'(1 - (node_filesystem_avail_bytes{{mountpoint="/"}}{instance_filter} / node_filesystem_size_bytes{{mountpoint="/"}}{instance_filter})) * 100'
-            disk_data = await self.query_metric(disk_query)
-            if disk_data and disk_data.get("status") == "success":
-                results = disk_data.get("data", {}).get("result", [])
-                metrics["disk_usage"] = [{"instance": r.get("metric", {}).get("instance"), "value": float(r["value"][1])} for r in results]
-            
+            if not resolved and server_ip:
+                up_map = get_node_exporter_up_map()
+                inst, _up = match_prometheus_instance(
+                    up_map, ip=server_ip, hostname=server_ip, name=server_ip,
+                )
+                if inst:
+                    resolved = [inst]
+            selector = linux_promql_selector(resolved or None)
+            queries = linux_live_preset_queries(selector)
+            key_map = {
+                "cpu": "cpu_usage",
+                "memory": "memory_usage",
+                "disk": "disk_usage",
+                "load": "load1",
+                "net_rx": "network_rx",
+                "net_tx": "network_tx",
+            }
+            for qk, mk in key_map.items():
+                data = await self.query_metric(queries[qk])
+                metrics[mk] = self._instant_series(data)
         except Exception as e:
             logger.error(f"Sunucu metrikleri hatası: {e}")
-        
         return metrics
-    
+
     async def get_metrics_context_for_ai(self, message: str) -> str:
-        """AI için metrik context'i oluştur — Node Exporter verisini öncelikle kullan."""
+        """AI için metrik context — scrape etiketini uydurmadan, preset PromQL."""
         context = ""
-        ml = message.lower()
+        ml = (message or "").lower()
+        want_uptime = any(
+            kw in ml for kw in ("uptime", "çalışma süresi", "calisma suresi", "boot", "restart")
+        )
 
-        want_perf    = any(kw in ml for kw in ['performans', 'performance', 'cpu', 'memory', 'ram',
-                                                'bellek', 'disk', 'kullanım', 'usage', 'yüksek', 'yük'])
-        want_network = any(kw in ml for kw in ['network', 'ağ', 'bandwidth', 'trafik', 'traffic'])
-        want_uptime  = any(kw in ml for kw in ['uptime', 'çalışma süresi', 'ne kadar', 'boot', 'restart'])
+        up_map = get_node_exporter_up_map()
+        named = resolve_prometheus_instances_from_message(message, up_map)
 
-        # Herhangi bir sunucu sorusunda (veya fallback olarak) genel özet her zaman verilir
+        if named:
+            context += (
+                "\n📈 Prometheus Node Exporter (instance etiketi scrape'den birebir; "
+                "FQDN veya hostname hangisiyse o):\n"
+            )
+            try:
+                metrics = await self.get_server_metrics(instances=named)
+                by_host: Dict[str, Dict[str, Optional[float]]] = {
+                    inst: {} for inst in named
+                }
+                for key, field in (
+                    ("cpu_usage", "cpu"),
+                    ("memory_usage", "mem"),
+                    ("disk_usage", "disk"),
+                    ("load1", "load"),
+                    ("network_rx", "rx"),
+                    ("network_tx", "tx"),
+                ):
+                    for item in metrics.get(key) or []:
+                        inst = item.get("instance") or "?"
+                        by_host.setdefault(inst, {})[field] = item.get("value")
+                for inst in named:
+                    row = by_host.get(inst) or {}
+                    context += f"  {inst}\n"
+                    if row.get("cpu") is not None:
+                        context += f"    CPU: {row['cpu']:.1f}%\n"
+                    if row.get("mem") is not None:
+                        context += f"    RAM: {row['mem']:.1f}%\n"
+                    if row.get("disk") is not None:
+                        context += f"    Disk (/): {row['disk']:.1f}%\n"
+                    if row.get("load") is not None:
+                        context += f"    Load1: {row['load']:.2f}\n"
+                    if row.get("rx") is not None:
+                        context += f"    Net RX: {self._fmt_rate_bps(row['rx'])}\n"
+                    if row.get("tx") is not None:
+                        context += f"    Net TX: {self._fmt_rate_bps(row['tx'])}\n"
+                    if not row:
+                        context += "    (bu instance için seri yok)\n"
+            except Exception:
+                pass
+            if want_uptime:
+                context += await self._uptime_context(named)
+            return context
+
         try:
             overview = await self.get_system_overview()
-            context += "\n📊 Sistem Genel Bakış (Prometheus/Node Exporter):\n"
+            context += (
+                "\n📊 Filo ortalaması (tüm instance'ların avg'i — tek sunucu değil):\n"
+            )
             if overview.get("cpu", {}).get("average") is not None:
                 context += f"  - Ortalama CPU: {overview['cpu']['average']:.2f}%\n"
             if overview.get("memory", {}).get("usage_percent") is not None:
                 context += f"  - Ortalama RAM: {overview['memory']['usage_percent']:.2f}%\n"
             if overview.get("disk", {}).get("usage_percent") is not None:
-                context += f"  - Ortalama Disk: {overview['disk']['usage_percent']:.2f}%\n"
+                context += f"  - Ortalama Disk (/): {overview['disk']['usage_percent']:.2f}%\n"
             if overview.get("load", {}).get("1min") is not None:
                 context += f"  - Load Average (1 dk): {overview['load']['1min']:.2f}\n"
         except Exception:
             pass
 
-        # Sunucu bazlı detaylı metrikler
-        if want_perf:
-            try:
-                metrics = await self.get_server_metrics()
-                if any(metrics.get(k) for k in ("cpu_usage", "memory_usage", "disk_usage")):
-                    context += "\n📈 Sunucu Bazlı Metrikler (Node Exporter):\n"
-                    if metrics.get("cpu_usage"):
-                        context += "  CPU:\n"
-                        for item in metrics["cpu_usage"][:10]:
-                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
-                    if metrics.get("memory_usage"):
-                        context += "  RAM:\n"
-                        for item in metrics["memory_usage"][:10]:
-                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
-                    if metrics.get("disk_usage"):
-                        context += "  Disk:\n"
-                        for item in metrics["disk_usage"][:10]:
-                            context += f"    {item['instance']}: {item['value']:.1f}%\n"
-            except Exception:
-                pass
+        try:
+            metrics = await self.get_server_metrics()
+            context += (
+                "\n📈 Sunucu bazlı (Prometheus instance etiketi, değere göre yüksekten düşüğe):\n"
+            )
+            if metrics.get("cpu_usage"):
+                context += "  CPU:\n"
+                for item in self._top(metrics["cpu_usage"]):
+                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
+            if metrics.get("memory_usage"):
+                context += "  RAM:\n"
+                for item in self._top(metrics["memory_usage"]):
+                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
+            if metrics.get("disk_usage"):
+                context += "  Disk (/):\n"
+                for item in self._top(metrics["disk_usage"]):
+                    context += f"    {item['instance']}: {item['value']:.1f}%\n"
+            if metrics.get("load1"):
+                context += "  Load1:\n"
+                for item in self._top(metrics["load1"]):
+                    context += f"    {item['instance']}: {item['value']:.2f}\n"
+            if metrics.get("network_rx"):
+                context += "  Network RX:\n"
+                for item in self._top(metrics["network_rx"]):
+                    context += f"    {item['instance']}: {self._fmt_rate_bps(item['value'])}\n"
+            if metrics.get("network_tx"):
+                context += "  Network TX:\n"
+                for item in self._top(metrics["network_tx"]):
+                    context += f"    {item['instance']}: {self._fmt_rate_bps(item['value'])}\n"
+        except Exception:
+            pass
 
-        # Network trafiği
-        if want_network:
-            try:
-                network_data = await self.query_metric('rate(node_network_receive_bytes_total{device!="lo"}[5m])')
-                if network_data and network_data.get("status") == "success":
-                    results = network_data["data"].get("result", [])
-                    if results:
-                        context += "\n🌐 Network (alım, son 5 dk):\n"
-                        for r in results[:8]:
-                            instance = r.get("metric", {}).get("instance", "?")
-                            device   = r.get("metric", {}).get("device", "?")
-                            value    = float(r["value"][1])
-                            context += f"  {instance} [{device}]: {value/1024:.1f} KB/s\n"
-            except Exception:
-                pass
-
-        # Uptime
         if want_uptime:
-            try:
-                uptime_data = await self.query_metric('node_boot_time_seconds')
-                if uptime_data and uptime_data.get("status") == "success":
-                    from datetime import datetime as _dt
-                    results = uptime_data["data"].get("result", [])
-                    if results:
-                        context += "\n⏱️ Uptime:\n"
-                        for r in results[:10]:
-                            instance = r.get("metric", {}).get("instance", "?")
-                            days = (_dt.now().timestamp() - float(r["value"][1])) / 86400
-                            context += f"  {instance}: {days:.1f} gün\n"
-            except Exception:
-                pass
-
+            context += await self._uptime_context(None)
         return context
+
+    async def _uptime_context(self, instances: Optional[List[str]]) -> str:
+        try:
+            from datetime import datetime as _dt
+            sel = linux_promql_selector(instances)
+            data = await self.query_metric(f"node_boot_time_seconds{{{sel}}}")
+            series = self._instant_series(data)
+            if not series:
+                return ""
+            lines = ["\n⏱️ Uptime:"]
+            now = _dt.now().timestamp()
+            for item in series[:12]:
+                days = (now - item["value"]) / 86400
+                lines.append(f"  {item['instance']}: {days:.1f} gün")
+            return "\n".join(lines) + "\n"
+        except Exception:
+            return ""

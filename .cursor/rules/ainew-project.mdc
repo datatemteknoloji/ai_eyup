@@ -5,30 +5,31 @@ alwaysApply: true
 
 # ainew — AI-Powered Infrastructure Management
 
-Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` dosyasında (ör. 1.0.9.21). Repo: `datatemteknoloji/ai_eyup`.
+Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` (şu an 1.0.9.26). Repo: `datatemteknoloji/ai_eyup`.
 
 ## Yığın
 
-- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Paramiko, LangGraph, ChromaDB
+- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Paramiko, LangGraph, pgvector
 - **Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query, Recharts
-- **Altyapı:** TimescaleDB (PG15), Redis 7, Prometheus, Pushgateway, Ollama (yerel LLM)
+- **Altyapı:** TimescaleDB (PG15), Redis 7, Prometheus, Pushgateway; Ollama isteğe bağlı (`profiles: [ollama]`)
+- **Level 1:** Dropt sidecar (`dropt_api` `:8001`, ayrı Postgres) — ainew DB ile karıştırma
 
 ## Dizinler
 
-- `backend/app/api/` — REST router'lar (`router.py` hepsini `/api/v1` altına bağlar)
-- `backend/app/services/` — iş mantığı (SSH, AIOps, agent, NLQ, hypervisor, Windows, …)
-- `backend/app/models/` — SQLAlchemy ORM
-- `backend/app/core/` — config, DB, JWT auth, encryption
-- `frontend/src/pages/` — sayfalar; `components/` — Layout, AIOps, chat
-- `docs/` — mimari ve özellik dokümanları (önce buraya bak)
-- `DESIGN.md` — UI design system (dark, blue accent, DM Sans/Mono)
+- `backend/app/api/` — REST (`router.py` → `/api/v1`)
+- `backend/app/services/` — SSH, AIOps, agent, NLQ, hypervisor, Windows, Prometheus chat
+- `backend/app/models/` — ORM · `backend/app/core/` — config, DB, JWT, encryption
+- `frontend/src/pages/` · `components/` (Layout, AIOps, `nlChatUi`, chat markdown)
+- `docs/` — mimari; `DESIGN.md` — UI (dark, blue accent, DM Sans/Mono)
+- Dağıtım: `scripts/build-distribution.sh` → `dist/ainew-<sürüm>-linux-amd64.tar.gz` (Ollama yok); GitHub **Release asset**, git’e tar koyma
 
-## Çalışan ortam (bu host)
+## Bu host (dev)
 
-- Compose: `docker-compose.yml` (dev; backend `network_mode: host`, source mount)
-- UI: `:3000` · API: `:8000` · DB: `:5432` · Redis: `:6379` · Pushgateway: `:9091`
-- Kalıcı veri: `/data/data/{postgres,redis,chroma,hf_cache,repos,uploads,prometheus}`
-- Backend container adı: `server_management_backend`
+- Compose: `docker-compose.yml` — backend `network_mode: host` + **source mount**; frontend **baked nginx** (değişiklik: `docker compose build frontend && up -d`)
+- `UVICORN_WORKERS=2` → Python değişince `docker restart server_management_backend` (reload yok)
+- UI `:3000` · API `:8000` · DB `:5432` · Redis `:6379` · Pushgateway `:9091`
+- Veri: `/data/data/{postgres,redis,chroma,hf_cache,repos,uploads,prometheus}`
+- Backend: `server_management_backend`
 
 ## Modüller (RBAC)
 
@@ -36,8 +37,8 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 
 ## Kurallar
 
-- Uygulama verisini (DB, `.env` sırları, volume'lar) izinsiz değiştirme / silme
-- AI çıkarımı yerel Ollama veya isteğe bağlı REMOTE_LLM; harici cloud varsayılan değil
-- UI metinleri ve API hata mesajları çoğunlukla Türkçe
-- Dokümantasyon: `README.md`, `docs/architecture.md`, `docs/api-reference.md`
-- Ürün sohbet kuralları (asistan prompt): `.cursor/rules/ainew-assistant-prompts.mdc` — dosya yolları orada
+- Uygulama verisini (DB, `.env`, volume) izinsiz değiştirme/silme
+- AI: yerel Ollama veya `REMOTE_LLM_*`; harici cloud varsayılan değil
+- Sohbet Prometheus: **yalnızca PromQL**; scrape / `prometheus.yml` / target JSON’a dokunma
+- UI ve API hataları çoğunlukla Türkçe
+- Ürün asistan prompt’ları: `.cursor/rules/ainew-assistant-prompts.mdc`

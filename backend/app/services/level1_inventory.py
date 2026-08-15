@@ -87,8 +87,11 @@ def eligible_for_level1_dropt_sync(
         ids = get_exadata_server_id_set(db)
     if ids is not None and server.id in ids:
         return False
-    if not is_level1_dropt_os(os_type=server.os_type, os_version=server.os_version):
-        return False
+    guest_full = (getattr(server, "vm_guest_os_full", None) or "").strip()
+    os_blob = (server.os_version or "").strip() or guest_full
+    if not is_level1_dropt_os(os_type=server.os_type, os_version=os_blob):
+        if not is_level1_dropt_os(os_type="", os_version=guest_full):
+            return False
     return True
 
 
@@ -279,6 +282,15 @@ def ensure_dropt_for_server(
                 "port": 22,
                 "description": f"ainew:{server.id} {(server.name or '').strip()}".strip()[:512],
                 "skip_connection_test": skip_connection_test,
+                "os_pretty": (
+                    (server.os_version or "").strip()
+                    or (getattr(server, "vm_guest_os_full", None) or "").strip()
+                )[:255],
+                "machine_type": (
+                    "virtual" if (server.server_type or "").upper() == "VIRTUAL"
+                    else "physical" if (server.server_type or "").upper() == "PHYSICAL"
+                    else ""
+                ),
             },
         )
     if cr.status_code >= 400:
@@ -299,6 +311,50 @@ def bridge_dropt_token(*, dropt_base: str, bridge_secret: str, username: str = "
     if not token:
         raise RuntimeError("Dropt bridge token yok")
     return str(token)
+
+
+def best_effort_delete_dropt_hosts(
+    *,
+    ainew_server_ids: list[int],
+    ips: list[str],
+    actor_username: str = "ainew",
+) -> int:
+    """vCenter/Linux silince Level 1 (Dropt) kopyasını da kaldır — Dropt yoksa sessiz."""
+    import os
+
+    ids = [int(x) for x in ainew_server_ids if x]
+    ip_list = [ip.strip() for ip in ips if (ip or "").strip()]
+    if not ids and not ip_list:
+        return 0
+    secret = (os.getenv("AINEW_BRIDGE_SECRET") or "").strip()
+    base = (os.getenv("DROPT_API_URL") or "http://127.0.0.1:8001").rstrip("/")
+    if not secret:
+        logger.debug("Dropt prune skip: AINEW_BRIDGE_SECRET yok")
+        return 0
+    try:
+        token = bridge_dropt_token(
+            dropt_base=base,
+            bridge_secret=secret,
+            username=f"sync-{actor_username}"[:64],
+        )
+        with httpx.Client(timeout=60.0) as client:
+            r = client.post(
+                f"{base}/api/servers/delete-hosts-bulk",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"ainew_server_ids": ids, "ips": ip_list},
+            )
+        if r.status_code >= 400:
+            logger.warning("Dropt prune failed: %s %s", r.status_code, r.text[:400])
+            return 0
+        deleted = int((r.json() or {}).get("deleted") or 0)
+        logger.info("Dropt prune: %s host silindi (ainew_ids=%s ips=%s)", deleted, len(ids), len(ip_list))
+        return deleted
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Dropt prune unreachable: %s", exc)
+        return 0
 
 
 def best_effort_ensure_after_ainew_create(server: Server, *, actor_username: str = "ainew") -> None:

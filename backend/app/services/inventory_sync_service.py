@@ -4,6 +4,7 @@ API ve background task tarafından kullanılır.
 """
 import inspect
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -16,36 +17,89 @@ from app.services.snapshot_service import _apply_vm_details_to_server
 
 logger = logging.getLogger(__name__)
 
+# UI overlay + yeni tarama: updated_at bu süreden eskiyse iş ölü kabul edilir.
+STALE_RUNNING_SEC = 180
+
 
 def update_sync_job(hypervisor_id: int, **patch) -> None:
     """Hypervisor.meta_data.sync_job alanını güncelle (thread-safe, ayrı session)."""
     from app.core.database import ThreadSessionLocal
 
-    db = ThreadSessionLocal()
-    try:
-        hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
-        if not hv:
+    last_exc = None
+    for attempt in range(5):
+        db = ThreadSessionLocal()
+        try:
+            hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+            if not hv:
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            meta = dict(hv.meta_data or {})
+            job = dict(meta.get("sync_job") or {})
+            job.update(patch)
+            job["updated_at"] = now
+            if patch.get("status") == "running":
+                if patch.get("started_at"):
+                    job["started_at"] = patch["started_at"]
+                elif not job.get("started_at"):
+                    job["started_at"] = now
+                hv.status = "SYNCING"
+            elif patch.get("status") == "done":
+                hv.status = "ONLINE"
+            elif patch.get("status") == "error":
+                hv.status = "ERROR"
+            meta["sync_job"] = job
+            hv.meta_data = meta
+            flag_modified(hv, "meta_data")
+            db.commit()
             return
-        meta = dict(hv.meta_data or {})
-        job = dict(meta.get("sync_job") or {})
-        job.update(patch)
-        job["updated_at"] = datetime.now(timezone.utc).isoformat()
-        meta["sync_job"] = job
-        hv.meta_data = meta
-        flag_modified(hv, "meta_data")
-        st = patch.get("status")
-        if st == "running":
-            hv.status = "SYNCING"
-        elif st == "done":
-            hv.status = "ONLINE"
-        elif st == "error":
-            hv.status = "ERROR"
-        db.commit()
-    except Exception as exc:
-        logger.warning("sync_job update failed (hv=%s): %s", hypervisor_id, exc)
-        db.rollback()
-    finally:
-        db.close()
+        except Exception as exc:
+            last_exc = exc
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            time.sleep(0.4 * (attempt + 1))
+        finally:
+            db.close()
+    logger.warning("sync_job update failed (hv=%s): %s", hypervisor_id, last_exc)
+
+
+def job_is_stale_running(job: dict) -> bool:
+    if not job or job.get("status") != "running":
+        return False
+    raw = job.get("updated_at") or job.get("started_at")
+    if not raw:
+        return True
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() > STALE_RUNNING_SEC
+    except Exception:
+        return True
+
+
+def expire_stale_sync_job(hypervisor_id: int, job: dict) -> dict:
+    """Ölü 'running' kaydını error yapar; UI sonsuz spinner'da kalmasın."""
+    if not job_is_stale_running(job):
+        return job if isinstance(job, dict) else {}
+    update_sync_job(
+        hypervisor_id,
+        status="error",
+        phase="error",
+        percent=100,
+        message="Tarama yanıt vermeyi kesti (zaman aşımı). Yeniden tarayabilirsiniz.",
+        error="stale_running",
+    )
+    out = dict(job or {})
+    out.update({
+        "status": "error",
+        "phase": "error",
+        "percent": 100,
+        "message": "Tarama yanıt vermeyi kesti (zaman aşımı). Yeniden tarayabilirsiniz.",
+        "error": "stale_running",
+    })
+    return out
 
 
 def get_sync_job(hypervisor: Hypervisor) -> dict:
@@ -391,7 +445,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
 
     try:
         for i, vm in enumerate(vms, 1):
-            before = _find_existing_server(db, hypervisor.id, vm)
+            before = _find_existing_server(db, hv_id, vm)
             was_missing_meta = (
                 before is None
                 or not before.vm_disk_gb
@@ -409,7 +463,8 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 synced += 1
             elif was_missing_meta:
                 enriched += 1
-            if track_progress and (i % 25 == 0 or i == len(vms)):
+            # Küçük filolarda her VM; büyükte her 5 — UI 0/N'de kilitlenmesin.
+            if track_progress and (i == 1 or i == len(vms) or i % 5 == 0):
                 pct = 88 + int(10 * (i / max(len(vms), 1)))
                 _prog(
                     phase="saving",
@@ -418,6 +473,12 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                     vms_done=i,
                     vms_total=len(vms),
                 )
+            if i % 10 == 0:
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
 
         hypervisor.last_sync = datetime.now(timezone.utc)
         db.add(hypervisor)

@@ -21,6 +21,7 @@ import {
   NlModelUnavailableBanner,
   NlEmptyState,
   NlChatInput,
+  nlChatColumnClass,
   nlUserBubbleClass,
   nlAssistantBubbleClass,
 } from '../components/nlChatUi'
@@ -689,7 +690,7 @@ const Chat: React.FC<{
             {showEmpty ? (
               <NlEmptyState icon={emptyIcon} description={emptyDescription} />
             ) : (
-              <div className="max-w-3xl mx-auto">
+              <div className={nlChatColumnClass}>
                 {[
                   ...messages,
                   ...localInventoryMessages,

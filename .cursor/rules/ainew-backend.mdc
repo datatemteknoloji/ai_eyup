@@ -9,35 +9,29 @@ alwaysApply: false
 ## Yapı
 
 - Endpoint: `app/api/<domain>.py` → `APIRouter`; kayıt `app/api/router.py`
-- Mantık: `app/services/`; ORM: `app/models/`; ayarlar: `app/core/config.py` (`settings`)
-- Runtime ayarlar (interval vb.): `app/services/runtime_settings.py` + DB `AppSettings`
-- Arka plan: `app/background_tasks.py` (health, metric sync, anomaly, logs, inventory, OCP, …)
+- Mantık: `app/services/`; ORM: `app/models/`; `app/core/config.py`
+- Runtime: `runtime_settings.py` + DB `AppSettings`
+- Arka plan: `background_tasks.py` (health, metric_sync, anomaly, inventory, OCP)
 
 ## Auth
 
-- Global middleware `main.py`: `/api/v1/*` JWT Bearer ister
-- Muaf: `/api/v1/auth/*`, `/api/v1/public/*`, `/health`, `/docs`, `/repos`, OPTIONS
-- WebSocket terminal kendi JWT doğrulamasını kullanır
+- `/api/v1/*` JWT; muaf: `/auth/*`, `/public/*`, `/health`, `/docs`, `/repos`, OPTIONS
+- Terminal WS kendi JWT’si
 
-## Ölçek / I/O
+## Sohbet + Prometheus (scrape’e dokunma)
 
-- Blocking SSH/WinRM/vCenter: `run_in_executor` / thread pool (SSH pool max 150)
-- Sync FastAPI `def` endpoint'ler AnyIO thread limiter (150) ile çalışır
-- DB pool: `app/core/database.py`; Postgres `max_connections=500` (compose)
+- Context: `monitoring/prometheus_metrics.py` → `get_metrics_context_for_ai`
+- Instance: `up` map + `match_prometheus_instance` (FQDN:9100 **veya** hostname:9100; `IP:9100` uydurma)
+- CPU: `avg by (instance) (rate(...[5m]))` — çıplak `avg()` labels düşürür (`None`)
+- Tek selector: `{mode="idle",instance="…"}` — iki `{}` birleştirme **geçersiz PromQL**
+- Preset kaynak: Canlı Metrikler (CPU/RAM/disk `/`/load/RX+TX)
+- Planner: `chat_source_planner.py` `_PERF`
 
-## AI / RAG
+## Diğer
 
-- Chat/agent: Ollama veya `REMOTE_LLM_*` gateway (`llm_gateway.py`)
-- RAG: ChromaDB (`RAG_CHROMA_PATH`), embedding genelde yerel Ollama
-- Agent: LangGraph + `services/agent/guard.py` (human-in-the-loop)
-
-## Şema
-
-- Startup'ta `create_all` + idempotent `ALTER … IF NOT EXISTS` (`main.py`)
-- Ağır migrasyonlar: `backend/alembic/`, kök `migrations/*.sql`
-
-## Yapma
-
-- Secrets'ı loglama; `.env` commit etme
-- Router yüklemesini try/except ile kırılgan bırakma (mevcut pattern'i koru)
-- `network_mode: host` varsayımını bozan bağlama değişiklikleri yapma
+- AI Ready: `ai_ready_probe.py` (önce TCP, sonra SSH; key sonra password)
+- vCenter guest metin: `vcenter_client._guest_text` (lokalize dict)
+- Level 1 sync: `eligible_for_level1_dropt_sync` `vm_guest_os_full` da kullanır; `os_pretty` ensure-host’ta
+- vCenter silince Dropt prune: `best_effort_delete_dropt_hosts` (ayrı DB; sync upsert-only)
+- Blocking I/O: executor; `network_mode: host` varsayımını bozma
+- Secrets loglama / `.env` commit yok

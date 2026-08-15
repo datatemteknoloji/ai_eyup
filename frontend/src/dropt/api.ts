@@ -837,12 +837,36 @@ export type BulkConnectionTestResult = {
   items: BulkConnectionTestItem[];
 };
 
+export type BulkConnectionTestProgress = {
+  done: number;
+  total: number;
+  items: BulkConnectionTestItem[];
+  current?: string;
+};
+
+type BulkConnectionTestJob = BulkConnectionTestResult & {
+  job_id?: string;
+  status?: string;
+  done?: number;
+  error?: string;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export async function testServerConnectionsBulk(
   token: string,
   serverIds: number[],
-  opts?: { refreshFacts?: boolean; workers?: number },
+  opts?: {
+    refreshFacts?: boolean;
+    workers?: number;
+    onProgress?: (progress: BulkConnectionTestProgress) => void;
+  },
 ): Promise<BulkConnectionTestResult> {
-  const res = await fetch(apiUrl("/api/servers/test-connections"), {
+  const res = await fetch(apiUrl("/api/servers/test-connections?wait=false"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -855,7 +879,48 @@ export async function testServerConnectionsBulk(
     }),
   });
   if (!res.ok) throw new Error(await readError(res));
-  return res.json();
+  const started = (await res.json()) as BulkConnectionTestJob;
+  if (!started.job_id) {
+    const items = started.items || [];
+    opts?.onProgress?.({
+      done: started.total || items.length,
+      total: started.total || items.length,
+      items,
+    });
+    return started;
+  }
+
+  const totalHint = started.total || serverIds.length;
+  opts?.onProgress?.({ done: 0, total: totalHint, items: [] });
+
+  for (;;) {
+    const pr = await fetch(apiUrl(`/api/servers/test-connections/${started.job_id}`), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!pr.ok) throw new Error(await readError(pr));
+    const job = (await pr.json()) as BulkConnectionTestJob;
+    const items = job.items || [];
+    const last = items[items.length - 1];
+    opts?.onProgress?.({
+      done: job.done ?? items.length,
+      total: job.total || totalHint,
+      items,
+      current: last?.hostname,
+    });
+    if (job.status === "done") {
+      return {
+        total: job.total || items.length,
+        ok: job.ok,
+        failed: job.failed,
+        workers: job.workers,
+        items,
+      };
+    }
+    if (job.status === "error") {
+      throw new Error(job.error || "Toplu bağlantı testi başarısız");
+    }
+    await sleep(400);
+  }
 }
 
 export async function deleteServer(token: string, id: number): Promise<void> {

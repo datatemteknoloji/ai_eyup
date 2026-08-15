@@ -140,7 +140,26 @@ class VCenterClient:
         return []
     
     @staticmethod
-    def _guest_os_family_fallback(guest_os_id: str) -> str:
+    def _guest_text(val) -> str:
+        """vCenter localization dict / string / None → düz metin.
+
+        guest.identity.full_name çoğu sürümde string değil
+        ``{"id": "...", "default_message": "Red Hat Enterprise Linux 9 (64-bit)"}``.
+        """
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, dict):
+            for k in ("default_message", "full_name", "name", "label", "id", "value", "status"):
+                inner = val.get(k)
+                if isinstance(inner, str) and inner.strip():
+                    return inner.strip()
+            return ""
+        return str(val).strip()
+
+    @staticmethod
+    def _guest_os_family_fallback(guest_os_id) -> str:
         """VMware `guest_OS` alanından ("WINDOWS_2019_64", "RHEL_8_64" vb.) family tahmini üretir.
 
         `guest/identity` endpoint'i (family/full_name) VMware Tools'un VM içinde
@@ -149,7 +168,7 @@ class VCenterClient:
         sunucuyu doğru sınıflandırması için kritik). `guest_OS` ise VM
         oluşturulurken belirlenen konfigürasyon alanıdır, Tools'a bağlı değildir.
         """
-        g = (guest_os_id or "").upper()
+        g = VCenterClient._guest_text(guest_os_id).upper()
         if not g:
             return ""
         if "WIN" in g:
@@ -1150,8 +1169,9 @@ class VCenterClient:
             )
             # Tools full_name çoğu zaman daha okunaklıdır ("Red Hat Enterprise Linux 9 (64-bit)");
             # guest_OS yalnızca major id verir (RHEL_9_64). Minor sürüm SSH /etc/os-release'ten gelir.
-            _full = (guest.get("full_name") or "").strip()
-            _gid = (details.get("guest_OS") or "").strip()
+            # REST identity.full_name localization dict olabilir — .strip() çökmesin.
+            _full = self._guest_text(guest.get("full_name"))
+            _gid = self._guest_text(details.get("guest_OS"))
             guest_os_full = _full or _gid
 
             return {
@@ -1164,7 +1184,7 @@ class VCenterClient:
                 "vm_disk_gb":          disk_gb,
                 "vm_disks":            disks_detail or None,
                 "vm_power_state":      power_state,
-                "vm_tools_status":     (guest.get("tools_status") or ""),
+                "vm_tools_status":     self._guest_text(guest.get("tools_status")),
                 "vm_network_info":     networks,
                 "vm_cluster":          str(cluster_name) if cluster_name else "",
                 "vm_datastore":        datastore_name,
@@ -1172,7 +1192,7 @@ class VCenterClient:
                 "vm_host_name":        host_name,
                 "vm_host_ref":         host_ref,
                 "vm_guest_os_full":    guest_os_full,
-                "os_type":             (guest.get("family") or "") or self._guest_os_family_fallback(details.get("guest_OS", "")),
+                "os_type":             self._guest_text(guest.get("family")) or self._guest_os_family_fallback(details.get("guest_OS", "")),
             }
         except Exception as e:
             logger.error(f"VCenter get_vm_full_details error: {e}", exc_info=True)

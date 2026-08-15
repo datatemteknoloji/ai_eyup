@@ -13,7 +13,7 @@ import { chatMarkdownComponents, chatResponseBody } from '../components/chatMark
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
   NlModelUnavailableBanner,
-  NlEmptyState, NlChatInput, nlUserBubbleClass, nlAssistantBubbleClass,
+  NlEmptyState, NlChatInput, nlChatColumnClass, nlUserBubbleClass, nlAssistantBubbleClass,
 } from '../components/nlChatUi'
 import {
   useChatStream,
@@ -573,7 +573,7 @@ const WindowsChat: React.FC<{
                 description={t('chat_empty_win')}
               />
             ) : (
-              <div className="max-w-3xl mx-auto space-y-4">
+              <div className={`${nlChatColumnClass} space-y-4`}>
                 {[
                   ...messages,
                   ...(pendingUserMessage && streamBelongsHere
@@ -647,7 +647,7 @@ const WindowsChat: React.FC<{
 
                 {isLoading && streamBelongsHere && (
                   <div className="flex justify-start">
-                    <div className={`${nlAssistantBubbleClass} max-w-[min(85%,48rem)] w-full`}>
+                    <div className={nlAssistantBubbleClass}>
                       {toolCalls.length > 0 && (
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
@@ -693,7 +693,7 @@ const WindowsChat: React.FC<{
 
                 {!isLoading && streamBelongsHere && streamingText && (
                   <div className="flex justify-start">
-                    <div className={`${nlAssistantBubbleClass} max-w-[min(85%,48rem)] w-full`}>
+                    <div className={nlAssistantBubbleClass}>
                       <div className={chatResponseBody}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
                       </div>
