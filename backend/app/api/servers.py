@@ -42,14 +42,35 @@ _SSH_CRED_REQUIRED_MSG = (
 )
 
 
+def _resolve_ssh_username(conn_config: dict | None, global_cred=None) -> str:
+    """UI için güvenli SSH kullanıcı adı (şifre yok). Sunucu → global → boş."""
+    cfg = conn_config or {}
+    u = (cfg.get("username") or "").strip()
+    if u:
+        return u
+    if global_cred is not None:
+        gu = (getattr(global_cred, "username", None) or "").strip()
+        if gu:
+            return gu
+    return ""
+
+
 def _server_list_item(
     s: Server,
     *,
     include_connection_config: bool = False,
+    global_cred=None,
 ) -> dict:
-    """Sayfalı liste için slim sunucu DTO (SSH yok — DB cache NE alanları)."""
+    """Sayfalı liste için slim sunucu DTO (SSH şifresi yok — username + NE cache)."""
     conn_config = getattr(s, "connection_config", None) or {}
-    hv_name = s.hypervisor.name if s.hypervisor else None
+    hv = s.hypervisor
+    hv_name = hv.name if hv else None
+    # vCenter bağlantı ucu (IP/FQDN) — ESXi host ile karıştırılmamalı
+    hv_endpoint = ""
+    if hv:
+        hv_endpoint = (getattr(hv, "ip_address", None) or getattr(hv, "hostname", None) or "") or ""
+    ssh_user = _resolve_ssh_username(conn_config, global_cred)
+    has_secret = _conn_has_ssh_secret(conn_config) or _global_cred_has_ssh_secret(global_cred)
     item = {
         "id": s.id,
         "name": s.name or "",
@@ -68,9 +89,14 @@ def _server_list_item(
         "cpu_cores": s.cpu_cores or 0,
         "memory_gb": s.memory_gb or 0,
         "ai_ready": bool(s.ai_ready),
-        "has_ssh_secret": _conn_has_ssh_secret(conn_config),
+        "has_ssh_secret": has_secret,
+        "ssh_username": ssh_user,
         "hypervisor_id": s.hypervisor_id,
         "hypervisor_name": hv_name,
+        "vcenter_name": hv_name,
+        "vcenter_endpoint": hv_endpoint,
+        "vm_host_name": getattr(s, "vm_host_name", None) or "",
+        "vm_host_ref": getattr(s, "vm_host_ref", None) or "",
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
         "node_exporter": {
@@ -79,7 +105,10 @@ def _server_list_item(
         },
     }
     if include_connection_config:
-        item["connection_config"] = _mask_conn_config(conn_config)
+        masked = _mask_conn_config(conn_config)
+        if not masked.get("username") and ssh_user:
+            masked["username"] = ssh_user
+        item["connection_config"] = masked
     return item
 
 
@@ -562,6 +591,10 @@ def list_servers(
     """
     del include_node_exporter_status  # SSH list path kaldırıldı; DB alanları yeterli
     try:
+        global_cred = (
+            db.query(GlobalCredential).filter_by(is_default=True).first()
+            or db.query(GlobalCredential).first()
+        )
         query = db.query(Server).options(selectinload(Server.hypervisor))
         if platform in ("linux", "windows", "virt", "exadata"):
             from app.services.platform_scope import apply_server_platform_filter
@@ -586,7 +619,11 @@ def list_servers(
             .all()
         )
         items = [
-            _server_list_item(s, include_connection_config=include_connection_config)
+            _server_list_item(
+                s,
+                include_connection_config=include_connection_config,
+                global_cred=global_cred,
+            )
             for s in servers
         ]
         return {

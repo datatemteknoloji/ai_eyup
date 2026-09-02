@@ -36,6 +36,8 @@ class ChatSourceState(TypedDict, total=False):
     live_escalated: bool
     tools_used: List[str]
     tool_text: str
+    deterministic_answer: str
+    inventory_kind: str
     status: str  # ok | skipped | error
     detail: str
 
@@ -75,6 +77,8 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
     live_escalated = False
     status = "ok"
     detail = ""
+    deterministic_answer = ""
+    inventory_kind = ""
 
     try:
         gen = run_read_only_tool_loop(
@@ -96,6 +100,8 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
                 tools_used = list(item.get("tools_used") or [])
                 used_tools = bool(item.get("used_tools"))
                 live_escalated = bool(item.get("live_escalated"))
+                deterministic_answer = item.get("deterministic_answer") or ""
+                inventory_kind = item.get("inventory_kind") or ""
                 break
             if t == "skipped":
                 status = "skipped"
@@ -114,6 +120,8 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
             "tools_used": [],
             "tool_text": "",
             "live_escalated": False,
+            "deterministic_answer": "",
+            "inventory_kind": "",
         }
 
     return {
@@ -123,6 +131,8 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
         "tools_used": tools_used,
         "tool_text": tool_text,
         "live_escalated": live_escalated,
+        "deterministic_answer": deterministic_answer,
+        "inventory_kind": inventory_kind,
     }
 
 
@@ -133,6 +143,8 @@ def finalize_node(state: ChatSourceState, config) -> ChatSourceState:
     return {
         "tool_text": text,
         "status": state.get("status") or "ok",
+        "deterministic_answer": state.get("deterministic_answer") or "",
+        "inventory_kind": state.get("inventory_kind") or "",
     }
 
 
@@ -205,4 +217,6 @@ def run_chat_source_graph(
         "live_escalated": bool(final.get("live_escalated")),
         "status": final.get("status") or "ok",
         "detail": final.get("detail") or "",
+        "deterministic_answer": final.get("deterministic_answer") or "",
+        "inventory_kind": final.get("inventory_kind") or "",
     }

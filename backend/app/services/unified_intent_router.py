@@ -1,37 +1,16 @@
-"""Unified Chat — deterministik intent router (Dalga 2).
+"""Unified Chat — deterministik intent router + module-first orkestrasyon.
 
 Tek structured karar: knowledge | planning_clarify | planning_agentic | live.
-Ekstra LLM round-trip yok (TTFT korunur). Keyword + planning_intent + path_policy.
+Domain'ler module_orchestrator ile exclusive (single) veya bilinçli multi kombinasyon.
+Modül seçimi kullanıcıya SORULMAZ — belirsizlikte otomatik domain seti açılır.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Tuple
 
 logger = logging.getLogger(__name__)
-
-_LINUX_TRIGGER = (
-    "linux", "rhel", "centos", "ubuntu", "debian", "selinux", "systemctl", "journalctl",
-    "kernel", "ssh", "vmstat", "iostat", "firewalld", "iptables",
-)
-_WINDOWS_TRIGGER = (
-    "windows", "winrm", "powershell", "defender", "event log", "olay günlüğü", "wsus",
-    "active directory", "iis", "kb", "domain",
-)
-_OPENSHIFT_TRIGGER = (
-    "openshift", "ocp", "kubernetes", "k8s", "kube", "pod", "pods", "namespace",
-    "crashloop", "crashloopbackoff", "imagepull", "deployment", "statefulset",
-    "route", "scc", "operator", "etcd", "oc get", "kubectl", "kubevirt",
-    "proje", "project", "clusterversion", "machineconfig",
-)
-_GENERAL_TRIGGER = (
-    "cpu", "ram", "memory", "bellek", "disk", "performans", "performance", "kullanım",
-    "usage", "yük", "load", "durum", "status", "genel", "özet", "rapor", "servis", "service",
-    "kaynak", "tüket", "tuket", "tüketim", "tuketim",
-    "log", "hata", "error", "güncelleme", "update", "yama", "patch", "güvenlik", "security",
-    "os", "işletim", "sürüm", "version", "network", "ağ", "uptime",
-)
 
 
 @dataclass(frozen=True)
@@ -48,72 +27,17 @@ class UnifiedRoute:
     wants_openshift: bool = False
     linux_specific: bool = False
     windows_specific: bool = False
-
-
-def _platform_flags(message: str, *, skip_ctx: bool) -> tuple:
-    ml = (message or "").lower()
-    try:
-        from app.services.linux_info_collector import has_recognized_topic
-        topic = has_recognized_topic(message)
-    except Exception:
-        topic = False
-
-    wants_openshift = any(k in ml for k in _OPENSHIFT_TRIGGER) and not skip_ctx
-    linux_kw = any(k in ml for k in _LINUX_TRIGGER)
-    # OCP odaklı soruda yalnız topic eşleşmesi Linux SSH açmasın (eski karışıklık)
-    linux_specific = linux_kw or (bool(topic) and not wants_openshift)
-    windows_specific = any(k in ml for k in _WINDOWS_TRIGGER)
-    wants_linux = (linux_specific or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
-    wants_windows = (windows_specific or any(k in ml for k in _GENERAL_TRIGGER)) and not skip_ctx
-    if wants_openshift and not linux_specific:
-        wants_linux = False
-    if wants_openshift and not windows_specific:
-        wants_windows = False
-    # OCP + genel kelime (durum/cpu): Linux/Windows genel tetik kapat
-    if wants_openshift and not linux_kw:
-        wants_linux = False
-    if wants_openshift and not windows_specific:
-        wants_windows = False
-    return wants_linux, wants_windows, wants_openshift, linux_specific, windows_specific
-
-
-def _domains_for(
-    message: str,
-    *,
-    wants_linux: bool,
-    wants_windows: bool,
-    wants_openshift: bool,
-    linux_specific: bool,
-    windows_specific: bool,
-) -> FrozenSet[str]:
-    from app.services.chat_planning_intent import planning_tool_domains
-
-    planned = planning_tool_domains(
-        message,
-        wants_openshift=wants_openshift,
-        linux_specific=linux_specific,
-        windows_specific=windows_specific,
-    )
-    if planned is not None:
-        return planned
-    dom: set = set()
-    if wants_openshift:
-        dom |= {"openshift", "infra"}
-    if wants_linux:
-        dom |= {"linux", "infra"}
-    if wants_windows:
-        dom |= {"windows", "infra"}
-    try:
-        from app.services.chat_planning_intent import message_has_vcenter_intent
-        if message_has_vcenter_intent(message):
-            dom |= {"vcenter", "infra"}
-    except Exception:
-        pass
-    return frozenset(dom) if dom else frozenset({"infra"})
+    # module-first
+    module_mode: str = ""  # single | multi | knowledge
+    modules: Tuple[str, ...] = ()
+    join_keys: Tuple[str, ...] = ()
+    need_prometheus: bool = False
+    persona_addendum: str = ""
+    clarify_options: Tuple[str, ...] = ()  # geriye uyum; kullanılmaz
 
 
 def _complexity(message: str, *, mode: str) -> str:
-    if mode == "knowledge":
+    if mode in ("knowledge", "planning_clarify"):
         return "simple"
     try:
         from app.services.chat_path_policy import is_deep_live_query
@@ -124,9 +48,53 @@ def _complexity(message: str, *, mode: str) -> str:
             return "deep"
     except Exception:
         pass
-    if mode == "planning_agentic":
-        return "normal"
     return "normal"
+
+
+def _from_module_plan(message: str, plan) -> UnifiedRoute:
+    """ModulePlan → UnifiedRoute (clarify yok)."""
+    mods = plan.modules or ()
+    wants_linux = "linux" in mods or "exadata" in mods
+    wants_windows = "windows" in mods
+    wants_openshift = "openshift" in mods
+    linux_specific = "linux" in mods
+    windows_specific = "windows" in mods
+
+    if plan.mode == "knowledge":
+        return UnifiedRoute(
+            mode="knowledge",
+            domains=frozenset({"infra"}),
+            need_rag=True,
+            need_live=False,
+            complexity="simple",
+            confidence=plan.confidence,
+            reason=plan.reason,
+            module_mode="knowledge",
+            need_prometheus=False,
+        )
+
+    from app.services.module_orchestrator import persona_addendum
+    persona = persona_addendum(plan)
+
+    return UnifiedRoute(
+        mode="live",
+        domains=plan.domains,
+        need_rag=True,
+        need_live=True,
+        complexity=_complexity(message, mode="live"),
+        confidence=plan.confidence,
+        reason=plan.reason,
+        wants_linux=wants_linux,
+        wants_windows=wants_windows,
+        wants_openshift=wants_openshift,
+        linux_specific=linux_specific,
+        windows_specific=windows_specific,
+        module_mode=plan.mode,
+        modules=mods,
+        join_keys=plan.join_keys,
+        need_prometheus=bool(plan.need_prometheus),
+        persona_addendum=persona,
+    )
 
 
 def route_unified(
@@ -137,7 +105,7 @@ def route_unified(
     clarification_pending: bool = False,
     skip_ctx: bool = False,
 ) -> UnifiedRoute:
-    """Unified soru için tek structured rota kararı."""
+    """Unified soru için tek structured rota kararı (module-first, auto)."""
     msg = message or ""
 
     from app.services.chat_planning_intent import (
@@ -145,11 +113,11 @@ def route_unified(
         is_cross_platform_planning,
         resolve_planning_scope,
         is_depth_followup,
-        message_has_vcenter_intent,
     )
     from app.services.chat_path_policy import is_knowledge_only
+    from app.services.module_orchestrator import plan_modules, persona_addendum
 
-    # 1) Planlama netleştirme
+    # 1) Planlama netleştirme (MTV / taşıma kapsamı — ayrı ürün akışı)
     if planning_needs_clarification(
         msg,
         is_followup=is_followup,
@@ -164,32 +132,46 @@ def route_unified(
             complexity="simple",
             confidence=0.9,
             reason="planning_needs_clarification",
+            wants_openshift=True,
+            module_mode="multi",
+            modules=("virt", "openshift"),
+            join_keys=("vm_name", "hostname"),
+            persona_addendum=(
+                "\n\nYÖNETİCİ → Planlama netleştirme: önce kapsam seçtir; tool çağırma.\n"
+            ),
         )
 
-    # 2) Planlama agentic (scope / depth / cross-platform)
+    # 2) Planlama agentic (scope / depth / cross-platform migrate)
     scope = resolve_planning_scope(msg)
     if scope or is_depth_followup(msg) or is_cross_platform_planning(msg):
-        _, _, _, ls, ws = _platform_flags(msg, skip_ctx=skip_ctx)
-        reason = (
-            f"planning_scope:{scope}" if scope
-            else ("planning_depth" if is_depth_followup(msg) else "planning_cross")
-        )
+        plan = plan_modules(msg, skip_ctx=skip_ctx)
+        domains = frozenset({"vcenter", "openshift", "infra"})
+        mods = plan.modules if plan.mode == "multi" and len(plan.modules) >= 2 else ("virt", "openshift")
         return UnifiedRoute(
             mode="planning_agentic",
-            domains=frozenset({"vcenter", "openshift", "infra"}),
+            domains=domains,
             need_rag=True,
             need_live=True,
             complexity=_complexity(msg, mode="planning_agentic"),
             confidence=0.85,
-            reason=reason,
+            reason=(
+                f"planning_scope:{scope}" if scope
+                else ("planning_depth" if is_depth_followup(msg) else "planning_cross")
+            ),
             wants_linux=False,
             wants_windows=False,
             wants_openshift=True,
-            linux_specific=ls,
-            windows_specific=ws,
+            module_mode="multi",
+            modules=tuple(mods),
+            join_keys=plan.join_keys or ("vm_name", "hostname"),
+            need_prometheus=False,
+            persona_addendum=persona_addendum(plan) if plan.mode == "multi" else (
+                "\n\nYÖNETİCİ → vCenter↔OpenShift planlama: vcenter + openshift READ-ONLY; "
+                "Linux SSH açma. Join: vm_name/hostname.\n"
+            ),
         )
 
-    # Saf bilgi / selamlaşma
+    # 3) Saf bilgi / selamlaşma
     if is_knowledge_only(msg):
         from app.services.chat_path_policy import is_chitchat
         reason = "chitchat" if is_chitchat(msg) else "knowledge_only"
@@ -201,41 +183,15 @@ def route_unified(
             complexity="simple",
             confidence=0.95 if reason == "chitchat" else 0.8,
             reason=reason,
+            module_mode="knowledge",
         )
 
-    # 4) Canlı / genel
-    wl, ww, wo, ls, ws = _platform_flags(msg, skip_ctx=skip_ctx)
-    domains = _domains_for(
-        msg,
-        wants_linux=wl,
-        wants_windows=ww,
-        wants_openshift=wo,
-        linux_specific=ls,
-        windows_specific=ws,
+    # 4) Module-first canlı rota (clarify yok)
+    plan = plan_modules(msg, skip_ctx=skip_ctx)
+    route = _from_module_plan(msg, plan)
+    logger.info(
+        "[ModuleOrch] mode=%s modules=%s domains=%s conf=%.2f reason=%s prom=%s",
+        plan.mode, plan.modules, sorted(plan.domains), plan.confidence,
+        plan.reason, plan.need_prometheus,
     )
-    conf = 0.7
-    reason = "live"
-    if wo and not ls and not ws:
-        reason = "live_openshift"
-        conf = 0.75
-    elif message_has_vcenter_intent(msg) and not ls and not ws:
-        reason = "live_vcenter"
-        conf = 0.75
-    elif wl or ww:
-        reason = "live_os"
-        conf = 0.72
-
-    return UnifiedRoute(
-        mode="live",
-        domains=domains,
-        need_rag=True,
-        need_live=True,
-        complexity=_complexity(msg, mode="live"),
-        confidence=conf,
-        reason=reason,
-        wants_linux=wl,
-        wants_windows=ww,
-        wants_openshift=wo,
-        linux_specific=ls,
-        windows_specific=ws,
-    )
+    return route

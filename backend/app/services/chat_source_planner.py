@@ -109,6 +109,8 @@ def plan_sources(
             complexity = route.complexity
             need_rag = bool(use_rag and route.need_rag)
             need_live = bool(route.need_live and not skip_ctx)
+            # Module-first: Prometheus yalnız plan izin verirse
+            need_prom = bool(getattr(route, "need_prometheus", False))
         except Exception:
             domains = clamp_domains(scope_l, domains)
     else:
@@ -124,10 +126,16 @@ def plan_sources(
             reason = "knowledge"
             need_live = False
 
+    # Kapsamlı perf kelimesi: yalnız linux/windows domain varken Prom aç
     if any(k in ml for k in _PERF) or any(k in ml for k in ("yavaş", "yavas", "darboğaz", "bottleneck")):
-        need_prom = True
-        intent = "performance" if intent == "live" else intent
-        complexity = "deep" if any(k in ml for k in _TROUBLE) else complexity
+        if "linux" in domains or "windows" in domains or "exadata" in domains:
+            need_prom = True
+            intent = "performance" if intent == "live" else intent
+            complexity = "deep" if any(k in ml for k in _TROUBLE) else complexity
+        # virt-only: Prom açma (vcenter_perf_query)
+        if domains <= frozenset({"vcenter", "infra", "openshift"}) and "linux" not in domains:
+            if "vcenter" in domains and "linux" not in domains and "windows" not in domains:
+                need_prom = False
 
     if any(k in ml for k in _TROUBLE):
         intent = "troubleshooting" if intent in ("live", "performance") else intent

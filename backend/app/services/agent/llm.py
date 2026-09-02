@@ -51,17 +51,21 @@ def _ollama_chat(payload: Dict[str, Any], timeout: int):
 
 def _parse_tool_calls(msg: Dict[str, Any]) -> List[Dict[str, Any]]:
     tool_calls: List[Dict[str, Any]] = []
-    for tc in msg.get("tool_calls", []) or []:
+    for idx, tc in enumerate(msg.get("tool_calls", []) or []):
         fn = tc.get("function", {}) or {}
         raw_args = fn.get("arguments", {})
         if isinstance(raw_args, str):
             try:
-                raw_args = json.loads(raw_args)
+                raw_args = json.loads(raw_args) if raw_args.strip() else {}
             except Exception:
                 raw_args = {}
         name = fn.get("name", "")
         if name:
-            tool_calls.append({"name": name, "arguments": raw_args or {}})
+            tool_calls.append({
+                "id": tc.get("id") or f"call_{idx}_{name}",
+                "name": name,
+                "arguments": raw_args or {},
+            })
     return tool_calls
 
 

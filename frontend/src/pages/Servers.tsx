@@ -65,8 +65,13 @@ interface Server {
   memory_gb: number
   ai_ready: boolean
   has_ssh_secret?: boolean
+  ssh_username?: string
   hypervisor_id: number | null
   hypervisor_name: string | null
+  vcenter_name?: string | null
+  vcenter_endpoint?: string | null
+  vm_host_name?: string | null
+  vm_host_ref?: string | null
   connection_config: any
   node_exporter?: {
     installed: boolean
@@ -532,8 +537,13 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
   const [snapRetention, setSnapRetention] = useState('1w')
   const [vmSearching, setVmSearching] = useState(false)
 
-  const { data: vmDetails, refetch: refetchVmDetails } = useQuery<{
+  const { data: vmDetails, refetch: refetchVmDetails, isFetching: vmDetailsFetching } = useQuery<{
     hypervisor_vm_id?: string
+    hypervisor_name?: string
+    vcenter_name?: string
+    vcenter_endpoint?: string
+    vm_host_name?: string
+    vm_host_ref?: string
     vm_name?: string
     vm_guest_hostname?: string
     vm_guest_ip?: string
@@ -548,15 +558,18 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
     vm_hardware_version?: string
     vm_last_sync?: string
     can_snapshot: boolean
+    source?: string
+    live_error?: string | null
   }>({
     queryKey: ['server-vm-details', server.id],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}/vm-details`)
+      const r = await fetch(`${API_BASE_URL}/snapshots/server/${server.id}/vm-details?live=true`)
       if (!r.ok) return { can_snapshot: false }
       return r.json()
     },
     enabled: tab === 'info' && !!server.hypervisor_id,
     refetchInterval: false,
+    staleTime: 30_000,
   })
 
   const handleSearchVm = async () => {
@@ -611,7 +624,16 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
     } finally { setIsAnalyzing(false) }
   }
 
-  const sshUser = server.connection_config?.username
+  const sshUser =
+    server.ssh_username
+    || server.connection_config?.username
+    || ''
+  const vcenterLabel = server.vcenter_name || server.hypervisor_name || ''
+  const vcenterEndpoint = server.vcenter_endpoint || ''
+  const esxiHost =
+    vmDetails?.vm_host_name
+    || server.vm_host_name
+    || ''
   const cpuColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 60 ? 'bg-yellow-500' : 'bg-green-500'
   const memColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-amber-500' : 'bg-blue-500'
   const diskColor = (v: number | null) => v === null ? 'bg-slate-600' : v > 85 ? 'bg-red-500' : v > 70 ? 'bg-amber-500' : 'bg-blue-500'
@@ -631,9 +653,20 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
             </h2>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
-              {server.hypervisor_name && (
-                <span className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
-                  <Cloud size={11} strokeWidth={2} /> {server.hypervisor_name}
+              {vcenterLabel && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                  title={vcenterEndpoint ? `vCenter: ${vcenterLabel} (${vcenterEndpoint})` : `vCenter: ${vcenterLabel}`}
+                >
+                  <Cloud size={11} strokeWidth={2} /> {vcenterLabel}
+                </span>
+              )}
+              {esxiHost && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                  title={`ESXi host: ${esxiHost}`}
+                >
+                  ESXi {esxiHost}
                 </span>
               )}
             </div>
@@ -682,7 +715,11 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   [t('label_server_name'), server.name],
                   [t('label_ip'), server.ip_address || '-'],
                   ['Hostname', server.hostname || '-'],
-                  ...(server.hypervisor_name ? [['Hypervisor', server.hypervisor_name]] : []),
+                  ...(vcenterLabel ? [[
+                    'vCenter',
+                    vcenterEndpoint ? `${vcenterLabel} (${vcenterEndpoint})` : vcenterLabel,
+                  ]] : []),
+                  ...(esxiHost ? [['ESXi host', esxiHost]] : []),
                   [t('label_type'), server.server_type || '-'],
                   [t('label_os_distro'), server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
                   [t('label_os_version'), server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
@@ -791,22 +828,27 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       {vmDetails?.vm_last_sync && (
                         <span className="text-[10px] text-slate-500 font-normal">
                           {t('last_sync')}: {new Date(vmDetails.vm_last_sync).toLocaleString(dateLoc)}
+                          {vmDetails.source === 'vcenter_live' ? ' · live' : ''}
+                          {vmDetailsFetching ? ' · …' : ''}
                         </span>
                       )}
                     </h3>
-                    {/* Manuel yenileme — otomatik sync 2 saatte bir, gerekirse elle çalıştırılır */}
+                    {/* Manuel yenileme — canlı vCenter API */}
                     <button
                       onClick={handleSearchVm}
-                      disabled={vmSearching}
+                      disabled={vmSearching || vmDetailsFetching}
                       className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       title={t('refresh_vm_title')}
                     >
-                      {vmSearching
+                      {(vmSearching || vmDetailsFetching)
                         ? <><span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" /> {t('refreshing')}</>
                         : `↻ ${t('refresh_action')}`
                       }
                     </button>
                   </div>
+                  {vmDetails?.live_error && (
+                    <p className="text-[11px] text-amber-400/90">{vmDetails.live_error}</p>
+                  )}
 
                   {/* VM detay grid */}
                   {vmDetails?.hypervisor_vm_id ? (
@@ -814,6 +856,17 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       {[
                         { label: 'VM ID',              val: vmDetails.hypervisor_vm_id },
                         { label: t('label_vm_name'),   val: vmDetails.vm_name },
+                        {
+                          label: 'vCenter',
+                          val: (vmDetails.vcenter_name || vmDetails.hypervisor_name)
+                            ? (
+                                vmDetails.vcenter_endpoint
+                                  ? `${vmDetails.vcenter_name || vmDetails.hypervisor_name} (${vmDetails.vcenter_endpoint})`
+                                  : (vmDetails.vcenter_name || vmDetails.hypervisor_name)
+                              )
+                            : undefined,
+                        },
+                        { label: 'ESXi host',          val: vmDetails.vm_host_name },
                         { label: 'Guest Host',         val: vmDetails.vm_guest_hostname },
                         { label: 'Guest IP',           val: vmDetails.vm_guest_ip },
                         { label: 'vCPU',               val: vmDetails.vm_cpu_count != null ? `${vmDetails.vm_cpu_count} core` : undefined },
@@ -1874,8 +1927,23 @@ const Servers: React.FC = () => {
                             </span>
                           )}
                           {server.hypervisor_name ? (
-                            <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded">
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                              title={
+                                server.vcenter_endpoint
+                                  ? `vCenter: ${server.hypervisor_name} (${server.vcenter_endpoint})`
+                                  : `vCenter: ${server.hypervisor_name}`
+                              }
+                            >
                               <Cloud size={10} strokeWidth={2} /> {server.hypervisor_name}
+                            </span>
+                          ) : null}
+                          {server.vm_host_name ? (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                              title={`ESXi host: ${server.vm_host_name}`}
+                            >
+                              ESXi {server.vm_host_name}
                             </span>
                           ) : null}
                         </div>

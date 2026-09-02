@@ -285,6 +285,8 @@ async def startup_tasks():
                 "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS network_rx_bytes_per_sec NUMERIC(20,2)",
                 "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS network_tx_bytes_per_sec NUMERIC(20,2)",
                 "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS metrics_extra JSONB",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS product_version VARCHAR(64)",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS product_full_name VARCHAR(255)",
             ]:
                 _conn.execute(_sa_text(_col_sql))
             _conn.execute(_sa_text(

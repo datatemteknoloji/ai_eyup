@@ -1191,6 +1191,7 @@ def ask_hypervisor_question(
                 # 2) Agentic tool çıktısı yalnız LLM dalına eklenir
                 live_hint = True
                 agentic_extra = ""
+                inventory_done = False
                 if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
                     try:
                         from app.services.agent.tools import domains_for_platform
@@ -1216,6 +1217,26 @@ def ask_hypervisor_question(
                             agentic_extra = ""
                         else:
                             agentic_extra = final.get("tool_text") or ""
+                        det_inv = (final.get("deterministic_answer") or "").strip()
+                        if det_inv:
+                            result = {
+                                "answer": det_inv,
+                                "intents": [
+                                    "virt_inventory_deterministic",
+                                    final.get("inventory_kind") or "inventory",
+                                    route.intent,
+                                ],
+                                "context_lines": 0,
+                                "model": None,
+                                "latency_ms": 0,
+                                "error": None,
+                                "normalized_q": route.normalized_q,
+                            }
+                            inventory_done = True
+                            logger.info(
+                                "[HypervisorAsk] inventory deterministic kind=%s tools=%s",
+                                final.get("inventory_kind"), final.get("tools_used"),
+                            )
                         logger.info(
                             "[HypervisorAsk] chat_source tools=%s db_first=%s live=%s status=%s full=%s",
                             final.get("tools_used"),
@@ -1244,29 +1265,46 @@ def ask_hypervisor_question(
                             for item in gen:
                                 if item.get("type") == "final":
                                     agentic_extra = item.get("tool_text") or ""
+                                    det_inv = (item.get("deterministic_answer") or "").strip()
+                                    if det_inv:
+                                        result = {
+                                            "answer": det_inv,
+                                            "intents": [
+                                                "virt_inventory_deterministic",
+                                                item.get("inventory_kind") or "inventory",
+                                                route.intent,
+                                            ],
+                                            "context_lines": 0,
+                                            "model": None,
+                                            "latency_ms": 0,
+                                            "error": None,
+                                            "normalized_q": route.normalized_q,
+                                        }
+                                        inventory_done = True
                                     break
                                 if item.get("type") in ("skipped", "error"):
                                     break
                         except Exception as e2:
                             logger.warning(f"[HypervisorAsk] agentic fallback: {e2}")
 
-                ask_question = ask_user_q
-                tool_cap = 200000 if full_scan_this_turn else 20000
-                if agentic_extra:
-                    ask_question = (
-                        ask_user_q
-                        + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
-                        + agentic_extra[:tool_cap]
-                    )
+                if not inventory_done:
+                    ask_question = ask_user_q
+                    tool_cap = 200000 if full_scan_this_turn else 20000
+                    if agentic_extra:
+                        ask_question = (
+                            ask_user_q
+                            + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
+                            + agentic_extra[:tool_cap]
+                        )
 
-                result = answer_hypervisor_question(
-                    db=db,
-                    question=ask_question,
-                    model=req.model,
-                    conversation_history=history,
-                    skip_deterministic=True,  # ham soruda zaten denendi / full_scan
-                    user_question=ask_user_q,
-                )
+                    result = answer_hypervisor_question(
+                        db=db,
+                        question=ask_question,
+                        model=req.model,
+                        conversation_history=history,
+                        skip_deterministic=True,  # ham soruda zaten denendi / full_scan
+                        user_question=ask_user_q,
+                    )
                 if full_scan_this_turn:
                     intents = list(result.get("intents") or [])
                     if "full_scan" not in intents:

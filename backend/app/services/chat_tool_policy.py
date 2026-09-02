@@ -1,9 +1,8 @@
 """Chat tool politikası — DB-first (özellikle virt / vCenter).
 
-İlk fazda yalnızca DATABASE tool'ları (db_*) modele sunulur; sonuç stale/boş
-ise veya faz adımı dolunca canlı vCenter tool'ları açılır. Virt kapsamında
-Linux SSH araçları zaten domain filtresiyle kapalıdır; politika ek olarak
-yanlış canlı çağrıları faz-1'de reddeder.
+İlk fazda db_* öncelikli; stale/boş veya faz dolunca canlı vCenter açılır.
+Esnaf merdiveni: domain'de linux/windows varsa SSH/WinRM basamağı serbest
+(Prometheus yok diye reddetme).
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ DB_FIRST_TOOLS: FrozenSet[str] = frozenset({
     "db_list_datastores",
     "db_list_esx_hosts",
     "db_virt_alarms",
+    "db_virt_cross_match",
 })
 
 # L3 — canlı API (DB yetersizse)
@@ -24,6 +24,7 @@ LIVE_VCENTER_TOOLS: FrozenSet[str] = frozenset({
     "vcenter_ask",
     "vcenter_live_alarms",
     "vcenter_live_tasks",
+    "vcenter_perf_query",
 })
 
 # Virt sohbetinde asla (SSH / Linux teşhis)
@@ -84,27 +85,45 @@ def result_needs_live_escalation(tool_name: str, result: Any) -> bool:
     if result.get("stale") is True:
         return True
     # Liste boş
-    for key in ("vms", "datastores", "hosts", "alarms"):
+    for key in ("vms", "datastores", "hosts", "alarms", "rows"):
         if key in result and isinstance(result.get(key), list) and len(result[key]) == 0:
             return True
     if result.get("count") == 0 and any(
-        k in result for k in ("vms", "datastores", "hosts", "alarms")
+        k in result for k in ("vms", "datastores", "hosts", "alarms", "rows")
     ):
         return True
     return False
 
 
-def tool_blocked_in_db_first_phase(name: str) -> Optional[str]:
-    """Faz-1'de yasaklı tool çağrısı için model mesajı."""
+def tool_blocked_in_db_first_phase(
+    name: str,
+    *,
+    domains: Optional[frozenset] = None,
+) -> Optional[str]:
+    """Faz-1'de yasaklı tool çağrısı için model mesajı.
+
+    vcenter_perf_query istisna: Monitor Disk Rate/Requests DB'de yok;
+    READ-ONLY QueryPerf faz-1'de de serbest (mutate değil).
+    domains içinde linux/windows varsa SSH/WinRM esnaf merdiveninde serbest.
+    """
     if name in DB_FIRST_TOOLS:
+        return None
+    if name == "vcenter_perf_query":
         return None
     if name in LIVE_VCENTER_TOOLS:
         return (
             f"'{name}' henüz kapalı (DB-first fazı). Önce db_list_vms / "
-            "db_list_datastores / db_list_esx_hosts / db_virt_alarms / db_vm_detail "
-            "çağır. Sonuç stale veya boşsa canlı araçlar sonraki adımda açılır."
+            "db_list_datastores / db_list_esx_hosts / db_virt_alarms / "
+            "db_virt_cross_match / db_vm_detail çağır. "
+            "Anlık Disk Rate/CPU için vcenter_perf_query kullanılabilir. "
+            "Diğer canlı araçlar sonraki adımda açılır."
         )
     if name.startswith(SSH_DIAG_PREFIXES) or name.startswith("win_"):
+        dom = domains or frozenset()
+        if name.startswith("win_") and "windows" in dom:
+            return None
+        if (not name.startswith("win_")) and "linux" in dom:
+            return None  # esnaf: SSH basamağı açık
         return (
             f"'{name}' sanallaştırma/DB-first kapsamında değil "
             "(SSH/WinRM kapalı). DB veya vCenter araçlarını kullan."
@@ -114,10 +133,19 @@ def tool_blocked_in_db_first_phase(name: str) -> Optional[str]:
 
 DB_FIRST_SYSTEM_ADDENDUM = (
     "\n\nDB-FIRST POLİTİKA (zorunlu):\n"
-    "- İlk adımlarda YALNIZCA db_list_vms, db_vm_detail, db_list_datastores, "
-    "db_list_esx_hosts, db_virt_alarms, infra_overview kullan.\n"
-    "- vcenter_ask / vcenter_live_* araçları yalnızca DB sonucu stale=true, "
-    "boş liste veya hata döndükten SONRA (sistem 'canlı araçlar açıldı' derse) kullan.\n"
-    "- Linux SSH get_* / run_diagnostic bu kapsamda YASAK.\n"
-    "- Cevabında as_of / stale bilgisini kısaca belirt.\n"
+    "- İlk adımlarda öncelik: db_list_vms, db_vm_detail, db_list_datastores, "
+    "db_list_esx_hosts, db_virt_alarms, db_virt_cross_match, infra_overview.\n"
+    "- Domain'de linux varsa SSH get_* / run_diagnostic SERBEST (esnaf merdiveni basamak 4); "
+    "Prometheus yoksa guest anlık metrik için SSH kullan — 'iznim yok' deme.\n"
+    "- VM disk adet/boyut: db_list_vms (disk_gb, disk_count, disks[]) — tek çağrı; "
+    "27× db_vm_detail yapma. disk_gb dolu satıra 'toplanmadı' YAZMA.\n"
+    "- Kullanıcı özellik listesi verdiyse fields=[...] geç (ESXi/VM/datastore); "
+    "disk_gb/disk_count yine korunur.\n"
+    "- Birden fazla SoT'u (host+VM+datastore+alarm) eşleştirmek için "
+    "db_virt_cross_match(join_on=host|datastore|entity) kullan — elle birleştirme.\n"
+    "- Monitor Disk Rate / Disk Requests / canlı CPU-disk-net için "
+    "vcenter_perf_query. metrics=[disk_rate] veya [disk_requests,cpu]; yalnız istenen metrikler.\n"
+    "- vcenter_ask / vcenter_live_* yalnız DB stale/boş/hata SONRASI "
+    "(sistem 'canlı araçlar açıldı' derse). Hepsi READ-ONLY; write/mutate yok.\n"
+    "- Cevabında as_of / stale / SoT etiketini kısaca belirt.\n"
 )

@@ -273,6 +273,26 @@ def _infra_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, An
         return {"ok": False, "error": str(e)}
 
 
+def _cross_entity_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.cross_entity_match import cross_entity_match
+        names = args.get("names")
+        if isinstance(names, str):
+            names = [n.strip() for n in names.replace(";", ",").split(",") if n.strip()]
+        modules = args.get("modules")
+        if isinstance(modules, str):
+            modules = [m.strip() for m in modules.replace(";", ",").split(",") if m.strip()]
+        return cross_entity_match(
+            db,
+            names=names if isinstance(names, list) else None,
+            modules=modules if isinstance(modules, list) else None,
+            limit=int(args.get("limit") or 50),
+        )
+    except Exception as e:
+        logger.error("[Tool] cross_entity_match hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     question = (args.get("question") or "").strip()
     if not question:
@@ -299,6 +319,12 @@ def _db_list_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
         lim = int(args.get("limit") or default_lim)
         if is_full_scan_request():
             lim = max(lim, default_lim)
+        fields = args.get("fields")
+        if isinstance(fields, str):
+            fields = [f.strip() for f in fields.split(",") if f.strip()]
+        include_disks = args.get("include_disks")
+        if include_disks is None:
+            include_disks = True
         return list_vms_db(
             db,
             hypervisor=args.get("hypervisor"),
@@ -306,6 +332,8 @@ def _db_list_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
             host_name=args.get("host_name"),
             cluster=args.get("cluster"),
             limit=lim,
+            fields=fields if isinstance(fields, list) else None,
+            include_disks=bool(include_disks),
         )
     except Exception as e:
         logger.error("[Tool] db_list_vms hata: %s", e, exc_info=True)
@@ -324,7 +352,14 @@ def _db_vm_detail_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]
 def _db_list_datastores_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from app.services.virt_db_query import list_datastores_db
-        return list_datastores_db(db, hypervisor=args.get("hypervisor"))
+        fields = args.get("fields")
+        if isinstance(fields, str):
+            fields = [f.strip() for f in fields.split(",") if f.strip()]
+        return list_datastores_db(
+            db,
+            hypervisor=args.get("hypervisor"),
+            fields=fields if isinstance(fields, list) else None,
+        )
     except Exception as e:
         logger.error("[Tool] db_list_datastores hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
@@ -333,7 +368,14 @@ def _db_list_datastores_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
 def _db_list_esx_hosts_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from app.services.virt_db_query import list_esx_hosts_db
-        return list_esx_hosts_db(db, hypervisor=args.get("hypervisor"))
+        fields = args.get("fields")
+        if isinstance(fields, str):
+            fields = [f.strip() for f in fields.split(",") if f.strip()]
+        return list_esx_hosts_db(
+            db,
+            hypervisor=args.get("hypervisor"),
+            fields=fields if isinstance(fields, list) else None,
+        )
     except Exception as e:
         logger.error("[Tool] db_list_esx_hosts hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
@@ -350,6 +392,31 @@ def _db_virt_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, An
         )
     except Exception as e:
         logger.error("[Tool] db_virt_alarms hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_virt_cross_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """READ-ONLY: host/VM/datastore/alarm SoT'larını ortak anahtarla birleştir."""
+    try:
+        from app.services.virt_db_query import cross_match_virt_db
+        fields = args.get("fields")
+        if isinstance(fields, str):
+            fields = [f.strip() for f in fields.split(",") if f.strip()]
+        include = args.get("include")
+        if isinstance(include, str):
+            include = [x.strip() for x in include.split(",") if x.strip()]
+        return cross_match_virt_db(
+            db,
+            join_on=str(args.get("join_on") or "host"),
+            include=include if isinstance(include, list) else None,
+            hypervisor=args.get("hypervisor"),
+            host_name=args.get("host_name"),
+            fields=fields if isinstance(fields, list) else None,
+            hours=int(args.get("hours") or 48),
+            limit=int(args.get("limit") or 100),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_virt_cross_match hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -392,6 +459,36 @@ def _vcenter_live_tasks_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
         }
     except Exception as e:
         logger.error(f"[Tool] vcenter_live_tasks hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _vcenter_perf_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """READ-ONLY dinamik QueryPerf — katalogdan yalnız istenen metrikler; mutate yok."""
+    try:
+        from app.services.virt_perf_query import run_virt_perf_query
+        from app.services.vmware.perf_catalog import is_mutate_method
+
+        # Savunma: args içine sızmış mutate method adı varsa reddet
+        for k in ("method", "soap_method", "operation"):
+            if is_mutate_method(str(args.get(k) or "")):
+                return {"ok": False, "error": f"Mutate method yasak: {args.get(k)}"}
+
+        metrics = args.get("metrics")
+        if isinstance(metrics, str):
+            metrics = [m.strip() for m in metrics.replace(";", ",").split(",") if m.strip()]
+        return run_virt_perf_query(
+            db,
+            entity=str(args.get("entity") or "host"),
+            target=args.get("target") or args.get("host") or args.get("vm"),
+            metrics=metrics if isinstance(metrics, list) else None,
+            hypervisor=args.get("hypervisor"),
+            top_n=int(args.get("top_n") or 10),
+            max_sample=int(args.get("max_sample") or 1),
+            interval_id=int(args.get("interval_id") or 20),
+            list_catalog=bool(args.get("list_catalog")),
+        )
+    except Exception as e:
+        logger.error("[Tool] vcenter_perf_query hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -796,25 +893,71 @@ TOOLS: Dict[str, Tool] = {
         direct_handler=_infra_overview_handler,
         direct_label="Platform envanter özeti",
     ),
+    "cross_entity_match": Tool(
+        name="cross_entity_match",
+        description=(
+            "Modüller arası READ-ONLY envanter JOIN: hostname / vm_name / IP ile "
+            "Linux, Windows, vCenter VM/ESXi host kayıtlarını tek satırda eşleştirir. "
+            "Unified'de linux+virt, ocp+virt vb. çapraz sorularda önce anahtar doğrula; "
+            "sonra ilgili canlı tool'larla alanları doldur. Uydurma eşleştirme yapma."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Eşleştirilecek ad/IP listesi",
+                },
+                "modules": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "linux, windows, virt, openshift (opsiyonel filtre)",
+                },
+                "limit": {"type": "integer"},
+            },
+            "required": ["names"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_cross_entity_match_handler,
+        direct_label="Modüller arası envanter join",
+    ),
     "db_list_vms": Tool(
         name="db_list_vms",
         description=(
-            "VMware/hypervisor VM envanterini DATABASE'den listeler (canlı API yok). "
-            "Kaç VM, poweredOn/Off, host/cluster/datastore, vCPU/RAM. "
+            "VMware/hypervisor VM envanterini DATABASE'den listeler (READ-ONLY, canlı API yok). "
+            "Kaç VM, poweredOn/Off, host/cluster/datastore, vCPU/RAM, disk_gb, disk_count, disks[]. "
+            "VM disk adet/boyut sorularında TEK çağrı yeter — her VM için db_vm_detail döngüsü yapma. "
+            "disk_gb doluysa 'toplanmadı' deme. fields ile kolon seç; disk_gb/disk_count her zaman korunur. "
             "Önce bunu kullan; stale=true veya eksik alan varsa vcenter_ask / canlı tool'a düş."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "hypervisor": {"type": "string", "description": "vCenter adı filtresi (opsiyonel)"},
+                "hypervisor": {"type": "string", "description": "vCenter kaydı adı/label filtresi (ESXi değil; örn. Office)"},
                 "power_state": {"type": "string", "description": "örn. poweredOn / poweredOff"},
-                "host_name": {"type": "string", "description": "ESXi host adı"},
+                "host_name": {"type": "string", "description": "ESXi host adı/IP (vm_host_name; vCenter adı değil)"},
                 "cluster": {"type": "string", "description": "Cluster adı"},
                 "limit": {
                     "type": "integer",
                     "description": (
                         "Max satır. Varsayılan: Gelişmiş Ayarlar virt_chat_vm_list_limit "
                         "(onaylı tam taramada hard_max)."
+                    ),
+                },
+                "include_disks": {
+                    "type": "boolean",
+                    "description": "true (varsayılan): her VM için disks[{label,capacity_gb,...}] dahil",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "İstenen alanlar. Örn: name, ip, power_state, host (ESXi), "
+                        "esxi_host, cluster, datastore, vcpu, memory_mb, disk_gb, "
+                        "disk_count, disks, guest_os, hypervisor/vcenter (vCenter label). "
+                        "disk_gb/disk_count her zaman eklenir. host ≠ hypervisor."
                     ),
                 },
             },
@@ -828,8 +971,10 @@ TOOLS: Dict[str, Tool] = {
     "db_vm_detail": Tool(
         name="db_vm_detail",
         description=(
-            "Tek VM detayını DATABASE'den getirir (disk listesi, NIC/portgroup, host, guest OS, "
-            "QuickStats özeti). Canlı API yok — önce bunu dene."
+            "Tek VM detayını DATABASE'den getirir (disk listesi, NIC/portgroup, "
+            "ESXi host, vCenter label, guest OS, QuickStats). "
+            "host/esxi_host=ESXi; hypervisor/vcenter=vCenter kaydı — karıştırma. "
+            "Canlı API yok — önce bunu dene."
         ),
         parameters={
             "type": "object",
@@ -847,14 +992,22 @@ TOOLS: Dict[str, Tool] = {
     "db_list_datastores": Tool(
         name="db_list_datastores",
         description=(
-            "Datastore kapasite/free/accessible bilgisini DATABASE'den (virt_datastores) getirir. "
-            "'Yer var mı', 'datastore doluluk' sorularında ÖNCE bunu kullan. "
-            "stale=true veya boşsa canlı vcenter_ask / datastore sync gerekir."
+            "Datastore kapasite/free/accessible bilgisini DATABASE'den (virt_datastores) getirir "
+            "(READ-ONLY). 'Yer var mı', 'datastore doluluk' sorularında ÖNCE bunu kullan. "
+            "fields=[...] ile kolon seç. stale=true veya boşsa canlı vcenter_ask / sync."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "İstenen alanlar. Örn: name, usage_pct, free_gb, capacity_gb, "
+                        "accessible, hypervisor"
+                    ),
+                },
             },
             "required": [],
         },
@@ -866,26 +1019,39 @@ TOOLS: Dict[str, Tool] = {
     "db_list_esx_hosts": Tool(
         name="db_list_esx_hosts",
         description=(
-            "ESXi host CPU/RAM/datastore aggregate ve VM sayılarını DATABASE'den "
-            "(hypervisor_host_metrics son örnek) listeler. Canlı API yok."
+            "ESXi host bilgisini DATABASE'den listeler. "
+            "metrics (CPU/RAM/state) ile inventory (IP, version, vendor) JOIN edilir — "
+            "tek satırda birleşik sonuç. "
+            "Kullanıcının istediği alanları fields ile geç (örn. name,ip,version). "
+            "fields yoksa kısa özet: name,ip,version,connection_state,hypervisor. "
+            "Canlı API yok; stale/eksik alan için sync veya vcenter_ask."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "İstenen alanlar (dinamik). Örn: name, ip, version, vendor, model, "
+                        "cpu_pct, mem_pct, connection_state, vms_total, hypervisor"
+                    ),
+                },
             },
             "required": [],
         },
         risk_level=RiskLevel.READ_ONLY,
         build_command=lambda args: "",
         direct_handler=_db_list_esx_hosts_handler,
-        direct_label="DB ESXi host metrikleri",
+        direct_label="DB ESXi host (join+fields)",
     ),
     "db_virt_alarms": Tool(
         name="db_virt_alarms",
         description=(
-            "vCenter alarmlarını DATABASE'den (system_events, sync edilmiş) listeler. "
-            "Önce bunu kullan; boş/stale ise vcenter_live_alarms."
+            "vCenter alarmlarını DATABASE'den (system_events, sync edilmiş) listeler (READ-ONLY). "
+            "Önce bunu kullan; boş/stale ise vcenter_live_alarms. "
+            "Host/VM/datastore ile birlikte çapraz tablo için db_virt_cross_match tercih et."
         ),
         parameters={
             "type": "object",
@@ -901,13 +1067,54 @@ TOOLS: Dict[str, Tool] = {
         direct_handler=_db_virt_alarms_handler,
         direct_label="DB virt alarmları",
     ),
+    "db_virt_cross_match": Tool(
+        name="db_virt_cross_match",
+        description=(
+            "READ-ONLY çapraz eşleştirme: ESXi host ⋈ VM ⋈ datastore ⋈ alarm SoT'larını "
+            "ortak anahtarla tek satırda birleştirir. "
+            "Örn. 'hangi host'ta alarm var ve disk dolu', 'datastore X'teki VM'ler + host IP'. "
+            "join_on=host|datastore|entity. fields ile çıktı kolonları seç. "
+            "Write/power/destroy YOK — yalnızca DB join."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "join_on": {
+                    "type": "string",
+                    "description": "Eşleştirme ekseni: host (varsayılan) | datastore | entity",
+                },
+                "include": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Kaynaklar: hosts, vms, datastores, alarms (varsayılan hepsi)",
+                },
+                "hypervisor": {"type": "string", "description": "vCenter adı filtresi"},
+                "host_name": {"type": "string", "description": "Tek ESXi host filtresi"},
+                "hours": {"type": "integer", "description": "Alarm penceresi (saat)"},
+                "limit": {"type": "integer", "description": "Max satır (varsayılan 100)"},
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Çıktı alanları. Örn: match_key, host, host_ip, vm_count, vms, "
+                        "datastore, ds_usage_pct, alarm_count, alarms, hypervisor"
+                    ),
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_virt_cross_match_handler,
+        direct_label="DB virt çapraz eşleştirme",
+    ),
     "vcenter_ask": Tool(
         name="vcenter_ask",
         description=(
-            "vCenter/hypervisor ile ilgili doğal dil sorusunu CANLI veriyle yanıtlar (VM listesi, "
-            "host/VM durumu, kaynak kullanımı, snapshot, event/alarm vb.) — mevcut hypervisor "
-            "zeka katmanını (deterministik + gerekirse canlı vCenter sorgusu) kullanır. "
-            "Sanallaştırma/hypervisor/VM ile ilgili SPESİFİK bir soru geldiğinde önce bunu dene."
+            "vCenter/hypervisor ile ilgili doğal dil sorusunu CANLI READ-ONLY veriyle yanıtlar "
+            "(VM listesi, host/VM durumu, kaynak kullanımı, snapshot, event/alarm). "
+            "Write/power/destroy/reconfig YAPMAZ. "
+            "DB yetersiz/stale ise kullan; çapraz tablo için önce db_virt_cross_match dene."
         ),
         parameters={
             "type": "object",
@@ -960,6 +1167,61 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_vcenter_live_tasks_handler,
         direct_label="vCenter canlı task sorgusu",
+    ),
+    "vcenter_perf_query": Tool(
+        name="vcenter_perf_query",
+        description=(
+            "vCenter Monitor tarzı CANLI performans (READ-ONLY QueryPerf). "
+            "Geniş counter kataloğundan YALNIZ kullanıcının istediği metrikleri çeker "
+            "(disk_rate, disk_requests, cpu, mem, net, vdisk, overview veya kanonik key). "
+            "Host Disk Rate/Requests Top-N (naa.*/NVMe) için entity=host, "
+            "metrics=[disk_rate] veya [disk_requests], target=ESXi adı, top_n=10. "
+            "VM için entity=vm + target=VM adı. Envanter ile join (IP, version…). "
+            "Power/destroy/reconfig/mutate YOK. Kataloğu görmek için list_catalog=true."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "host (ESXi) veya vm — varsayılan host",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "ESXi host adı veya VM adı",
+                },
+                "metrics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "İstenen metrikler/bundle: disk_rate, disk_requests, disk, cpu, mem, "
+                        "net, vdisk, overview veya disk_read_kbps, cpu_usage_pct, …"
+                    ),
+                },
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "top_n": {
+                    "type": "integer",
+                    "description": "Disk instance Top-N (varsayılan 10)",
+                },
+                "max_sample": {
+                    "type": "integer",
+                    "description": "Realtime sample sayısı (1–180, varsayılan 1)",
+                },
+                "interval_id": {
+                    "type": "integer",
+                    "description": "Perf interval saniye (realtime=20)",
+                },
+                "list_catalog": {
+                    "type": "boolean",
+                    "description": "true ise QueryPerf atmadan katalog listeler",
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_perf_query_handler,
+        direct_label="vCenter dinamik perf (QueryPerf)",
     ),
     "openshift_ask": Tool(
         name="openshift_ask",
@@ -1507,14 +1769,17 @@ TOOLS: Dict[str, Tool] = {
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
+    "cross_entity_match": frozenset({"infra", "linux", "windows", "vcenter", "openshift"}),
     "db_list_vms": frozenset({"vcenter", "infra"}),
     "db_vm_detail": frozenset({"vcenter", "infra"}),
     "db_list_datastores": frozenset({"vcenter", "infra"}),
     "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
     "db_virt_alarms": frozenset({"vcenter", "infra"}),
+    "db_virt_cross_match": frozenset({"vcenter", "infra"}),
     "vcenter_ask": frozenset({"vcenter"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),
+    "vcenter_perf_query": frozenset({"vcenter"}),
     "openshift_ask": frozenset({"openshift"}),
     "list_kubevirt_vms": frozenset({"openshift", "vcenter"}),
     "list_ocp_pods": frozenset({"openshift"}),

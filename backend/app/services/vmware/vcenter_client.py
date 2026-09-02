@@ -30,6 +30,16 @@ def _sync_workers(requested: Optional[int] = None) -> int:
     return DEFAULT_SYNC_WORKERS
 
 
+def _xml_text(value: Optional[str]) -> str:
+    """SOAP XML element içeriği için escape (& < > \" ').
+
+    Şifrede '&' vb. varken ham gömme Login XML'ini bozar; REST Basic Auth
+    çalışır, SOAP SessionManager.Login düşer → ESX host metrik sync boş kalır.
+    """
+    from xml.sax.saxutils import escape
+    return escape(value or "", entities={'"': "&quot;", "'": "&apos;"})
+
+
 class VCenterClient:
     """vCenter REST API client"""
     
@@ -1222,27 +1232,37 @@ class VCenterClient:
         return None
 
     def _soap_login(self) -> Optional[str]:
-        """SOAP SessionManager.Login ile cookie al."""
-        import xml.etree.ElementTree as ET
+        """SOAP SessionManager.Login ile cookie al.
+
+        userName/password XML text olarak escape edilir (& → &amp; vb.).
+        """
         soap_url = f"https://{self.host}:{self.port}/sdk"
+        user_xml = _xml_text(self.username)
+        pass_xml = _xml_text(self.password)
         login_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
   <soapenv:Body>
     <vim25:Login>
       <vim25:_this type="SessionManager">SessionManager</vim25:_this>
-      <vim25:userName>{self.username}</vim25:userName>
-      <vim25:password>{self.password}</vim25:password>
+      <vim25:userName>{user_xml}</vim25:userName>
+      <vim25:password>{pass_xml}</vim25:password>
     </vim25:Login>
   </soapenv:Body>
 </soapenv:Envelope>"""
         try:
             soap_sess = requests.Session()
             soap_sess.verify = self.verify_ssl
-            resp = soap_sess.post(soap_url, data=login_body,
+            resp = soap_sess.post(soap_url, data=login_body.encode("utf-8"),
                                   headers={"Content-Type": "text/xml; charset=utf-8"},
                                   timeout=10)
-            if resp.status_code == 200:
+            if resp.status_code == 200 and "LoginResponse" in (resp.text or ""):
                 return soap_sess  # session has cookie
+            # Şifreyi loglama; yalnızca HTTP + kısa fault özeti
+            snippet = (resp.text or "").replace("\n", " ")[:220]
+            logger.warning(
+                "SOAP login failed host=%s status=%s body=%s",
+                self.host, resp.status_code, snippet,
+            )
         except Exception as e:
             logger.warning(f"SOAP login error: {e}")
         return None
@@ -1505,6 +1525,289 @@ class VCenterClient:
 
         self._perf_cache = (perf_mgr, found)
         return self._perf_cache
+
+    def _perf_mgr_and_counter_index(self, soap_session, soap_url: str):
+        """PerformanceManager MOR + tüm counter index: (group, name, rollup) → id.
+
+        Mevcut _perf_manager_and_counters slot cache'inden bağımsız; dinamik katalog için.
+        """
+        import xml.etree.ElementTree as ET
+        cached = getattr(self, "_perf_full_index", None)
+        if cached:
+            return cached
+
+        body = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveServiceContent>
+      <vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this>
+    </vim25:RetrieveServiceContent>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        resp = soap_session.post(
+            soap_url, data=body,
+            headers={"Content-Type": "text/xml; charset=utf-8"},
+            verify=self.verify_ssl, timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        root = ET.fromstring(resp.text)
+        perf_mgr = None
+        for el in root.iter():
+            if el.tag.split("}")[-1] == "perfManager" and (el.text or "").strip():
+                perf_mgr = el.text.strip()
+                break
+        if not perf_mgr:
+            return None
+
+        body2 = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>PerformanceManager</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>perfCounter</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="PerformanceManager">{perf_mgr}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        resp2 = soap_session.post(
+            soap_url, data=body2,
+            headers={"Content-Type": "text/xml; charset=utf-8"},
+            verify=self.verify_ssl, timeout=45,
+        )
+        if resp2.status_code != 200:
+            return None
+        root2 = ET.fromstring(resp2.text)
+        index: Dict[tuple, int] = {}
+        counters_xml = [
+            el for el in root2.iter()
+            if el.tag.split("}")[-1] == "PerfCounterInfo"
+        ]
+        if not counters_xml:
+            for el in root2.iter():
+                kids = {c.tag.split("}")[-1] for c in list(el)}
+                if "groupInfo" in kids and "nameInfo" in kids and "key" in kids:
+                    counters_xml.append(el)
+        for pci in counters_xml:
+            key_el = next((c for c in pci if c.tag.split("}")[-1] == "key"), None)
+            rollup_el = next((c for c in pci if c.tag.split("}")[-1] == "rollupType"), None)
+            group_name = counter_name = None
+            for child in pci:
+                ct = child.tag.split("}")[-1]
+                if ct == "groupInfo":
+                    gn = next((c for c in child if c.tag.split("}")[-1] == "key"), None)
+                    group_name = gn.text if gn is not None else None
+                elif ct == "nameInfo":
+                    nn = next((c for c in child if c.tag.split("}")[-1] == "key"), None)
+                    counter_name = nn.text if nn is not None else None
+            if key_el is None or not group_name or not counter_name:
+                continue
+            rollup = (rollup_el.text or "").strip() if rollup_el is not None else ""
+            try:
+                index[(group_name, counter_name, rollup)] = int(key_el.text)
+            except (TypeError, ValueError):
+                pass
+        self._perf_full_index = (perf_mgr, index)
+        return self._perf_full_index
+
+    def query_perf_metrics(
+        self,
+        *,
+        entity_type: str,
+        entity_ref: str,
+        metric_defs: List[Any],
+        max_sample: int = 1,
+        interval_id: int = 20,
+        instance: str = "*",
+        top_n: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """READ-ONLY dinamik QueryPerf.
+
+        metric_defs: PerfMetricDef listesi (group/name/rollup/key/unit).
+        instance='*' → cihaz bazlı seriler; top_n verilirse son değere göre kırpılır.
+        Mutate method çağırmaz.
+        """
+        import xml.etree.ElementTree as ET
+
+        if not entity_ref or not metric_defs:
+            return {"ok": False, "error": "entity_ref ve metrics gerekli"}
+
+        et = entity_type if entity_type in ("HostSystem", "VirtualMachine") else (
+            "HostSystem" if entity_type == "host" else "VirtualMachine"
+        )
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {"ok": False, "error": "SOAP login failed"}
+
+        try:
+            idx = self._perf_mgr_and_counter_index(soap_session, soap_url)
+            if not idx:
+                return {"ok": False, "error": "PerformanceManager / counter index alınamadı"}
+            perf_mgr, index = idx
+
+            resolved: List[Tuple[str, int, str]] = []  # key, cid, unit
+            missing_counters: List[str] = []
+            for m in metric_defs:
+                trip = (m.group, m.name, m.rollup)
+                cid = index.get(trip)
+                if cid is None:
+                    missing_counters.append(m.key)
+                    continue
+                resolved.append((m.key, cid, m.unit))
+
+            if not resolved:
+                return {
+                    "ok": False,
+                    "error": "İstenen metrikler bu vCenter counter kataloğunda yok",
+                    "missing_counters": missing_counters,
+                }
+
+            metric_xml = "".join(
+                f"<vim25:metricId><vim25:counterId>{cid}</vim25:counterId>"
+                f"<vim25:instance>{instance}</vim25:instance></vim25:metricId>"
+                for _, cid, _ in resolved
+            )
+            max_sample = max(1, min(int(max_sample or 1), 180))
+            interval_id = int(interval_id or 20)
+
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      <vim25:querySpec>
+        <vim25:entity type="{et}">{entity_ref}</vim25:entity>
+        <vim25:maxSample>{max_sample}</vim25:maxSample>
+        {metric_xml}
+        <vim25:intervalId>{interval_id}</vim25:intervalId>
+      </vim25:querySpec>
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            resp = soap_session.post(
+                soap_url, data=body.encode("utf-8"),
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=45,
+            )
+            if resp.status_code != 200:
+                return {
+                    "ok": False,
+                    "error": f"QueryPerf HTTP {resp.status_code}",
+                    "detail": (resp.text or "")[:240],
+                }
+
+            root = ET.fromstring(resp.text)
+            cid_to_key = {cid: (key, unit) for key, cid, unit in resolved}
+
+            # value blokları: id(counterId, instance) + value listesi
+            series: List[Dict[str, Any]] = []
+            for val_el in root.iter():
+                if val_el.tag.split("}")[-1] != "value":
+                    continue
+                # PerfMetricSeries: <value><id><counterId/><instance/></id><value>…</value></value>
+                id_el = next((c for c in val_el if c.tag.split("}")[-1] == "id"), None)
+                if id_el is None:
+                    continue
+                cid = None
+                inst = ""
+                for c in id_el:
+                    t = c.tag.split("}")[-1]
+                    if t == "counterId" and c.text and c.text.isdigit():
+                        cid = int(c.text)
+                    elif t == "instance":
+                        inst = (c.text or "").strip()
+                if cid is None or cid not in cid_to_key:
+                    continue
+                nums: List[float] = []
+                for c in val_el:
+                    if c.tag.split("}")[-1] != "value":
+                        continue
+                    # ArrayOfLong / text children
+                    if c.text and c.text.strip():
+                        for part in c.text.replace(",", " ").split():
+                            try:
+                                nums.append(float(part))
+                            except ValueError:
+                                pass
+                    for leaf in c.iter():
+                        if leaf is c:
+                            continue
+                        if leaf.text and leaf.text.strip():
+                            try:
+                                nums.append(float(leaf.text.strip()))
+                            except ValueError:
+                                pass
+                if not nums:
+                    continue
+                key, unit = cid_to_key[cid]
+                latest = nums[-1]
+                series.append({
+                    "metric": key,
+                    "unit": unit,
+                    "instance": inst or "(aggregate)",
+                    "latest": round(latest, 3),
+                    "samples": [round(x, 3) for x in nums[-min(len(nums), max_sample):]],
+                    "sample_count": len(nums),
+                })
+
+            # top_n: her metrik için |latest|'e göre
+            if top_n and top_n > 0:
+                by_metric: Dict[str, List[Dict[str, Any]]] = {}
+                for row in series:
+                    by_metric.setdefault(row["metric"], []).append(row)
+                trimmed: List[Dict[str, Any]] = []
+                for metric, rows in by_metric.items():
+                    rows_sorted = sorted(rows, key=lambda r: abs(float(r.get("latest") or 0)), reverse=True)
+                    trimmed.extend(rows_sorted[: int(top_n)])
+                series = trimmed
+
+            # Özet: instance yok / aggregate satırlar için metric→latest
+            summary: Dict[str, Any] = {}
+            for row in series:
+                if row.get("instance") in ("", "(aggregate)"):
+                    summary[row["metric"]] = row["latest"]
+
+            return {
+                "ok": True,
+                "source": "vcenter_query_perf",
+                "read_only": True,
+                "entity_type": et,
+                "entity_ref": entity_ref,
+                "interval_id": interval_id,
+                "max_sample": max_sample,
+                "metrics": [m.key for m in metric_defs],
+                "missing_counters": missing_counters,
+                "summary": summary,
+                "series": series,
+                "series_count": len(series),
+            }
+        except Exception as e:
+            logger.warning("query_perf_metrics error: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+
+    def find_host_ref_by_name(self, host_name: str) -> Optional[Dict[str, str]]:
+        """Host adıyla HostSystem ref bul (get_all_host_stats üzerinden)."""
+        want = (host_name or "").strip().lower()
+        if not want:
+            return None
+        for h in self.get_all_host_stats() or []:
+            name = (h.get("host_name") or "").strip()
+            ref = (h.get("host_ref") or "").strip()
+            if not ref:
+                continue
+            if name.lower() == want or want in name.lower() or name.lower() in want:
+                return {"host_name": name, "host_ref": ref}
+        return None
 
     def get_vm_disk_iops(self, vm_id: str) -> Optional[Dict]:
         """Geriye uyum: get_vm_perf_io yalnızca disk alanlarını döner."""
@@ -2766,6 +3069,7 @@ class VCenterClient:
           <vim25:all>false</vim25:all>
           <vim25:pathSet>name</vim25:pathSet>
           <vim25:pathSet>config.network</vim25:pathSet>
+          <vim25:pathSet>config.product</vim25:pathSet>
           <vim25:pathSet>hardware.systemInfo</vim25:pathSet>
         </vim25:propSet>
         <vim25:objectSet>
@@ -2808,6 +3112,7 @@ class VCenterClient:
                 host_name = None
                 net_struct: dict = {}
                 hw_struct: dict = {}
+                product_struct: dict = {}
 
                 for ps in rv:
                     if _tag(ps) != "propSet":
@@ -2822,6 +3127,8 @@ class VCenterClient:
                         host_name = v_el.text
                     elif pname == "config.network":
                         net_struct = self._xml_struct_to_dict(v_el, _tag) or {}
+                    elif pname == "config.product":
+                        product_struct = self._xml_struct_to_dict(v_el, _tag) or {}
                     elif pname == "hardware.systemInfo":
                         hw_struct = self._xml_struct_to_dict(v_el, _tag) or {}
 
@@ -2904,6 +3211,8 @@ class VCenterClient:
                     "vendor":     hw_struct.get("vendor"),
                     "model":      hw_struct.get("model"),
                     "uuid":       hw_struct.get("uuid"),
+                    "product_version": product_struct.get("version"),
+                    "product_full_name": product_struct.get("fullName") or product_struct.get("name"),
                     "pnics":      pnics,
                     "vswitches":  vswitches,
                     "portgroups": portgroups,

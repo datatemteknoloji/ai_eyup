@@ -80,11 +80,21 @@ def llm_node(state: AgentGraphState, config) -> AgentGraphState:
         return {"result": {"status": "done", "answer": content or "(boş yanıt)",
                            "steps": steps, "session_id": ctx.get("session_id")}}
 
-    # Asistanın tool isteğini transcript'e ekle.
+    # Asistanın tool isteğini transcript'e ekle (OpenAI: arguments STRING + id).
     messages = messages + [{
         "role": "assistant", "content": content,
-        "tool_calls": [{"function": {"name": tc["name"], "arguments": tc["arguments"]}}
-                       for tc in tool_calls],
+        "tool_calls": [
+            {
+                "id": tc.get("id") or f"call_{i}_{tc.get('name') or 'tool'}",
+                "type": "function",
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc["arguments"] if isinstance(tc.get("arguments"), str)
+                    else json.dumps(tc.get("arguments") or {}, ensure_ascii=False),
+                },
+            }
+            for i, tc in enumerate(tool_calls)
+        ],
     }]
     return {
         "messages": messages,

@@ -262,6 +262,8 @@ def _build_prompt(message: str, context_str: str, collection_summary: str, histo
         "  yönetiliyor' diye ayır — 'sanallaştırma sayılmaz' deme.",
         "- VMware/vCenter = hypervisor envanteri; OV = OpenShift/KubeVirt yüzeyi;",
         "  ikisi de sanallaştırmadır, farklı entegrasyon yollarıdır.",
+        "- TERİM: vCenter/hypervisor kaydı (label veya IP/FQDN) ≠ ESXi host.",
+        "  ESXi = host/esxi_host (vm_host_name); vCenter adı 'Office' gibi label olabilir.",
         "",
         "ONEMLI: Asla 'SSH/WinRM yapamam' veya 'doğrudan bağlanamam' deme.",
         "Sistem bunu yapabiliyor. Veri gelmemişse toplanmamış demektir, toplanamaz değil.",
@@ -492,6 +494,9 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 wants_linux = _route.wants_linux
                 wants_windows = _route.wants_windows
 
+                # Modül seçimi yok: ambiguous/weak sinyaller module_orchestrator'da
+                # otomatik single/multi plana çevrilir (kullanıcıya Linux/Virt/… sorulmaz).
+
                 # Planlama: belirsiz kapsam → seçenek sor (tool/collect yok)
                 if _route.mode == "planning_clarify":
                     clarify = build_planning_clarification()
@@ -601,6 +606,20 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     has_explicit_selection=False,
                     mentioned=windows_mentioned,
                 )
+                # Module-first: virt/ocp-only sorularda Linux/Windows SSH collect kapalı
+                if not wants_linux and getattr(_route, "module_mode", "") in ("single", "multi"):
+                    if "linux" not in (_route.modules or ()) and "exadata" not in (_route.modules or ()):
+                        linux_targets = []
+                        linux_fleet_note = ""
+                if not wants_windows and getattr(_route, "module_mode", "") in ("single", "multi"):
+                    if "windows" not in (_route.modules or ()):
+                        windows_targets = []
+                        windows_fleet_note = ""
+                if getattr(_route, "module_mode", "") == "single" and (_route.modules or ()) == ("virt",):
+                    linux_targets = []
+                    windows_targets = []
+                    linux_fleet_note = ""
+                    windows_fleet_note = ""
                 fleet_notes = [n for n in (linux_fleet_note, windows_fleet_note) if n]
                 # Aynı UNSELECTED_LIVE_HINT iki kez eklenmesin
                 if len(fleet_notes) == 2 and fleet_notes[0] == fleet_notes[1]:
@@ -667,6 +686,26 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 )
                 _has_targets = bool(linux_targets or windows_targets)
                 _clarify_pending = has_planning_clarification_pending(session_id, platform="unified")
+                _route_virt = (
+                    "vcenter" in (_route.domains or ())
+                    or "virt" in (_route.modules or ())
+                )
+                _route_linux = "linux" in (_route.modules or ()) or "exadata" in (_route.modules or ())
+                _route_windows = "windows" in (_route.modules or ())
+                _inv_kind = None
+                _live_resource = False
+                try:
+                    from app.services.virt_inventory_contract import detect_virt_inventory_kind
+                    from app.services.data_fetch_ladder import is_live_resource_query
+                    _inv_kind = detect_virt_inventory_kind(message)
+                    _live_resource = is_live_resource_query(message)
+                except Exception:
+                    pass
+                # Esnaf: isimli hedef + anlık kaynak → collect+agentic (SSH + gerekirse vCenter)
+                _force_both = bool(
+                    _live_resource
+                    and (linux_mentioned or windows_mentioned or linux_targets or windows_targets)
+                )
                 _live_path = resolve_live_path(
                     message,
                     agentic_enabled=_agentic_ok,
@@ -674,6 +713,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     has_live_targets=_has_targets,
                     is_followup=_is_followup,
                     has_episode=has_session_episode(session_id=session_id, platform="unified"),
+                    force_both=_force_both if _force_both else None,
                     allow_agentic_without_collect=(
                         _route.mode == "planning_agentic"
                         or should_reopen_planning_agentic(
@@ -685,6 +725,11 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                         )
                         or bool(wants_openshift)
                         or message_has_vcenter_intent(message)
+                        or _route_virt
+                        or _route_linux
+                        or _route_windows
+                        or bool(_inv_kind)
+                        or _live_resource
                     ),
                 )
                 # Router knowledge → path ile hizala
@@ -789,6 +834,12 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
                 async def _collect_prom():
                     try:
+                        # Module-first: virt-only → Prometheus yok
+                        if getattr(_route, "module_mode", "") == "single" and "virt" in (_route.modules or ()):
+                            return ""
+                        if getattr(_route, "need_prometheus", None) is False and getattr(_route, "module_mode", ""):
+                            if not _route.need_prometheus:
+                                return ""
                         from app.services.chat_source_planner import plan_sources
                         _plan = plan_sources(
                             message, scope="unified",
@@ -996,6 +1047,20 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                         )
 
                         loop = _asyncio.get_event_loop()
+                        # Esnaf merdiveni + module persona
+                        _sys_add = getattr(_route, "persona_addendum", None) or ""
+                        try:
+                            from app.services.data_fetch_ladder import (
+                                is_live_resource_query,
+                                ladder_system_addendum,
+                            )
+                            if is_live_resource_query(message):
+                                _sys_add = (_sys_add or "") + ladder_system_addendum(
+                                    has_prometheus=bool(getattr(_route, "need_prometheus", False))
+                                )
+                        except Exception:
+                            pass
+
                         gen = run_read_only_tool_loop(
                             db, model, agentic_user_message, context_str, tool_server_summary,
                             max_steps=max_tool_steps,
@@ -1004,6 +1069,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                             stop_after_tools=_stop_after if _planning else None,
                             planning_mode=_planning,
                             planning_depth=_depth,
+                            system_addendum=_sys_add or None,
                         )
 
                         def _next_item(g):
@@ -1013,6 +1079,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                                 return None
 
                         tool_context_text = ""
+                        deterministic_answer = ""
                         while True:
                             item = await loop.run_in_executor(None, _next_item, gen)
                             if item is None:
@@ -1024,11 +1091,38 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                                 yield _sse({"type": "tool_result", "tool": item.get("tool")})
                             elif itype == "final":
                                 tool_context_text = item.get("tool_text") or ""
+                                deterministic_answer = item.get("deterministic_answer") or ""
                                 break
                             elif itype in ("skipped", "error"):
                                 if itype == "error":
                                     logger.warning(f"[UnifiedChat] agentic tool loop hatası: {item.get('detail')}")
                                 break
+
+                        # Virt envanter: SoT tablosu hazırsa LLM'e bırakma (uydurma/eksik yok)
+                        if deterministic_answer:
+                            yield _sse({"phase": "answering"})
+                            _timing.note_ttft()
+                            answer_text = deterministic_answer
+                            for i in range(0, len(answer_text), 24):
+                                yield _sse({"token": answer_text[i:i + 24]})
+                            db.add(ChatMessage(
+                                session_id=session_id, role="assistant", content=answer_text,
+                            ))
+                            s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                            if s:
+                                s.updated_at = datetime.now(timezone.utc)
+                            db.commit()
+                            _timing.finish(
+                                cache_hit=False,
+                                extra={
+                                    "path": "virt_inventory_deterministic",
+                                    "route": _route.mode,
+                                    "route_reason": _route.reason,
+                                    "modules": list(_route.modules or ()),
+                                },
+                            )
+                            yield _sse({"done": True, "session_id": session_id})
+                            return
 
                         if tool_context_text:
                             context_str = context_str + "\n\nARAÇ SONUÇLARI (bu turda modelin kendi kararıyla çalıştırdığı ek SSH/canlı sorgular):\n" + tool_context_text

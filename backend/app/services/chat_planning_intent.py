@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,14 @@ logger = logging.getLogger(__name__)
 _VCENTER_KW = (
     "vcenter", "vsphere", "esxi", "esx", "vmware", "datastore",
     "sanallaştır", "sanallastir", "hypervisor", "virtual machine", " sanal ",
+    "sanal makine", "vmdk", "disk rate", "disk requests",
 )
+# vm / vms / vmler / vmlerdeki (Türkçe ekler) — yalnız "vm" substring değil
+_VM_TOKEN_RE = re.compile(
+    r"(?<![a-z0-9_])vm(?:s|ler|leri|lerin|lerde|lerdeki|ye|yi|nin|nın|nün|'s|’s)?(?![a-z0-9_])",
+    re.IGNORECASE,
+)
+
 _OCP_KW = (
     "openshift", "ocp", "kubernetes", "k8s", "kubevirt", "mtv", "migration toolkit",
     "namespace", "cluster",
@@ -27,9 +35,10 @@ _MIGRATE_KW = (
     "migrate", "migration", "move to", "aktar", "göç", "goc",
 )
 _PLAN_KW = (
-    "planlama", "kaynak plan", "kapasite", "capacity", "sizing",
-    "boyutlandır", "boyutlandir", "overcommit", "fit eder", "sığar", "sigar",
+    "planlama", "kaynak plan", "kapasite plan", "capacity plan", "capacity planning",
+    "sizing", "boyutlandır", "boyutlandir", "overcommit", "fit eder", "sığar", "sigar",
     "kaynak ihtiyacı", "kaynak ihtiyaci", "ne kadar cpu", "ne kadar ram",
+    "kaynak kapasite", "cluster kapasite", "sığar mı", "sigar mi",
 )
 _DEPTH_KW = (
     "daha kapsamlı", "daha kapsamli", "kapsamlı cevap", "kapsamli cevap",
@@ -57,8 +66,15 @@ _CLARIFY_TTL = 45 * 60
 
 
 def message_has_vcenter_intent(message: Optional[str]) -> bool:
+    """vCenter/ESXi/VM envanter veya sanallaştırma niyeti (agentic kapısı)."""
     m = (message or "").lower()
-    return any(k in m for k in _VCENTER_KW)
+    if not m.strip():
+        return False
+    if any(k in m for k in _VCENTER_KW):
+        return True
+    if _VM_TOKEN_RE.search(m):
+        return True
+    return False
 
 
 def message_has_ocp_intent(message: Optional[str]) -> bool:
@@ -75,6 +91,15 @@ def is_cross_platform_planning(message: Optional[str]) -> bool:
     plan = any(k in m for k in _PLAN_KW)
     vc = message_has_vcenter_intent(m)
     ocp = message_has_ocp_intent(m)
+    # Guest/SSH/df + virt envanter soruları MTV planlama değil
+    guestish = any(
+        k in m for k in (
+            "ssh", "guest", "df -", "df -h", "vmdk", "disk adet", "disk boyut",
+            "her bir disk", "içinden", "icinden",
+        )
+    )
+    if guestish and not ocp and not migrate:
+        return False
     if migrate and (vc or ocp):
         return True
     if plan and (vc or ocp):

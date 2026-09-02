@@ -25,7 +25,9 @@ SYSTEM_PROMPT = (
     "Sen kıdemli bir Altyapı Mimarısın. Elindeki READ_ONLY araçlarla sunuculara "
     "SSH/WinRM ile tanı komutu çalıştırabilir, vCenter/OpenShift/KubeVirt'e canlı "
     "sorgu atabilirsin.\n\n"
-    "PLATFORM AYIRIMI (KRİTİK — karıştırma):\n"
+    "PLATFORM / MODÜL AYIRIMI (KRİTİK — asla karıştırma):\n"
+    "- Bu sohbetin platform kapsamı sistem eklerinde yazılıdır. Yalnız o modülün "
+    "araçlarıyla cevap ver; diğer modül konularında yönlendir, veri uydurma.\n"
     "- Linux sunucu soruları (systemd, journalctl, SELinux, df, SSH, RHEL/Ubuntu, "
     "'failed service') → get_* / run_diagnostic gibi Linux SSH araçları. "
     "OpenShift pod/namespace araçlarını KULLANMA.\n"
@@ -33,10 +35,25 @@ SYSTEM_PROMPT = (
     "Deployment, Route, node NotReady, oc/kubectl) → openshift_ask / list_ocp_pods / "
     "list_ocp_events. Linux SSH/systemd araçlarını KULLANMA.\n"
     "- vCenter/ESXi/VM soruları → ÖNCE db_list_vms / db_vm_detail / db_list_datastores / "
-    "db_list_esx_hosts / db_virt_alarms (DATABASE). stale=true veya veri yoksa "
-    "vcenter_ask / vcenter_live_alarms / vcenter_live_tasks.\n"
+    "db_list_esx_hosts / db_virt_alarms / db_virt_cross_match (DATABASE). stale=true "
+    "veya veri yoksa vcenter_ask / vcenter_live_alarms / vcenter_live_tasks.\n"
+    "- TERİM: hypervisor/vcenter alanı = vCenter kaydı adı (örn. Office) veya bağlantı "
+    "IP/FQDN; host/esxi_host = ESXi compute host (örn. 192.168.1.101). Karıştırma.\n"
+    "- DİNAMİK ALAN SEÇİMİ: Kullanıcı hangi özellikleri istediyse "
+    "(örn. ESXi name+IP+version, VM name+host+datastore) sorudan fields listesini "
+    "çıkar ve ilgili db_* aracına fields olarak geç.\n"
+    "- ÇAPRAZ EŞLEŞTİRME: Farklı SoT'lar (host + VM + datastore + alarm) tek tabloda "
+    "isteniyorsa db_virt_cross_match(join_on=host|datastore|entity) kullan. "
+    "Tool ortak anahtarla JOIN eder — ayrı çağırıp isimleri tahminle birleştirme. "
+    "Yalnız istenen kolonları yanıtta göster; missing_fields doluysa "
+    "'envanterde yok / sync gerekir' de, uydurma.\n"
+    "- CANLI PERF (Monitor): Disk Rate, Disk Requests, anlık CPU/mem/net → "
+    "vcenter_perf_query. metrics paket/key listesi ver (disk_rate, disk_requests, "
+    "cpu, overview…). Kullanıcının istemediği metrikleri çekme. "
+    "list_catalog=true ile menüyü görebilirsin. Mutate yok.\n"
     "- OpenShift Virtualization / KubeVirt VM soruları → list_kubevirt_vms / openshift_ask "
-    "(OV bir sanallaştırma ortamıdır; yalnız VMware listesine bakıp 'OV yok' deme).\n"
+    "(OV bir sanallaştırma ortamıdır; yalnız VMware listesine bakıp 'OV yok' deme) — "
+    "ancak yalnız virt veya openshift kapsamında bu araçlar açıksa.\n"
     "- Belirsiz 'servis/durum' ifadesinde: kullanıcı OpenShift/pod demediyse Linux; "
     "pod/namespace/cluster dediysa OpenShift. İkisini aynı yanıtta karıştırma.\n\n"
     "SANALLASTIRMA KAPSAMI:\n"
@@ -64,8 +81,8 @@ SYSTEM_PROMPT = (
     "- Aynı bilgiyi tekrar tekrar çağırma; birkaç adımda gerekli veriyi topla, sonra "
     "daha fazla araç çağırmadan (tool_call üretmeden) doğrudan yanıtla.\n"
     "- Bu arayüzde değişiklik yapan (mutating) HİÇBİR araç yoktur — yalnızca "
-    "salt-okunur bilgi toplarsın, hiçbir aracın bir servisi/veriyi değiştirmediğinden "
-    "emin olabilirsin.\n"
+    "salt-okunur bilgi toplarsın. vCenter/ESXi üzerinde power/destroy/reconfig "
+    "yapamazsın; yalnız read.\n"
     "- Performans/sağlık/kök-neden sorularında (ör. 'bu sunucunun performansını "
     "değerlendir') birden çok get_* aracını art arda çağırıp (sistem özeti, disk, "
     "süreçler, failed servisler vb.) TOPLADIĞIN GERÇEK VERİYE dayanarak derinlemesine, "
@@ -77,36 +94,41 @@ SYSTEM_PROMPT = (
 _PLATFORM_HINTS = {
     "linux": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Linux sunucular (SSH/systemd). "
-        "OpenShift pod/cluster veya vCenter cevapları ÜRETME; elinde o araçlar yoksa "
-        "kullanıcıya OpenShift AIOps / Unified Chat'e yönlendir.\n"
+        "OpenShift pod/cluster veya vCenter/ESXi/VM cevapları ÜRETME; elinde o araçlar "
+        "yoksa kullanıcıya OpenShift AIOps / Sanallaştırma / Unified Chat'e yönlendir.\n"
         "infra_overview bu sohbette YALNIZCA Linux özeti döner — Windows/HV/OCP sayma; "
         "tabloda yalnızca Linux metrikleri göster."
     ),
     "openshift": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA OpenShift Container Platform (pod, namespace, "
         "node, event, KubeVirt / OpenShift Virtualization). Linux sunucu SSH/systemd "
-        "cevabı ÜRETME; o konular için Linux AIOps sohbetini öner.\n"
+        "veya VMware vCenter/ESXi envanteri cevabı ÜRETME; o konular için ilgili "
+        "modül sohbetini öner.\n"
         "KubeVirt VirtualMachine'ler bu kapsamda SANALLAŞTIRMA workload'udur; "
         "'OV sanallaştırma sayılmaz' deme.\n"
         "infra_overview yalnızca OCP cluster özeti döner."
     ),
     "windows": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Windows sunucular (WinRM). "
-        "Linux SSH veya OpenShift karıştırma.\n"
+        "Linux SSH, OpenShift veya vCenter karıştırma.\n"
         "infra_overview yalnızca Windows özeti döner."
     ),
     "virt": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA sanallaştırma (vCenter/ESXi + OpenShift "
-        "Virtualization/KubeVirt VM). Linux OS yönetimi veya OCP pod envanterini karıştırma.\n"
+        "Virtualization/KubeVirt VM). Linux OS yönetimi (SSH/systemd) veya OCP "
+        "pod/Deployment envanterini KARISTIRMA — o konular için Linux / OpenShift "
+        "sohbetine yönlendir.\n"
         "OV, VMware yanında ikinci bir sanallaştırma yoludur; hypervisor kaydı yoksa "
         "bile OCP KubeVirt VM'leri sanallaştırma sayılır.\n"
-        "VMware sorularında önce db_* (DATABASE); canlı vcenter_* yalnızca stale/boş "
-        "sonrası. SSH get_* yok.\n"
+        "VMware: önce db_*; çapraz tablo db_virt_cross_match; "
+        "Monitor Disk Rate/Requests/CPU canlı → vcenter_perf_query "
+        "(metrics=[disk_rate] / [disk_requests] / [cpu] — yalnız istenen). "
+        "Hepsi READ-ONLY (write/mutate yok). SSH get_* yok.\n"
         "infra_overview hypervisor/VM özeti döner; OV için OpenShift/KubeVirt araçlarını kullan."
     ),
     "exadata": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Exadata. "
-        "Genel Linux filo veya Windows karıştırma.\n"
+        "Genel Linux filo, Windows veya vCenter karıştırma.\n"
         "infra_overview yalnızca Exadata özeti döner."
     ),
 }
@@ -136,20 +158,11 @@ def run_read_only_tool_loop(
     stop_after_tools: Optional[int] = None,
     planning_mode: bool = False,
     planning_depth: bool = False,
+    system_addendum: Optional[str] = None,
 ) -> Iterator[Dict[str, Any]]:
     """READ_ONLY tool-calling döngüsü — generator.
 
-    Her adımda şu tiplerden birini yield eder:
-      - {"type": "tool_call", "tool": str, "args": dict, "label": str}
-      - {"type": "tool_result", "tool": str}
-      - {"type": "skipped", "reason": str}           (tool desteklenmiyor/hata — ilk turda)
-      - {"type": "error", "detail": str}              (araç kullanıldıktan SONRA hata)
-      - {"type": "final", "used_tools": bool, "tool_text": str, "max_steps_reached": bool}
-
-    stop_after_tools: Bu kadar başarılı tool sonrası ek LLM turu yok (erken final) —
-    migrasyon/planlama TTFT için.
-    planning_mode: Kapasite/migrasyon sistem ekleri + agresif erken kesme.
-    planning_depth: Kullanıcı 'daha kapsamlı' istediğinde derin addendum.
+    system_addendum: Unified module-first persona / join sözleşmesi (opsiyonel).
     """
     try:
         from app.services.agent import tools as tool_mod
@@ -174,6 +187,16 @@ def run_read_only_tool_loop(
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
+    if system_addendum:
+        sys_content += system_addendum
+
+    # Unified + yalnız vcenter domain → virt uzmanı gibi davran
+    if plat == "unified" and domains and "vcenter" in domains and "linux" not in domains and "windows" not in domains:
+        sys_content += _PLATFORM_HINTS.get("virt", "")
+    elif plat == "unified" and domains and "openshift" in domains and "linux" not in domains and "vcenter" not in domains:
+        sys_content += _PLATFORM_HINTS.get("openshift", "")
+    elif plat == "unified" and domains and "linux" in domains and "vcenter" not in domains and "openshift" not in domains:
+        sys_content += _PLATFORM_HINTS.get("linux", "")
 
     db_first = tool_policy.should_use_db_first(platform=plat, domains=domains)
     escalate_live = False
@@ -208,6 +231,26 @@ def run_read_only_tool_loop(
     if context_str:
         sys_content += "\n\nBAĞLAM (bu turda zaten toplanmış canlı veri — varsa önce buna bak):\n" + context_str[:_MAX_CONTEXT_CHARS]
 
+    # Virt envanter sınıfı (VM disk / datastore / ESX) — sözleşme + prefetch
+    inv_kind = None
+    materialize_from_tool_results = None
+    prefetch_spec = None
+    try:
+        from app.services.virt_inventory_contract import (
+            detect_virt_inventory_kind,
+            inventory_system_addendum,
+            prefetch_spec as _prefetch_spec,
+            materialize_from_tool_results as _materialize,
+        )
+        prefetch_spec = _prefetch_spec
+        materialize_from_tool_results = _materialize
+        if domains is None or (domains and "vcenter" in domains):
+            inv_kind = detect_virt_inventory_kind(user_message)
+            if inv_kind:
+                sys_content += inventory_system_addendum(inv_kind)
+    except Exception as e:
+        logger.debug("virt inventory contract atlandı: %s", e)
+
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": sys_content},
         {"role": "user", "content": user_message},
@@ -215,23 +258,108 @@ def run_read_only_tool_loop(
 
     tool_texts: List[str] = []
     tools_used: List[str] = []
+    structured_results: List[Dict[str, Any]] = []
     used_tools = False
     successful_tool_runs = 0
     exec_ctx: Dict[str, Any] = {"platform": plat or "unified"}
     _stop_n = int(stop_after_tools) if stop_after_tools and stop_after_tools > 0 else None
 
+    # Zorunlu prefetch: model çağırmadan SoT çek → deterministik tablo
+    if inv_kind and prefetch_spec:
+        try:
+            spec = prefetch_spec(inv_kind)
+            if spec:
+                pref_name, pref_args = spec
+                pref_tool = tool_mod.get_tool(pref_name)
+                if pref_tool and (
+                    domains is None or (pref_tool.domains & domains)
+                ):
+                    yield {
+                        "type": "tool_call",
+                        "tool": pref_name,
+                        "args": pref_args,
+                        "label": pref_tool.direct_label or pref_name,
+                    }
+                    pref_result = pref_tool.execute(db, pref_args, exec_ctx)
+                    used_tools = True
+                    successful_tool_runs += 1
+                    if pref_name not in tools_used:
+                        tools_used.append(pref_name)
+                    pref_text = _tool_result_to_text(pref_result)
+                    tool_texts.append(f"[{pref_tool.direct_label or pref_name}]\n{pref_text[:_MAX_TOOL_TEXT_CHARS]}")
+                    structured_results.append({"tool": pref_name, "result": pref_result})
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": f"call_prefetch_{pref_name}",
+                            "type": "function",
+                            "function": {
+                                "name": pref_name,
+                                "arguments": json.dumps(pref_args, ensure_ascii=False),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": f"call_prefetch_{pref_name}",
+                        "name": pref_name,
+                        "content": pref_text[:12000],
+                    })
+                    yield {"type": "tool_result", "tool": pref_name}
+                    logger.info(
+                        "[UnifiedToolChat] virt inventory prefetch kind=%s tool=%s ok=%s",
+                        inv_kind, pref_name,
+                        (pref_result or {}).get("ok") if isinstance(pref_result, dict) else None,
+                    )
+                    # Prefetch yeterliyse LLM tool döngüsünü atla — tabloyu SoT'tan üret
+                    if materialize_from_tool_results and isinstance(pref_result, dict) and pref_result.get("ok"):
+                        det = materialize_from_tool_results(inv_kind, structured_results)
+                        if det:
+                            out = {
+                                "type": "final",
+                                "used_tools": True,
+                                "tool_text": "\n\n".join(tool_texts),
+                                "tools_used": list(tools_used),
+                                "db_first": db_first,
+                                "live_escalated": False,
+                                "deterministic_answer": det,
+                                "inventory_kind": inv_kind,
+                                "early_stop": True,
+                            }
+                            try:
+                                from app.services.assistant_playbooks import record_playbook
+                                record_playbook(
+                                    db,
+                                    platform=plat or "unified",
+                                    question=user_message,
+                                    tools=tools_used,
+                                    server_scope=(server_summary or "")[:80] or None,
+                                )
+                            except Exception:
+                                pass
+                            yield out
+                            return
+        except Exception as e:
+            logger.warning("[UnifiedToolChat] inventory prefetch hata: %s", e)
+
     def _active_specs(step: int) -> List[Dict[str, Any]]:
-        """DB-first: ilk adımlarda canlı vCenter şemasını gizle."""
+        """DB-first: ilk adımlarda canlı vCenter şemasını gizle.
+
+        vcenter_perf_query her zaman kalır (Monitor disk/cpu DB'de yok; READ-ONLY).
+        """
         if not db_first or escalate_live:
             return specs
         if step >= tool_policy.DB_FIRST_MAX_STEPS:
             return specs
-        filtered = [
-            s for s in specs
-            if isinstance(s, dict)
-            and ((s.get("function") or {}).get("name") or "")
-            not in tool_policy.LIVE_VCENTER_TOOLS
-        ]
+        filtered = []
+        for s in specs:
+            if not isinstance(s, dict):
+                continue
+            name = ((s.get("function") or {}).get("name") or "")
+            if name in tool_policy.LIVE_VCENTER_TOOLS and name != "vcenter_perf_query":
+                continue
+            filtered.append(s)
         return filtered or specs
 
     def _unlock_live(reason: str) -> None:
@@ -262,6 +390,12 @@ def run_read_only_tool_loop(
                 )
             except Exception as e:
                 logger.debug("Playbook kayıt atlandı: %s", e)
+        det = None
+        if inv_kind and materialize_from_tool_results and structured_results:
+            try:
+                det = materialize_from_tool_results(inv_kind, structured_results)
+            except Exception:
+                det = None
         out: Dict[str, Any] = {
             "type": "final",
             "used_tools": used_tools,
@@ -270,6 +404,9 @@ def run_read_only_tool_loop(
             "db_first": db_first,
             "live_escalated": escalate_live if db_first else False,
         }
+        if det:
+            out["deterministic_answer"] = det
+            out["inventory_kind"] = inv_kind
         if max_steps_reached:
             out["max_steps_reached"] = True
         if early_stop:
@@ -294,30 +431,47 @@ def run_read_only_tool_loop(
             yield _finalize()
             return
 
+        # OpenAI/Ollama OpenAI-compat: arguments STRING + tool_call_id zorunlu
         messages.append({
             "role": "assistant",
             "content": llm.get("content") or "",
             "tool_calls": [
-                {"function": {"name": tc["name"], "arguments": tc["arguments"]}} for tc in tool_calls
+                {
+                    "id": tc.get("id") or f"call_{i}_{tc.get('name') or 'tool'}",
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"] if isinstance(tc.get("arguments"), str)
+                        else json.dumps(tc.get("arguments") or {}, ensure_ascii=False),
+                    },
+                }
+                for i, tc in enumerate(tool_calls)
             ],
         })
 
         for tc in tool_calls:
             name = tc.get("name") or ""
             args = tc.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args.strip() else {}
+                except Exception:
+                    args = {}
+            tc_id = tc.get("id") or f"call_{name}"
 
             if name == "ask_user":
-                messages.append({"role": "tool", "name": name, "content": json.dumps({
+                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                     "error": "ask_user bu sohbette desteklenmiyor (insan onay akışı yok); "
                              "mevcut bilgiyle veya diğer READ_ONLY araçlarla devam et"
                 }, ensure_ascii=False)})
                 continue
 
             # DB-first: canlı vCenter çağrısını faz-1'de reddet (şema sızıntısına karşı)
+            # vcenter_perf_query istisna (Monitor perf; READ-ONLY)
             if db_first and not escalate_live:
-                block_msg = tool_policy.tool_blocked_in_db_first_phase(name)
-                if block_msg and name in tool_policy.LIVE_VCENTER_TOOLS:
-                    messages.append({"role": "tool", "name": name, "content": json.dumps({
+                block_msg = tool_policy.tool_blocked_in_db_first_phase(name, domains=domains)
+                if block_msg and name in tool_policy.LIVE_VCENTER_TOOLS and name != "vcenter_perf_query":
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                         "error": block_msg,
                         "ok": False,
                     }, ensure_ascii=False)})
@@ -326,13 +480,13 @@ def run_read_only_tool_loop(
             try:
                 if name.startswith("win_"):
                     if domains is not None and "windows" not in domains:
-                        messages.append({"role": "tool", "name": name, "content": json.dumps({
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                             "error": "Windows araçları bu sohbet kapsamında değil"
                         }, ensure_ascii=False)})
                         continue
                     from app.services.agent.tools_windows import execute_windows_tool, MUTATING_WIN_TOOLS
                     if name in MUTATING_WIN_TOOLS:
-                        messages.append({"role": "tool", "name": name, "content": json.dumps({
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                             "error": "Bu araç değişiklik yaptığı (mutating) için bu sohbette çalıştırılamaz"
                         }, ensure_ascii=False)})
                         continue
@@ -342,19 +496,19 @@ def run_read_only_tool_loop(
                     successful_tool_runs += 1
                     if name and name not in tools_used:
                         tools_used.append(name)
-                    messages.append({"role": "tool", "name": name, "content": (result_str or "")[:6000]})
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": (result_str or "")[:6000]})
                     tool_texts.append(f"[{name}] {(result_str or '')[:_MAX_TOOL_TEXT_CHARS]}")
                     yield {"type": "tool_result", "tool": name}
                     continue
 
                 tool = tool_mod.get_tool(name)
                 if not tool or tool.risk_level != RiskLevel.READ_ONLY:
-                    messages.append({"role": "tool", "name": name, "content": json.dumps({
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                         "error": f"Bilinmeyen veya bu sohbette izinli olmayan araç: {name}"
                     }, ensure_ascii=False)})
                     continue
                 if domains is not None and not (tool.domains & domains):
-                    messages.append({"role": "tool", "name": name, "content": json.dumps({
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                         "error": f"'{name}' bu sohbet platformunda kullanılamaz"
                     }, ensure_ascii=False)})
                     continue
@@ -367,8 +521,9 @@ def run_read_only_tool_loop(
                 if name and name not in tools_used:
                     tools_used.append(name)
                 result_text = _tool_result_to_text(result)
-                messages.append({"role": "tool", "name": name, "content": result_text})
+                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": result_text})
                 tool_texts.append(f"[{label}]\n{result_text[:_MAX_TOOL_TEXT_CHARS]}")
+                structured_results.append({"tool": name, "result": result})
                 yield {"type": "tool_result", "tool": name}
 
                 if db_first and not escalate_live and tool_policy.result_needs_live_escalation(name, result):
@@ -383,7 +538,7 @@ def run_read_only_tool_loop(
                     pass
             except Exception as e:
                 logger.warning(f"[UnifiedToolChat] '{name}' çalıştırma hatası: {e}")
-                messages.append({"role": "tool", "name": name,
+                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name,
                                  "content": json.dumps({"error": str(e)}, ensure_ascii=False)})
                 if db_first and not escalate_live and name in tool_policy.DB_FIRST_TOOLS:
                     _unlock_live(f"{name} çalıştırma hatası")

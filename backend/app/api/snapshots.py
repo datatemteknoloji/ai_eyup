@@ -7,9 +7,9 @@ from typing import List, Optional
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
@@ -106,16 +106,65 @@ def get_server_snapshots(server_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/server/{server_id}/vm-details")
-def get_vm_details(server_id: int, db: Session = Depends(get_db)):
-    """Server kaydındaki mevcut VM detaylarını döner."""
-    srv = db.query(Server).filter_by(id=server_id).first()
+def get_vm_details(
+    server_id: int,
+    live: bool = Query(
+        True,
+        description=(
+            "True: vCenter/hypervisor API'den VM detayını yeniler (ESXi host dahil). "
+            "False: yalnızca DB cache."
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    VM detayları.
+
+    TERİM: ``vcenter_name`` / ``hypervisor_name`` = vCenter kaydı (label veya
+    bağlantı IP/FQDN). ``vm_host_name`` = ESXi host (vCenter API runtime.host).
+    Bunları karıştırma.
+    """
+    srv = (
+        db.query(Server)
+        .options(selectinload(Server.hypervisor))
+        .filter_by(id=server_id)
+        .first()
+    )
     if not srv:
         raise HTTPException(404, "Sunucu bulunamadı")
+
+    source = "db"
+    live_error = None
+    if live and srv.hypervisor_id:
+        try:
+            result = search_and_sync_vm_details(srv, db)
+            if result.get("found"):
+                source = "vcenter_live"
+                db.refresh(srv)
+            else:
+                live_error = result.get("message") or "VM canlı sorguda bulunamadı"
+        except Exception as exc:
+            logger.warning("vm-details live refresh #%s: %s", server_id, exc)
+            live_error = str(exc)
+
+    hv = srv.hypervisor
+    vcenter_name = hv.name if hv else None
+    vcenter_endpoint = ""
+    if hv:
+        vcenter_endpoint = (hv.ip_address or hv.hostname or "") or ""
+
     return {
         "server_id": srv.id,
         "server_name": srv.name,
         "hypervisor_id": srv.hypervisor_id,
         "hypervisor_vm_id": srv.hypervisor_vm_id,
+        # vCenter (yönetim) — ESXi değil
+        "hypervisor_name": vcenter_name,
+        "vcenter_name": vcenter_name,
+        "vcenter_endpoint": vcenter_endpoint,
+        # ESXi compute host — vCenter API'den
+        "vm_host_name": srv.vm_host_name,
+        "vm_host_ref": srv.vm_host_ref,
         "vm_name": srv.vm_name,
         "vm_guest_hostname": srv.vm_guest_hostname,
         "vm_guest_ip": srv.vm_guest_ip,
@@ -130,6 +179,8 @@ def get_vm_details(server_id: int, db: Session = Depends(get_db)):
         "vm_hardware_version": srv.vm_hardware_version,
         "vm_last_sync": srv.vm_last_sync.isoformat() if srv.vm_last_sync else None,
         "can_snapshot": server_can_snapshot(srv),
+        "source": source,
+        "live_error": live_error,
     }
 
 

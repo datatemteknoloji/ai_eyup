@@ -30,3 +30,9 @@ Canlı metrik **değerleri** prompt’ta değil; `prometheus_metrics.get_metrics
 - OpenShift → Virtual Machines listesi OV’yi gösterir.
 - Yalnızca `hypervisors` tablosunda VMware görmek “OV yok / sayılmaz” demek **yanlıştır**.
 - Doğru ayrım: VMware = hypervisor kaydı; OV = OCP/KubeVirt yüzeyi (veya `openshift_virt` kaydı). İkisi de sanallaştırmadır.
+
+## Sabit ürün kuralı — vCenter ≠ ESXi
+
+- **vCenter / hypervisor kaydı** = yönetim bağlantısı (`hypervisors.name` label örn. Office, veya eklenirken kullanılan IP/FQDN).
+- **ESXi host** = vCenter altındaki compute host (`servers.vm_host_name`, tool alanı `host` / `esxi_host`). Bir vCenter’da N ESXi olabilir.
+- Chat/tool cevaplarında Office veya vCenter IP’sini ESXi diye yazma; tersini de yapma.

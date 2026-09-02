@@ -45,6 +45,15 @@ logger = logging.getLogger(__name__)
 _VIRTUALIZATION_PERSONA = (
     "Sen 15+ yıllık deneyime sahip kıdemli bir "
     "Sanallaştırma Yöneticisisin (Senior Virtualization Administrator).\n\n"
+    "MODÜL SINIRI: Yalnızca sanallaştırma (vCenter/ESXi/VM + OpenShift Virtualization/"
+    "KubeVirt). Linux SSH/systemd veya OCP pod/Deployment konularında cevap üretme; "
+    "ilgili modül sohbetine yönlendir.\n\n"
+    "TERİM AYRIMI (KRİTİK — asla karıştırma):\n"
+    "- vCenter / hypervisor kaydı = yönetim bağlantısı (label örn. Office, veya "
+    "eklenirken kullanılan IP/FQDN örn. 192.168.1.102). Tool alanı: hypervisor / vcenter.\n"
+    "- ESXi host = o vCenter altındaki compute host (örn. 192.168.1.101). Bir vCenter'da "
+    "birçok ESXi olabilir. Tool alanı: host / esxi_host (servers.vm_host_name).\n"
+    "- 'Office' veya vCenter IP'sini ESXi host diye yazma; ESXi IP/adını vCenter diye yazma.\n\n"
     "UZMANLIK ALANLARIN:\n"
     "- VMware vSphere/ESXi (vCenter, DRS, HA, vMotion, Storage vMotion, vSAN)\n"
     "- OpenShift Virtualization / KubeVirt (VirtualMachine; OCP üzerindeki sanallaştırma — "
@@ -62,7 +71,9 @@ _VIRTUALIZATION_PERSONA = (
     "- Ortamda vCenter/hypervisor bağlantısı vardır; cevapları SAĞLANAN CANLI VERİYE dayandır.\n"
     "- 'Bilinmiyor', 'bu veriye erişimim yok', 'collector yok', 'senkronize edilmiyor' deme — "
     "veri blokunda yoksa yalnızca bağlantı/sorgu hatasını veya 'canlı sorguda kayıt dönmedi'yi söyle.\n"
-    "- Tahmin etme, uydurma; eksik alan için boş bırak veya 'sorguda gelmedi' yaz.\n\n"
+    "- Tahmin etme, uydurma; eksik alan için boş bırak veya 'sorguda gelmedi' yaz.\n"
+    "- Salt okuma: power off/on, destroy, reconfig, migrate gibi değişiklik önerme veya "
+    "yapma iddiasında bulunma; yalnız gözlem/analiz.\n\n"
     "YANIT UZUNLUĞU — VARSAYILAN KISA: Varsayılan olarak KISA, SADE ve NET cevap ver — "
     "basit/doğrudan bir soruya ('kaç VM var?', 'hangi ESX'te?' gibi) 1-3 cümlelik doğrudan "
     "cevap ya da küçük bir tablo yeterlidir; gereksiz giriş cümlesi veya istenmeyen ek yorum "
@@ -411,19 +422,20 @@ def build_context(
         hv = hv_map.get(host["hypervisor_id"], {})
         host_hv_map[host["host"]] = hv.get("name", "")
 
-    # VM → host mapping (vm'in hypervisor_id üzerinden)
-    vm_host_map: Dict[int, str] = defaultdict(str)
-    for vm in vms:
-        hv = hv_map.get(vm["hypervisor_id"], {})
-        vm_host_map[vm["id"]] = hv.get("name", "")
-
     parts: List[str] = []
 
     # ── Bölüm 1: Hypervisor özeti ────────────────────────────────────────────
     hv_lines = []
     for hv in hypervisors:
-        hv_lines.append(f"  - {hv['name']} ({hv['type']}) @ {hv['ip']} | Durum: {hv['status']} | Son sync: {hv['last_sync']}")
-    parts.append(f"## HYPERVISOR'LAR ({len(hypervisors)} adet)\n" + "\n".join(hv_lines))
+        hv_lines.append(
+            f"  - vCenter/hypervisor: {hv['name']} ({hv['type']}) @ {hv['ip']} "
+            f"| Durum: {hv['status']} | Son sync: {hv['last_sync']}"
+        )
+    parts.append(
+        f"## vCENTER / HYPERVISOR KAYITLARI ({len(hypervisors)} adet)\n"
+        "_Not: Bunlar ESXi host değildir; yönetim bağlantısıdır._\n"
+        + "\n".join(hv_lines)
+    )
 
     # ── Bölüm 2: ESX host durumu ────────────────────────────────────────────
     host_lines = []
@@ -599,13 +611,18 @@ def _environment_totals_block(
 
 def _vm_detail_block(vm: Dict[str, Any], hv_map: Dict) -> str:
     hv_name = hv_map.get(vm["hypervisor_id"], {}).get("name", "?")
+    hv_ip = hv_map.get(vm["hypervisor_id"], {}).get("ip", "")
+    esxi = (vm.get("host") or "").strip() or "-"
     nets = "\n    ".join(
         f"  {n['adapter']}: {', '.join(n['ips']) or 'IP yok'} (MAC: {n['mac']})"
         for n in vm["network"]
     ) or "  Bilgi yok"
     return (
         f"### VM: {vm['name']}\n"
-        f"  Hypervisor   : {hv_name}\n"
+        f"  vCenter      : {hv_name}"
+        + (f" ({hv_ip})" if hv_ip else "")
+        + "\n"
+        f"  ESXi host    : {esxi}\n"
         f"  IP           : {vm['ip']}\n"
         f"  OS           : {vm['os_version'] or vm['os_type'] or 'Bilinmiyor'} ({vm['os_release']})\n"
         f"  vCPU         : {vm['cpu_count']} çekirdek\n"
@@ -768,13 +785,15 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
 
     for vm in filtered[: effective_limit]:
         hv_name = hv_map.get(vm["hypervisor_id"], {}).get("name", "?")
+        esxi = (vm.get("host") or "").strip() or "-"
         net_ips = ", ".join(
             ip for n in vm["network"] for ip in n["ips"]
         ) or vm["ip"]
         disk_info = f" Disk:{vm['disk_gb']}GB" if vm.get("disk_gb") else ""
         ds_info   = f" Datastore:{vm['datastore']}" if vm.get("datastore") else ""
         lines.append(
-            f"  - {vm['name']} | {hv_name} | OS: {vm['os_release'] or vm['os_type'] or '?'} | "
+            f"  - {vm['name']} | vCenter:{hv_name} | ESXi:{esxi} | "
+            f"OS: {vm['os_release'] or vm['os_type'] or '?'} | "
             f"vCPU:{vm['cpu_count']} RAM:{vm['memory_gb']}GB{disk_info} | "
             f"Güç:{vm['power_state']} | Tools:{vm['tools_status'] or '?'} | "
             f"IP:{net_ips}{ds_info}"

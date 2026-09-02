@@ -167,6 +167,8 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                 row.model       = info.get("model")
                 row.uuid        = info.get("uuid")
                 row.cpu_model   = cpu_model_by_ref.get(host_ref)
+                row.product_version = info.get("product_version")
+                row.product_full_name = info.get("product_full_name")
                 row.pnics       = info.get("pnics") or []
                 row.vswitches   = info.get("vswitches") or []
                 row.portgroups  = info.get("portgroups") or []

@@ -242,14 +242,33 @@ def _run_loop_legacy(
             return {"status": "done", "answer": content or "(boş yanıt)",
                     "steps": steps, "session_id": ctx.get("session_id")}
 
-        # Asistanın tool isteğini transcript'e ekle
-        messages.append({"role": "assistant", "content": content,
-                         "tool_calls": [{"function": {"name": tc["name"], "arguments": tc["arguments"]}}
-                                        for tc in tool_calls]})
+        # Asistanın tool isteğini transcript'e ekle (OpenAI: arguments STRING + id)
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": tc.get("id") or f"call_{i}_{tc.get('name') or 'tool'}",
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"] if isinstance(tc.get("arguments"), str)
+                        else json.dumps(tc.get("arguments") or {}, ensure_ascii=False),
+                    },
+                }
+                for i, tc in enumerate(tool_calls)
+            ],
+        })
 
         for tc in tool_calls:
             name = tc["name"]
             args = tc["arguments"] or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args.strip() else {}
+                except Exception:
+                    args = {}
+            tc_id = tc.get("id") or f"call_{name}"
 
             # ask_user: shell tool değil — kullanıcıya seçenek sun ve duraklat.
             if name == "ask_user":

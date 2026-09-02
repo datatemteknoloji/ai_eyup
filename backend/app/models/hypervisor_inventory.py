@@ -28,6 +28,9 @@ class HypervisorHostInventory(Base):
     model     = Column(String(128))    # örn. PowerEdge R740
     uuid      = Column(String(64))
     cpu_model = Column(String(128))
+    # ESXi ürün sürümü (config.product) — asistan "version" alanı
+    product_version = Column(String(64))
+    product_full_name = Column(String(255))
 
     # ── Ağ envanteri (JSON) ──────────────────────────────────────────────────
     pnics      = Column(JSON, default=list)   # [{device, mac, link_speed_mb, full_duplex, mtu}]

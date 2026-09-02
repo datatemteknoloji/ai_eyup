@@ -59,6 +59,77 @@ def _resolve_model(requested_model: Optional[str]) -> str:
     return settings.REMOTE_LLM_MODEL or requested_model or ""
 
 
+def _normalize_messages_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Ollama-tarzı transcript'i OpenAI/LiteLLM uyumlu hale getir.
+
+    Kritik: tool_calls.function.arguments STRING olmalı (dict → 400 unmarshal).
+    tool sonuçlarında tool_call_id zorunlu.
+    """
+    out: List[Dict[str, Any]] = []
+    # name → kalan call id kuyruğu (çoklu aynı tool)
+    pending_ids: Dict[str, List[str]] = {}
+
+    for i, raw in enumerate(messages or []):
+        if not isinstance(raw, dict):
+            continue
+        m = dict(raw)
+        role = m.get("role")
+
+        if role == "assistant" and m.get("tool_calls"):
+            new_tcs = []
+            for j, tc in enumerate(m.get("tool_calls") or []):
+                if not isinstance(tc, dict):
+                    continue
+                tc = dict(tc)
+                fn = dict(tc.get("function") or {})
+                args = fn.get("arguments", "{}")
+                if isinstance(args, (dict, list)):
+                    fn["arguments"] = json.dumps(args, ensure_ascii=False)
+                elif args is None:
+                    fn["arguments"] = "{}"
+                else:
+                    fn["arguments"] = str(args)
+                name = fn.get("name") or "tool"
+                tc_id = tc.get("id") or f"call_{i}_{j}_{name}"
+                tc["id"] = tc_id
+                tc["type"] = tc.get("type") or "function"
+                tc["function"] = fn
+                new_tcs.append(tc)
+                pending_ids.setdefault(name, []).append(tc_id)
+            m["tool_calls"] = new_tcs
+            if m.get("content") == "":
+                m["content"] = None
+            out.append(m)
+            continue
+
+        if role == "tool":
+            name = m.get("name") or ""
+            tc_id = m.get("tool_call_id")
+            if not tc_id:
+                queue = pending_ids.get(name) or []
+                if queue:
+                    tc_id = queue.pop(0)
+                else:
+                    # isim eşleşmezse herhangi bir bekleyen id
+                    for q in pending_ids.values():
+                        if q:
+                            tc_id = q.pop(0)
+                            break
+                tc_id = tc_id or f"call_orphan_{i}_{name or 'tool'}"
+            nm = {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": m.get("content") if m.get("content") is not None else "",
+            }
+            if name:
+                nm["name"] = name
+            out.append(nm)
+            continue
+
+        out.append(m)
+    return out
+
+
 def active_model_label(requested_model: Optional[str] = None) -> str:
     """UI/loglarda gösterilecek 'şu an kullanılan model' etiketi."""
     if remote_llm_enabled():
@@ -126,7 +197,10 @@ def chat_sync(
     Dönüş: .status_code, .json() -> {"message": {"content", "tool_calls"?}}
     """
     if remote_llm_enabled():
-        payload: Dict[str, Any] = {"model": _resolve_model(model), "messages": messages}
+        payload: Dict[str, Any] = {
+            "model": _resolve_model(model),
+            "messages": _normalize_messages_openai(messages),
+        }
         if tools:
             payload["tools"] = tools
         temp = (options or {}).get("temperature")
