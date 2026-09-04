@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.29] - 2026-09-04
+
 ### OpenShift / KubeVirt asistan
 - Cluster sağlık/operatör (`ocp_cluster_status`), storage PV/PVC/SC (`ocp_storage_overview`), Multus NAD (`ocp_network_overview`), DataVolume, Live Migration, ResourceQuota/LimitRange, KubeVirt VM detay ve snapshot/restore tool'ları eklendi.
 - `kubevirt_vm_detail` alan projeksiyonu: kullanıcı ne sordıysa yalnız onu döner (varsayılan kısa özet; full dump yok).
