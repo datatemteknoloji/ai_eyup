@@ -943,6 +943,12 @@ async def set_remote_llm(
         f"verify_ssl={verify_ssl} ca_bundle={'set' if ca_bundle else 'unset'} "
         f"virtual_key={'cleared' if clear_virtual_key else ('set' if virtual_key_raw else 'unchanged')}"
     )
+    try:
+        from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
+        reload_runtime_settings_from_db()
+        broadcast_settings_reload()
+    except Exception as _bc:
+        logger.debug("settings broadcast: %s", _bc)
     return {
         "success": True,
         "enabled": enabled,

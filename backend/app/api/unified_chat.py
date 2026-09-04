@@ -24,6 +24,7 @@ from app.models.chat_session import ChatSession, ChatMessage
 from app.models.credential import GlobalCredential
 from app.services.platform_scope import is_windows_server
 from app.services import llm_gateway
+from app.services.response_layers import wrap_layer
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,13 @@ _GENERAL_TRIGGER = [
 ]
 
 
-def _build_prompt(message: str, context_str: str, collection_summary: str, history_block: str = "") -> str:
+def _build_prompt(
+    message: str,
+    context_str: str,
+    collection_summary: str,
+    history_block: str = "",
+    output_directive: Optional[str] = None,
+) -> str:
     NL = "\n"
     identity = NL.join([
         "Sen 15+ yillik deneyime sahip kıdemli bir",
@@ -317,7 +324,13 @@ def _build_prompt(message: str, context_str: str, collection_summary: str, histo
     if history_block:
         parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     parts.append("KULLANICI SORUSU: " + message)
-    parts.append("YANIT (Markdown, Türkçe):")
+    from app.services.chat_output_directives import directive_system_addendum
+    _dir_add = directive_system_addendum(output_directive)
+    if _dir_add:
+        parts.append(_dir_add.strip())
+        parts.append("YANIT:")
+    else:
+        parts.append("YANIT (Markdown, Türkçe):")
     return "\n\n".join(parts)
 
 
@@ -332,10 +345,13 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
         async def event_generator():
             try:
-                message = request.message.strip()
-                if not message:
+                raw_message = request.message.strip()
+                if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
                     return
+
+                from app.services.chat_output_directives import extract_output_directive
+                message, output_directive = extract_output_directive(raw_message)
 
                 session_id = request.session_id
                 if not session_id:
@@ -357,7 +373,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
 
                 yield _sse({"session_id": session_id, "start": True})
 
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(session_id=session_id, role="user", content=raw_message))
                 db.commit()
 
                 from app.services.chat_obs import ChatTiming
@@ -436,9 +452,13 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 _is_followup = has_prior_messages(db, session_id)
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
-                # Takip sorularinda cache'e bakilmiyor — bkz. chat.py'deki ayni mantik.
+                # Takip sorularinda VE /table-/json-/brief komutlarinda cache'e bakilmiyor —
+                # aksi halde ayni soru farkli format komutlariyla sorulunca eski formattaki
+                # cache'lenmis cevap yanlislikla donmus olur (bkz. chat.py'deki ayni mantik).
+                from app.services.chat_output_directives import OutputDirective as _OD
+                _has_directive = output_directive != _OD.NONE
                 cache_key_ids: List[int] = []
-                cached = None if _is_followup else get_cached_answer(
+                cached = None if (_is_followup or _has_directive) else get_cached_answer(
                     db, message, cache_key_ids, platform="unified",
                 )
                 _timing.mark("cache")
@@ -877,11 +897,11 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 if inventory_context and not linux_ctx and not windows_ctx:
                     context_parts.append(inventory_context)
                 if linux_ctx:
-                    context_parts.append("LINUX SUNUCULARDAN ALINAN GERCEK VERILER (SSH):\n" + linux_ctx.strip())
+                    context_parts.append(wrap_layer("linux_ssh", linux_ctx))
                 if windows_ctx:
-                    context_parts.append("WINDOWS SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + windows_ctx.strip())
+                    context_parts.append(wrap_layer("windows_winrm", windows_ctx))
                 if prom_ctx:
-                    context_parts.append("PROMETHEUS CANLI METRIKLER:\n" + prom_ctx.strip())
+                    context_parts.append(wrap_layer("prometheus", prom_ctx))
 
                 _all_targets = list(linux_targets) + list(windows_targets)
                 if _all_targets:
@@ -1070,6 +1090,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                             planning_mode=_planning,
                             planning_depth=_depth,
                             system_addendum=_sys_add or None,
+                            output_directive=output_directive,
                         )
 
                         def _next_item(g):
@@ -1151,7 +1172,15 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                 except Exception:
                     pass
 
-                prompt = _build_prompt(message, context_str, collection_summary, history_block)
+                # MULTI_DOMAIN: Linux+Windows+Prometheus+RAG aynı turda birleşince context
+                # kolayca modelin token limitini (ör. 32K) aşabilir — merkezi bütçeye kırp.
+                try:
+                    from app.services.llm_context_budget import apply_context_char_budget
+                    context_str = apply_context_char_budget(context_str)
+                except Exception:
+                    pass
+
+                prompt = _build_prompt(message, context_str, collection_summary, history_block, output_directive)
 
                 yield _sse({"phase": "answering"})
                 full_response = ""
@@ -1207,7 +1236,7 @@ async def unified_chat_stream(request: UnifiedChatRequest, db: Session = Depends
                     s.updated_at = datetime.now(timezone.utc)
                 db.commit()
 
-                if full_response and not linux_ctx and not windows_ctx and not _is_followup:
+                if full_response and not linux_ctx and not windows_ctx and not _is_followup and not _has_directive:
                     save_to_cache(db, message, full_response, cache_key_ids, platform="unified")
 
                 _timing.finish(

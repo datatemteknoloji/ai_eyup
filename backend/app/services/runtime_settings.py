@@ -476,6 +476,15 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "Cevap bitince varsayılan limite dönülür.",
         "env": "VIRT_CHAT_VM_LIST_HARD_MAX",
     },
+    "llm_context_token_budget": {
+        "default": "32768", "type": "str",
+        "choices": ["8192", "16384", "32768", "49152", "65536", "128000"],
+        "group": "llm_context", "label": "LLM context token bütçesi",
+        "help": "Uzak/yerel modele gönderilen toplam context üst sınırı (token). "
+                "Model limitinden düşük veya eşit seçin (örn. gpt-oss-120b → 32768). "
+                "Aşımda bağlam otomatik kısaltılır.",
+        "env": "LLM_CONTEXT_TOKEN_BUDGET",
+    },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
     "rag_reranker_enabled": {
         "default": True, "type": "bool", "min": 0, "max": 1,
@@ -545,6 +554,7 @@ GROUP_LABELS = {
     "unified_chat": "Unified Chat (agentic)",
     "linux_chat": "Linux Chat (agentic)",
     "virt_chat": "Sanallaştırma Chat",
+    "llm_context": "LLM / Context",
     "rag_reranker": "RAG Reranker (HuggingFace)",
     "proxy": "Proxy / Nginx",
     "api_cache": "API önbellek (Redis)",

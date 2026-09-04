@@ -515,6 +515,12 @@ async def startup_tasks():
     except Exception as _e:
         logger.debug(f"Settings load: {_e}")
 
+    try:
+        from app.services.settings_broadcast import start_settings_reload_listener
+        start_settings_reload_listener()
+    except Exception as _lr:
+        logger.debug("Settings reload listener: %s", _lr)
+
     # Yarım kalan repo sync job'larını "failed" yap — otomatik resume yok
     # (Birden fazla parallel sync başlatmak SQLAlchemy connection pool sorununa yol açıyor)
     try:

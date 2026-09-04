@@ -643,10 +643,15 @@ def _datastore_vm_disk_summary(
     vms: List[Dict],
     esx_hosts: List[Dict],
     live_datastores: Optional[List[Dict[str, Any]]] = None,
+    datastore_filter: Optional[str] = None,
 ) -> str:
     """
     Datastore bazında: vCenter kapasite (toplam/boş) + VM disk tahsisi.
     live_datastores verilmezse yalnızca tahsis özeti üretilir.
+
+    datastore_filter: verilmişse (bkz. _extract_datastore_filter) yalnız adı
+    eşleşen datastore grubu döner — kullanıcı belirli bir datastore adı verdiğinde
+    TÜM datastore'ları basmak yerine kapsam daraltılır (bilgi kirliliği önlemi).
     """
     from collections import defaultdict
 
@@ -656,13 +661,20 @@ def _datastore_vm_disk_summary(
         key = ds if ds else f"Hypervisor: {vm.get('hypervisor', 'Bilinmiyor')}"
         groups[key].append(vm)
 
-    live_idx = _datastore_capacity_index(live_datastores or [])
+    live_datastores = list(live_datastores or [])
 
     # Canlı DS'leri de ekle (üzerinde VM olmasa bile)
-    for d in live_datastores or []:
+    for d in live_datastores:
         name = (d.get("name") or "").strip()
         if name and name not in groups:
             groups[name] = []
+
+    if datastore_filter:
+        needle = datastore_filter.strip().lower()
+        groups = {k: v for k, v in groups.items() if needle in k.lower()}
+        live_datastores = [d for d in live_datastores if needle in (d.get("name") or "").lower()]
+
+    live_idx = _datastore_capacity_index(live_datastores)
 
     if not groups and not live_datastores:
         return ""
@@ -1468,17 +1480,85 @@ def h_largest_snapshot(db: Session, question: str = "") -> str:
         _fmt_ts(v.get("snapshot_oldest")),
         v.get("hypervisor"),
     ] for v in with_snap[:25]]
+    any_size = any(v.get("snapshot_space_gb") is not None for v in with_snap)
+    note = (
+        "_Sıralama: yaklaşık alan (desc), sonra snapshot adedi. "
+        "Alan `summary.storage.uncommitted` üzerinden canlı okunur — VM'in TOPLAM "
+        "snapshot zinciri alanıdır (tekil snapshot'a bölünemez, vSphere API'de "
+        "per-snapshot byte alanı yoktur)._\n\n"
+        if any_size else
+        "_Sıralama: snapshot adedi (desc), sonra en eski tarih. Bu vCenter/ESXi "
+        "sürümü `summary.storage` alanını desteklemiyor (InvalidProperty) — "
+        "alan verisi bu ortamda mevcut değil, adet + yaş üzerinden listelenir._\n\n"
+    )
     return (
         "### En Büyük / En Çok Snapshot (vCenter canlı)\n\n"
-        "_Sıralama: snapshot adedi (desc), sonra en eski tarih. "
-        "Byte cinsinden zincir boyutu bu API sürümünde `summary.storage` ile gelmiyor; "
-        "adet + yaş üzerinden canlı listelenir._\n\n"
+        + note
         + _md_table(
-            ["VM", "Snapshot adedi", "Alan (GB ≈)", "En eski", "Hypervisor"],
+            ["VM", "Snapshot adedi", "Alan (GB ≈, VM toplamı)", "En eski", "Hypervisor"],
             rows,
             "Hiçbir VM'de snapshot yok.",
         )
     )
+
+
+def h_snapshot_size(db: Session, question: str = "") -> str:
+    """
+    Snapshot boyutu/büyüklüğü sorusu — TARİF DEĞİL, GERÇEK SORGU:
+    Soruda BİLİNEN bir VM adı geçiyorsa o VM'in her snapshot'ının GERÇEK byte
+    boyutunu (vCenter layout + datastore browser üzerinden — tahmin değil)
+    döner. VM belirtilmemişse fleet-wide yaklaşık özete (h_largest_snapshot)
+    düşer.
+    """
+    vm_name = _extract_vm_name_filter(db, question)
+    if not vm_name:
+        return h_largest_snapshot(db, question)
+
+    from app.models.server import Server
+    from app.services.platform_scope import vm_filter_condition
+    from app.services.snapshot_service import list_external_snapshots
+
+    srv = db.query(Server).filter(vm_filter_condition(), Server.name.ilike(vm_name)).first()
+    if not srv:
+        return _na(f"'{vm_name}' adlı VM envanterde bulunamadı.")
+
+    result = list_external_snapshots(srv, db, include_size=True)
+    if not result.get("success"):
+        return _na(
+            f"{vm_name}: canlı snapshot sorgusu başarısız — {result.get('message') or 'bağlantı hatası'}."
+        )
+    snaps = result.get("snapshots") or []
+    if not snaps:
+        return f"### {vm_name} — Snapshot Boyutu\n\n{vm_name} üzerinde aktif snapshot yok."
+
+    rows = [[
+        s.get("name") or s.get("id"),
+        _fmt_ts(s.get("create_time")),
+        (f"{s['size_gb']:.3f}" if isinstance(s.get("size_gb"), (int, float)) else "—"),
+        ("gerçek" if s.get("size_exact") else ("tahmini" if s.get("size_gb") is not None else "—")),
+    ] for s in snaps]
+    any_size = any(s.get("size_gb") is not None for s in snaps)
+    note = (
+        "_Boyut, snapshot alındığı andan sonra o disk zincirine yazılan GERÇEK "
+        "delta dosyası boyutudur (vCenter layout + datastore browser ile okunur — "
+        "PowerCLI/RVTools'la aynı yöntem, tahmin değildir)._\n\n"
+        if any_size else
+        (result.get("size_note") or "_Bu VM'in disk zinciri düzensiz/dallanmış olabilir — per-snapshot boyut hesaplanamadı._") + "\n\n"
+    )
+    return (
+        f"### {vm_name} — Snapshot Boyutu (vCenter canlı)\n\n"
+        + note
+        + _md_table(["Snapshot", "Oluşturulma", "Boyut (GB)", "Kesinlik"], rows, "Snapshot yok.")
+    )
+
+
+def _extract_vm_name_filter(db: Session, question: str) -> Optional[str]:
+    """Soruda geçen GERÇEK (DB'de kayıtlı) VM adını bulur — yoksa None."""
+    try:
+        from app.services.virt_entity_resolver import extract_entity_filters
+        return extract_entity_filters(db, question or "").get("vm_name")
+    except Exception:
+        return None
 
 
 def h_idle_disks(db: Session, question: str = "") -> str:
@@ -1950,7 +2030,25 @@ def _datastore_capacity_index(datastores: List[Dict[str, Any]]) -> Dict[str, Dic
     return idx
 
 
+def _extract_datastore_filter(db: Session, question: str) -> Optional[str]:
+    """Soruda geçen GERÇEK (DB'de kayıtlı) datastore adını bulur — yoksa None.
+
+    GENEL kural: "NVME_DS'de hangi VM'ler var" gibi sorularda literal "datastore"
+    kelimesi hiç geçmeyebilir (bkz. virt_entity_resolver docstring) — bu yüzden
+    regex tahmini yerine DB'deki gerçek adlarla eşleştirme kullanılır. QA_RULES
+    şablon handler'ları (h_datastore_vm_map, h_datastore_by_disk, h_datastore_status)
+    isim bulunursa TÜM datastore'ları değil yalnız o datastore'u göstermek için
+    bunu kullanır — aksi halde "bilgi kirliliği" (istenmeyen ekstra veri) oluşur.
+    """
+    try:
+        from app.services.virt_entity_resolver import extract_entity_filters
+        return extract_entity_filters(db, question or "").get("datastore")
+    except Exception:
+        return None
+
+
 def h_datastore_by_disk(db: Session, question: str = "") -> str:
+    ds_filter = _extract_datastore_filter(db, question)
     vms = _get_vms(db)
     groups: Dict[str, Dict[str, float]] = defaultdict(lambda: {"disk": 0, "count": 0})
     for v in vms:
@@ -1966,7 +2064,15 @@ def h_datastore_by_disk(db: Session, question: str = "") -> str:
 
     # Canlı DS listesini birleştir (VM tahsisi olmayan DS'ler de görünsün)
     names = set(groups.keys()) | {d.get("name") for d in live if d.get("name")}
-    if not names:
+
+    # Kullanıcı belirli bir datastore adı verdiyse (regex "datastore" kelimesini
+    # şart koşmasa da) yalnız o isme daralt — GENEL kural, bkz. _extract_datastore_filter.
+    if ds_filter:
+        needle = ds_filter.strip().lower()
+        names = {n for n in names if n and needle in n.lower()}
+        if not names:
+            return _na(f"'{ds_filter}' adlı datastore için kapasite/tahsis bilgisi bulunamadı.")
+    elif not names:
         return _na("Datastore bilgisi yok (`vm_datastore` boş ve vCenter sorgusu sonuç vermedi).")
 
     rows = []
@@ -1987,8 +2093,11 @@ def h_datastore_by_disk(db: Session, question: str = "") -> str:
         "_Not: **Tahsis** = VM `vm_disk_gb` toplamı (provisioned). "
         "**Toplam/Kullanılan/Boş** = vCenter datastore `summary.capacity/freeSpace` (canlı)._\n\n"
     )
+    title = "### Datastore Kapasite + VM Disk Tahsisatı"
+    if ds_filter:
+        title += f" — filtre: **{ds_filter}**"
     return (
-        "### Datastore Kapasite + VM Disk Tahsisatı\n\n" + note
+        title + "\n\n" + note
         + _md_table(
             ["Datastore", "VM", "Tahsis (GB)", "Toplam (GB)", "Kullanılan (GB)", "Boş (GB)", "Doluluk"],
             rows,
@@ -2114,13 +2223,18 @@ def h_datastore_accessibility(db: Session, question: str = "") -> str:
 
 def h_datastore_status(db: Session, question: str = "") -> str:
     """Datastore durumları: erişim + kapasite + doluluk (canlı vCenter)."""
+    ds_filter = _extract_datastore_filter(db, question)
     from app.services import vcenter_vm_performance as perf
     r = perf.fetch_datastore_status(db)
     if r.get("errors") and not r.get("datastores"):
         return _na(f"vCenter datastore sorgusu başarısız oldu: {'; '.join((r.get('errors') or [])[:2])}")
     stores = list(r.get("datastores") or [])
+    if ds_filter:
+        needle = ds_filter.strip().lower()
+        stores = [d for d in stores if needle in (d.get("name") or "").lower()]
     if not stores:
-        # Fallback: kapasite tablosu (VM tahsis + canlı)
+        # Fallback: kapasite tablosu (VM tahsis + canlı) — h_datastore_by_disk aynı
+        # question'dan kendi filtresini bağımsız çıkarır, tutarlı davranır.
         return h_datastore_by_disk(db, question)
 
     inaccessible = [d for d in stores if not d.get("accessible")]
@@ -2138,7 +2252,7 @@ def h_datastore_status(db: Session, question: str = "") -> str:
             d.get("hypervisor") or "-",
         ])
     header = (
-        f"### Datastore Durumları\n\n"
+        f"### Datastore Durumları" + (f" — filtre: **{ds_filter}**" if ds_filter else "") + "\n\n"
         f"**Toplam:** {len(stores)} | **Erişilebilir:** {len(stores) - len(inaccessible)} | "
         f"**Erişilemez:** {len(inaccessible)}\n\n"
     )
@@ -2153,24 +2267,39 @@ def h_datastore_status(db: Session, question: str = "") -> str:
 
 
 def h_datastore_vm_map(db: Session, question: str = "") -> str:
-    """Hangi datastore'da hangi VM'ler — isimli dağılım (kapasite özeti değil)."""
+    """Hangi datastore'da hangi VM'ler — isimli dağılım (kapasite özeti değil).
+
+    Soruda GERÇEK bir datastore adı geçiyorsa (ör. "NVME_DS'de hangi VM'ler var",
+    "hangi vmlere ait diskler var" — literal "datastore" kelimesi şart değil)
+    yalnız o datastore gösterilir; aksi halde tüm datastore'lar listelenir.
+    """
+    ds_filter = _extract_datastore_filter(db, question)
     vms = _get_vms(db)
     live = _get_live_datastores(db)
-    body = _datastore_vm_disk_summary(vms, _get_esx_hosts(db), live_datastores=live)
+    body = _datastore_vm_disk_summary(vms, _get_esx_hosts(db), live_datastores=live, datastore_filter=ds_filter)
     if not body or not body.strip():
+        if ds_filter:
+            return _na(f"'{ds_filter}' adlı datastore için VM/kapasite bilgisi bulunamadı.")
         return _na(
             "Datastore→VM eşlemesi yok (`vm_datastore` boş ve vCenter canlı listesi gelmedi)."
         )
-    # Özet satır: DS başına VM sayısı
+    # Özet satır: DS başına VM sayısı (filtre varsa yalnız o datastore'un VM'leri)
     from collections import defaultdict
     groups: Dict[str, int] = defaultdict(int)
-    for v in vms:
+    scoped_vms = vms
+    scoped_live = live
+    if ds_filter:
+        needle = ds_filter.strip().lower()
+        scoped_vms = [v for v in vms if needle in (v.get("datastore") or "").lower()]
+        scoped_live = [d for d in live if needle in (d.get("name") or "").lower()]
+    for v in scoped_vms:
         ds = (v.get("datastore") or "").strip()
         if ds:
             groups[ds] += 1
+    scope_note = f" — filtre: **{ds_filter}**" if ds_filter else ""
     summary = (
-        f"### Datastore → VM Haritası\n\n"
-        f"**{len(vms)}** VM · **{len(groups) or len(live)}** datastore "
+        f"### Datastore → VM Haritası{scope_note}\n\n"
+        f"**{len(scoped_vms)}** VM · **{len(groups) or len(scoped_live)}** datastore "
         f"(isimli liste aşağıda).\n\n"
     )
     return summary + body
@@ -2548,7 +2677,14 @@ QA_RULES: List[Tuple[str, Any]] = [
 
     # Disk
     (r"disk\s*kullanımı\s*%?\s*90|guest\s*disk.*90|disk.?i\s*%?\s*90", h_guest_disk_usage_over_90),
-    (r"snapshot\s*bulunan\s*vm|snapshot.?ı\s*olan|hangi\s*vm.*snapshot", h_snapshot_vms),
+    # Boyut/büyüklük sorusu — "snapshotların boyutları nedir" gibi (VM adı varsa
+    # GERÇEK per-snapshot byte boyutu döner) — genel "hangi VM'de snapshot var"
+    # kuralından ÖNCE denenmeli, yoksa boyut isteği adet listesine düşer.
+    (r"snapshot.*(boyut|büyüklük|buyukluk)|(boyut|büyüklük|buyukluk).*snapshot"
+     r"|snapshot.*ne\s*kadar\s*yer|snapshot.*(kaç\s*gb|kac\s*gb)", h_snapshot_size),
+    (r"snapshot\s*bulunan\s*vm|snapshot.?ı\s*olan|hangi\s*vm.*snapshot"
+     r"|(?:aktif\s*)?snapshot.*(?:var\s*m[ıi]|kaç|say[ıi]|adet)"
+     r"|kaç.*snapshot|snapshot.*kaç", h_snapshot_vms),
     (r"\d+\s*(saat|gün|hafta|ay|yıl|sene)\w*\s*eski\s*snapshot|eski\s*snapshot", h_old_snapshots),
     (r"en\s*büyük\s*snapshot", h_largest_snapshot),
     (r"thin\s*provision|thick\s*provision|disk\s*provision", h_disk_provisioning),
@@ -2737,22 +2873,36 @@ def answer_hypervisor_question(
     conversation_history: Optional[List[Dict[str, str]]] = None,
     skip_deterministic: bool = False,
     user_question: Optional[str] = None,
+    output_directive: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Doğal dil sorusunu alır, context oluşturur, Ollama ile yanıtlar.
 
     skip_deterministic: True ise QA_RULES atlanır (çağıran ham soruda zaten denedi).
     user_question: intent/report/cache için ham kullanıcı sorusu (agentic dump yok).
+    output_directive: kullanıcının /table, /json, /brief komutu (chat_output_directives).
+        Verilmişse cache atlanır (format'a özel cevap genel cache'i kirletmesin) ve
+        LLM prompt'una format talimatı eklenir.
     """
     from app.services import qa_cache
+    from app.services.chat_output_directives import OutputDirective
+
+    _directive = output_directive if isinstance(output_directive, OutputDirective) else (
+        OutputDirective(output_directive) if output_directive else OutputDirective.NONE
+    )
+    _has_directive = _directive != OutputDirective.NONE
 
     t0 = datetime.utcnow()
     cache_q = user_question or (question or "").split("\n\n[CANLI ARAÇ SONUÇLARI")[0]
 
-    # Takip sorularinda (conversation_history varsa) cache'e bakilmiyor — aksi halde
-    # "peki cpu?" gibi baglama bagli bir soru, izole/eski bir soruyla metin benzerligi
-    # yuzunden yanlislikla eslesip bu oturumun gecmisini yok sayan bir cevap donebilir.
-    cached = qa_cache.get_cached_answer(cache_q, model) if not conversation_history else None
+    # Takip sorularinda (conversation_history varsa) VEYA /table-/json-/brief komutu
+    # varken cache'e bakilmiyor — aksi halde format'a özel istek eski/genel formattaki
+    # cache'lenmis cevabi yanlislikla dondurur (bkz. "peki cpu?" ayni mantik).
+    cached = (
+        qa_cache.get_cached_answer(cache_q, model)
+        if not conversation_history and not _has_directive
+        else None
+    )
     if cached is not None:
         hits = cached.pop("_cache_hits", None)
         cached["cached"] = True
@@ -2766,6 +2916,7 @@ def answer_hypervisor_question(
         db, question, model, conversation_history,
         skip_deterministic=skip_deterministic,
         user_question=cache_q,
+        output_directive=_directive,
     )
 
     # Deterministik cevaplar şablon; LLM serbest metinde bilinmiyor kaçışını temizle
@@ -2775,7 +2926,7 @@ def answer_hypervisor_question(
         result["answer"] = sanitize_llm_answer(result.get("answer") or "")
 
     is_deterministic = "deterministic" in intents
-    should_cache = (is_deterministic or not conversation_history) and not result.get("error")
+    should_cache = (is_deterministic or not conversation_history) and not result.get("error") and not _has_directive
     if should_cache:
         qa_cache.set_cached_answer(cache_q, result, model)
 
@@ -2789,12 +2940,59 @@ def _compute_hypervisor_answer(
     conversation_history: Optional[List[Dict[str, str]]] = None,
     skip_deterministic: bool = False,
     user_question: Optional[str] = None,
+    output_directive: Optional[str] = None,
 ) -> Dict[str, Any]:
+    from app.services.chat_output_directives import OutputDirective, directive_system_addendum
+
+    _directive = output_directive if isinstance(output_directive, OutputDirective) else (
+        OutputDirective(output_directive) if output_directive else OutputDirective.NONE
+    )
+    _dir_addendum = directive_system_addendum(_directive)
+
     t0 = datetime.utcnow()
     intent_q = user_question or (question or "").split("\n\n[CANLI ARAÇ SONUÇLARI")[0]
 
+    from app.services.chat_intent import classify_chat_intent, ChatIntentKind
+    chat_intent = classify_chat_intent(intent_q)
+
+    # Kavramsal soru — tam envanter dump'ı yok, persona ile kısa açıklama
+    if chat_intent.kind == ChatIntentKind.CONCEPTUAL:
+        hist = ""
+        if conversation_history:
+            for msg in conversation_history[-4:]:
+                role = "Kullanıcı" if msg["role"] == "user" else "Asistan"
+                hist += f"\n{role}: {msg['content']}"
+        prompt = (
+            f"{_VIRTUALIZATION_PERSONA}\n\n"
+            "Kullanıcı kavramsal / eğitim amaçlı soru soruyor. Türkçe, net ve kısa açıkla. "
+            "Envanter tablosu veya canlı metrik listesi VERME unless explicitly asked.\n"
+            f"{hist}\n\nKullanıcı: {intent_q}"
+            f"{_dir_addendum}\n\nYanıt:"
+        )
+        from app.services.llm_context_budget import apply_prompt_budget
+        prompt, _ = apply_prompt_budget(prompt)
+        active_model = model or get_active_model(db)
+        try:
+            data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+            answer = (data.get("response") or "").strip() if not data.get("error") else data["error"]
+            err = data.get("error")
+        except Exception as e:
+            answer, err = str(e), str(e)
+        latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
+        return {
+            "answer": answer or "",
+            "intents": ["conceptual"],
+            "context_lines": 0,
+            "vm_count_in_context": 0,
+            "model": active_model,
+            "latency_ms": latency_ms,
+            "error": err,
+        }
+
     # 1) Deterministik katman — ham kullanıcı sorusu üzerinde
-    if not skip_deterministic:
+    # /table /json /brief varsa QA_RULES şablonlarını atla — bu komutlar yalnızca
+    # virt_inventory_contract (satır bazlı deterministik) ve LLM prompt'unda uygulanır.
+    if not skip_deterministic and _directive == OutputDirective.NONE:
         det_answer = try_deterministic_answer(db, intent_q)
         if det_answer:
             latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
@@ -2822,8 +3020,7 @@ def _compute_hypervisor_answer(
     vm_names_to_compare = _extract_vm_names(question, [r[0] for r in all_vm_names]) if "compare_vms" in intents else None
 
     context = build_context(db, question, vm_names_to_compare)
-
-    # System prompt
+    from app.services.llm_context_budget import apply_prompt_budget
     system_prompt = (
         _VIRTUALIZATION_PERSONA + "\n\n"
         "Sana sağlanan gerçek veri üzerinden Türkçe, kısa, net ve pratik yanıtlar ver. "
@@ -2848,8 +3045,11 @@ def _compute_hypervisor_answer(
 === VERİ SONU ===
 {messages_block}
 Kullanıcı Sorusu: {question}
+{_dir_addendum}
 
 Lütfen yanıtını ver:"""
+
+    prompt, _trunc = apply_prompt_budget(prompt)
 
     active_model = model or get_active_model(db)
     answer = ""

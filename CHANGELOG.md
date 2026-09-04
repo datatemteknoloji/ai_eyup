@@ -11,6 +11,15 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### OpenShift / KubeVirt asistan
+- Cluster sağlık/operatör (`ocp_cluster_status`), storage PV/PVC/SC (`ocp_storage_overview`), Multus NAD (`ocp_network_overview`), DataVolume, Live Migration, ResourceQuota/LimitRange, KubeVirt VM detay ve snapshot/restore tool'ları eklendi.
+- `kubevirt_vm_detail` alan projeksiyonu: kullanıcı ne sordıysa yalnız onu döner (varsayılan kısa özet; full dump yok).
+- OpenShiftCluster üzerinden KubeVirt erişimi (ayrı hypervisor kaydı zorunlu değil); `openshift_ask` canlı sürüm kullanır.
+
+### Raporlar / Chat
+- Özel raporlar (custom reports) + platform Altyapı Raporları kataloğuna entegrasyon; RBAC `custom_reports` modülü.
+- Snapshot boyutu (SOAP layout + datastore browser), çıktı direktifleri (`/table` `/json` `/brief`), bilgi kirliliği / entity filtreleri, kapasite analitiği ve LLM context budget ayarı.
+
 ## [1.0.9.27] - 2026-08-15
 
 ### Chat / Prometheus

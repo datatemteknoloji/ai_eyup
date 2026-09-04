@@ -454,33 +454,35 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
     """)).all()
     trend_map = {r.host_name: r for r in trend_rows}
 
-    # 90 günlük büyüme oranı (linear regression basiti)
-    growth_rows = db.execute(text("""
-        SELECT host_name,
-               CORR(EXTRACT(EPOCH FROM timestamp), ds_usage_pct) as ds_corr,
-               REGR_SLOPE(ds_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as ds_daily_growth,
-               REGR_SLOPE(mem_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as mem_daily_growth,
-               REGR_SLOPE(cpu_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as cpu_daily_growth
-        FROM hypervisor_host_metrics
-        WHERE timestamp >= NOW() - INTERVAL '90 days'
-        GROUP BY host_name
-    """)).all()
-    growth_map = {r.host_name: r for r in growth_rows}
-
+    # 90 günlük büyüme — report_analytics (host başına seri)
     capacity_items = []
     for h in hosts:
         trend = trend_map.get(h["host"])
-        growth = growth_map.get(h["host"])
 
-        ds_daily = (growth.ds_daily_growth or 0) if growth else 0
-        mem_daily = (growth.mem_daily_growth or 0) if growth else 0
+        from app.services import report_analytics as ra
 
-        # Kaç günde %80 kapasiteye ulaşır? Kullanım zaten %80 üzerindeyse
-        # (80 - kullanım) negatif olur ve bölme negatif/anlamsız bir "gün" üretir
-        # (örn. "-1724 gün içinde %80'e ulaşacak") — bunun yerine 0 döndürülür,
-        # yani eşik zaten geçilmiş demektir.
-        days_to_ds_80 = _days_to_threshold(h["ds_pct"], ds_daily)
-        days_to_mem_80 = _days_to_threshold(h["mem_pct"], mem_daily)
+        series_rows = db.execute(text("""
+            SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
+            FROM hypervisor_host_metrics
+            WHERE host_name = :host
+              AND timestamp >= NOW() - INTERVAL '90 days'
+            ORDER BY timestamp ASC
+        """), {"host": h["host"]}).all()
+        cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
+        mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
+        ds_series = ra.aggregate_host_metrics_series(series_rows, value_key="ds_usage_pct")
+        cpu_trend = ra.compute_trend_from_series(cpu_series)
+        mem_trend = ra.compute_trend_from_series(mem_series)
+        ds_trend = ra.compute_trend_from_series(ds_series)
+        mem_daily = mem_trend.daily_slope
+        ds_daily = ds_trend.daily_slope
+
+        days_to_ds_80 = ra.days_to_threshold(
+            h["ds_pct"], ds_daily, confidence=ds_trend.confidence,
+        )
+        days_to_mem_80 = ra.days_to_threshold(
+            h["mem_pct"], mem_daily, confidence=mem_trend.confidence,
+        )
 
         status = "Kritik" if h["mem_pct"] > 85 or h["ds_pct"] > 85 else (
             "Uyarı" if h["mem_pct"] > 70 or h["ds_pct"] > 70 else "Normal"
@@ -492,7 +494,8 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
                 "used_pct": h["cpu_pct"],
                 "cores": h["cpu_cores"],
                 "avg_30d": round(trend.avg_cpu or 0, 1) if trend else None,
-                "daily_growth_pct": round(growth.cpu_daily_growth or 0, 4) if growth else 0,
+                "daily_growth_pct": round(cpu_trend.daily_slope, 4),
+                "trend_confidence": cpu_trend.confidence,
             },
             "memory": {
                 "used_pct": h["mem_pct"],
@@ -716,8 +719,13 @@ def generate_resource_usage_report(db: Session) -> Dict[str, Any]:
             "total_allocated_ram_gb": round(total_allocated_ram, 1),
             "total_allocated_disk_gb": round(total_allocated_disk, 1),
         },
-        "top_cpu_consumers": [
+        "top_cpu_allocators": [
             {"vm": v["name"], "vcpu": v["cpu_count"], "hypervisor": v["hypervisor"]}
+            for v in top_cpu
+        ],
+        "top_cpu_consumers": [
+            {"vm": v["name"], "vcpu": v["cpu_count"], "hypervisor": v["hypervisor"],
+             "note": "Tahsis edilen vCPU (gerçek CPU kullanımı değil)"}
             for v in top_cpu
         ],
         "top_ram_consumers": [
@@ -808,6 +816,7 @@ def generate_consolidation_report(db: Session) -> Dict[str, Any]:
         },
         "oversized_vms": {
             "count": len(low_cpu),
+            "note": "vCPU≥8 tahsis heuristic — gerçek CPU kullanım metriği değil",
             "vms": [{"vm": v["name"], "cpu": v["cpu_count"], "ram_gb": v["memory_gb"]}
                     for v in sorted(low_cpu, key=lambda x: -(x["cpu_count"] or 0))[:20]],
         },
@@ -913,66 +922,52 @@ def generate_anomaly_report(db: Session) -> Dict[str, Any]:
 
 
 def generate_forecast_report(db: Session) -> Dict[str, Any]:
+    from app.services import report_analytics as ra
+
     hosts = _latest_host_metrics(db)
-
-    # 90 günlük büyüme trendi
-    growth_rows = db.execute(text("""
-        SELECT host_name,
-               REGR_SLOPE(ds_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as ds_daily,
-               REGR_SLOPE(mem_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as mem_daily,
-               REGR_SLOPE(cpu_usage_pct, EXTRACT(EPOCH FROM timestamp)) * 86400 as cpu_daily
-        FROM hypervisor_host_metrics
-        WHERE timestamp >= NOW() - INTERVAL '90 days'
-        GROUP BY host_name
-    """)).all()
-    growth_map = {r.host_name: r for r in growth_rows}
-
-    def project(current_pct: float, daily_growth: float, days: int) -> float:
-        # Düşen trendlerde (negatif growth) uzun vadede kullanım %0'ın altına
-        # inemez — clamp olmadan "-2.3%" gibi anlamsız bir tahmin üretiliyordu.
-        return round(max(0, min(100, current_pct + daily_growth * days)), 1)
-
     forecasts = []
-    for h in hosts:
-        g = growth_map.get(h["host"])
-        if not g:
-            continue
-        ds_d = g.ds_daily or 0
-        mem_d = g.mem_daily or 0
-        cpu_d = g.cpu_daily or 0
 
-        forecasts.append({
-            "host": h["host"],
-            "current": {
+    for h in hosts:
+        host_name = h["host"]
+        series_rows = db.execute(text("""
+            SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
+            FROM hypervisor_host_metrics
+            WHERE host_name = :host
+              AND timestamp >= NOW() - INTERVAL '90 days'
+            ORDER BY timestamp ASC
+        """), {"host": host_name}).all()
+
+        cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
+        mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
+        ds_series = ra.aggregate_host_metrics_series(series_rows, value_key="ds_usage_pct")
+
+        cpu_trend = ra.compute_trend_from_series(cpu_series)
+        mem_trend = ra.compute_trend_from_series(mem_series)
+        ds_trend = ra.compute_trend_from_series(ds_series)
+
+        cpu_vals = [float(x) for x in cpu_series if x is not None]
+        cpu_p95 = ra.percentile(cpu_vals, 95) if cpu_vals else None
+
+        forecasts.append(ra.build_forecast_payload(
+            host_name,
+            {
                 "cpu_pct": h["cpu_pct"],
                 "mem_pct": h["mem_pct"],
                 "ds_pct": h["ds_pct"],
             },
-            "forecast_3m": {
-                "cpu_pct": project(h["cpu_pct"], cpu_d, 90),
-                "mem_pct": project(h["mem_pct"], mem_d, 90),
-                "ds_pct": project(h["ds_pct"], ds_d, 90),
-            },
-            "forecast_6m": {
-                "cpu_pct": project(h["cpu_pct"], cpu_d, 180),
-                "mem_pct": project(h["mem_pct"], mem_d, 180),
-                "ds_pct": project(h["ds_pct"], ds_d, 180),
-            },
-            "forecast_12m": {
-                "cpu_pct": project(h["cpu_pct"], cpu_d, 365),
-                "mem_pct": project(h["mem_pct"], mem_d, 365),
-                "ds_pct": project(h["ds_pct"], ds_d, 365),
-            },
-            "daily_growth": {
-                "cpu_pct_per_day": round(cpu_d, 4),
-                "mem_pct_per_day": round(mem_d, 4),
-                "ds_pct_per_day": round(ds_d, 4),
-            },
-        })
+            cpu_trend=cpu_trend,
+            mem_trend=mem_trend,
+            ds_trend=ds_trend,
+            cpu_p95=cpu_p95,
+        ))
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "forecasts": forecasts,
+        "methodology": (
+            "Disk/Memory: günlük trend; düşüşte %0 extrapolasyonu yok. "
+            "CPU: p95/mevcut taban; negatif trend %0'a inmez."
+        ),
         "investment_needed": any(
             f["forecast_6m"]["mem_pct"] > 90 or f["forecast_6m"]["ds_pct"] > 90
             for f in forecasts
@@ -1249,14 +1244,19 @@ def generate_sla_report(db: Session) -> Dict[str, Any]:
 
     sla_items = []
     for r in rows:
-        estimated_uptime = max(0, 100 - (r.critical_count or 0) * 0.5)
+        crit = int(r.critical_count or 0)
+        total_ev = int(r.event_count or 0)
+        # Olay yoğunluğundan muhafazakâr tahmin — gerçek uptime değil
+        penalty = min(15.0, crit * 0.3 + max(0, total_ev - crit) * 0.05)
+        estimated_uptime = max(85.0, 100.0 - penalty)
         sla_items.append({
             "server": r.name,
             "current_status": r.status or "UNKNOWN",
-            "critical_events_30d": r.critical_count or 0,
-            "total_events_30d": r.event_count or 0,
+            "critical_events_30d": crit,
+            "total_events_30d": total_ev,
             "estimated_uptime_pct": round(min(100, estimated_uptime), 2),
             "sla_met": estimated_uptime >= 99.0,
+            "estimate_type": "event_proxy",
         })
 
     met = sum(1 for s in sla_items if s["sla_met"])

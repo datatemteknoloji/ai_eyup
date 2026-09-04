@@ -10,6 +10,7 @@ import {
   UserPlus, Pencil, Trash2, KeyRound, Check, X, AlertTriangle,
   ShieldCheck, Eye, Search, RefreshCw, CheckCircle2, UserX, UserCheck,
   Package, Server, Shield, Cloud, Brain, Bot, FileUp, Wrench, Database,
+  FileBarChart2,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -49,14 +50,17 @@ const MODULE_ICONS: Record<string, React.ReactNode> = {
   Server: <Server size={14} />, Shield: <Shield size={14} />, Cloud: <Cloud size={14} />,
   Brain: <Brain size={14} />, Bot: <Bot size={14} />, FileUp: <FileUp size={14} />,
   Wrench: <Wrench size={14} />, Package: <Package size={14} />, Database: <Database size={14} />,
+  FileBarChart2: <FileBarChart2 size={14} />,
 }
 const MOD_COLOR_TEXT: Record<string, string> = {
   green: 'text-green-400', blue: 'text-blue-400', indigo: 'text-indigo-400',
   purple: 'text-sky-400', cyan: 'text-cyan-400', orange: 'text-orange-400', teal: 'text-teal-400',
+  lime: 'text-lime-400',
 }
 const MOD_COLOR_DOT: Record<string, string> = {
   green: 'bg-green-400', blue: 'bg-blue-400', indigo: 'bg-indigo-400',
   purple: 'bg-sky-400', cyan: 'bg-cyan-400', orange: 'bg-orange-400', teal: 'bg-teal-400',
+  lime: 'bg-lime-400',
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

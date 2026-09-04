@@ -34,9 +34,32 @@ SYSTEM_PROMPT = (
     "- OpenShift/OCP/Kubernetes soruları (pod, namespace, proje, CrashLoopBackOff, "
     "Deployment, Route, node NotReady, oc/kubectl) → openshift_ask / list_ocp_pods / "
     "list_ocp_events. Linux SSH/systemd araçlarını KULLANMA.\n"
+    "- OpenShift CLUSTER SAĞLIK/OPERATÖR/SÜRÜM soruları (cluster operator, degraded, "
+    "ClusterVersion, API server adresi, genel sağlık) → ocp_cluster_status.\n"
+    "- OpenShift STORAGE soruları (PV, PVC, StorageClass, kota/kapasite) → "
+    "ocp_storage_overview; namespace CPU/bellek/VM-pod SAYISI KOTASI → ocp_resource_quota "
+    "(namespace ZORUNLU).\n"
+    "- OpenShift NETWORK soruları (NetworkAttachmentDefinition, Multus, SR-IOV, bridge, "
+    "ek ağ/VLAN) → ocp_network_overview.\n"
+    "- KubeVirt VM DataVolume/import/clone durumu → list_datavolumes; CANLI LIVE MIGRATION "
+    "(hangi node'a taşınıyor, transfer hızı/ilerleme) → list_ocp_migrations.\n"
+    "- KubeVirt VM detayı → kubevirt_vm_detail: fields=[...] veya question ile "
+    "YALNIZ istenen alanları iste (örn. fields=[run_strategy,firmware]). "
+    "Kullanıcı sormadıysa 50 özelliği DÖKME — varsayılan kısa özet yeter. "
+    "list_kubevirt_vms sadece liste özeti.\n"
+    "- BİLGİ KİRLİLİĞİ YASAĞI (tüm platformlar): Kullanıcı ne sordıysa yalnız onu "
+    "göster. Tool ekstra alan döndürse bile cevabında istenmeyen kolonları yazma; "
+    "'tam detay / hepsini ver' demedikçe kısa tut.\n"
+    "- KubeVirt VM Snapshot/Restore listesi (ready, failure_reason, volume snapshots, "
+    "restore durumu) → kubevirt_snapshots.\n"
     "- vCenter/ESXi/VM soruları → ÖNCE db_list_vms / db_vm_detail / db_list_datastores / "
     "db_list_esx_hosts / db_virt_alarms / db_virt_cross_match (DATABASE). stale=true "
-    "veya veri yoksa vcenter_ask / vcenter_live_alarms / vcenter_live_tasks.\n"
+    "veya veri yoksa vcenter_live_alarms / vcenter_live_tasks / vcenter_perf_query.\n"
+    "- SNAPSHOT sorularında (adet, boyut/büyüklük, en eski/en yeni, ağaç, GB) db_list_vms'i "
+    "BEKLEME — db_list_vms'te snapshot boyutu/detayı YOKTUR (staleness gözetmeksizin her "
+    "zaman eksiktir). Bu yüzden snapshot geçen HER soruda DOĞRUDAN vcenter_snapshot_summary "
+    "(fleet özeti) veya vcenter_list_vm_snapshots (vm_name verilmişse — GERÇEK per-snapshot "
+    "byte boyutu döner) çağır; 'veri toplanmadı' deyip geçme, önce bu aracı dene.\n"
     "- TERİM: hypervisor/vcenter alanı = vCenter kaydı adı (örn. Office) veya bağlantı "
     "IP/FQDN; host/esxi_host = ESXi compute host (örn. 192.168.1.101). Karıştırma.\n"
     "- DİNAMİK ALAN SEÇİMİ: Kullanıcı hangi özellikleri istediyse "
@@ -80,6 +103,13 @@ SYSTEM_PROMPT = (
     "eksik/yetersiz kaldığı noktada ek bir araç çağırarak tamamla.\n"
     "- Aynı bilgiyi tekrar tekrar çağırma; birkaç adımda gerekli veriyi topla, sonra "
     "daha fazla araç çağırmadan (tool_call üretmeden) doğrudan yanıtla.\n"
+    "- TARİF DEĞİL, SONUÇ VER: Kullanıcı 'X'i API/SOAP ile alabilir misin', 'bu veriyi "
+    "sorgulayabilir misin', 'boyutu/büyüklüğü nedir' gibi bir şey sorduğunda, sana "
+    "'şu şu adımlarla / şu API çağrısıyla elde edilebilir' tarzı bir REÇETE yazman "
+    "YASAKTIR — elinde o veriyi getirecek bir araç varsa onu GERÇEKTEN ÇAĞIR ve "
+    "sonucu göster. Sadece hiçbir araç o veriyi hiçbir şekilde sağlamıyorsa (gerçekten "
+    "denedikten sonra) bunu açıkça söyle; 'şöyle yapabilirsiniz' diye anlatıp aracı "
+    "çağırmadan bırakma.\n"
     "- Bu arayüzde değişiklik yapan (mutating) HİÇBİR araç yoktur — yalnızca "
     "salt-okunur bilgi toplarsın. vCenter/ESXi üzerinde power/destroy/reconfig "
     "yapamazsın; yalnız read.\n"
@@ -88,7 +118,36 @@ SYSTEM_PROMPT = (
     "süreçler, failed servisler vb.) TOPLADIĞIN GERÇEK VERİYE dayanarak derinlemesine, "
     "kanıta dayalı bir analiz üret — asla 'bu veri mevcut değil' deyip geçme, önce "
     "aracı çağırarak veriyi getirmeyi dene.\n"
-    "- Nihai cevabını TÜRKÇE ver; hangi sunucu/hypervisor/cluster'dan geldiğini belirt."
+    "- 'Kritik event/alarm/olay var mı', 'son N saatte hata var mı' tarzı sorularda "
+    "ÖNCE db_list_critical_events (veya vCenter'a özgüyse db_virt_alarms) çağır — "
+    "bu aracı çağırmadan 'yok/tespit edilemedi' ya da örnek olay/tarih UYDURMA; "
+    "tool count=0 dönerse gerçekten yok demektir, dönmezse tool sonucundaki gerçek "
+    "kayıtları kullan.\n"
+    "- BÜYÜME/TREND/TAHMİN sorularında (ör. 'workload büyümesini değerlendir', "
+    "'gelecek ayki kullanım ne olur'): yalnızca GERÇEK geçmiş zaman serisi (tekrarlanan "
+    "ölçüm geçmişi) elindeyse sayısal tahmin üret. Elindeki veri yalnızca ANLIK/tek "
+    "noktalıysa (ör. şu anki node/pod sayısı) ASLA geçmiş tarih, günlük artış oranı "
+    "veya gelecek rakamı UYDURMA — açıkça 'geçmiş zaman serisi verisi toplanmadığı "
+    "için büyüme oranı hesaplanamıyor, yalnızca mevcut anlık durum gösteriliyor' de. "
+    "Keyfi bir varsayım (ör. '%20 yıllık artış') kullanman gerekiyorsa bunu HER ZAMAN "
+    "'VARSAYIM' olarak açıkça etiketle ve dayanağının gerçek veri olmadığını belirt.\n"
+    "- ÇAPRAZ DOĞRULAMA DÜRÜSTLÜĞÜ: 'X hem SSH hem vCenter'dan doğrulandı', 'iki "
+    "kaynak da aynı sonucu veriyor' gibi bir iddiada bulunacaksan, iddia ettiğin HER "
+    "kaynağın aracını BU TURDA gerçekten çağırmış olmalısın. Çağırmadığın bir "
+    "kaynaktan (ör. SSH) veri geldiğini veya doğrulama yapıldığını ASLA söyleme — "
+    "yalnızca gerçekten çağırdığın araçların sonucuna atıfta bulun.\n"
+    "- KARŞILAŞTIRMA sorularında (ör. 'X ve Y sunucularını/VM'lerini karşılaştır'): "
+    "yalnızca statik DB/vCenter envanter alanlarıyla (vCPU/RAM tahsisi) YETİNME; "
+    "taraflar SSH erişimi olan Linux/Windows sunucularıysa ilgili get_system_summary/ "
+    "get_disk_usage gibi canlı araçları da çağırıp gerçek kullanım verisiyle zenginleştir.\n"
+    "- TAKİP SORUSU (ör. 'peki ... var mı?', 'ya X?') önceki turda incelenmemiş ek "
+    "sunucu/VM/varlığı da kapsıyorsa, yalnızca önceki turun dar sonucuna güvenip "
+    "'diğerleri için veri yok' deme — ilgili aracı bu sefer daha geniş kapsamda "
+    "(tüm ilgili sunucular/VM'ler için) yeniden çağır.\n"
+    "- Nihai cevabını TÜRKÇE, akıcı ve gramatik olarak doğru şekilde ver ('HEMEN "
+    "VARMAYAN' gibi anlamsız/bozuk çekimlenmiş ifadeler ÜRETME — 'yok', 'tespit "
+    "edilmedi' gibi net ve doğru Türkçe kullan); hangi sunucu/hypervisor/cluster'dan "
+    "geldiğini belirt."
 )
 
 _PLATFORM_HINTS = {
@@ -106,6 +165,17 @@ _PLATFORM_HINTS = {
         "modül sohbetini öner.\n"
         "KubeVirt VirtualMachine'ler bu kapsamda SANALLAŞTIRMA workload'udur; "
         "'OV sanallaştırma sayılmaz' deme.\n"
+        "Node/proje envanteri (rol, durum, kapasite, pod/deployment/route sayısı) için "
+        "ÖNCE db_list_ocp_nodes / db_list_ocp_projects dene (ucuz, DB'den); "
+        "stale=true, boş veya canlı pod/olay detayı gerekiyorsa openshift_ask / "
+        "list_ocp_pods / list_ocp_events ile canlıya geç.\n"
+        "Cluster sağlığı/operatör/sürüm/API server → ocp_cluster_status. "
+        "Storage (PV/PVC/StorageClass) → ocp_storage_overview. Namespace ResourceQuota/"
+        "LimitRange (CPU/bellek/obje kotası) → ocp_resource_quota (namespace ZORUNLU). "
+        "Network (NetworkAttachmentDefinition/Multus/SR-IOV) → ocp_network_overview. "
+        "VM detayı → kubevirt_vm_detail(fields=[...] veya question=...); kullanıcı "
+        "sormadığı alanları DÖKME. Snapshot/Restore → kubevirt_snapshots. DataVolume → "
+        "list_datavolumes. Live Migration → list_ocp_migrations. Hepsi READ_ONLY.\n"
         "infra_overview yalnızca OCP cluster özeti döner."
     ),
     "windows": (
@@ -123,6 +193,9 @@ _PLATFORM_HINTS = {
         "VMware: önce db_*; çapraz tablo db_virt_cross_match; "
         "Monitor Disk Rate/Requests/CPU canlı → vcenter_perf_query "
         "(metrics=[disk_rate] / [disk_requests] / [cpu] — yalnız istenen). "
+        "OV/KubeVirt VM'in TAM spec detayı (runStrategy, CPU pinning/NUMA/hugepages, "
+        "firmware, disk/PVC/DataVolume zinciri, nodeSelector/affinity) → kubevirt_vm_detail; "
+        "OV VM Snapshot/Restore → kubevirt_snapshots (list_kubevirt_vms sadece özet döner).\n"
         "Hepsi READ-ONLY (write/mutate yok). SSH get_* yok.\n"
         "infra_overview hypervisor/VM özeti döner; OV için OpenShift/KubeVirt araçlarını kullan."
     ),
@@ -136,6 +209,39 @@ _PLATFORM_HINTS = {
 _MAX_CONTEXT_CHARS = 12000
 # Envanter tool çıktıları (örn. 300+ OCP pod TSV ~32K) için bütçe.
 _MAX_TOOL_TEXT_CHARS = 48000
+
+
+def _budgeted_context(text: str) -> str:
+    try:
+        from app.services.llm_context_budget import apply_context_char_budget
+        return apply_context_char_budget(text or "")
+    except Exception:
+        return (text or "")[:_MAX_CONTEXT_CHARS]
+
+
+import re as _re
+
+_CONJUNCTION_RE = _re.compile(r"\bve\b|\bile\b|ayrıca|ayrica|hem de|ek olarak", _re.I)
+_CROSS_DOMAIN_HINT_RE = _re.compile(
+    r"\b(openshift|ocp|kubernetes|k8s)\b|cluster.?(?:ı|i|u|ün)n\b|\bpod\b|\bnode\b|"
+    r"\bwindows\b|\blinux\b",
+    _re.I,
+)
+
+
+def _has_unaddressed_cross_domain_clause(message: str, domains: Optional[frozenset]) -> bool:
+    """Soru 've/ile' gibi bir bağlaçla ikinci bir alt-soru içeriyor mu ve o alt-soru
+
+    (vCenter envanter deterministik tablosunun kapsamadığı) başka bir domain'e
+    (OpenShift/Linux/Windows/node/pod) mi değiniyor? Öyleyse early_stop YAPILMAMALI —
+    aksi halde soru bölünüp ikinci yarı sessizce cevapsız kalır.
+    """
+    m = message or ""
+    if not (_CONJUNCTION_RE.search(m) and _CROSS_DOMAIN_HINT_RE.search(m)):
+        return False
+    # Unified'da domains=None (tam erişim) veya ilgili domain açıksa devam etmeye değer;
+    # tek-platform vCenter sohbetinde zaten o araçlar yok, LLM nazikçe yönlendirir.
+    return True
 
 
 def _tool_result_to_text(result: Any) -> str:
@@ -159,10 +265,14 @@ def run_read_only_tool_loop(
     planning_mode: bool = False,
     planning_depth: bool = False,
     system_addendum: Optional[str] = None,
+    output_directive: Optional[str] = None,
 ) -> Iterator[Dict[str, Any]]:
     """READ_ONLY tool-calling döngüsü — generator.
 
     system_addendum: Unified module-first persona / join sözleşmesi (opsiyonel).
+    output_directive: kullanıcının /table, /json, /brief komutu (chat_output_directives.
+        OutputDirective değeri veya string). Hem LLM'e giden sistem talimatına hem de
+        deterministik virt envanter render'ına (materialize_from_tool_results) uygulanır.
     """
     try:
         from app.services.agent import tools as tool_mod
@@ -183,12 +293,19 @@ def run_read_only_tool_loop(
 
     from app.services import chat_tool_policy as tool_policy
 
+    from app.services.chat_output_directives import OutputDirective, directive_system_addendum
+
+    _directive = output_directive if isinstance(output_directive, OutputDirective) else (
+        OutputDirective(output_directive) if output_directive else OutputDirective.NONE
+    )
+
     sys_content = SYSTEM_PROMPT
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
     if system_addendum:
         sys_content += system_addendum
+    sys_content += directive_system_addendum(_directive)
 
     # Unified + yalnız vcenter domain → virt uzmanı gibi davran
     if plat == "unified" and domains and "vcenter" in domains and "linux" not in domains and "windows" not in domains:
@@ -229,18 +346,23 @@ def run_read_only_tool_loop(
     if server_summary:
         sys_content += "\n\nKULLANILABİLİR SUNUCULAR/KÜMELER:\n" + server_summary[:4000]
     if context_str:
-        sys_content += "\n\nBAĞLAM (bu turda zaten toplanmış canlı veri — varsa önce buna bak):\n" + context_str[:_MAX_CONTEXT_CHARS]
+        sys_content += "\n\nBAĞLAM (bu turda zaten toplanmış canlı veri — varsa önce buna bak):\n" + _budgeted_context(context_str)
 
     # Virt envanter sınıfı (VM disk / datastore / ESX) — sözleşme + prefetch
     inv_kind = None
+    inv_filters: Dict[str, str] = {}
+    inv_fields: Optional[List[str]] = None
     materialize_from_tool_results = None
     prefetch_spec = None
     try:
         from app.services.virt_inventory_contract import (
             detect_virt_inventory_kind,
+            detect_requested_vm_fields,
             inventory_system_addendum,
             prefetch_spec as _prefetch_spec,
             materialize_from_tool_results as _materialize,
+            KIND_VM_DISK,
+            KIND_VM_LIST,
         )
         prefetch_spec = _prefetch_spec
         materialize_from_tool_results = _materialize
@@ -248,6 +370,17 @@ def run_read_only_tool_loop(
             inv_kind = detect_virt_inventory_kind(user_message)
             if inv_kind:
                 sys_content += inventory_system_addendum(inv_kind)
+                # GENEL kural (datastore'a özel değil): mesajda geçen bilinen
+                # VM/datastore/host/cluster adını gerçek DB kayıtlarıyla
+                # eşleştirip filtre olarak uygula + yalnız istenen kolonları
+                # göster ("bilgi kirliliği" önlemi).
+                try:
+                    from app.services.virt_entity_resolver import extract_entity_filters
+                    inv_filters = extract_entity_filters(db, user_message)
+                except Exception:
+                    inv_filters = {}
+                if inv_kind in (KIND_VM_DISK, KIND_VM_LIST):
+                    inv_fields = detect_requested_vm_fields(user_message, filters=inv_filters)
     except Exception as e:
         logger.debug("virt inventory contract atlandı: %s", e)
 
@@ -261,13 +394,87 @@ def run_read_only_tool_loop(
     structured_results: List[Dict[str, Any]] = []
     used_tools = False
     successful_tool_runs = 0
-    exec_ctx: Dict[str, Any] = {"platform": plat or "unified"}
+    exec_ctx: Dict[str, Any] = {
+        "platform": plat or "unified",
+        "user_message": user_message or "",
+        "message": user_message or "",
+    }
     _stop_n = int(stop_after_tools) if stop_after_tools and stop_after_tools > 0 else None
+    # Aynı (tool, args) ikilisinin bu turda tekrar tekrar çağrılmasını önle —
+    # gözlemlenen regresyon: canlı OCP 401 verince model aynı openshift_ask'i
+    # 3-4 kez art arda çağırıp gereksiz yere 100+ sn kaybediyordu.
+    _call_signatures: Dict[str, int] = {}
+    _MAX_SAME_CALL = 2
+    # Çok parçalı soru (P1-8): early_stop atlanıp LLM'e devam ettirildiyse, finalize
+    # aşamasında deterministik tabloyu tekrar öne çıkarma — LLM'in gerçek sentezi
+    # (tool_text bağlamıyla üretilecek nihai cevap) kullanılmalı, aksi halde ikinci
+    # yarı (ör. OpenShift kısmı) yine sessizce kaybolur.
+    _multi_part_deferred = False
+
+    # SNAPSHOT boyutu/büyüklüğü sorusu — küçük/yerel modellerin bu tool-call'ı
+    # güvenilir şekilde tetiklemediği gözlemlendi (bkz. hypervisors.py QA_RULES
+    # ile aynı desen). db_list_vms'te snapshot boyutu YOKTUR — modelin karar
+    # vermesini beklemeden DOĞRUDAN atomik SOAP aracını çağır (tarif değil,
+    # gerçek sorgu). vcenter domain'i açık değilse atlanır.
+    _snapshot_size_re = None
+    try:
+        import re as _re_snap
+        _snapshot_size_re = _re_snap.compile(
+            r"snapshot.*(boyut|büyüklük|buyukluk)|(boyut|büyüklük|buyukluk).*snapshot"
+            r"|snapshot.*ne\s*kadar\s*yer|snapshot.*(kaç\s*gb|kac\s*gb)",
+            _re_snap.I,
+        )
+    except Exception:
+        pass
+    if (
+        _snapshot_size_re and _snapshot_size_re.search(user_message or "")
+        and (domains is None or "vcenter" in domains)
+    ):
+        try:
+            from app.services.virt_entity_resolver import extract_entity_filters
+            _vm_hint = extract_entity_filters(db, user_message).get("vm_name")
+        except Exception:
+            _vm_hint = None
+        _snap_tool_name = "vcenter_list_vm_snapshots" if _vm_hint else "vcenter_snapshot_summary"
+        _snap_tool = tool_mod.get_tool(_snap_tool_name)
+        if _snap_tool:
+            _snap_args = {"vm_name": _vm_hint} if _vm_hint else {"limit": 200}
+            yield {
+                "type": "tool_call", "tool": _snap_tool_name, "args": _snap_args,
+                "label": _snap_tool.direct_label or _snap_tool_name,
+            }
+            _snap_result = _snap_tool.execute(db, _snap_args, exec_ctx)
+            used_tools = True
+            successful_tool_runs += 1
+            tools_used.append(_snap_tool_name)
+            _snap_text = _tool_result_to_text(_snap_result)
+            tool_texts.append(f"[{_snap_tool.direct_label or _snap_tool_name}]\n{_snap_text[:_MAX_TOOL_TEXT_CHARS]}")
+            structured_results.append({"tool": _snap_tool_name, "args": _snap_args, "result": _snap_result})
+            messages.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{
+                    "id": f"call_prefetch_{_snap_tool_name}", "type": "function",
+                    "function": {"name": _snap_tool_name, "arguments": json.dumps(_snap_args, ensure_ascii=False)},
+                }],
+            })
+            messages.append({
+                "role": "tool", "tool_call_id": f"call_prefetch_{_snap_tool_name}",
+                "name": _snap_tool_name, "content": _snap_text[:12000],
+            })
+            yield {"type": "tool_result", "tool": _snap_tool_name}
+            logger.info(
+                "[UnifiedToolChat] snapshot boyutu prefetch tool=%s vm=%s ok=%s",
+                _snap_tool_name, _vm_hint,
+                (_snap_result or {}).get("ok") if isinstance(_snap_result, dict) else None,
+            )
+            # LLM'e devam ettir — gerçek veriyi (tool sonucu) BAĞLAM olarak görsün ve
+            # Türkçe akıcı bir cevaba dönüştürsün (tekil VM için tablo zaten net;
+            # LLM'in tekrar araç çağırmasına gerek yok, mesaj bunu zaten belirtiyor).
 
     # Zorunlu prefetch: model çağırmadan SoT çek → deterministik tablo
     if inv_kind and prefetch_spec:
         try:
-            spec = prefetch_spec(inv_kind)
+            spec = prefetch_spec(inv_kind, filters=inv_filters, fields=inv_fields)
             if spec:
                 pref_name, pref_args = spec
                 pref_tool = tool_mod.get_tool(pref_name)
@@ -287,7 +494,7 @@ def run_read_only_tool_loop(
                         tools_used.append(pref_name)
                     pref_text = _tool_result_to_text(pref_result)
                     tool_texts.append(f"[{pref_tool.direct_label or pref_name}]\n{pref_text[:_MAX_TOOL_TEXT_CHARS]}")
-                    structured_results.append({"tool": pref_name, "result": pref_result})
+                    structured_results.append({"tool": pref_name, "args": pref_args, "result": pref_result})
                     messages.append({
                         "role": "assistant",
                         "content": "",
@@ -312,10 +519,18 @@ def run_read_only_tool_loop(
                         inv_kind, pref_name,
                         (pref_result or {}).get("ok") if isinstance(pref_result, dict) else None,
                     )
-                    # Prefetch yeterliyse LLM tool döngüsünü atla — tabloyu SoT'tan üret
+                    # Prefetch yeterliyse LLM tool döngüsünü atla — tabloyu SoT'tan üret.
+                    # İSTİSNA: soru çok parçalıysa (ör. "...ve bu VM'lerden biri
+                    # OpenShift'in parçası mı?") ve ikinci kısım başka bir domain'e
+                    # değiniyorsa, early_stop YAPMA — deterministik tabloyu context'e
+                    # ekleyip LLM'in ilgili aracı çağırarak sorunun TAMAMINI
+                    # yanıtlamasına izin ver (aksi halde ikinci yarı sessizce atlanır).
                     if materialize_from_tool_results and isinstance(pref_result, dict) and pref_result.get("ok"):
-                        det = materialize_from_tool_results(inv_kind, structured_results)
-                        if det:
+                        det = materialize_from_tool_results(
+                            inv_kind, structured_results,
+                            filters=inv_filters, fields=inv_fields, directive=_directive,
+                        )
+                        if det and not _has_unaddressed_cross_domain_clause(user_message, domains):
                             out = {
                                 "type": "final",
                                 "used_tools": True,
@@ -326,6 +541,7 @@ def run_read_only_tool_loop(
                                 "deterministic_answer": det,
                                 "inventory_kind": inv_kind,
                                 "early_stop": True,
+                                "structured_results": list(structured_results),
                             }
                             try:
                                 from app.services.assistant_playbooks import record_playbook
@@ -340,6 +556,23 @@ def run_read_only_tool_loop(
                                 pass
                             yield out
                             return
+                        if det:
+                            _multi_part_deferred = True
+                            logger.info(
+                                "[UnifiedToolChat] cok parcali soru: early_stop atlandi, "
+                                "LLM devam ediyor kind=%s", inv_kind,
+                            )
+                            tool_texts.append(f"[Deterministik envanter — {inv_kind}]\n{det}")
+                            messages.append({
+                                "role": "system",
+                                "content": (
+                                    "Yukarıdaki deterministik envanter tablosu sorunun İLK "
+                                    "kısmını zaten karşılıyor — bunu tekrar sorgulama. "
+                                    "Sorunun geri kalan kısmı (ör. başka bir platform/"
+                                    "domain'e referans) için uygun aracı çağırıp TAM "
+                                    "cevabı tamamla; hiçbir kısmı sessizce atlama."
+                                ),
+                            })
         except Exception as e:
             logger.warning("[UnifiedToolChat] inventory prefetch hata: %s", e)
 
@@ -391,9 +624,12 @@ def run_read_only_tool_loop(
             except Exception as e:
                 logger.debug("Playbook kayıt atlandı: %s", e)
         det = None
-        if inv_kind and materialize_from_tool_results and structured_results:
+        if inv_kind and materialize_from_tool_results and structured_results and not _multi_part_deferred:
             try:
-                det = materialize_from_tool_results(inv_kind, structured_results)
+                det = materialize_from_tool_results(
+                    inv_kind, structured_results,
+                    filters=inv_filters, fields=inv_fields, directive=_directive,
+                )
             except Exception:
                 det = None
         out: Dict[str, Any] = {
@@ -403,6 +639,9 @@ def run_read_only_tool_loop(
             "tools_used": list(tools_used),
             "db_first": db_first,
             "live_escalated": escalate_live if db_first else False,
+            # Özel Rapor motoru (custom_report_engine) için: bu turda çağrılan her
+            # tool'un tam (isim, args, ham sonuç) üçlüsü. Geriye dönük uyumlu ek alan.
+            "structured_results": list(structured_results),
         }
         if det:
             out["deterministic_answer"] = det
@@ -459,6 +698,24 @@ def run_read_only_tool_loop(
                     args = {}
             tc_id = tc.get("id") or f"call_{name}"
 
+            # Aynı (tool, args) tekrarını engelle (bkz. yukarıdaki _call_signatures notu).
+            try:
+                _sig = f"{name}:{json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)}"
+            except Exception:
+                _sig = f"{name}:{args!r}"
+            _prior_calls = _call_signatures.get(_sig, 0)
+            if _prior_calls >= _MAX_SAME_CALL:
+                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
+                    "ok": False,
+                    "error": (
+                        f"'{name}' bu argümanlarla bu turda zaten {_prior_calls} kez "
+                        "çağrıldı — tekrar ÇALIŞTIRILMADI. Yukarıdaki önceki sonucu "
+                        "kullan; aynı çağrıyı tekrarlama, doğrudan yanıtla."
+                    ),
+                }, ensure_ascii=False)})
+                continue
+            _call_signatures[_sig] = _prior_calls + 1
+
             if name == "ask_user":
                 messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                     "error": "ask_user bu sohbette desteklenmiyor (insan onay akışı yok); "
@@ -498,6 +755,11 @@ def run_read_only_tool_loop(
                         tools_used.append(name)
                     messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": (result_str or "")[:6000]})
                     tool_texts.append(f"[{name}] {(result_str or '')[:_MAX_TOOL_TEXT_CHARS]}")
+                    try:
+                        _win_result = json.loads(result_str) if result_str else {}
+                    except Exception:
+                        _win_result = {"raw": result_str}
+                    structured_results.append({"tool": name, "args": args, "result": _win_result})
                     yield {"type": "tool_result", "tool": name}
                     continue
 
@@ -523,7 +785,7 @@ def run_read_only_tool_loop(
                 result_text = _tool_result_to_text(result)
                 messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": result_text})
                 tool_texts.append(f"[{label}]\n{result_text[:_MAX_TOOL_TEXT_CHARS]}")
-                structured_results.append({"tool": name, "result": result})
+                structured_results.append({"tool": name, "args": args, "result": result})
                 yield {"type": "tool_result", "tool": name}
 
                 if db_first and not escalate_live and tool_policy.result_needs_live_escalation(name, result):

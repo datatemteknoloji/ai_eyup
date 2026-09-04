@@ -60,6 +60,8 @@ DEFAULT_MODULES = [
      "icon": "Package",  "color": "violet",  "sort_order": 9},
     {"id": "knowledge",      "name": "Bilgi Bankası",    "description": "AI'in SSH/WinRM taramalarından öğrendiği kalıcı sunucu bilgileri — ayrı atama gerektirir",
      "icon": "Brain",    "color": "pink",    "sort_order": 10},
+    {"id": "custom_reports", "name": "Özel Raporlar",    "description": "Sohbet üzerinden keşfedilen sorguları deterministik, tekrar çalıştırılabilir özel rapor olarak kaydetme — varsayılan yalnız Admin, ayrı atama gerektirir",
+     "icon": "FileBarChart2", "color": "lime", "sort_order": 11},
 ]
 
 # 'aiops' kaldırıldı (2026-07) — Komuta Merkezi/Events özellikleri 'linux' kapsamında.

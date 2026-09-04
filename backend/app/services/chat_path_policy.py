@@ -102,11 +102,31 @@ def is_knowledge_only(message: Optional[str]) -> bool:
         pass
     if is_deep_live_query(m):
         return False
+    # chat_intent (paylaşımlı sınıflandırıcı — virt sohbetiyle aynı motor): saf
+    # kavramsal/eğitim/troubleshooting-metodolojisi sorusu, "neden"/"incele" gibi
+    # basit _LIVE_BLOCK_KEYWORDS eşleşmelerine rağmen canlı SSH/WinRM/agentic
+    # taramayı TETİKLEMEMELİ. Gerçek canlı teşhis istekleri zaten yukarıdaki
+    # is_deep_live_query ("kök neden", "root cause" vb.) ile önce yakalanır.
+    _ci_kind = None
+    try:
+        from app.services.chat_intent import ChatIntentKind, classify_chat_intent
+        _ci = classify_chat_intent(m)
+        _ci_kind = _ci.kind
+        if _ci.kind == ChatIntentKind.CONCEPTUAL and _ci.confidence >= 0.7:
+            return True
+        if _ci.kind in (ChatIntentKind.INVENTORY, ChatIntentKind.LIVE):
+            # chat_intent zaten somut bir ölçülebilir değer/envanter isteği
+            # tespit etti (ör. "snapshotların boyutları nedir?") — aşağıdaki kaba
+            # "X nedir?" yakalayıcısı bunu ezip knowledge_only'e düşürmesin.
+            return False
+    except Exception:
+        pass
     if any(k in m for k in _LIVE_BLOCK_KEYWORDS):
         return False
     if any(k in m for k in _KNOWLEDGE_HINTS):
         return True
-    # Kısa "X nedir?" / "X ne?" kalıbı
+    # Kısa "X nedir?" / "X ne?" kalıbı (yalnızca chat_intent yukarıda somut bir
+    # envanter/canlı sinyali tespit ETMEDIYSE — aksi halde ezme)
     if len(m) <= 80 and (
         m.endswith(" nedir") or m.endswith(" nedir?")
         or m.endswith(" ne?") or m.endswith(" ne")

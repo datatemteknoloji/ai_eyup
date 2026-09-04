@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 import { useQuery } from '@tanstack/react-query'
@@ -15,7 +16,7 @@ import {
   CheckCircle2, XCircle, Loader2, Download, Bot, FileDown, Eye, HardDrive,
   Activity, Layers, Target, Network, PackageOpen,
   Building2, ArrowUpRight, ArrowDownRight, Minus, Info, RefreshCw, Radar, Shield,
-  GitCompare,
+  GitCompare, FileBarChart2,
 } from 'lucide-react'
 import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { chatMarkdownComponents } from '../components/chatMarkdown'
@@ -41,6 +42,7 @@ const COLOR_MAP: Record<string, string> = {
   emerald: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   indigo:  'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
   yellow:  'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  lime:    'bg-lime-500/10 text-lime-400 border-lime-500/20',
 }
 
 const dateLoc = (locale: string) => locale === 'en' ? 'en-GB' : 'tr-TR'
@@ -244,12 +246,13 @@ function SectionHeader({ title, count, icon }: { title: string; count?: number; 
 
 function ReportCard({
   type, title, icon, color, desc,
-  onGenerate, isLoading, lastGenerated,
+  onGenerate, isLoading, lastGenerated, badge,
 }: {
   type: string; title: string; icon: React.ReactNode; color: string; desc: string
   onGenerate: (type: string) => void
   isLoading: boolean
   lastGenerated?: string
+  badge?: string
 }) {
   const t = useT()
   const { locale } = useLocale()
@@ -261,7 +264,14 @@ function ReportCard({
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-white text-sm font-medium">{title}</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-white text-sm font-medium">{title}</h3>
+            {badge && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-lime-500/15 text-lime-400 border border-lime-500/25">
+                {badge}
+              </span>
+            )}
+          </div>
           <p className="text-slate-400 text-xs mt-0.5 leading-relaxed">{desc}</p>
         </div>
       </div>
@@ -289,13 +299,14 @@ function ReportCard({
 
 // ── Rapor Viewer ─────────────────────────────────────────────────────────────
 
-function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, regenerating }: {
+function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, regenerating, preferMarkdown }: {
   type: string; title: string; data: Record<string, unknown>; markdown?: string; onClose: () => void
   onRegenerate?: (type: string) => void; regenerating?: boolean
+  preferMarkdown?: boolean
 }) {
   const t = useT()
   const { locale } = useLocale()
-  const [tab, setTab] = useState<'visual' | 'markdown' | 'raw'>('visual')
+  const [tab, setTab] = useState<'visual' | 'markdown' | 'raw'>(preferMarkdown ? 'markdown' : 'visual')
   const tabs = [
     { id: 'visual', label: t('rpt_visual'), Icon: BarChart3 },
     { id: 'markdown', label: t('rpt_md'), Icon: FileDown },
@@ -2172,6 +2183,16 @@ function PlatformExecSummaryView({ d }: { d: any }) {
 function ReportSummaryView({ type, data }: { type: string; data: Record<string, unknown> }) {
   const t = useT()
   const d = data as any
+  if (type.startsWith('custom:')) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+        <FileBarChart2 size={36} className="text-lime-500/70" />
+        <p className="text-slate-300 text-sm">{t('rpt_custom_badge')}</p>
+        <p className="text-slate-500 text-xs max-w-md">{t('rpt_custom_desc')}</p>
+        <p className="text-slate-600 text-[11px] mt-2">{t('rpt_md')} →</p>
+      </div>
+    )
+  }
   if (type === 'executive_summary') {
     // Linux/Windows/Exadata `inventory`/`health` şeması kullanır; virt (hypervisor)
     // raporu `infrastructure`/`utilization` şeması kullanır — veriye göre yönlendir.
@@ -2238,10 +2259,39 @@ export default function InfraReports({
     if (initialTab) setMainTab(initialTab)
   }, [initialTab, platform])
   const [generating, setGenerating] = useState<string | null>(null)
-  const [viewReport, setViewReport] = useState<{ type: string; title: string; data: Record<string, unknown>; markdown?: string } | null>(null)
+  const [viewReport, setViewReport] = useState<{
+    type: string
+    title: string
+    data: Record<string, unknown>
+    markdown?: string
+    preferMarkdown?: boolean
+  } | null>(null)
   const [lastGenTimes, setLastGenTimes] = useState<Record<string, string>>({})
   const [chatQuestion, setChatQuestion] = useState('')
   const [pendingChatQuestion, setPendingChatQuestion] = useState<string | null>(null)
+
+  type CustomReportRow = {
+    id: number
+    title: string
+    description: string | null
+    last_run_at: string | null
+    last_ok: boolean | null
+    last_rendered: string | null
+    last_error: string | null
+    tool_name: string
+  }
+
+  const { data: customReportsData, refetch: refetchCustom } = useQuery({
+    queryKey: ['custom-reports-catalog', platform],
+    queryFn: async (): Promise<CustomReportRow[]> => {
+      const r = await fetch(`${API_BASE_URL}/custom-reports/?platform=${encodeURIComponent(platform)}`)
+      if (!r.ok) return []
+      const j = await r.json()
+      return (j.reports || []) as CustomReportRow[]
+    },
+    staleTime: 30_000,
+  })
+  const customReports = customReportsData || []
 
   const { data: history, refetch: refetchHistory } = useQuery({
     queryKey: ['report-history', platform],
@@ -2271,8 +2321,89 @@ export default function InfraReports({
       histMap[rpt.type] = rpt.generated_at
     }
   }
+  for (const cr of customReports) {
+    const key = `custom:${cr.id}`
+    if (cr.last_run_at) histMap[key] = cr.last_run_at
+  }
+
+  function isCustomType(type: string): boolean {
+    return type.startsWith('custom:')
+  }
+
+  function customIdFromType(type: string): number | null {
+    const n = Number(type.slice('custom:'.length))
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+
+  async function handleGenerateCustom(type: string) {
+    const id = customIdFromType(type)
+    if (!id) return
+    setGenerating(type)
+    try {
+      const r = await fetch(`${API_BASE_URL}/custom-reports/${id}/run`, { method: 'POST' })
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({ detail: r.statusText }))
+        throw new Error(e.detail || `HTTP ${r.status}`)
+      }
+      const j = await r.json()
+      const report = j.report || {}
+      const run = j.run || {}
+      const md = (run.rendered || report.last_rendered || '') as string
+      if (!run.ok && !md) {
+        throw new Error(run.error || report.last_error || t('rpt_custom_empty_result'))
+      }
+      setViewReport({
+        type,
+        title: report.title || `custom:${id}`,
+        data: {
+          custom_report: true,
+          report_id: id,
+          tool_name: report.tool_name,
+          tool_args: report.tool_args,
+          generated_at: report.last_run_at || new Date().toISOString(),
+          ok: run.ok,
+          error: run.error,
+        },
+        markdown: md || (run.error ? `**Hata:** ${run.error}` : t('rpt_custom_empty_result')),
+        preferMarkdown: true,
+      })
+      setLastGenTimes(prev => ({ ...prev, [type]: new Date().toISOString() }))
+      refetchCustom()
+    } catch (err) {
+      alert(t('rpt_custom_run_err', { msg: String(err) }))
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  async function handleViewCustom(type: string) {
+    const id = customIdFromType(type)
+    const cr = customReports.find(c => c.id === id)
+    if (cr?.last_rendered && cr.last_ok !== false) {
+      setViewReport({
+        type,
+        title: cr.title,
+        data: {
+          custom_report: true,
+          report_id: cr.id,
+          tool_name: cr.tool_name,
+          generated_at: cr.last_run_at || undefined,
+          ok: cr.last_ok,
+          error: cr.last_error,
+        },
+        markdown: cr.last_rendered,
+        preferMarkdown: true,
+      })
+      return
+    }
+    await handleGenerateCustom(type)
+  }
 
   async function handleGenerate(type: string) {
+    if (isCustomType(type)) {
+      await handleGenerateCustom(type)
+      return
+    }
     setGenerating(type)
     try {
       const r = await fetch(`${apiBase}/generate`, {
@@ -2294,6 +2425,10 @@ export default function InfraReports({
   }
 
   async function handleView(type: string) {
+    if (isCustomType(type)) {
+      await handleViewCustom(type)
+      return
+    }
     const r = await fetch(`${apiBase}/latest/${type}`)
     if (!r.ok) { handleGenerate(type); return }
     const { data, markdown } = await r.json()
@@ -2428,9 +2563,18 @@ export default function InfraReports({
       </div>
       )}
 
-      {/* Rapor kataloğu */}
+      {/* Rapor kataloğu — sabit + bu platformdaki özel raporlar */}
       <div>
-        <h2 className="text-slate-300 text-sm font-medium mb-3">{t('rpt_all')}</h2>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h2 className="text-slate-300 text-sm font-medium">{t('rpt_all')}</h2>
+          <Link
+            to="/custom-reports"
+            className="text-[11px] text-lime-400/80 hover:text-lime-300 flex items-center gap-1"
+          >
+            <FileBarChart2 size={12} />
+            {t('rpt_custom_manage')}
+          </Link>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {catalog.map(cat => (
             <div key={cat.type} className="cursor-pointer" onClick={() => histMap[cat.type] ? handleView(cat.type) : undefined}>
@@ -2446,6 +2590,28 @@ export default function InfraReports({
               />
             </div>
           ))}
+          {customReports.map(cr => {
+            const ctype = `custom:${cr.id}`
+            return (
+              <div
+                key={ctype}
+                className="cursor-pointer"
+                onClick={() => histMap[ctype] || cr.last_rendered ? handleView(ctype) : undefined}
+              >
+                <ReportCard
+                  type={ctype}
+                  title={cr.title}
+                  icon={<FileBarChart2 size={18} />}
+                  color="lime"
+                  desc={cr.description || t('rpt_custom_desc')}
+                  badge={t('rpt_custom_badge')}
+                  onGenerate={handleGenerate}
+                  isLoading={generating === ctype}
+                  lastGenerated={lastGenTimes[ctype] || histMap[ctype]}
+                />
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -2531,6 +2697,7 @@ export default function InfraReports({
           title={viewReport.title}
           data={viewReport.data}
           markdown={viewReport.markdown}
+          preferMarkdown={viewReport.preferMarkdown}
           onClose={() => setViewReport(null)}
           onRegenerate={handleGenerate}
           regenerating={generating === viewReport.type}

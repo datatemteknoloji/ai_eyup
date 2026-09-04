@@ -490,7 +490,10 @@ class VCenterClient:
 
             result: List[Dict] = []
             for snap_el in root.iter():
-                if _tag(snap_el) not in ("VirtualMachineSnapshotTree", "rootSnapshotList"):
+                # rootSnapshotList = kök snapshot; childSnapshotList = ağaçtaki HER
+                # alt/torun snapshot (iç içe olabilir) — ikisi de atlanmadan
+                # okunmalı, yoksa zincirdeki child snapshot'lar sessizce kaybolur.
+                if _tag(snap_el) not in ("VirtualMachineSnapshotTree", "rootSnapshotList", "childSnapshotList"):
                     continue
                 snap_id = ""
                 snap_name = ""
@@ -518,6 +521,358 @@ class VCenterClient:
         except Exception as e:
             logger.error(f"_list_snapshots_soap error: {e}")
             return []
+
+    def _get_vm_layout_soap(self, vm_id: str) -> Optional[Dict]:
+        """
+        VirtualMachine.layout (eski ama bu ortamda desteklenen alan — layoutEx bazı
+        ESXi/vCenter sürümlerinde InvalidProperty verir). Disk zincirlerini
+        (key → [dosya1(base), dosya2(delta1), ...]) ve her snapshot'ın O ANDA
+        bildiği dosya kümesini (snapshotFile) döner — per-snapshot boyut hesabının
+        temelini oluşturur.
+        """
+        import xml.etree.ElementTree as ET
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return None
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>VirtualMachine</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>layout</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="VirtualMachine">{vm_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=20)
+            if resp.status_code != 200:
+                logger.info("_get_vm_layout_soap HTTP %s (layout desteklenmiyor olabilir)", resp.status_code)
+                return None
+            root = ET.fromstring(resp.text)
+
+            def _tag(el): return el.tag.split("}")[-1]
+
+            disks: Dict[str, List[str]] = {}
+            snaps: Dict[str, List[str]] = {}
+            for ps in root.iter():
+                if _tag(ps) != "propSet":
+                    continue
+                n_el = next((c for c in ps if _tag(c) == "name"), None)
+                v_el = next((c for c in ps if _tag(c) == "val"), None)
+                if n_el is None or v_el is None or n_el.text != "layout":
+                    continue
+                for child in v_el:
+                    ct = _tag(child)
+                    if ct == "disk":
+                        key_el = next((c for c in child if _tag(c) == "key"), None)
+                        files = [c.text for c in child if _tag(c) == "diskFile" and c.text]
+                        if key_el is not None and key_el.text:
+                            disks[key_el.text] = files
+                    elif ct == "snapshot":
+                        key_el = next((c for c in child if _tag(c) == "key"), None)
+                        files = [c.text for c in child if _tag(c) == "snapshotFile" and c.text]
+                        if key_el is not None and key_el.text:
+                            snaps[key_el.text] = files
+            return {"disks": disks, "snapshots": snaps}
+        except Exception as e:
+            logger.warning("_get_vm_layout_soap error: %s", e)
+            return None
+
+    def _get_datastore_browser_map(self, soap_session, soap_url: str) -> Dict[str, str]:
+        """Datastore adı → HostDatastoreBrowser MOR (dosya boyutu sorgusu için)."""
+        import xml.etree.ElementTree as ET
+        root_folder = self._get_root_folder(soap_session, soap_url)
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>Datastore</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>summary.name</vim25:pathSet>
+          <vim25:pathSet>browser</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Folder">{root_folder}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>visitFolders</vim25:name>
+            <vim25:type>Folder</vim25:type>
+            <vim25:path>childEntity</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+            <vim25:selectSet><vim25:name>dcToDF</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>dcToDF</vim25:name>
+            <vim25:type>Datacenter</vim25:type>
+            <vim25:path>datastoreFolder</vim25:path>
+            <vim25:skip>false</vim25:skip>
+            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
+          </vim25:selectSet>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code != 200:
+                return {}
+            root = ET.fromstring(resp.text)
+
+            def _tag(el): return el.tag.split("}")[-1]
+
+            out: Dict[str, str] = {}
+            for rv in root.iter():
+                if _tag(rv) != "returnval":
+                    continue
+                name = browser = None
+                for ps in rv:
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    if n_el.text == "summary.name":
+                        name = (v_el.text or "").strip()
+                    elif n_el.text == "browser":
+                        browser = (v_el.text or "").strip()
+                if name and browser:
+                    out[name] = browser
+            return out
+        except Exception as e:
+            logger.warning("_get_datastore_browser_map error: %s", e)
+            return {}
+
+    def _search_datastore_file_sizes(self, soap_session, soap_url: str, browser_ref: str,
+                                       ds_name: str, folder: str, filenames: List[str]) -> Dict[str, int]:
+        """
+        SearchDatastore_Task ile TEK bir klasördeki verilen dosyaların byte boyutunu
+        okur (recursive değil — klasör zaten dosya path'inden biliniyor, hızlı).
+        Döner: {dosya_adı: fileSize_bytes}
+        """
+        import xml.etree.ElementTree as ET, time
+        if not filenames:
+            return {}
+        ds_path = f"[{ds_name}] {folder}".rstrip()
+        pattern_xml = "".join(f"<vim25:matchPattern>{_xml_text(f)}</vim25:matchPattern>" for f in filenames)
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:SearchDatastore_Task>
+      <vim25:_this type="HostDatastoreBrowser">{browser_ref}</vim25:_this>
+      <vim25:datastorePath>{_xml_text(ds_path)}</vim25:datastorePath>
+      <vim25:searchSpec>
+        <vim25:details>
+          <vim25:fileType>false</vim25:fileType>
+          <vim25:fileSize>true</vim25:fileSize>
+          <vim25:modification>false</vim25:modification>
+          <vim25:fileOwner>false</vim25:fileOwner>
+        </vim25:details>
+        <vim25:searchCaseInsensitive>false</vim25:searchCaseInsensitive>
+        {pattern_xml}
+      </vim25:searchSpec>
+    </vim25:SearchDatastore_Task>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(soap_url, data=body,
+                                     headers={"Content-Type": "text/xml; charset=utf-8"},
+                                     verify=self.verify_ssl, timeout=30)
+            if resp.status_code != 200:
+                logger.info("_search_datastore_file_sizes HTTP %s: %s", resp.status_code, resp.text[:250])
+                return {}
+            root = ET.fromstring(resp.text)
+            task_id = None
+            for el in root.iter():
+                if el.tag.split("}")[-1] == "returnval" and el.text:
+                    task_id = el.text
+                    break
+            if not task_id:
+                return {}
+
+            # Task'ı bekle — sonucu (HostDatastoreBrowserSearchResults.file[]) tam XML olarak oku
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                poll_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>Task</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>info.state</vim25:pathSet>
+          <vim25:pathSet>info.result</vim25:pathSet>
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="Task">{task_id}</vim25:obj>
+          <vim25:skip>false</vim25:skip>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                p = soap_session.post(soap_url, data=poll_body,
+                                      headers={"Content-Type": "text/xml; charset=utf-8"},
+                                      verify=self.verify_ssl, timeout=15)
+                if p.status_code != 200:
+                    return {}
+                proot = ET.fromstring(p.text)
+
+                def _tag(el): return el.tag.split("}")[-1]
+
+                state = None
+                result_el = None
+                for ps in proot.iter():
+                    if _tag(ps) != "propSet":
+                        continue
+                    n_el = next((c for c in ps if _tag(c) == "name"), None)
+                    v_el = next((c for c in ps if _tag(c) == "val"), None)
+                    if n_el is None or v_el is None:
+                        continue
+                    if n_el.text == "info.state":
+                        state = (v_el.text or "").strip().lower()
+                    elif n_el.text == "info.result":
+                        result_el = v_el
+                if state == "error":
+                    return {}
+                if state == "success":
+                    out: Dict[str, int] = {}
+                    if result_el is not None:
+                        for f_el in result_el:
+                            if _tag(f_el) != "file":
+                                continue
+                            path_el = next((c for c in f_el if _tag(c) == "path"), None)
+                            size_el = next((c for c in f_el if _tag(c) == "fileSize"), None)
+                            if path_el is not None and path_el.text and size_el is not None and size_el.text:
+                                try:
+                                    out[path_el.text] = int(size_el.text)
+                                except ValueError:
+                                    pass
+                    return out
+                time.sleep(1.5)
+            return {}
+        except Exception as e:
+            logger.warning("_search_datastore_file_sizes error: %s", e)
+            return {}
+
+    def get_vm_snapshot_sizes(self, vm_id: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Her snapshot için GERÇEK, byte-kesin boyutu hesaplar (vCenter'ın kendi
+        yaklaşımıyla aynı mantık — RVTools/PowerCLI'nin kullandığı yöntem):
+
+        1) layout.disk[key].diskFile  → diskin TÜM zinciri (base, delta1, delta2, ...)
+        2) layout.snapshot[key].snapshotFile → o snapshot alınırken zincirde bilinen dosyalar
+        3) Bir snapshot'ın YARATTIĞI delta = zincirde bir SONRAKİ dosya (bir sonraki
+           snapshot'ın/güncel diskin bildiği ama bu snapshot'ın bilmediği dosya).
+        4) Delta dosyalarının gerçek boyutu SearchDatastore_Task ile datastore'dan
+           okunur (tahmin değil, gerçek dosya sistemi boyutu).
+
+        Zincir düzensizse (silinmiş ara snapshot, dallanma) per-snapshot ayrıştırma
+        YAPILMAZ — sessizce {} döner (çağıran taraf toplam/adet gibi bilinen alanlara
+        düşer, YANLIŞ sayı üretmektense veri vermemeyi tercih eder).
+        """
+        layout = self._get_vm_layout_soap(vm_id)
+        if not layout or not layout.get("disks") or not layout.get("snapshots"):
+            return {}
+
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+
+        snaps_order = self._list_snapshots_soap(vm_id)  # createTime sıralı değil — sırala
+        order_by_key = {s["id"]: s.get("create_time") or "" for s in snaps_order}
+
+        # Her disk zinciri için: bu diski kullanan snapshot'ları createTime'a göre sırala,
+        # zincir uzunluğu (base hariç) snapshot sayısıyla eşleşiyorsa i. snapshot → i. delta.
+        assigned_delta: Dict[str, List[str]] = {}  # snapshot_key -> [delta_file, ...]
+        for disk_key, chain in (layout.get("disks") or {}).items():
+            if len(chain) < 2:
+                continue  # bu diskte hiç snapshot yok (tek dosya)
+            snaps_on_disk = [
+                sk for sk, files in (layout.get("snapshots") or {}).items()
+                if any(f in chain for f in files)
+            ]
+            if len(snaps_on_disk) != len(chain) - 1:
+                # Silinmiş/dallanmış snapshot — güvenli sırayla eşleştirilemez, atla.
+                continue
+            snaps_on_disk.sort(key=lambda sk: order_by_key.get(sk, ""))
+            for i, sk in enumerate(snaps_on_disk):
+                delta_file = chain[i + 1]
+                assigned_delta.setdefault(sk, []).append(delta_file)
+
+        if not assigned_delta:
+            return {}
+
+        # Dosyaları datastore + klasöre göre grupla (tek arama/klasör)
+        # path formatı: "[dsname] folder/sub/file.vmdk"
+        import re as _re
+        path_re = _re.compile(r"^\[([^\]]+)\]\s*(.*)$")
+        by_ds_folder: Dict[Tuple[str, str], List[str]] = {}
+        file_to_full: Dict[str, str] = {}
+        for files in assigned_delta.values():
+            for full in files:
+                m = path_re.match(full)
+                if not m:
+                    continue
+                ds_name, rel = m.group(1), m.group(2)
+                folder, _, fname = rel.rpartition("/")
+                by_ds_folder.setdefault((ds_name, folder), []).append(fname)
+                file_to_full[full] = fname
+
+        browser_map = self._get_datastore_browser_map(soap_session, soap_url)
+        size_by_fname: Dict[str, int] = {}
+        for (ds_name, folder), fnames in by_ds_folder.items():
+            browser_ref = browser_map.get(ds_name)
+            if not browser_ref:
+                continue
+            sizes = self._search_datastore_file_sizes(
+                soap_session, soap_url, browser_ref, ds_name, folder, list(set(fnames)),
+            )
+            size_by_fname.update(sizes)
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for sk, files in assigned_delta.items():
+            total_bytes = 0
+            found_all = True
+            for full in files:
+                fname = file_to_full.get(full)
+                sz = size_by_fname.get(fname) if fname else None
+                if sz is None:
+                    found_all = False
+                    continue
+                total_bytes += sz
+            if total_bytes > 0:
+                result[sk] = {
+                    "size_bytes": total_bytes,
+                    "size_gb": round(total_bytes / (1024 ** 3), 3),
+                    "exact": found_all,
+                }
+        return result
 
     def _create_snapshot_soap(self, vm_id: str, name: str,
                                description: str = "") -> Tuple[bool, str, Optional[str]]:
@@ -2304,12 +2659,17 @@ class VCenterClient:
         """
         Tüm VM'lerin CANLI performans/durum verisini tek SOAP çağrısıyla toplar:
         güç durumu, boot zamanı (→ uptime), CPU/RAM anlık kullanım, memory
-        ballooning/swap ve snapshot sayısı/en eski snapshot tarihi.
+        ballooning/swap, snapshot sayısı/en eski snapshot tarihi VE (varsa)
+        yaklaşık toplam snapshot alanı (summary.storage.uncommitted).
 
         CPU Ready / disk latency PerformanceManager QueryPerf ile ayrıca
         get_all_vm_perf_io üzerinden gelir. customValue (Custom Attributes)
-        bu çağrıda toplanır. (summary.storage bazı ESXi/vCenter sürümlerinde
-        InvalidProperty verdiği için dahil edilmez.)
+        bu çağrıda toplanır.
+
+        summary.storage bazı ESXi/vCenter sürümlerinde InvalidProperty SOAP
+        Fault'u fırlatabilir (tüm RetrieveProperties çağrısını düşürür) —
+        bu yüzden ÖNCE bu alanla denenir, hata alınırsa (HTTP != 200) OTOMATİK
+        OLARAK bu alan olmadan tekrar denenir (geriye dönük uyumlu fallback).
         """
         import xml.etree.ElementTree as ET
 
@@ -2321,7 +2681,9 @@ class VCenterClient:
 
         root_folder = self._get_root_folder(soap_session, soap_url)
 
-        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+        def _build_body(include_storage: bool) -> str:
+            storage_path = "<vim25:pathSet>summary.storage</vim25:pathSet>\n          " if include_storage else ""
+            return f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:vim25="urn:vim25"
                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -2337,7 +2699,7 @@ class VCenterClient:
           <vim25:pathSet>runtime.bootTime</vim25:pathSet>
           <vim25:pathSet>runtime.host</vim25:pathSet>
           <vim25:pathSet>summary.quickStats</vim25:pathSet>
-          <vim25:pathSet>snapshot</vim25:pathSet>
+          {storage_path}<vim25:pathSet>snapshot</vim25:pathSet>
           <vim25:pathSet>customValue</vim25:pathSet>
           <vim25:pathSet>config.hardware.numCPU</vim25:pathSet>
           <vim25:pathSet>guest.disk</vim25:pathSet>
@@ -2359,12 +2721,22 @@ class VCenterClient:
 </soapenv:Envelope>"""
 
         try:
-            resp = soap_session.post(soap_url, data=soap_body,
+            resp = soap_session.post(soap_url, data=_build_body(True),
                                      headers={"Content-Type": "text/xml; charset=utf-8"},
                                      verify=self.verify_ssl, timeout=90)
             if resp.status_code != 200:
-                logger.warning(f"get_all_vm_live_stats HTTP {resp.status_code}: {resp.text[:300]}")
-                return []
+                # summary.storage bu vCenter/ESXi sürümünde InvalidProperty verdi —
+                # o alan olmadan tekrar dene (diğer tüm veriler kaybolmasın).
+                logger.info(
+                    "get_all_vm_live_stats: summary.storage ile HTTP %s — "
+                    "bu alan olmadan tekrar deneniyor", resp.status_code,
+                )
+                resp = soap_session.post(soap_url, data=_build_body(False),
+                                         headers={"Content-Type": "text/xml; charset=utf-8"},
+                                         verify=self.verify_ssl, timeout=90)
+                if resp.status_code != 200:
+                    logger.warning(f"get_all_vm_live_stats HTTP {resp.status_code}: {resp.text[:300]}")
+                    return []
 
             root_xml = ET.fromstring(resp.text)
             results = []
@@ -2413,6 +2785,16 @@ class VCenterClient:
                     if pname == "summary.quickStats":
                         for child in v_el:
                             flat[_tag(child)] = child.text
+                        continue
+                    if pname == "summary.storage":
+                        # VirtualMachineStorageSummary: committed/uncommitted/unshared (byte, long).
+                        # 'uncommitted' snapshot zincirinin (+ thin provisioning slack'inin)
+                        # tuttuğu yaklaşık alanı temsil eder — vCenter UI'daki "Storage"
+                        # panelindeki değerle aynı kaynak. Tekil snapshot'a bölünemez
+                        # (vSphere API'de per-snapshot byte alanı yoktur), VM toplamıdır.
+                        for child in v_el:
+                            if _tag(child) == "uncommitted" and child.text:
+                                flat["_storage_uncommitted_bytes"] = child.text
                         continue
                     if pname == "guest.disk":
                         guest_disks = []
@@ -2507,6 +2889,16 @@ class VCenterClient:
                 nic_devices = flat.get("_nic_devices") or []
                 nic_disconnected = sum(1 for n in nic_devices if n.get("connected") == "false")
 
+                # Yaklaşık toplam snapshot alanı (GB) — yalnızca snapshot'ı OLAN VM'ler için
+                # anlamlı; snapshot yoksa 'uncommitted' thin-provisioning slack'i gösterebilir,
+                # snapshot alanıyla ilişkisi yoktur (yanıltıcı olmasın diye None bırakılır).
+                _snap_count_val = _i("snapshot_count", 0) or 0
+                snapshot_space_gb = None
+                if _snap_count_val > 0:
+                    _uncommitted_bytes = _f("_storage_uncommitted_bytes")
+                    if _uncommitted_bytes is not None:
+                        snapshot_space_gb = round(_uncommitted_bytes / (1024 ** 3), 2)
+
                 results.append({
                     "vm_ref": vm_ref,
                     "name": flat.get("name", vm_ref or "unknown"),
@@ -2524,7 +2916,9 @@ class VCenterClient:
                     "uptime_seconds": _i("uptimeSeconds"),
                     "snapshot_count": flat.get("snapshot_count", 0),
                     "snapshot_oldest": flat.get("snapshot_oldest"),
-                    "snapshot_space_gb": None,
+                    "snapshot_space_gb": snapshot_space_gb,
+                    "snapshot_space_is_estimate": snapshot_space_gb is not None,
+                    "storage_uncommitted_bytes": _i("_storage_uncommitted_bytes"),
                     "custom_attrs": flat.get("_custom_attrs") or [],
                     "guest_disk_pct": guest_disk_pct,
                     "guest_disk_total_gb": guest_disk_total_gb,

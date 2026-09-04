@@ -1022,7 +1022,9 @@ def ask_hypervisor_question(
     from app.models.chat_session import ChatSession, ChatMessage
     from datetime import datetime, timezone
 
-    question = req.question.strip()
+    raw_question = req.question.strip()
+    from app.services.chat_output_directives import OutputDirective, extract_output_directive
+    question, output_directive = extract_output_directive(raw_question)
     session_id = req.session_id
 
     try:
@@ -1051,7 +1053,7 @@ def ask_hypervisor_question(
             db.refresh(session)
             session_id = session.id
 
-        db.add(ChatMessage(session_id=session_id, role="user", content=question))
+        db.add(ChatMessage(session_id=session_id, role="user", content=raw_question))
         db.commit()
 
         # DB'den konuşma geçmişi (son 8 mesaj, yeni user hariç)
@@ -1171,7 +1173,15 @@ def ask_hypervisor_question(
             # 1) Deterministik katman — HAM soru (agentic dump QA_RULES'a ASLA girmez)
             # Tam tarama onayında şablon kesmesin diye deterministic atlanır.
             route = route_admin_question(ask_user_q, platform="virt")
-            det_answer = None if full_scan_this_turn else try_deterministic_answer(db, ask_user_q)
+            from app.services.chat_intent import should_skip_deterministic
+            # /table /json /brief komutu varsa QA_RULES şablonlarını atla — bu komutlar
+            # yalnızca virt_inventory_contract (satır bazlı) ve LLM prompt katmanında uygulanır.
+            skip_det = (
+                full_scan_this_turn
+                or should_skip_deterministic(ask_user_q)
+                or output_directive != OutputDirective.NONE
+            )
+            det_answer = None if skip_det else try_deterministic_answer(db, ask_user_q)
             if det_answer:
                 from app.services import qa_cache as _qa_cache
                 result = {
@@ -1184,7 +1194,8 @@ def ask_hypervisor_question(
                     "normalized_q": route.normalized_q,
                 }
                 try:
-                    _qa_cache.set_cached_answer(ask_user_q, result, req.model)
+                    if output_directive == OutputDirective.NONE:
+                        _qa_cache.set_cached_answer(ask_user_q, result, req.model)
                 except Exception:
                     pass
             else:
@@ -1212,6 +1223,7 @@ def ask_hypervisor_question(
                             domains=domains_for_platform("virt"),
                             platform="virt",
                             actor_name="virt_chat",
+                            output_directive=output_directive,
                         )
                         if final.get("status") in ("skipped", "error") and not final.get("used_tools"):
                             agentic_extra = ""
@@ -1261,6 +1273,7 @@ def ask_hypervisor_question(
                                 max_steps=_rts.get_int("virt_chat_max_tool_steps"),
                                 domains=domains_for_platform("virt"),
                                 platform="virt",
+                                output_directive=output_directive,
                             )
                             for item in gen:
                                 if item.get("type") == "final":
@@ -1289,7 +1302,9 @@ def ask_hypervisor_question(
 
                 if not inventory_done:
                     ask_question = ask_user_q
-                    tool_cap = 200000 if full_scan_this_turn else 20000
+                    from app.services.llm_context_budget import get_input_token_budget
+                    _char_cap = int(get_input_token_budget() * 3.5 * 0.35)
+                    tool_cap = min(200000 if full_scan_this_turn else 20000, max(8000, _char_cap))
                     if agentic_extra:
                         ask_question = (
                             ask_user_q
@@ -1304,6 +1319,7 @@ def ask_hypervisor_question(
                         conversation_history=history,
                         skip_deterministic=True,  # ham soruda zaten denendi / full_scan
                         user_question=ask_user_q,
+                        output_directive=output_directive,
                     )
                 if full_scan_this_turn:
                     intents = list(result.get("intents") or [])

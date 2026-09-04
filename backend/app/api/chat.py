@@ -21,6 +21,7 @@ from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
 from app.models.credential import GlobalCredential
 from app.services.platform_scope import is_windows_server
 from app.services import llm_gateway
+from app.services.response_layers import wrap_layer
 
 logger = logging.getLogger(__name__)
 
@@ -388,9 +389,12 @@ async def delete_all_sessions(category: str = "linux", db: Session = Depends(get
 async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     """Chat mesajı gönder ve AI yanıtı al (SSH komut çalıştırma desteği ile)"""
     try:
-        message = request.message.strip()
-        if not message:
+        raw_message = request.message.strip()
+        if not raw_message:
             raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+        from app.services.chat_output_directives import extract_output_directive
+        message, output_directive = extract_output_directive(raw_message)
 
         session_id = request.session_id
         if not session_id:
@@ -621,7 +625,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
             user_msg = ChatMessage(
                 session_id=session_id,
                 role="user",
-                content=message,
+                content=raw_message,
             )
             db.add(user_msg)
             db.commit()
@@ -705,7 +709,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 focused = _extract_focused_summary(message, all_server_contexts)
                 if focused:
                     context_parts.append(focused)
-                context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (SSH):\n" + ssh_context.strip())
+                context_parts.append(wrap_layer("ssh", ssh_context))
             elif server_context:
                 context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
             if prometheus_context:
@@ -791,6 +795,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
                 prometheus_available=bool(prometheus_context),
                 selected_server_names=[s.name for s in selected_servers],
                 history_block=history_block,
+                output_directive=output_directive,
             )
 
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1104,6 +1109,7 @@ def _build_prompt(
     selected_server_names,
     history_block="",
     platform="linux",
+    output_directive=None,
 ):
     NL = "\n"
     parts = []
@@ -1271,7 +1277,13 @@ def _build_prompt(
     if history_block:
         prompt_parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     prompt_parts.append("KULLANICI SORUSU: " + message)
-    prompt_parts.append("YANIT (Markdown, Turkce):")
+    from app.services.chat_output_directives import directive_system_addendum
+    _dir_add = directive_system_addendum(output_directive)
+    if _dir_add:
+        prompt_parts.append(_dir_add.strip())
+        prompt_parts.append("YANIT:")
+    else:
+        prompt_parts.append("YANIT (Markdown, Turkce):")
 
     return "\n\n".join(prompt_parts)
 
@@ -1323,10 +1335,17 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
         async def event_generator():
             try:
-                message = request.message.strip()
-                if not message:
+                raw_message = request.message.strip()
+                if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
                     return
+
+                from app.services.chat_output_directives import (
+                    OutputDirective as _OD,
+                    extract_output_directive,
+                )
+                message, output_directive = extract_output_directive(raw_message)
+                _has_directive = output_directive != _OD.NONE
 
                 ephemeral = bool(request.ephemeral)
                 chat_platform = _normalize_chat_platform(request.platform)
@@ -1359,7 +1378,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
 
                 # Kullanıcı mesajını stream başında kaydet (sayfa değişse bile history'de kalsın)
                 if not ephemeral:
-                    db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                    db.add(ChatMessage(session_id=session_id, role="user", content=raw_message))
                     db.commit()
 
                 from app.services.chat_obs import ChatTiming
@@ -1444,7 +1463,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 # _context_key — session_id icermiyor).
                 # Gizli modda cache okuma/yazma yok (prompt sızıntısı önlemi).
                 server_ids = request.server_ids or []
-                cached = None if (_is_followup or ephemeral) else get_cached_answer(
+                cached = None if (_is_followup or ephemeral or _has_directive) else get_cached_answer(
                     db, message, server_ids, platform=chat_platform,
                 )
                 _timing.mark("cache")
@@ -1489,7 +1508,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     _persist_chat_pair(
                         db, session_id, ephemeral=ephemeral, user=None, assistant=inv_answer,
                     )
-                    if not ephemeral:
+                    if not ephemeral and not _has_directive:
                         save_to_cache(
                             db, message, inv_answer, server_ids, platform=chat_platform,
                         )
@@ -1957,7 +1976,15 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     has_live_targets=bool(selected_servers),
                     is_followup=_is_followup,
                     has_episode=has_session_episode(session_id=session_id, platform=chat_platform),
-                    allow_agentic_without_collect=(chat_platform == "openshift"),
+                    # OpenShift: SSH collect'i zaten yok, agentic hep açık. Linux/Exadata:
+                    # BELİRLİ bir sunucu seçilmemişse (filo/genel soru — ör. "kritik event
+                    # var mı", "kaç sunucu var") sabit SSH collect'i zaten çalışamaz;
+                    # bu durumda DB/agentic araçlarına (db_list_critical_events, db_list_vms
+                    # vb.) erişim KAPALI kalırsa soru hiçbir araç çağırmadan context'ten
+                    # (RAG/cache) uydurma cevaplanıyordu — bkz. gözlemlenen regresyon.
+                    allow_agentic_without_collect=(
+                        chat_platform == "openshift" or not selected_servers
+                    ),
                 )
                 if _live_path.is_deep:
                     is_deep = True
@@ -2087,7 +2114,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     focused = _extract_focused_summary(message, _ssh_server_ctxs)
                     if focused:
                         context_parts.append(focused)
-                    context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (SSH):\n" + ssh_ctx.strip())
+                    context_parts.append(wrap_layer("ssh", ssh_ctx))
                 elif server_context:
                     context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
                 if prom_ctx:
@@ -2200,6 +2227,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                             max_steps=max_tool_steps,
                             domains=tool_domains,
                             platform=chat_platform,
+                            output_directive=output_directive,
                         )
 
                         def _next_item(g):
@@ -2257,8 +2285,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                                 if ctxs_fb:
                                     ssh_ctx = "\n\n".join(ctxs_fb)
                                     context_str = (
-                                        "SUNUCULARDAN ALINAN GERCEK VERILER (SSH, agentic fallback):\n"
-                                        + ssh_ctx
+                                        wrap_layer("ssh_agentic", ssh_ctx)
                                         + ("\n\n" + context_str if context_str else "")
                                     )
                             except Exception as e_fb:
@@ -2284,6 +2311,12 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 except Exception:
                     pass
 
+                try:
+                    from app.services.llm_context_budget import apply_context_char_budget
+                    context_str = apply_context_char_budget(context_str)
+                except Exception:
+                    pass
+
                 prompt = _build_prompt(
                     message=message,
                     context_str=context_str,
@@ -2293,6 +2326,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                     selected_server_names=[s.name for s in selected_servers],
                     history_block=history_block,
                     platform=chat_platform,
+                    output_directive=output_directive,
                 )
 
                 # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
@@ -2376,7 +2410,7 @@ async def chat_stream(request: "ChatRequest", db: Session = Depends(get_db)):
                 # bağımlı cevabı yanlışlıkla kullanabilir).
                 if (
                     full_response and not is_deep and not needs_ssh and not _is_followup
-                    and not ephemeral
+                    and not ephemeral and not _has_directive
                 ):
                     save_to_cache(db, message, full_response, server_ids, platform=chat_platform)
 

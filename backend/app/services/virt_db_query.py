@@ -44,6 +44,8 @@ def list_vms_db(
     power_state: Optional[str] = None,
     host_name: Optional[str] = None,
     cluster: Optional[str] = None,
+    datastore: Optional[str] = None,
+    name_filter: Optional[str] = None,
     limit: int = 100,
     fields: Optional[List[str]] = None,
     include_disks: bool = True,
@@ -95,6 +97,11 @@ def list_vms_db(
         q = q.filter(Server.vm_host_name.ilike(f"%{host_name.strip()}%"))
     if cluster:
         q = q.filter(Server.vm_cluster.ilike(f"%{cluster.strip()}%"))
+    if datastore:
+        # Yalnızca bu datastore'da yer alan VM'ler (kapsam daraltma — "bilgi kirliliği" önlemi).
+        q = q.filter(Server.vm_datastore.ilike(f"%{datastore.strip()}%"))
+    if name_filter:
+        q = q.filter(Server.vm_name.ilike(f"%{name_filter.strip()}%"))
 
     rows = q.order_by(Server.name.asc()).limit(max(1, min(limit, 500))).all()
     hv_map = {
@@ -250,6 +257,7 @@ def list_datastores_db(
     db: Session,
     *,
     hypervisor: Optional[str] = None,
+    name_filter: Optional[str] = None,
     max_age_min: int = 45,
     fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -269,6 +277,8 @@ def list_datastores_db(
         )
         if hv:
             q = q.filter(VirtDatastore.hypervisor_id == hv.id)
+    if name_filter:
+        q = q.filter(VirtDatastore.name.ilike(f"%{name_filter.strip()}%"))
     rows = q.order_by(VirtDatastore.usage_pct.desc().nullslast()).all()
     if not rows:
         return {
@@ -332,6 +342,7 @@ def list_esx_hosts_db(
     db: Session,
     *,
     hypervisor: Optional[str] = None,
+    name_filter: Optional[str] = None,
     fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """ESXi host listesi — metrics ⋈ inventory join; fields ile dinamik projeksiyon.
@@ -359,6 +370,8 @@ def list_esx_hosts_db(
         )
         if hv:
             q = q.filter(HypervisorHostMetric.hypervisor_id == hv.id)
+    if name_filter:
+        q = q.filter(HypervisorHostMetric.host_name.ilike(f"%{name_filter.strip()}%"))
 
     subq = (
         q.with_entities(

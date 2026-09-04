@@ -47,6 +47,7 @@ const Level1Jobs = lazy(() => import('./pages/level1/Level1Jobs'))
 const Level1Audit = lazy(() => import('./pages/level1/Level1Audit'))
 const Level1Settings = lazy(() => import('./pages/level1/Level1Settings'))
 const UserManager = lazy(() => import('./pages/UserManager'))
+const CustomReports = lazy(() => import('./pages/CustomReports'))
 
 const LinuxInfraReportsPage = lazy(() =>
   import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.LinuxInfraReportsPage }))
@@ -365,6 +366,7 @@ function App() {
                       <Route path="/system-update" element={<RequireModule moduleId="linux"><ErrorBoundary><SystemUpdate /></ErrorBoundary></RequireModule>} />
                       <Route path="/knowledge-base" element={<RequireModule moduleId="knowledge"><ErrorBoundary><KnowledgeBase /></ErrorBoundary></RequireModule>} />
                       <Route path="/applications" element={<RequireModule moduleId="applications"><ErrorBoundary><Applications /></ErrorBoundary></RequireModule>} />
+                      <Route path="/custom-reports" element={<RequireModule moduleId="custom_reports"><ErrorBoundary><CustomReports /></ErrorBoundary></RequireModule>} />
                       <Route path="/audit" element={<RequireAdmin><ErrorBoundary><AuditLog /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/settings" element={<RequireAdmin><ErrorBoundary><Settings /></ErrorBoundary></RequireAdmin>} />
                     </Routes>

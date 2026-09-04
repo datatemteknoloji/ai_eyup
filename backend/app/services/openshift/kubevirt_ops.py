@@ -238,14 +238,61 @@ def list_snapshots(client: KubeVirtClient, namespace: str, vm_name: str) -> list
     _raise_http(r, "Snapshot listesi")
     out = []
     for s in (r.json() or {}).get("items") or []:
-        src = ((s.get("spec") or {}).get("source") or {}).get("name")
+        spec = s.get("spec") or {}
+        src = (spec.get("source") or {}).get("name")
         if src and src != vm_name:
             continue
+        st = s.get("status") or {}
+        conds = st.get("conditions") or []
+        failure = next(
+            (c.get("message") for c in conds if c.get("type") == "Failure" and c.get("status") == "True"),
+            None,
+        )
         out.append({
             "name": (s.get("metadata") or {}).get("name"),
-            "ready": ((s.get("status") or {}).get("readyToUse")),
+            "vm": src,
+            "ready": st.get("readyToUse"),
             "created": (s.get("metadata") or {}).get("creationTimestamp"),
-            "phase": ((s.get("status") or {}).get("phase")),
+            "phase": st.get("phase"),
+            "source": {"kind": (spec.get("source") or {}).get("kind"), "name": src},
+            "volume_snapshots": [
+                {"name": v.get("volumeSnapshotName"), "creation_time": v.get("creationTime")}
+                for v in (st.get("volumeSnapshotStatus") or [])
+            ],
+            "indications": st.get("indications") or [],
+            "failure_reason": failure,
+        })
+    out.sort(key=lambda x: x.get("created") or "", reverse=True)
+    return out
+
+
+def list_restores(client: KubeVirtClient, namespace: str, vm_name: str = "") -> list:
+    """VirtualMachineRestore listesi (snapshot.kubevirt.io) — opsiyonel vm_name filtresi."""
+    r = client.session.get(
+        f"{client.api_url}{SNAP}/namespaces/{namespace}/virtualmachinerestores",
+        timeout=client.timeout,
+    )
+    if r.status_code == 404:
+        return []
+    _raise_http(r, "Restore listesi")
+    out = []
+    for item in (r.json() or {}).get("items") or []:
+        spec = item.get("spec") or {}
+        target = (spec.get("target") or {}).get("name")
+        if vm_name and target != vm_name:
+            continue
+        st = item.get("status") or {}
+        out.append({
+            "name": (item.get("metadata") or {}).get("name"),
+            "source_snapshot": spec.get("virtualMachineSnapshotName"),
+            "target_vm": target,
+            "complete": st.get("complete"),
+            "restore_time": st.get("restoreTime"),
+            "conditions": [
+                {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+                for c in (st.get("conditions") or [])
+            ],
+            "created": (item.get("metadata") or {}).get("creationTimestamp"),
         })
     out.sort(key=lambda x: x.get("created") or "", reverse=True)
     return out

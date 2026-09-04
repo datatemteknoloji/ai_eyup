@@ -57,6 +57,11 @@ class OpenShiftClient:
         self.verify_ssl = verify_ssl
         self.timeout = timeout
         self.auth_error = ""
+        # Son list_*/get_* çağrısındaki HTTP/bağlantı hatası — boş `[]` sonucu ile
+        # "gerçekten boş" durumunu ayırt etmek için. Her çağrının başında temizlenir,
+        # hata olursa doldurulur. Çağıran kod (agent/tools.py handler'ları) bunu
+        # kontrol ederek "0 node/pod" yerine açık hata döndürebilir.
+        self.last_error: str = ""
         self.token = token or ""
 
         if not self.token and self.username and self.password:
@@ -139,6 +144,15 @@ class OpenShiftClient:
             logger.error(f"OpenShift connection test failed: {e}")
             return False, str(e)
 
+    @staticmethod
+    def _describe_http_error(r) -> str:
+        """HTTP durum koduna göre insan-okunur hata metni (401/403 için özel)."""
+        if r.status_code == 401:
+            return "401 Yetkisiz — Token geçersiz veya süresi dolmuş"
+        if r.status_code == 403:
+            return "403 Erişim reddedildi — Token'ın küme kaynaklarını okuma yetkisi yok"
+        return f"HTTP {r.status_code}: {(r.text or '')[:200]}"
+
     def get_version(self) -> str:
         try:
             r = self._get("/version/openshift", timeout=10)
@@ -181,9 +195,11 @@ class OpenShiftClient:
 
     def list_nodes(self) -> List[Dict]:
         """Cluster node'larını (master/worker/infra) döner."""
+        self.last_error = ""
         try:
             r = self._get("/api/v1/nodes", params={"limit": 500}, timeout=30)
             if r.status_code != 200:
+                self.last_error = self._describe_http_error(r)
                 logger.error(f"OpenShift node listesi hatası: {r.status_code} - {r.text[:200]}")
                 return []
             nodes = []
@@ -244,14 +260,17 @@ class OpenShiftClient:
                 })
             return nodes
         except Exception as e:
+            self.last_error = f"Bağlantı hatası: {e}"
             logger.error(f"OpenShift list_nodes error: {e}", exc_info=True)
             return []
 
     def list_projects(self) -> List[Dict]:
         """Namespace/proje listesini döner (openshift-* sistem projeleri de dahil, `is_system` ile ayrılır)."""
+        self.last_error = ""
         try:
             r = self._get("/api/v1/namespaces", params={"limit": 500}, timeout=30)
             if r.status_code != 200:
+                self.last_error = self._describe_http_error(r)
                 logger.error(f"OpenShift proje listesi hatası: {r.status_code} - {r.text[:200]}")
                 return []
             projects = []
@@ -269,6 +288,7 @@ class OpenShiftClient:
                 })
             return projects
         except Exception as e:
+            self.last_error = f"Bağlantı hatası: {e}"
             logger.error(f"OpenShift list_projects error: {e}", exc_info=True)
             return []
 
@@ -279,6 +299,7 @@ class OpenShiftClient:
         yeterli olmayabilir). Ham containerStatuses dönülmez — AI/tool
         bağlamını şişirir ve 300+ pod'da çıktı kesilip 1-2 pod kalırdı.
         """
+        self.last_error = ""
         try:
             path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
             pods: List[Dict] = []
@@ -289,6 +310,7 @@ class OpenShiftClient:
                     params["continue"] = continue_token
                 r = self._get(path, params=params, timeout=45)
                 if r.status_code != 200:
+                    self.last_error = self._describe_http_error(r)
                     logger.error(f"OpenShift pod listesi hatası: {r.status_code} - {r.text[:200]}")
                     break
                 body = r.json() or {}
@@ -346,6 +368,7 @@ class OpenShiftClient:
                     break
             return pods
         except Exception as e:
+            self.last_error = f"Bağlantı hatası: {e}"
             logger.error(f"OpenShift list_pods error: {e}", exc_info=True)
             return []
 
@@ -529,9 +552,12 @@ class OpenShiftClient:
         """Türetilmiş alarm mantığı: Node NotReady, CrashLoopBackOff, OOMKilled, PVC sorunları, Deployment ilerleme sorunu."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         events: List[Dict] = []
+        self.last_error = ""
 
         try:
             r = self._get("/api/v1/events", params={"limit": 500}, timeout=30)
+            if r.status_code != 200:
+                self.last_error = self._describe_http_error(r)
             if r.status_code == 200:
                 for ev in (r.json() or {}).get("items", []):
                     involved = ev.get("involvedObject", {}) or {}
@@ -563,6 +589,7 @@ class OpenShiftClient:
                         "reason": reason,
                     })
         except Exception as e:
+            self.last_error = f"Bağlantı hatası: {e}"
             logger.error(f"OpenShift list_events error: {e}", exc_info=True)
 
         # Türetilmiş: CrashLoopBackOff / yüksek restart (list_pods reason alanından)

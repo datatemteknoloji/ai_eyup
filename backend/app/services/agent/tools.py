@@ -293,11 +293,109 @@ def _cross_entity_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
         return {"ok": False, "error": str(e)}
 
 
+def _vcenter_snapshot_summary_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Fleet-wide snapshot özeti — vCenter SOAP canlı (snapshot_count / en eski)."""
+    try:
+        from app.services import vcenter_vm_performance as perf
+        r = perf.fetch_live_vm_stats(db)
+        vms = r.get("vms") or []
+        host_filter = (args.get("host_name") or args.get("esxi_host") or "").strip().lower()
+        ds_filter = (args.get("datastore") or "").strip().lower()
+        if host_filter:
+            vms = [v for v in vms if host_filter in (v.get("name") or "").lower()
+                   or host_filter in str(v.get("hypervisor") or "").lower()]
+        with_snap = [v for v in vms if (v.get("snapshot_count") or 0) > 0]
+        with_snap.sort(key=lambda x: -(x.get("snapshot_count") or 0))
+        note = None
+        if with_snap and all(v.get("snapshot_space_gb") is None for v in with_snap):
+            note = (
+                "Bu vCenter/ESXi sürümü summary.storage'ı desteklemiyor — TOPLAM "
+                "yaklaşık alan bu fleet özetinde mevcut değil. Belirli bir VM'in "
+                "GERÇEK snapshot boyutunu öğrenmek için vcenter_list_vm_snapshots "
+                "(vm_name ile) çağır — orada per-snapshot gerçek byte boyutu döner."
+            )
+        return {
+            "ok": True,
+            "source": "vcenter_live",
+            "count": len(with_snap),
+            "total_vms_scanned": len(vms),
+            "errors": r.get("errors") or [],
+            "vms": with_snap[: int(args.get("limit") or 100)],
+            **({"note": note} if note else {}),
+        }
+    except Exception as e:
+        logger.error("[Tool] vcenter_snapshot_summary hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _vcenter_list_vm_snapshots_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Tek VM snapshot ağacı — vCenter SOAP list_snapshots."""
+    from app.models.server import Server
+    from app.services.snapshot_service import list_external_snapshots
+    from app.services.platform_scope import vm_filter_condition
+
+    name = (args.get("vm_name") or args.get("name") or "").strip()
+    server_id = args.get("server_id")
+    srv = None
+    if server_id:
+        srv = db.query(Server).filter(Server.id == int(server_id)).first()
+    elif name:
+        srv = db.query(Server).filter(
+            vm_filter_condition(),
+            Server.name.ilike(name),
+        ).first()
+        if not srv:
+            srv = db.query(Server).filter(
+                vm_filter_condition(),
+                Server.name.ilike(f"%{name}%"),
+            ).first()
+    if not srv:
+        return {"ok": False, "error": "VM bulunamadı — vm_name veya server_id verin"}
+    # Tek VM sorgusu — her snapshot için GERÇEK boyutu da çek (layout + datastore
+    # browser üzerinden; tahmin/reçete değil, gerçek dosya sistemi boyutu).
+    result = list_external_snapshots(srv, db, include_size=True)
+    return {
+        "ok": bool(result.get("success")),
+        "vm": srv.name,
+        "server_id": srv.id,
+        "platform": result.get("platform"),
+        "snapshots": result.get("snapshots") or [],
+        "size_note": result.get("size_note"),
+        "message": result.get("message"),
+        "source": "vcenter_soap",
+    }
+
+
 def _vcenter_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Canlı READ-ONLY yönlendirme — tam envanter dump yerine atomik araçlar."""
     question = (args.get("question") or "").strip()
     if not question:
         return {"ok": False, "error": "question zorunlu"}
+    q = question.lower()
     try:
+        from app.services.chat_intent import classify_chat_intent, ChatIntentKind
+        intent = classify_chat_intent(question)
+        if intent.kind == ChatIntentKind.CONCEPTUAL:
+            from app.services.hypervisor_intelligence import answer_hypervisor_question
+            result = answer_hypervisor_question(db, question)
+            return {"ok": not bool(result.get("error")), "answer": result.get("answer"), "source": "conceptual"}
+        if "snapshot" in q:
+            vm_hint = args.get("vm_name") or ""
+            size_asked = any(k in q for k in (
+                "boyut", "büyüklük", "buyukluk", "kaç gb", "kac gb", "ne kadar", "yer kaplı",
+            ))
+            if vm_hint and (
+                size_asked
+                or any(k in q for k in ("listele", "göster", "goster", "ağaç", "agac", "hangi", "soap"))
+            ):
+                # Belirli bir VM + boyut/liste isteği → gerçek per-snapshot boyutu
+                # dönen atomik araca git (tahmin/reçete değil, gerçek SOAP sorgusu).
+                return _vcenter_list_vm_snapshots_handler(db, {"vm_name": vm_hint}, ctx)
+            return _vcenter_snapshot_summary_handler(db, {"limit": 200}, ctx)
+        from app.services import vcenter_vm_performance as perf
+        if any(k in q for k in ("canlı", "canli", "anlık", "anlik", "perf", "cpu", "ram")):
+            r = perf.fetch_live_vm_stats(db)
+            return {"ok": True, "source": "vcenter_live", "vms": (r.get("vms") or [])[:50], "errors": r.get("errors")}
         from app.services.hypervisor_intelligence import answer_hypervisor_question
         result = answer_hypervisor_question(db, question)
         if result.get("error"):
@@ -331,6 +429,8 @@ def _db_list_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any])
             power_state=args.get("power_state"),
             host_name=args.get("host_name"),
             cluster=args.get("cluster"),
+            datastore=args.get("datastore"),
+            name_filter=args.get("name_filter"),
             limit=lim,
             fields=fields if isinstance(fields, list) else None,
             include_disks=bool(include_disks),
@@ -358,6 +458,7 @@ def _db_list_datastores_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
         return list_datastores_db(
             db,
             hypervisor=args.get("hypervisor"),
+            name_filter=args.get("name_filter"),
             fields=fields if isinstance(fields, list) else None,
         )
     except Exception as e:
@@ -374,6 +475,7 @@ def _db_list_esx_hosts_handler(db: Session, args: Dict[str, Any], ctx: Dict[str,
         return list_esx_hosts_db(
             db,
             hypervisor=args.get("hypervisor"),
+            name_filter=args.get("name_filter"),
             fields=fields if isinstance(fields, list) else None,
         )
     except Exception as e:
@@ -417,6 +519,79 @@ def _db_virt_cross_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[st
         )
     except Exception as e:
         logger.error("[Tool] db_virt_cross_match hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_critical_events_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """READ-ONLY: system_events tablosundan kritik/hata seviyeli olayları listeler.
+
+    'Sunucularda/VM'lerde kritik event var mı?' tarzı sorularda gerçek veriye
+    dayanmayı garanti eder — bu tool eklenmeden önce bu tür sorular hiçbir araç
+    çağırmadan LLM tarafından tamamen uydurma (yanlış tarih/kaynak) cevaplanıyordu.
+    """
+    try:
+        from datetime import datetime, timedelta, timezone
+        from app.models.event import SystemEvent
+
+        hours = max(1, min(int(args.get("hours") or 24), 24 * 30))
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        sev_arg = (args.get("severity") or "critical").strip().lower()
+        if sev_arg in ("all", "hepsi", "*"):
+            severities = None
+        else:
+            severities = [s.strip() for s in sev_arg.split(",") if s.strip()]
+
+        limit = max(1, min(int(args.get("limit") or 50), 200))
+        server_filter = (args.get("server_name") or "").strip()
+
+        q = db.query(SystemEvent, Server.name).outerjoin(
+            Server, Server.id == SystemEvent.server_id
+        ).filter(SystemEvent.created_at >= since)
+        if severities:
+            q = q.filter(SystemEvent.severity.in_(severities))
+        if server_filter:
+            q = q.filter(Server.name.ilike(f"%{server_filter}%"))
+        q = q.order_by(SystemEvent.created_at.desc()).limit(limit)
+        rows = q.all()
+
+        total_q = db.query(SystemEvent).filter(SystemEvent.created_at >= since)
+        if severities:
+            total_q = total_q.filter(SystemEvent.severity.in_(severities))
+        total_count = total_q.count()
+
+        events = [
+            {
+                "server": server_name or (f"server_id={ev.server_id}" if ev.server_id else None),
+                "severity": ev.severity,
+                "event_type": ev.event_type,
+                "source": ev.source,
+                "title": ev.title,
+                "description": (ev.description or "")[:300],
+                "occurrence_count": ev.occurrence_count,
+                "created_at": ev.created_at.isoformat() if ev.created_at else None,
+                "last_seen": ev.last_seen.isoformat() if ev.last_seen else None,
+                "resolved": ev.resolved,
+                "acknowledged": ev.is_acknowledged,
+            }
+            for ev, server_name in rows
+        ]
+        return {
+            "ok": True,
+            "source": "db",
+            "hours": hours,
+            "severity_filter": severities or "all",
+            "count": len(events),
+            "total_count_in_window": total_count,
+            "events": events,
+            "hint": (
+                "Bu liste system_events tablosundandır (gerçek, SoT). count=0 ise "
+                "gerçekten belirtilen pencerede/severity'de olay yok demektir — "
+                "uydurma olay/tarih ÜRETME."
+            ),
+        }
+    except Exception as e:
+        logger.error("[Tool] db_list_critical_events hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -501,8 +676,40 @@ def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
         from collections import Counter
         client = _build_ocp_client(cluster)
         nodes = client.list_nodes()
+        node_err = client.last_error
         projects = client.list_projects()
+        proj_err = client.last_error
         pods = client.list_pods()
+        pod_err = client.last_error
+        live_errors = [e for e in (node_err, proj_err, pod_err) if e]
+
+        # KRİTİK: canlı API 401/403/bağlantı hatası verdiğinde list_* metodları
+        # sessizce [] döner — bunu "gerçekten 0 kayıt var" ile ASLA karıştırma.
+        # Böyle bir durumda açık hata + (varsa) DB'den son senkron veriyle
+        # fallback döndür ki model "0 node/pod bulunamadı" diye yanlış cevap
+        # üretmesin (bkz. gözlemlenen regresyon: 401 → "cluster boş" hallüsinasyonu).
+        if live_errors and not nodes and not projects and not pods:
+            fallback: Dict[str, Any] = {}
+            try:
+                from app.services.ocp_db_query import list_ocp_nodes_db, list_ocp_projects_db
+                fallback["db_nodes"] = list_ocp_nodes_db(db, cluster=cluster.name)
+                fallback["db_projects"] = list_ocp_projects_db(db, cluster=cluster.name)
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "live_connection_failed": True,
+                "error": f"Canlı OpenShift API hatası: {live_errors[0]}",
+                "hint": (
+                    "BU BİR '0 NODE/POD' DURUMU DEĞİL — canlı API'ye erişilemedi "
+                    "(token süresi dolmuş/bağlantı hatası olabilir). Cluster'ın boş "
+                    "olduğunu SÖYLEME. Aşağıdaki db_nodes/db_projects varsa (son "
+                    "senkron), onu 'as_of' notuyla birlikte kullan; yoksa kullanıcıya "
+                    "canlı bağlantının başarısız olduğunu açıkça belirt."
+                ),
+                **fallback,
+            }
+
         by_status = dict(Counter((p.get("status") or "Unknown") for p in pods))
         problems = [
             p for p in pods
@@ -510,9 +717,15 @@ def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
             or int(p.get("restart_count") or 0) >= 5
             or p.get("reason")
         ]
+        # Canlı sürüm — DB'deki cluster.version periyodik sync ile stale kalabilir;
+        # `version` sorulduğunda güncel değeri gösterebilmek için canlı API'den de dene.
+        live_version = client.get_version() or cluster.version
+
         summary = {
             "cluster": cluster.name,
-            "version": cluster.version,
+            "api_url": cluster.api_url,
+            "version": live_version,
+            "version_db_cached": cluster.version,
             "node_count": len(nodes),
             "nodes": [{"name": n.get("name"), "role": n.get("role"), "status": n.get("status")} for n in nodes[:50]],
             "project_count": len(projects),
@@ -521,8 +734,21 @@ def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
             "problem_pod_count": len(problems),
             "problem_pods_sample": problems[:30],
             "question_hint": question or None,
-            "hint": "Detaylı pod listesi için list_ocp_pods aracını çağır (namespace filtreli veya tümü).",
+            "hint": (
+                "Detaylı pod listesi için list_ocp_pods; Cluster Operator/sağlık/ClusterVersion "
+                "için ocp_cluster_status; storage (PV/PVC/StorageClass) için ocp_storage_overview; "
+                "network (NAD/CNI) için ocp_network_overview; namespace ResourceQuota/LimitRange "
+                "için ocp_resource_quota; VM tam detayı için kubevirt_vm_detail; snapshot/restore "
+                "için kubevirt_snapshots; DataVolume için list_datavolumes; canlı migrasyon için "
+                "list_ocp_migrations aracını çağır."
+            ),
         }
+        if live_errors:
+            summary["live_connection_warning"] = (
+                f"UYARI: bazı canlı sorgularda hata oluştu ({'; '.join(live_errors)}). "
+                "Yukarıdaki sayılar kısmi/eksik olabilir — 0 ise gerçek boşluk mu "
+                "yoksa erişim hatası mı olduğunu belirt."
+            )
         return {"ok": True, **summary}
     except Exception as e:
         logger.error(f"[Tool] openshift_ask hata: {e}", exc_info=True)
@@ -551,6 +777,18 @@ def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
         from collections import Counter
         client = _build_ocp_client(cluster)
         pods = client.list_pods(namespace=namespace)
+        if client.last_error and not pods:
+            # 401/403/bağlantı hatası → "0 pod" ile karıştırma (bkz. openshift_ask).
+            return {
+                "ok": False,
+                "live_connection_failed": True,
+                "error": f"Canlı OpenShift API hatası: {client.last_error}",
+                "hint": (
+                    "BU '0 POD' DEMEK DEĞİL — canlı bağlantı başarısız oldu. "
+                    "Namespace'in gerçekten boş olduğunu SÖYLEME; kullanıcıya "
+                    "canlı API erişim hatası olduğunu açıkça belirt."
+                ),
+            }
         by_status = dict(Counter((p.get("status") or "Unknown") for p in pods))
         by_ns = Counter((p.get("namespace") or "") for p in pods)
 
@@ -614,6 +852,35 @@ def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
         return {"ok": False, "error": str(e)}
 
 
+def _db_list_ocp_nodes_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.ocp_db_query import list_ocp_nodes_db
+        return list_ocp_nodes_db(
+            db,
+            cluster=args.get("cluster"),
+            role=args.get("role"),
+            status=args.get("status"),
+            limit=int(args.get("limit") or 200),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_ocp_nodes hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_ocp_projects_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.ocp_db_query import list_ocp_projects_db
+        return list_ocp_projects_db(
+            db,
+            cluster=args.get("cluster"),
+            name_filter=args.get("name_filter"),
+            limit=int(args.get("limit") or 200),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_ocp_projects hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _list_ocp_events_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     cluster = resolve_openshift_cluster(db, args)
     if not cluster:
@@ -622,10 +889,272 @@ def _list_ocp_events_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, A
     try:
         client = _build_ocp_client(cluster)
         events = client.list_events(hours=hours)
+        if client.last_error and not events:
+            return {
+                "ok": False,
+                "live_connection_failed": True,
+                "error": f"Canlı OpenShift API hatası: {client.last_error}",
+                "hint": "BU '0 OLAY' DEMEK DEĞİL — canlı bağlantı başarısız oldu, olay olmadığını SÖYLEME.",
+            }
+        # KubeVirt VM/VMI/DataVolume/Node ile ilişkili olayları da ekle — ayrı istemci
+        # (aynı bearer token/cluster; VM/VMI/DataVolume kind filtresiyle).
+        try:
+            from app.services.openshift.cluster_ops import kubevirt_client_from_cluster
+            kv_client = kubevirt_client_from_cluster(cluster)
+            kv_events = kv_client.list_events(hours=hours)
+            existing_keys = {(e.get("source_object"), e.get("reason"), e.get("timestamp")) for e in events}
+            for ev in kv_events:
+                key = (ev.get("source_object"), ev.get("reason"), ev.get("timestamp"))
+                if key not in existing_keys:
+                    events.append(ev)
+                    existing_keys.add(key)
+        except Exception as exc:
+            logger.debug("KubeVirt events merge skipped: %s", exc)
         return {"ok": True, "cluster": cluster.name, "hours": hours,
                 "count": len(events), "events": events[:100]}
     except Exception as e:
         logger.error(f"[Tool] list_ocp_events hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_cluster_status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Cluster adı/sürüm/API server + Cluster Operator durumu + ClusterVersion + MachineConfigPool + genel sağlık."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    try:
+        from app.services.openshift.cluster_ops import cluster_overview, cluster_health
+        client = _build_ocp_client(cluster)
+        overview = cluster_overview(client, cluster)
+        health = cluster_health(client)
+        return {
+            "ok": True,
+            "cluster": cluster.name,
+            "api_url": cluster.api_url,
+            "version": overview.get("version") or cluster.version,
+            "overall_health": health.get("overall"),
+            "cluster_version_update": {
+                "updating": health.get("updating"),
+                "message": health.get("update_message"),
+            },
+            "operators": {
+                "total": health.get("operators", {}).get("total"),
+                "degraded": health.get("operators", {}).get("degraded"),
+                "progressing": health.get("operators", {}).get("progressing"),
+                "unavailable": health.get("operators", {}).get("unavailable"),
+            },
+            "operator_install_status": overview.get("operators"),
+            "nodes_not_ready": health.get("nodes_not_ready"),
+            "nodes_pressured": health.get("nodes_pressured"),
+            "machine_config_pools": health.get("machine_config_pools"),
+            "capacity": overview.get("capacity"),
+            "namespaces": overview.get("namespaces"),
+            "kubevirt_vms": overview.get("kubevirt_vms"),
+            "migration_ready": overview.get("migration_ready"),
+            "migration_missing": overview.get("migration_missing"),
+        }
+    except Exception as e:
+        logger.error(f"[Tool] ocp_cluster_status hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_storage_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """StorageClass / PersistentVolume / PersistentVolumeClaim canlı envanteri."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    try:
+        from app.services.openshift.cluster_ops import storage_overview
+        client = _build_ocp_client(cluster)
+        result = storage_overview(client)
+        namespace = (args.get("namespace") or "").strip()
+        if namespace:
+            result["persistent_volume_claims"] = [
+                p for p in result.get("persistent_volume_claims", [])
+                if p.get("namespace") == namespace
+            ]
+        return {"ok": True, "cluster": cluster.name, **result}
+    except Exception as e:
+        logger.error(f"[Tool] ocp_storage_overview hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_network_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """NetworkAttachmentDefinition (Multus CNI/bridge/SR-IOV/MACVLAN) envanteri."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    try:
+        from app.services.openshift.cluster_ops import network_overview
+        client = _build_ocp_client(cluster)
+        result = network_overview(client)
+        return {"ok": True, "cluster": cluster.name, **result}
+    except Exception as e:
+        logger.error(f"[Tool] ocp_network_overview hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _list_datavolumes_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """CDI DataVolume listesi — VM disk import/clone durumu, progress, kaynak (http/registry/pvc)."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    namespace = (args.get("namespace") or "").strip() or None
+    try:
+        from app.services.openshift.cluster_ops import list_datavolumes
+        client = _build_ocp_client(cluster)
+        result = list_datavolumes(client, namespace=namespace)
+        return {"ok": True, "cluster": cluster.name, "namespace": namespace, **result}
+    except Exception as e:
+        logger.error(f"[Tool] list_datavolumes hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _list_ocp_migrations_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """KubeVirt Live Migration (VirtualMachineInstanceMigration) durumu — kaynak/hedef node, transfer hızı, ilerleme."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    namespace = (args.get("namespace") or "").strip() or None
+    try:
+        from app.services.openshift.cluster_ops import list_migrations
+        client = _build_ocp_client(cluster)
+        result = list_migrations(client, namespace=namespace)
+        return {"ok": True, "cluster": cluster.name, "namespace": namespace, **result}
+    except Exception as e:
+        logger.error(f"[Tool] list_ocp_migrations hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_resource_quota_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Namespace ResourceQuota (CPU/bellek limit+used, obje sayısı) + LimitRange."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    namespace = (args.get("namespace") or "").strip()
+    if not namespace:
+        return {"ok": False, "error": "namespace gerekli (hangi proje için quota sorgulanacak?)"}
+    try:
+        from app.services.openshift.cluster_ops import resource_quota_overview
+        client = _build_ocp_client(cluster)
+        result = resource_quota_overview(client, namespace)
+        return {"ok": True, "cluster": cluster.name, **result}
+    except Exception as e:
+        logger.error(f"[Tool] ocp_resource_quota hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _resolve_kubevirt_client(db: Session, args: Dict[str, Any]):
+    """KubeVirt istemcisi — ÖNCE ayrı tanımlı 'openshift_virt' Hypervisor kaydını dener
+    (list_kubevirt_vms ile aynı yol); yoksa OpenShiftCluster bağlantı bilgisiyle (aynı
+    cluster, aynı token) bir KubeVirtClient kurar. Böylece ayrı bir hypervisor kaydı
+    OLMASA BİLE (yalnızca OpenShiftCluster tanımlıysa) VM detay/snapshot sorguları çalışır.
+
+    Returns: (client, label) veya (None, error_message)
+    """
+    hv = resolve_hypervisor(db, args, type_filter=HypervisorType.OPENSHIFT_VIRT)
+    if hv:
+        try:
+            return _build_kubevirt_client(hv), hv.name
+        except Exception as e:
+            return None, f"KubeVirt hypervisor bağlantı hatası: {e}"
+    cluster = resolve_openshift_cluster(db, args)
+    if cluster:
+        try:
+            from app.services.openshift.cluster_ops import kubevirt_client_from_cluster
+            return kubevirt_client_from_cluster(cluster), cluster.name
+        except Exception as e:
+            return None, f"OpenShift cluster üzerinden KubeVirt bağlantı hatası: {e}"
+    return None, "Tanımlı OpenShift Virtualization (KubeVirt) hypervisor veya OpenShift cluster bulunamadı"
+
+
+def _kubevirt_vm_detail_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """KubeVirt VM detayı — fields/question ile YALNIZ istenen alanlar (dump yok).
+
+    Canlı API'den tam spec çekilir ama LLM'e yalnızca kullanıcının sorduğu
+    (veya belirsizse kısa özet) alanlar projekte edilir.
+    """
+    from app.services.ocp_field_projection import (
+        detect_requested_kubevirt_fields,
+        normalize_fields,
+        project_kubevirt_vm,
+    )
+
+    client, label = _resolve_kubevirt_client(db, args)
+    if not client:
+        return {"ok": False, "error": label}
+    vm_name = (args.get("vm_name") or args.get("name") or "").strip()
+    namespace = (args.get("namespace") or "").strip()
+    if not vm_name:
+        return {"ok": False, "error": "vm_name gerekli"}
+    try:
+        if not namespace:
+            for v in client.list_vms():
+                if (v.get("name") or "").strip().lower() == vm_name.lower():
+                    namespace = v.get("namespace") or ""
+                    break
+        if not namespace:
+            return {"ok": False, "error": f"VM '{vm_name}' bulunamadı veya namespace belirlenemedi; namespace parametresini verin"}
+        detail = client.get_vm_full_details(f"{namespace}/{vm_name}", name=vm_name)
+        if not detail:
+            return {"ok": False, "error": f"VM bulunamadı: {namespace}/{vm_name}"}
+
+        raw_fields = args.get("fields")
+        if isinstance(raw_fields, str):
+            raw_fields = [f.strip() for f in raw_fields.split(",") if f.strip()]
+        question = (args.get("question") or "").strip()
+        if isinstance(raw_fields, list) and raw_fields:
+            fields = normalize_fields(raw_fields)
+        elif question:
+            fields = detect_requested_kubevirt_fields(question)
+        else:
+            # ctx'teki orijinal kullanıcı mesajı (agentic loop geçiriyorsa)
+            fields = detect_requested_kubevirt_fields(
+                (ctx or {}).get("user_message") or (ctx or {}).get("message") or ""
+            )
+
+        projected = project_kubevirt_vm(detail, fields)
+        return {
+            "ok": True,
+            "source": label,
+            "vm": projected,
+            "hint": (
+                "Yalnız istenen/özet alanlar döndü — tüm özellikleri kullanıcıya sayma. "
+                "Eksik alan için fields=[...] ile tekrar çağır."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"[Tool] kubevirt_vm_detail hata: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _kubevirt_snapshots_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """KubeVirt VM Snapshot + Restore listesi (snapshot.kubevirt.io) — ready/phase/failure_reason/volume snapshots."""
+    client, label = _resolve_kubevirt_client(db, args)
+    if not client:
+        return {"ok": False, "error": label}
+    vm_name = (args.get("vm_name") or args.get("name") or "").strip()
+    namespace = (args.get("namespace") or "").strip()
+    if not vm_name:
+        return {"ok": False, "error": "vm_name gerekli"}
+    try:
+        from app.services.openshift.kubevirt_ops import list_snapshots, list_restores
+        if not namespace:
+            for v in client.list_vms():
+                if (v.get("name") or "").strip().lower() == vm_name.lower():
+                    namespace = v.get("namespace") or ""
+                    break
+        if not namespace:
+            return {"ok": False, "error": f"VM '{vm_name}' bulunamadı veya namespace belirlenemedi; namespace parametresini verin"}
+        snaps = list_snapshots(client, namespace, vm_name)
+        restores = list_restores(client, namespace, vm_name)
+        return {
+            "ok": True, "source": label, "namespace": namespace, "vm": vm_name,
+            "snapshot_count": len(snaps), "snapshots": snaps,
+            "restore_count": len(restores), "restores": restores,
+        }
+    except Exception as e:
+        logger.error(f"[Tool] kubevirt_snapshots hata: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -930,6 +1459,8 @@ TOOLS: Dict[str, Tool] = {
             "Kaç VM, poweredOn/Off, host/cluster/datastore, vCPU/RAM, disk_gb, disk_count, disks[]. "
             "VM disk adet/boyut sorularında TEK çağrı yeter — her VM için db_vm_detail döngüsü yapma. "
             "disk_gb doluysa 'toplanmadı' deme. fields ile kolon seç; disk_gb/disk_count her zaman korunur. "
+            "Kullanıcı belirli bir datastore/host/cluster/VM adı verdiyse datastore/host_name/cluster/"
+            "name_filter ile daralt — filtresiz çağırma (gereksiz tüm filo dökümü = bilgi kirliliği). "
             "Önce bunu kullan; stale=true veya eksik alan varsa vcenter_ask / canlı tool'a düş."
         ),
         parameters={
@@ -939,6 +1470,21 @@ TOOLS: Dict[str, Tool] = {
                 "power_state": {"type": "string", "description": "örn. poweredOn / poweredOff"},
                 "host_name": {"type": "string", "description": "ESXi host adı/IP (vm_host_name; vCenter adı değil)"},
                 "cluster": {"type": "string", "description": "Cluster adı"},
+                "datastore": {
+                    "type": "string",
+                    "description": (
+                        "Yalnızca bu datastore'daki VM'leri döndür (substring, case-insensitive). "
+                        "'X datastore'unda hangi VM'ler var' gibi sorularda MUTLAKA kullan — "
+                        "filtresiz çağrı TÜM VM'leri döner (istenmeyen bilgi kirliliği)."
+                    ),
+                },
+                "name_filter": {
+                    "type": "string",
+                    "description": (
+                        "VM adında arama (substring). Kullanıcı belirli BİR VM adını verdiyse "
+                        "bunu kullan (veya doğrudan db_vm_detail çağır) — tüm filoyu döndürme."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "description": (
@@ -1000,6 +1546,13 @@ TOOLS: Dict[str, Tool] = {
             "type": "object",
             "properties": {
                 "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "name_filter": {
+                    "type": "string",
+                    "description": (
+                        "Belirli bir datastore adında arama (substring). Kullanıcı tek bir "
+                        "datastore adı verdiyse bunu kullan — filtresiz çağrı TÜM datastore'ları döner."
+                    ),
+                },
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1030,6 +1583,13 @@ TOOLS: Dict[str, Tool] = {
             "type": "object",
             "properties": {
                 "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "name_filter": {
+                    "type": "string",
+                    "description": (
+                        "Belirli bir ESXi host adında arama (substring). Kullanıcı tek bir "
+                        "host adı verdiyse bunu kullan — filtresiz çağrı TÜM host'ları döner."
+                    ),
+                },
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1066,6 +1626,33 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_db_virt_alarms_handler,
         direct_label="DB virt alarmları",
+    ),
+    "db_list_critical_events": Tool(
+        name="db_list_critical_events",
+        description=(
+            "Sunucu/VM sistem olaylarını (system_events tablosu — SSH log toplayıcı, "
+            "disk/servis hataları, anomali tespiti) DATABASE'den listeler (READ-ONLY). "
+            "'Kritik event/alarm/olay var mı', 'son N saatte hata var mı' tarzı HER "
+            "soruda ÖNCE bunu çağır — bu tool çağrılmadan böyle bir soruya ASLA "
+            "cevap verme (uydurma olay/tarih üretmiş olursun)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "integer", "description": "Kaç saat geriye bakılacak (varsayılan 24)"},
+                "severity": {
+                    "type": "string",
+                    "description": "critical | critical,error | warning | all (varsayılan critical)",
+                },
+                "server_name": {"type": "string", "description": "Belirli bir sunucu/VM adı filtresi (opsiyonel)"},
+                "limit": {"type": "integer", "description": "Max satır (varsayılan 50)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_critical_events_handler,
+        direct_label="DB kritik sistem olayları (system_events)",
     ),
     "db_virt_cross_match": Tool(
         name="db_virt_cross_match",
@@ -1223,12 +1810,102 @@ TOOLS: Dict[str, Tool] = {
         direct_handler=_vcenter_perf_query_handler,
         direct_label="vCenter dinamik perf (QueryPerf)",
     ),
+    "vcenter_snapshot_summary": Tool(
+        name="vcenter_snapshot_summary",
+        description=(
+            "vCenter SOAP canlı — snapshot'ı olan VM'lerin özeti: snapshot_count, en eski tarih VE "
+            "snapshot_space_gb (summary.storage.uncommitted — VM'in TOPLAM yaklaşık snapshot alanı, GB; "
+            "bazı ESXi/vCenter sürümlerinde desteklenmez, o durumda null döner ama diğer alanlar gelir). "
+            "'Snapshot boyutu/büyüklüğü ne kadar?' gibi sorularda tarif VERME, bu aracı ÇAĞIR. "
+            "Fleet veya host filtresi. Snapshot ağacı/isim için vcenter_list_vm_snapshots kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "host_name": {"type": "string", "description": "ESXi host filtresi (opsiyonel)"},
+                "datastore": {"type": "string", "description": "Datastore filtresi (opsiyonel)"},
+                "limit": {"type": "integer", "description": "Max VM satırı (varsayılan 100)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_snapshot_summary_handler,
+        direct_label="vCenter canlı snapshot özeti",
+    ),
+    "vcenter_list_vm_snapshots": Tool(
+        name="vcenter_list_vm_snapshots",
+        description=(
+            "Tek VM için vCenter SOAP snapshot ağacı: isim, tarih, hiyerarşi VE her "
+            "snapshot için size_gb/size_bytes (GERÇEK dosya boyutu — layout + datastore "
+            "browser üzerinden hesaplanır, tahmin değil; disk zinciri düzensizse "
+            "size_note ile açıklanır). 'Snapshot boyutu ne kadar?' sorularında tarif "
+            "VERME, bu aracı ÇAĞIR. vm_name veya server_id zorunlu."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "vm_name": {"type": "string", "description": "VM adı"},
+                "server_id": {"type": "integer", "description": "ainew server id"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_list_vm_snapshots_handler,
+        direct_label="vCenter VM snapshot ağacı",
+    ),
+    "db_list_ocp_nodes": Tool(
+        name="db_list_ocp_nodes",
+        description=(
+            "OpenShift node envanterini DATABASE'den (periyodik sync, ~10dk) listeler "
+            "(READ-ONLY). Node adı/rol(master|worker|infra)/durum/CPU-RAM kapasitesi için "
+            "ÖNCE bunu dene; canlı/anlık pod detayı veya stale=true ise openshift_ask / "
+            "list_ocp_pods ile canlıya geç."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "role": {"type": "string", "description": "master | worker | infra (opsiyonel)"},
+                "status": {"type": "string", "description": "Durum filtresi, örn. Ready/NotReady (opsiyonel)"},
+                "limit": {"type": "integer", "description": "Max satır (varsayılan 200)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_ocp_nodes_handler,
+        direct_label="DB OpenShift node envanteri",
+    ),
+    "db_list_ocp_projects": Tool(
+        name="db_list_ocp_projects",
+        description=(
+            "OpenShift proje/namespace envanterini DATABASE'den (periyodik sync, ~10dk) "
+            "listeler (READ-ONLY): pod/deployment/route sayıları. ÖNCE bunu dene; "
+            "canlı pod detayı veya stale=true ise openshift_ask / list_ocp_pods kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "name_filter": {"type": "string", "description": "Proje adında arama (opsiyonel)"},
+                "limit": {"type": "integer", "description": "Max satır (varsayılan 200)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_ocp_projects_handler,
+        direct_label="DB OpenShift proje/namespace envanteri",
+    ),
     "openshift_ask": Tool(
         name="openshift_ask",
         description=(
             "OpenShift/Kubernetes cluster CANLI genel durumu (node, namespace/proje, sürüm). "
             "YALNIZCA OpenShift/OCP/pod/namespace sorularında kullan — Linux sunucu SSH/"
-            "systemd durumuna bakmak için KULLANMA. Detay için list_ocp_pods/list_ocp_events."
+            "systemd durumuna bakmak için KULLANMA. Detay için list_ocp_pods/list_ocp_events. "
+            "DB stale/boş ise veya canlı doğrulama gerekiyorsa kullan."
         ),
         parameters={
             "type": "object",
@@ -1285,7 +1962,8 @@ TOOLS: Dict[str, Tool] = {
         name="list_ocp_events",
         description=(
             "OpenShift cluster olayları (Node NotReady, CrashLoopBackOff, OOMKilled, PVC, "
-            "Deployment). Linux journalctl/syslog DEĞİL — yalnızca OCP/K8s olay sorularında."
+            "Deployment) + KubeVirt VM/VMI/DataVolume olayları birleşik. Linux journalctl/syslog "
+            "DEĞİL — yalnızca OCP/K8s olay sorularında."
         ),
         parameters={
             "type": "object",
@@ -1299,6 +1977,186 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_list_ocp_events_handler,
         direct_label="OpenShift canlı olay listesi",
+    ),
+    "ocp_cluster_status": Tool(
+        name="ocp_cluster_status",
+        description=(
+            "OpenShift Cluster CANLI durumu: cluster adı/API server URL/sürüm (ClusterVersion), "
+            "Cluster Operator listesi + degraded/progressing/unavailable durumu, genel sağlık "
+            "(healthy/warning/critical), MachineConfigPool durumu, node/pod kapasite özeti, "
+            "namespace sayısı, KubeVirt/CDI/MTV operatör kurulum durumu. 'Cluster sağlıklı mı', "
+            "'hangi operatörler bozuk', 'cluster versiyonu ne', 'API server adresi ne' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_cluster_status_handler,
+        direct_label="OpenShift cluster sağlık/operatör durumu",
+    ),
+    "ocp_storage_overview": Tool(
+        name="ocp_storage_overview",
+        description=(
+            "StorageClass (provisioner, default, reclaim policy, binding mode) + "
+            "PersistentVolume (kapasite, phase, claim, reclaim, access mode) + "
+            "PersistentVolumeClaim (kapasite, phase, storage class, bağlı PV) CANLI envanteri. "
+            "'PVC'ler ne durumda', 'kaç PV var', 'hangi storage class default' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "PVC'leri belirli bir namespace'e filtrele (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_storage_overview_handler,
+        direct_label="OpenShift storage (PV/PVC/StorageClass) envanteri",
+    ),
+    "ocp_network_overview": Tool(
+        name="ocp_network_overview",
+        description=(
+            "NetworkAttachmentDefinition (Multus CNI) envanteri — hangi ek ağlar tanımlı, "
+            "hangi namespace'lerde kullanılıyor. Bridge/SR-IOV/MACVLAN gibi CNI tipi sorularında "
+            "ve 'ek network/VLAN tanımlı mı' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_network_overview_handler,
+        direct_label="OpenShift network (NAD/Multus) envanteri",
+    ),
+    "list_datavolumes": Tool(
+        name="list_datavolumes",
+        description=(
+            "CDI DataVolume (cdi.kubevirt.io) CANLI listesi — VM disk import/clone durumu, "
+            "progress (%), boyut, kaynak (HTTP URL/Registry image/kaynak PVC), storage class. "
+            "'DataVolume import durumu ne', 'disk kopyalama ne kadar ilerledi' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "Belirli namespace (opsiyonel, yoksa tüm cluster)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_list_datavolumes_handler,
+        direct_label="OpenShift DataVolume listesi",
+    ),
+    "list_ocp_migrations": Tool(
+        name="list_ocp_migrations",
+        description=(
+            "KubeVirt Live Migration (VirtualMachineInstanceMigration) CANLI listesi — hangi VM, "
+            "kaynak/hedef node, phase (Pending/Scheduling/Running/Succeeded/Failed), veri "
+            "işlenen/kalan/toplam byte, transfer hızı, başlangıç/bitiş zamanı. 'Canlı migrasyon "
+            "var mı', 'VM hangi node'a taşınıyor', 'migration ilerlemesi ne' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "Belirli namespace (opsiyonel, yoksa tüm cluster)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_list_ocp_migrations_handler,
+        direct_label="OpenShift/KubeVirt canlı migrasyon listesi",
+    ),
+    "ocp_resource_quota": Tool(
+        name="ocp_resource_quota",
+        description=(
+            "Namespace ResourceQuota (CPU/bellek limit ve kullanım, obje sayısı sınırları — "
+            "VM/pod adedi dahil) + LimitRange CANLI sorgusu. 'Bu projenin CPU/bellek kotası ne', "
+            "'kota doldu mu' sorularında kullan. namespace ZORUNLU."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "Proje/namespace adı (ZORUNLU)"},
+            },
+            "required": ["namespace"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_resource_quota_handler,
+        direct_label="OpenShift namespace ResourceQuota/LimitRange",
+    ),
+    "kubevirt_vm_detail": Tool(
+        name="kubevirt_vm_detail",
+        description=(
+            "KubeVirt VM CANLI detayı — BİLGİ KİRLİLİĞİ YOK: fields veya question ile "
+            "YALNIZ istenen alanları döner (varsayılan kısa özet: name/namespace/phase/"
+            "cpu/memory/ip/node/guest_os). Tam dump istemiyorsan fields geç. "
+            "Örn. fields=[run_strategy,firmware,dedicated_cpu_placement,cpu_numa] veya "
+            "question='runStrategy ve firmware nedir'. list_kubevirt_vms yalnız liste özeti."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "KubeVirt hypervisor adı (opsiyonel)"},
+                "vm_name": {"type": "string", "description": "VM adı (ZORUNLU)"},
+                "namespace": {"type": "string", "description": "VM'in namespace'i (opsiyonel — verilmezse otomatik bulunur)"},
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "İstenen alanlar. Örn: run_strategy, firmware, cpu_cores, memory_gb, "
+                        "ip_address, disks, nics, dedicated_cpu_placement, cpu_numa, hugepages, "
+                        "affinity, labels, annotations, vmi_conditions. Boşsa kısa özet."
+                    ),
+                },
+                "question": {
+                    "type": "string",
+                    "description": "Kullanıcı sorusu — fields yoksa bundan alan çıkarılır",
+                },
+            },
+            "required": ["vm_name"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_kubevirt_vm_detail_handler,
+        direct_label="KubeVirt VM detay (alan seçimli)",
+    ),
+    "kubevirt_snapshots": Tool(
+        name="kubevirt_snapshots",
+        description=(
+            "KubeVirt VM Snapshot + Restore CANLI listesi: snapshot adı, ready/phase, oluşturma "
+            "zamanı, kaynak, volume snapshot'lar, failure_reason; restore adı/kaynak "
+            "snapshot/hedef VM/tamamlanma durumu. 'Bu VM'in snapshotları neler', 'snapshot hazır "
+            "mı', 'restore işlemi tamamlandı mı' sorularında kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "KubeVirt hypervisor adı (opsiyonel)"},
+                "vm_name": {"type": "string", "description": "VM adı (ZORUNLU)"},
+                "namespace": {"type": "string", "description": "VM'in namespace'i (opsiyonel — verilmezse otomatik bulunur)"},
+            },
+            "required": ["vm_name"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_kubevirt_snapshots_handler,
+        direct_label="KubeVirt VM snapshot/restore listesi",
     ),
     "run_diagnostic": Tool(
         name="run_diagnostic",
@@ -1775,15 +2633,34 @@ _TOOL_DOMAIN_OVERRIDE = {
     "db_list_datastores": frozenset({"vcenter", "infra"}),
     "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
     "db_virt_alarms": frozenset({"vcenter", "infra"}),
+    "db_list_critical_events": frozenset({"infra"}),
     "db_virt_cross_match": frozenset({"vcenter", "infra"}),
     "vcenter_ask": frozenset({"vcenter"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),
     "vcenter_perf_query": frozenset({"vcenter"}),
+    "vcenter_snapshot_summary": frozenset({"vcenter"}),
+    "vcenter_list_vm_snapshots": frozenset({"vcenter"}),
     "openshift_ask": frozenset({"openshift"}),
     "list_kubevirt_vms": frozenset({"openshift", "vcenter"}),
     "list_ocp_pods": frozenset({"openshift"}),
     "list_ocp_events": frozenset({"openshift"}),
+    # NOT: "infra" EKLENMEDİ (db_list_vms/db_list_esx_hosts gibi virt DB tool'larından
+    # farklı olarak) — "infra" PLATFORM_TOOL_DOMAINS'te HER platformda ortak olduğu için
+    # o etiket, kesişim testini (tool.domains & domains) her zaman doğru yapıp bu tool'un
+    # Linux/Windows/virt sohbetlerine de sızmasına yol açardı. openshift_ask/list_ocp_pods
+    # ile aynı dar izolasyonu koru: yalnızca "openshift" (+ Unified'da domains=None zaten
+    # tam erişim veriyor, bu tool'lara ayrıca ihtiyaç yok).
+    "db_list_ocp_nodes": frozenset({"openshift"}),
+    "db_list_ocp_projects": frozenset({"openshift"}),
+    "ocp_cluster_status": frozenset({"openshift"}),
+    "ocp_storage_overview": frozenset({"openshift"}),
+    "ocp_network_overview": frozenset({"openshift"}),
+    "list_datavolumes": frozenset({"openshift"}),
+    "list_ocp_migrations": frozenset({"openshift"}),
+    "ocp_resource_quota": frozenset({"openshift"}),
+    "kubevirt_vm_detail": frozenset({"openshift", "vcenter"}),
+    "kubevirt_snapshots": frozenset({"openshift", "vcenter"}),
 }
 for _tool_name, _tool in TOOLS.items():
     if _tool_name in _TOOL_DOMAIN_OVERRIDE:

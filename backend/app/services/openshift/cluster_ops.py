@@ -573,6 +573,121 @@ def resource_kinds() -> List[Dict[str, Any]]:
     ]
 
 
+def list_datavolumes(client: OpenShiftClient, namespace: Optional[str] = None) -> Dict[str, Any]:
+    """CDI DataVolume listesi (cdi.kubevirt.io) — CDI operatörü kurulu değilse 404/None döner."""
+    path = (
+        f"/apis/cdi.kubevirt.io/v1beta1/namespaces/{namespace}/datavolumes"
+        if namespace else "/apis/cdi.kubevirt.io/v1beta1/datavolumes"
+    )
+    body = _get_json(client, path, params={"limit": 500}, timeout=30)
+    if body is None:
+        return {
+            "items": [], "total": 0,
+            "error": "CDI (DataVolume) API'sine erişilemedi — CDI/Containerized Data Importer operatörü kurulu olmayabilir veya SA yetkisi yok (404/403)",
+        }
+    items = []
+    for dv in body.get("items") or []:
+        meta = dv.get("metadata") or {}
+        spec = dv.get("spec") or {}
+        status = dv.get("status") or {}
+        source = spec.get("source") or {}
+        source_type = next(iter(source.keys()), "") if source else ""
+        pvc_spec = spec.get("pvc") or spec.get("storage") or {}
+        size = ((pvc_spec.get("resources") or {}).get("requests") or {}).get("storage")
+        src_pvc = source.get("pvc") or {}
+        items.append({
+            "name": meta.get("name"),
+            "namespace": meta.get("namespace"),
+            "phase": status.get("phase"),
+            "progress": status.get("progress"),
+            "size": size,
+            "storage_class": pvc_spec.get("storageClassName"),
+            "source_type": source_type,
+            "source_http_url": (source.get("http") or {}).get("url"),
+            "source_registry_url": (source.get("registry") or {}).get("url"),
+            "source_pvc": f"{src_pvc.get('namespace','')}/{src_pvc.get('name','')}".strip("/") or None,
+            "condition_bound": next(
+                (c.get("status") for c in (status.get("conditions") or []) if c.get("type") == "Bound"), None,
+            ),
+            "created": meta.get("creationTimestamp"),
+        })
+    return {"items": items, "total": len(items), "error": None}
+
+
+def list_migrations(client: OpenShiftClient, namespace: Optional[str] = None) -> Dict[str, Any]:
+    """KubeVirt Live Migration (VirtualMachineInstanceMigration) listesi — namespace verilmezse cluster-wide."""
+    path = (
+        f"/apis/kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstancemigrations"
+        if namespace else "/apis/kubevirt.io/v1/virtualmachineinstancemigrations"
+    )
+    body = _get_json(client, path, params={"limit": 200}, timeout=30)
+    if body is None:
+        return {
+            "items": [], "total": 0,
+            "error": "KubeVirt Migration API'sine erişilemedi — OpenShift Virtualization kurulu olmayabilir veya SA yetkisi yok (404/403)",
+        }
+    items = []
+    for m in body.get("items") or []:
+        meta = m.get("metadata") or {}
+        spec = m.get("spec") or {}
+        status = m.get("status") or {}
+        mstate = status.get("migrationState") or {}
+        items.append({
+            "name": meta.get("name"),
+            "namespace": meta.get("namespace"),
+            "vm": spec.get("vmiName"),
+            "phase": status.get("phase"),
+            "source_node": mstate.get("sourceNode"),
+            "target_node": mstate.get("targetNode"),
+            "start_time": mstate.get("startTimestamp"),
+            "end_time": mstate.get("endTimestamp"),
+            "data_processed_bytes": mstate.get("dataProcessed"),
+            "data_remaining_bytes": mstate.get("dataRemaining"),
+            "data_total_bytes": mstate.get("dataTotal"),
+            "transfer_rate_bytes_per_sec": mstate.get("transferRate"),
+            "pending": (status.get("phase") in ("Pending", "Scheduling", "Scheduled")),
+            "running": (status.get("phase") == "Running"),
+            "succeeded": (status.get("phase") == "Succeeded"),
+            "failed": bool(mstate.get("failed")) or (status.get("phase") == "Failed"),
+            "completed": bool(mstate.get("completed")),
+            "abort_status": mstate.get("abortStatus"),
+            "created": meta.get("creationTimestamp"),
+        })
+    items.sort(key=lambda x: x.get("created") or "", reverse=True)
+    return {"items": items, "total": len(items), "error": None}
+
+
+def resource_quota_overview(client: OpenShiftClient, namespace: str) -> Dict[str, Any]:
+    """Namespace ResourceQuota + LimitRange — CPU/bellek limit+used, obje sayısı sınırları."""
+    ns = (namespace or "").strip()
+    if not ns:
+        return {"error": "namespace gerekli", "resource_quotas": [], "limit_ranges": []}
+    rq_body = _get_json(client, f"/api/v1/namespaces/{ns}/resourcequotas", timeout=20)
+    lr_body = _get_json(client, f"/api/v1/namespaces/{ns}/limitranges", timeout=20)
+    quotas = []
+    for rq in (rq_body or {}).get("items") or []:
+        meta = rq.get("metadata") or {}
+        status = rq.get("status") or {}
+        quotas.append({
+            "name": meta.get("name"),
+            "hard": status.get("hard") or {},
+            "used": status.get("used") or {},
+        })
+    limits = []
+    for lr in (lr_body or {}).get("items") or []:
+        meta = lr.get("metadata") or {}
+        spec = lr.get("spec") or {}
+        limits.append({"name": meta.get("name"), "limits": spec.get("limits") or []})
+    return {
+        "namespace": ns,
+        "resource_quotas": quotas,
+        "limit_ranges": limits,
+        "has_quota": bool(quotas),
+        "has_limit_range": bool(limits),
+        "error": None if (rq_body is not None or lr_body is not None) else "ResourceQuota/LimitRange API'sine erişilemedi (403)",
+    }
+
+
 def network_overview(client: OpenShiftClient) -> Dict[str, Any]:
     """Multus NAD + Service/Route özet sayıları."""
     nad_body = _get_json(client, "/apis/k8s.cni.cncf.io/v1/network-attachment-definitions", timeout=15)

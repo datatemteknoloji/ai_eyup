@@ -34,6 +34,7 @@ from app.models.linux_inventory import (
     LinuxInventory, FilesystemMetric, ServiceStatus,
     PackageInventory, OpenPort, NlqQueryAudit,
 )
+from app.models.custom_report import CustomReportDefinition
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatTurn", "ChatQACache",
@@ -58,4 +59,5 @@ __all__ = [
     "DiscoveredApplication",
     "LinuxInventory", "FilesystemMetric", "ServiceStatus",
     "PackageInventory", "OpenPort", "NlqQueryAudit",
+    "CustomReportDefinition",
 ]

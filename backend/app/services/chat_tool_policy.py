@@ -25,6 +25,15 @@ LIVE_VCENTER_TOOLS: FrozenSet[str] = frozenset({
     "vcenter_live_alarms",
     "vcenter_live_tasks",
     "vcenter_perf_query",
+    "vcenter_snapshot_summary",
+    "vcenter_list_vm_snapshots",
+})
+
+# DB-first faz-1'de de serbest (DB'de kolon yok / canlı zorunlu)
+DB_FIRST_LIVE_EXCEPTIONS: FrozenSet[str] = frozenset({
+    "vcenter_perf_query",
+    "vcenter_snapshot_summary",
+    "vcenter_list_vm_snapshots",
 })
 
 # Virt sohbetinde asla (SSH / Linux teşhis)
@@ -108,7 +117,7 @@ def tool_blocked_in_db_first_phase(
     """
     if name in DB_FIRST_TOOLS:
         return None
-    if name == "vcenter_perf_query":
+    if name in DB_FIRST_LIVE_EXCEPTIONS:
         return None
     if name in LIVE_VCENTER_TOOLS:
         return (

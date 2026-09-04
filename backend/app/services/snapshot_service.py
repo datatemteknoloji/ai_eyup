@@ -287,7 +287,13 @@ def list_snapshots_for_server(server_id: int, db: Session, include_deleted: bool
     return [_snapshot_summary(r) for r in rows]
 
 
-def list_external_snapshots(server: Server, db: Session) -> Dict:
+def list_external_snapshots(server: Server, db: Session, include_size: bool = False) -> Dict:
+    """
+    include_size=True: vmware platformunda her snapshot için GERÇEK byte boyutunu
+    (VCenterClient.get_vm_snapshot_sizes — layout + datastore browser, tahmin değil)
+    ekler. Ekstra 1-2 SOAP round-trip gerektirir; yalnız kullanıcı özellikle boyut
+    istediğinde (tek VM sorgusu) açılmalı — fleet-wide taramada KULLANMA.
+    """
     if not server.hypervisor_id:
         return {"success": False, "snapshots": [], "message": "Hypervisor bağlantısı yok"}
     hypervisor = db.query(Hypervisor).filter_by(id=server.hypervisor_id).first()
@@ -301,7 +307,29 @@ def list_external_snapshots(server: Server, db: Session) -> Dict:
         if not vm_id:
             return {"success": False, "snapshots": [], "message": "VM ID bulunamadı"}
         snaps = client.list_snapshots(vm_id)
-        return {"success": True, "vm_id": vm_id, "platform": platform, "snapshots": snaps}
+        size_note = None
+        if include_size and platform == "vmware" and snaps and hasattr(client, "get_vm_snapshot_sizes"):
+            try:
+                sizes = client.get_vm_snapshot_sizes(vm_id) or {}
+            except Exception:
+                sizes = {}
+            if sizes:
+                for s in snaps:
+                    info = sizes.get(s.get("id"))
+                    if info:
+                        s["size_gb"] = info.get("size_gb")
+                        s["size_bytes"] = info.get("size_bytes")
+                        s["size_exact"] = info.get("exact")
+            else:
+                size_note = (
+                    "Bu vCenter/ESXi ortamında snapshot boyutu hesaplanamadı "
+                    "(disk zinciri düzensiz/dallanmış olabilir veya datastore "
+                    "browser erişimi kısıtlı) — adet/tarih bilgisi güncel."
+                )
+        return {
+            "success": True, "vm_id": vm_id, "platform": platform, "snapshots": snaps,
+            **({"size_note": size_note} if size_note else {}),
+        }
     except Exception as exc:
         return {"success": False, "snapshots": [], "message": str(exc)}
     finally:

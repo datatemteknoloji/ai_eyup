@@ -487,6 +487,17 @@ class KubeVirtClient:
             phase = vmi_status.get("phase") or (vm.get("status") or {}).get("printableStatus") or ""
             machine_type = (domain.get("machine") or {}).get("type") or ""
 
+            # ── Zengin spec alanları (scheduling / CPU-bellek yerleşimi / firmware) ──
+            meta_full = vm.get("metadata") or {}
+            annotations = meta_full.get("annotations") or {}
+            run_strategy = spec.get("runStrategy") or (
+                "Always" if spec.get("running") else "Halted" if "running" in spec else ""
+            )
+            cpu_spec = domain.get("cpu") or {}
+            mem_spec = domain.get("memory") or {}
+            firmware = domain.get("firmware") or {}
+            architecture = template_spec.get("architecture") or ""
+
             launcher = ""
             try:
                 pods_r = self._get(
@@ -544,6 +555,36 @@ class KubeVirtClient:
                 "nics": networks,
                 "created": (vm.get("metadata") or {}).get("creationTimestamp"),
                 "labels": (vm.get("metadata") or {}).get("labels") or {},
+                # ── Ek zengin alanlar (scheduling / yerleşim / firmware / yaşam döngüsü) ──
+                "uid": meta_full.get("uid") or "",
+                "annotations": annotations,
+                "owner_references": meta_full.get("ownerReferences") or [],
+                "run_strategy": run_strategy,
+                "architecture": architecture,
+                "firmware": {
+                    "uuid": firmware.get("uuid") or "",
+                    "bootloader": firmware.get("bootloader") or {},
+                    "serial": firmware.get("serial") or "",
+                },
+                "node_selector": template_spec.get("nodeSelector") or {},
+                "affinity": template_spec.get("affinity") or {},
+                "tolerations": template_spec.get("tolerations") or [],
+                "eviction_strategy": template_spec.get("evictionStrategy") or spec.get("evictionStrategy") or "",
+                "dedicated_cpu_placement": bool(cpu_spec.get("dedicatedCpuPlacement")),
+                "cpu_numa": cpu_spec.get("numa") or {},
+                "cpu_model": cpu_spec.get("model") or "",
+                "cpu_sockets": cpu_spec.get("sockets"),
+                "cpu_threads": cpu_spec.get("threads"),
+                "hugepages": (mem_spec.get("hugepages") or {}).get("pageSize") or "",
+                "boot_order": [
+                    {"name": d.get("name"), "boot_order": d.get("boot_order")}
+                    for d in disks_out if d.get("boot_order")
+                ],
+                "vmi_conditions": vmi_status.get("conditions") or [],
+                "qemu_libvirt_note": (
+                    "KubeVirt API QEMU/libvirt domain durumunu doğrudan sunmaz "
+                    "(virt-launcher pod içindeki libvirtd internal state'idir)."
+                ),
             }
         except Exception as e:
             logger.error(f"KubeVirt get_vm_full_details error: {e}", exc_info=True)

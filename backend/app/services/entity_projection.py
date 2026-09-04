@@ -45,12 +45,18 @@ VM_FIELD_ALIASES: Dict[str, tuple] = {
     "disk_count": ("disk_count", "disks_count", "n_disks", "adet", "disk_adet"),
     "disks": ("disks", "disk_list", "vmdk", "hard_disks"),
     "host": ("host", "esxi", "esx", "host_name", "vm_host", "esxi_host"),
-    "esxi_host": ("esxi_host", "host", "esxi", "esx", "vm_host"),
+    # NOT: "esxi_host" kendi adından başka alias İÇERMEZ — "host" ile aynı alt
+    # kümeyi (esxi/esx/vm_host) paylaşırsa dict-iteration sırasına göre
+    # alias_to_canon["host"]="esxi_host" gibi YANLIŞ bir çakışma oluşur (host
+    # sütunu istenip esxi_host anahtarıyla dönerse render katmanı boş görür).
+    "esxi_host": ("esxi_host",),
     "cluster": ("cluster",),
     "datastore": ("datastore", "ds", "datastore_name"),
     "guest_os": ("guest_os", "os", "os_type"),
     "hypervisor": ("hypervisor", "vcenter", "vcenter_name"),
-    "vcenter": ("vcenter", "hypervisor", "vcenter_name"),
+    # NOT: "vcenter" de aynı sebeple yalnız kendi adını taşır (hypervisor'ın
+    # alt kümesini tekrar İDDİA ETMEZ).
+    "vcenter": ("vcenter",),
     "vcenter_endpoint": ("vcenter_endpoint", "vcenter_ip", "vcenter_host"),
     "cpu_mhz": ("cpu_mhz",),
     "mem_active_mb": ("mem_active_mb", "mem_active"),

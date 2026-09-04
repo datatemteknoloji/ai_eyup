@@ -376,6 +376,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
     { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
     { type: 'link', path: '/knowledge-base', name: t('nav_knowledge'), icon: <Brain size={18} />, moduleId: 'knowledge' },
+    { type: 'link', path: '/custom-reports', name: t('nav_custom_reports'), icon: <BarChart3 size={18} />, moduleId: 'custom_reports' },
     { type: 'link', path: '/audit', name: t('nav_audit_log'), icon: <ScrollText size={18} /> },
     { type: 'link', path: '/users', name: t('nav_users'), icon: <Users size={18} /> },
     { type: 'link', path: '/settings', name: t('nav_settings'), icon: <Settings size={18} /> },

@@ -308,6 +308,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load applications router: {e}", exc_info=True)
 
+# Özel Raporlar (AI keşif + deterministik dondurma — admin/yetkili kullanıcı)
+try:
+    from app.api import custom_reports
+    api_router.include_router(custom_reports.router, prefix="/custom-reports", tags=["custom-reports"])
+except Exception as e:
+    logger.error(f"Could not load custom_reports router: {e}", exc_info=True)
+
 # Linux NL Inventory Query (güvenli sorgu pipeline)
 try:
     from app.api import nlq

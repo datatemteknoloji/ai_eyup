@@ -30,6 +30,7 @@ class ChatSourceState(TypedDict, total=False):
     domains: List[str]
     planning_mode: bool
     planning_depth: bool
+    output_directive: str
     # karar / sonuç
     db_first: bool
     used_tools: bool
@@ -92,6 +93,7 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
             platform=state.get("platform"),
             planning_mode=bool(state.get("planning_mode")),
             planning_depth=bool(state.get("planning_depth")),
+            output_directive=state.get("output_directive"),
         )
         for item in gen:
             t = item.get("type")
@@ -176,6 +178,7 @@ def run_chat_source_graph(
     planning_mode: bool = False,
     planning_depth: bool = False,
     actor_name: Optional[str] = None,
+    output_directive: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Sync çalıştırır; unified_tool_chat final event ile uyumlu özet döner:
@@ -191,6 +194,7 @@ def run_chat_source_graph(
         "domains": sorted(domains) if domains else [],
         "planning_mode": planning_mode,
         "planning_depth": planning_depth,
+        "output_directive": output_directive,
     }
     cfg = {"configurable": {"db": db}}
     try:

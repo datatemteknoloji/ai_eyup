@@ -22,6 +22,7 @@ from app.models.chat_session import ChatSession, ChatMessage
 from app.models.event import SystemEvent
 from app.services.platform_scope import is_windows_server
 from app.services import llm_gateway
+from app.services.response_layers import wrap_layer
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,7 @@ _ALL_WINRM_KEYWORDS = [
 
 def _build_prompt(message: str, context_str: str, winrm_collected: bool,
                    winrm_server_count: int, selected_server_names: List[str],
-                   history_block: str = "") -> str:
+                   history_block: str = "", output_directive=None) -> str:
     NL = "\n"
     coll = []
     if winrm_collected and winrm_server_count > 0:
@@ -394,7 +395,13 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
     if history_block:
         prompt_parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
     prompt_parts.append("KULLANICI SORUSU: " + message)
-    prompt_parts.append("YANIT (Markdown, Turkce):")
+    from app.services.chat_output_directives import directive_system_addendum
+    _dir_add = directive_system_addendum(output_directive)
+    if _dir_add:
+        prompt_parts.append(_dir_add.strip())
+        prompt_parts.append("YANIT:")
+    else:
+        prompt_parts.append("YANIT (Markdown, Turkce):")
     return "\n\n".join(prompt_parts)
 
 
@@ -405,9 +412,12 @@ def _sse(obj: dict) -> str:
 @router.post("/", response_model=ChatResponse)
 async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     """Non-streaming Windows chat (API parite; frontend varsayılan olarak /stream kullanır)."""
-    message = request.message.strip()
-    if not message:
+    raw_message = request.message.strip()
+    if not raw_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    from app.services.chat_output_directives import extract_output_directive
+    message, output_directive = extract_output_directive(raw_message)
 
     session_id = request.session_id
     if not session_id:
@@ -463,7 +473,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     ml = message.lower()
     needs_winrm = any(k in ml for k in _ALL_WINRM_KEYWORDS) and not request.skip_server_context
 
-    db.add(ChatMessage(session_id=session_id, role="user", content=message))
+    db.add(ChatMessage(session_id=session_id, role="user", content=raw_message))
     db.commit()
 
     winrm_ctx = ""
@@ -497,7 +507,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     if fleet_note:
         context_parts.append(fleet_note)
     if winrm_ctx:
-        context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + winrm_ctx.strip())
+        context_parts.append(wrap_layer("winrm", winrm_ctx))
     elif selected_servers:
         lines = [f"- {s.name} ({s.ip_address}): OS={s.os_version or s.os_type or 'Windows'}, Durum={s.status}" for s in selected_servers]
         context_parts.append("VERITABANI BILGILERI:\n" + "\n".join(lines))
@@ -566,6 +576,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         winrm_server_count=len(selected_servers) if winrm_ctx else 0,
         selected_server_names=[s.name for s in selected_servers],
         history_block=history_block,
+        output_directive=output_directive,
     )
 
     try:
@@ -599,10 +610,17 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
         async def event_generator():
             try:
-                message = request.message.strip()
-                if not message:
+                raw_message = request.message.strip()
+                if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
                     return
+
+                from app.services.chat_output_directives import (
+                    OutputDirective as _OD,
+                    extract_output_directive,
+                )
+                message, output_directive = extract_output_directive(raw_message)
+                _has_directive = output_directive != _OD.NONE
 
                 session_id = request.session_id
                 if not session_id:
@@ -624,7 +642,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
                 yield _sse({"session_id": session_id, "start": True})
 
-                db.add(ChatMessage(session_id=session_id, role="user", content=message))
+                db.add(ChatMessage(session_id=session_id, role="user", content=raw_message))
                 db.commit()
 
                 from app.services.chat_obs import ChatTiming
@@ -739,7 +757,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 selected_servers = live_targets
 
                 cache_ids = [s.id for s in selected_servers] if has_explicit else []
-                cached = None if _is_followup else get_cached_answer(
+                cached = None if (_is_followup or _has_directive) else get_cached_answer(
                     db, message, cache_ids, platform="windows",
                 )
                 _timing.mark("cache")
@@ -803,6 +821,10 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     has_live_targets=bool(selected_servers),
                     is_followup=_is_followup,
                     has_episode=has_session_episode(session_id=session_id, platform="windows"),
+                    # Belirli bir sunucu seçilmemişse (filo/genel soru) WinRM collect
+                    # zaten çalışamaz — DB/agentic araçlarına (db_list_critical_events vb.)
+                    # erişimi kapatma (bkz. chat.py'deki aynı düzeltme).
+                    allow_agentic_without_collect=not selected_servers,
                 )
                 logger.info(
                     "[WindowsChat] live_path reason=%s collect=%s agentic=%s targets=%s",
@@ -893,11 +915,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
                 context_parts = []
                 if winrm_ctx:
-                    context_parts.append("SUNUCULARDAN ALINAN GERCEK VERILER (WinRM):\n" + winrm_ctx.strip())
+                    context_parts.append(wrap_layer("winrm", winrm_ctx))
                 elif server_context:
                     context_parts.append("VERITABANI BILGILERI:\n" + server_context.strip())
                 if prom_ctx:
-                    context_parts.append("PROMETHEUS CANLI METRIKLER:\n" + prom_ctx.strip())
+                    context_parts.append(wrap_layer("prometheus", prom_ctx))
 
                 if selected_servers:
                     try:
@@ -979,6 +1001,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                             max_steps=max_tool_steps,
                             domains=domains_for_platform("windows"),
                             platform="windows",
+                            output_directive=output_directive,
                         )
 
                         def _next_item(g):
@@ -1033,6 +1056,12 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 except Exception:
                     pass
 
+                try:
+                    from app.services.llm_context_budget import apply_context_char_budget
+                    context_str = apply_context_char_budget(context_str)
+                except Exception:
+                    pass
+
                 prompt = _build_prompt(
                     message=message,
                     context_str=context_str,
@@ -1040,6 +1069,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     winrm_server_count=len(selected_servers) if winrm_ctx else 0,
                     selected_server_names=[s.name for s in selected_servers],
                     history_block=history_block,
+                    output_directive=output_directive,
                 )
 
                 # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
@@ -1097,7 +1127,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     s.updated_at = datetime.now(timezone.utc)
                 db.commit()
 
-                if full_response and not _is_followup and not needs_winrm:
+                if full_response and not _is_followup and not needs_winrm and not _has_directive:
                     save_to_cache(db, message, full_response, cache_ids, platform="windows")
 
                 _timing.finish(
