@@ -4,7 +4,7 @@ VMware vCenter REST API Client
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
 from urllib3.exceptions import InsecureRequestWarning
@@ -38,6 +38,24 @@ def _xml_text(value: Optional[str]) -> str:
     """
     from xml.sax.saxutils import escape
     return escape(value or "", entities={'"': "&quot;", "'": "&apos;"})
+
+
+class _HostScopedPropCache:
+    """`{object_type: set}` görünümü sunan, anahtarları host ile öneklenen adaptör.
+
+    Desteklenmeyen property listesi vCenter host'una özgüdür; aynı süreçte iki
+    farklı vCenter varsa birinin sürüm kısıtı diğerini etkilememelidir.
+    """
+
+    def __init__(self, store: Dict[str, set], prefix: str):
+        self._store = store
+        self._prefix = prefix
+
+    def setdefault(self, object_type: str, default: set) -> set:
+        return self._store.setdefault(self._prefix + object_type, default)
+
+    def get(self, object_type: str, default=None):
+        return self._store.get(self._prefix + object_type, default)
 
 
 class VCenterClient:
@@ -1810,6 +1828,16 @@ class VCenterClient:
             ("net", "bytesTx", "average"): "net_tx",
             # CPU Ready (ms / interval) — VM bazlı contention
             ("cpu", "ready", "summation"): "cpu_ready",
+            # CPU co-stop — fazla vCPU / SMP contention göstergesi
+            ("cpu", "costop", "summation"): "cpu_costop",
+            # Bellek baskısı: balloon + swap (quickStats'takinden bağımsız,
+            # anlık hız değerleri)
+            ("mem", "vmmemctl", "average"): "mem_balloon",
+            ("mem", "swapinRate", "average"): "mem_swapin",
+            ("mem", "swapoutRate", "average"): "mem_swapout",
+            # Ağ paket kaybı — "network performans problemi" teşhisi
+            ("net", "droppedRx", "summation"): "net_dropped_rx",
+            ("net", "droppedTx", "summation"): "net_dropped_tx",
             # Disk latency (ms)
             ("disk", "totalLatency", "average"): "disk_latency",
             ("virtualDisk", "totalReadLatency", "average"): "disk_read_lat",
@@ -1974,6 +2002,49 @@ class VCenterClient:
         self._perf_full_index = (perf_mgr, index)
         return self._perf_full_index
 
+    def _interval_has_metrics(
+        self,
+        soap_session,
+        soap_url: str,
+        perf_mgr: str,
+        entity_type: str,
+        entity_ref: str,
+        interval_id: int,
+    ) -> Optional[bool]:
+        """Varlık için verilen interval'da hiç counter saklanıyor mu?
+
+        QueryAvailablePerfMetric boş dönerse o interval bu endpoint'te YOKTUR
+        (doğrudan ESXi bağlantısında tarihsel rollup'lar oluşmaz). Karar
+        verilemezse None döner — çağıran genel açıklamaya düşer.
+        """
+        import xml.etree.ElementTree as ET
+
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryAvailablePerfMetric>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      <vim25:entity type="{entity_type}">{entity_ref}</vim25:entity>
+      <vim25:intervalId>{int(interval_id)}</vim25:intervalId>
+    </vim25:QueryAvailablePerfMetric>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            resp = soap_session.post(
+                soap_url, data=body.encode("utf-8"),
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+                verify=self.verify_ssl, timeout=30,
+            )
+            if resp.status_code != 200:
+                return None
+            root = ET.fromstring(resp.text)
+            return any(
+                el.tag.split("}")[-1] == "returnval" for el in root.iter()
+            )
+        except Exception as e:
+            logger.debug("_interval_has_metrics(%s): %s", interval_id, e)
+            return None
+
     def query_perf_metrics(
         self,
         *,
@@ -1984,11 +2055,21 @@ class VCenterClient:
         interval_id: int = 20,
         instance: str = "*",
         top_n: Optional[int] = None,
+        lookback_hours: Optional[float] = None,
     ) -> Dict[str, Any]:
         """READ-ONLY dinamik QueryPerf.
 
         metric_defs: PerfMetricDef listesi (group/name/rollup/key/unit).
         instance='*' → cihaz bazlı seriler; top_n verilirse son değere göre kırpılır.
+
+        lookback_hours verilirse GEÇMİŞE dönük sorgu yapılır: startTime/endTime
+        eklenir ve interval_id realtime (20) bırakılmışsa vCenter'ın kendi
+        rollup'ına yükseltilir (5 dk / 30 dk / 2 saat / 1 gün). Böylece ek
+        depolama olmadan "son 24 saat / 7 gün" soruları yanıtlanabilir.
+
+        NOT: Geçmiş rollup'larda hangi counter'ların tutulduğu vCenter
+        "statistics level" ayarına bağlıdır (seviye 1'de yalnız cpu.usage /
+        mem.usage). Eksik counter'lar `missing_intervals` ile bildirilir.
         Mutate method çağırmaz.
         """
         import xml.etree.ElementTree as ET
@@ -2035,6 +2116,38 @@ class VCenterClient:
             max_sample = max(1, min(int(max_sample or 1), 180))
             interval_id = int(interval_id or 20)
 
+            # Geçmişe dönük sorgu: startTime/endTime + uygun rollup interval'ı.
+            # PerfQuerySpec alan sırası WSDL'de sabittir:
+            # entity → startTime → endTime → maxSample → metricId → intervalId
+            time_xml = ""
+            historical = False
+            if lookback_hours and float(lookback_hours) > 0:
+                from datetime import datetime, timedelta, timezone as _tz
+                historical = True
+                hours = float(lookback_hours)
+                if interval_id in (0, 20):
+                    # vCenter varsayılan rollup'ları: 300=5dk (1 gün),
+                    # 1800=30dk (1 hafta), 7200=2sa (1 ay), 86400=1gün (1 yıl)
+                    if hours <= 24:
+                        interval_id = 300
+                    elif hours <= 24 * 7:
+                        interval_id = 1800
+                    elif hours <= 24 * 31:
+                        interval_id = 7200
+                    else:
+                        interval_id = 86400
+                now_utc = self._get_vcenter_current_time(soap_session, soap_url) or \
+                    datetime.now(_tz.utc)
+                start = now_utc - timedelta(hours=hours)
+                time_xml = (
+                    f"<vim25:startTime>{start.strftime('%Y-%m-%dT%H:%M:%SZ')}</vim25:startTime>"
+                    f"<vim25:endTime>{now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}</vim25:endTime>"
+                )
+
+            # Geçmiş sorgularda maxSample gönderilmez (aksi halde vCenter yalnız
+            # son N örneği döner ve zaman serisi anlamsızlaşır).
+            sample_xml = "" if historical else f"<vim25:maxSample>{max_sample}</vim25:maxSample>"
+
             body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
   <soapenv:Body>
@@ -2042,7 +2155,8 @@ class VCenterClient:
       <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
       <vim25:querySpec>
         <vim25:entity type="{et}">{entity_ref}</vim25:entity>
-        <vim25:maxSample>{max_sample}</vim25:maxSample>
+        {time_xml}
+        {sample_xml}
         {metric_xml}
         <vim25:intervalId>{interval_id}</vim25:intervalId>
       </vim25:querySpec>
@@ -2063,6 +2177,19 @@ class VCenterClient:
 
             root = ET.fromstring(resp.text)
             cid_to_key = {cid: (key, unit) for key, cid, unit in resolved}
+
+            # sampleInfo → örnek zaman damgaları (geçmiş sorgularda seriyi
+            # tarihlendirmek için; realtime tek örnekte gereksiz)
+            timestamps: List[str] = []
+            if historical:
+                for si in root.iter():
+                    if self._soap_tag(si) != "sampleInfo":
+                        continue
+                    ts_el = next(
+                        (c for c in si if self._soap_tag(c) == "timestamp"), None
+                    )
+                    if ts_el is not None and ts_el.text:
+                        timestamps.append(ts_el.text.strip())
 
             # value blokları: id(counterId, instance) + value listesi
             series: List[Dict[str, Any]] = []
@@ -2106,14 +2233,30 @@ class VCenterClient:
                     continue
                 key, unit = cid_to_key[cid]
                 latest = nums[-1]
-                series.append({
+                row: Dict[str, Any] = {
                     "metric": key,
                     "unit": unit,
                     "instance": inst or "(aggregate)",
                     "latest": round(latest, 3),
-                    "samples": [round(x, 3) for x in nums[-min(len(nums), max_sample):]],
                     "sample_count": len(nums),
-                })
+                }
+                if historical:
+                    ordered = sorted(nums)
+                    p95_idx = min(len(ordered) - 1, int(len(ordered) * 0.95))
+                    row["avg"] = round(sum(nums) / len(nums), 3)
+                    row["min"] = round(ordered[0], 3)
+                    row["max"] = round(ordered[-1], 3)
+                    row["p95"] = round(ordered[p95_idx], 3)
+                    # Ham seriyi bağlam maliyeti için sınırla (son 200 örnek)
+                    row["samples"] = [round(x, 3) for x in nums[-200:]]
+                    if timestamps and len(timestamps) == len(nums):
+                        row["first_sample_at"] = timestamps[0]
+                        row["last_sample_at"] = timestamps[-1]
+                else:
+                    row["samples"] = [
+                        round(x, 3) for x in nums[-min(len(nums), max_sample):]
+                    ]
+                series.append(row)
 
             # top_n: her metrik için |latest|'e göre
             if top_n and top_n > 0:
@@ -2130,9 +2273,11 @@ class VCenterClient:
             summary: Dict[str, Any] = {}
             for row in series:
                 if row.get("instance") in ("", "(aggregate)"):
-                    summary[row["metric"]] = row["latest"]
+                    summary[row["metric"]] = (
+                        row.get("avg") if historical else row["latest"]
+                    )
 
-            return {
+            out: Dict[str, Any] = {
                 "ok": True,
                 "source": "vcenter_query_perf",
                 "read_only": True,
@@ -2146,6 +2291,35 @@ class VCenterClient:
                 "series": series,
                 "series_count": len(series),
             }
+            if historical:
+                out["historical"] = True
+                out["lookback_hours"] = float(lookback_hours)
+                out["summary_kind"] = "avg"
+                if not series:
+                    # Boş sonucun iki farklı sebebi var ve ayırt edilmezse
+                    # "veri yok" cevabı yanıltıcı olur: (a) endpoint tarihsel
+                    # istatistik tutmuyor (doğrudan ESXi bağlantısı — yalnız
+                    # realtime), (b) counter bu statistics level'da saklanmıyor.
+                    has_interval = self._interval_has_metrics(
+                        soap_session, soap_url, perf_mgr, et, entity_ref, interval_id
+                    )
+                    if has_interval is False:
+                        out["historical_supported"] = False
+                        out["note"] = (
+                            f"Bu endpoint {interval_id} sn'lik tarihsel rollup TUTMUYOR "
+                            "(doğrudan ESXi host bağlantılarında yalnız realtime vardır; "
+                            "tarihsel interval'lar vCenter Server'da oluşur). "
+                            "Geçmiş/trend için db_metric_trend aracını kullan — "
+                            "uygulamanın kendi zaman serisinden hesaplar."
+                        )
+                    else:
+                        out["note"] = (
+                            "Geçmiş rollup'ta bu counter için veri dönmedi. vCenter "
+                            "statistics level ayarında saklanmıyor olabilir (seviye 1'de "
+                            "yalnız cpu.usage / mem.usage tutulur) ya da aralık henüz "
+                            "birikmemiştir. Alternatif: db_metric_trend."
+                        )
+            return out
         except Exception as e:
             logger.warning("query_perf_metrics error: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
@@ -2413,6 +2587,12 @@ class VCenterClient:
                         "disk_write_latency_ms": _sum_slot("disk_write_lat"),
                         "ds_read_latency_ms": _sum_slot("ds_read_lat"),
                         "ds_write_latency_ms": _sum_slot("ds_write_lat"),
+                        "cpu_costop_ms": _sum_slot("cpu_costop"),
+                        "mem_balloon_kb": _sum_slot("mem_balloon"),
+                        "mem_swapin_kbps": _sum_slot("mem_swapin"),
+                        "mem_swapout_kbps": _sum_slot("mem_swapout"),
+                        "net_dropped_rx": _sum_slot("net_dropped_rx"),
+                        "net_dropped_tx": _sum_slot("net_dropped_tx"),
                     }
             except Exception as e:
                 logger.warning("get_all_vm_perf_io chunk error: %s", e)
@@ -2498,6 +2678,8 @@ class VCenterClient:
           <vim25:type>HostSystem</vim25:type>
           <vim25:all>false</vim25:all>
           <vim25:pathSet>name</vim25:pathSet>
+          <vim25:pathSet>parent</vim25:pathSet>
+          <vim25:pathSet>summary.overallStatus</vim25:pathSet>
           <vim25:pathSet>summary.quickStats</vim25:pathSet>
           <vim25:pathSet>summary.hardware</vim25:pathSet>
           <vim25:pathSet>summary.runtime</vim25:pathSet>
@@ -2617,6 +2799,13 @@ class VCenterClient:
                     "connection_state": flat.get("connectionState", "unknown"),
                     "power_state":      flat.get("powerState", "unknown"),
                     "maintenance_mode": in_maint,
+                    # Cluster üyeliği: parent MOR'u (domain-c* = cluster,
+                    # domain-s* = standalone ComputeResource). Ad çözümlemesi
+                    # aşağıda _enrich_parent_names ile tek çağrıda yapılır.
+                    "parent_ref":       flat.get("parent"),
+                    "cluster_ref":      (flat.get("parent") or "") if str(flat.get("parent") or "").startswith("domain-c") else None,
+                    "cluster_name":     None,
+                    "overall_status":   flat.get("summary.overallStatus") or flat.get("overallStatus"),
                     # summary.hardware zaten çekiliyor — vendor/model bedavaya çıkar
                     "host_vendor":      flat.get("vendor"),
                     "host_model":       flat.get("model"),
@@ -2627,6 +2816,7 @@ class VCenterClient:
             if results:
                 self._enrich_datastores(soap_session, soap_url, root_folder, results)
                 self._enrich_vms_running(soap_session, soap_url, root_folder, results)
+                self._enrich_parent_names(soap_session, soap_url, results)
                 for r in results:
                     r.pop("_ds_refs", None)
 
@@ -3199,133 +3389,357 @@ class VCenterClient:
             logger.error("list_datastores_status error: %s", e, exc_info=True)
             return []
 
-    def list_clusters_status(self) -> List[Dict[str, Any]]:
-        """
-        ClusterComputeResource listesi: ad, HA/DRS durumu, host/VM sayısı (canlı SOAP).
-        """
-        import xml.etree.ElementTree as ET
+    # Slot bilgisi için HA advanced runtime (READ-ONLY method)
+    def _das_advanced_runtime(self, soap_session, soap_url: str,
+                              cluster_ref: str) -> Dict[str, Any]:
+        """ClusterComputeResource.RetrieveDasAdvancedRuntimeInfo — HA slot bilgisi.
 
+        "Bir host arizalanirsa VM'ler ayaga kalkar mi?" sorusunun deterministik
+        cevabi buradan gelir: totalSlots / usedSlots / unreservedSlots ve
+        totalGoodHosts. Read-only method (mutate degil).
+        """
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveDasAdvancedRuntimeInfo>
+      <vim25:_this type="ClusterComputeResource">{cluster_ref}</vim25:_this>
+    </vim25:RetrieveDasAdvancedRuntimeInfo>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body, timeout=30)
+        if root is None:
+            return {}
+        rv = next((el for el in root.iter() if self._soap_tag(el) == "returnval"), None)
+        if rv is None:
+            return {}
+        data = self._soap_val_to_py(rv) or {}
+        if not isinstance(data, dict):
+            return {}
+        slot = data.get("slotInfo") if isinstance(data.get("slotInfo"), dict) else {}
+
+        def _i(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "das_type": data.get("_type"),
+            "slot_cpu_mhz": _i(slot.get("cpu")),
+            "slot_memory_mb": _i(slot.get("memory")),
+            "slot_num_vcpus": _i(slot.get("numVcpus")),
+            "total_slots": _i(data.get("totalSlots")),
+            "used_slots": _i(data.get("usedSlots")),
+            "unreserved_slots": _i(data.get("unreservedSlots")),
+            "total_vms": _i(data.get("totalVms")),
+            "total_hosts": _i(data.get("totalHosts")),
+            "total_good_hosts": _i(data.get("totalGoodHosts")),
+        }
+
+    @staticmethod
+    def _admission_policy_summary(policy: Any) -> Dict[str, Any]:
+        """ClusterDasConfigInfo.admissionControlPolicy -> normalize edilmis ozet."""
+        if not isinstance(policy, dict):
+            return {}
+        ptype = policy.get("_type") or ""
+
+        def _i(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        out: Dict[str, Any] = {"policy_type": ptype or None}
+        if "FailoverLevel" in ptype:
+            out["failover_level"] = _i(policy.get("failoverLevel"))
+            out["policy_label"] = "Host failure tolerated (slot policy)"
+        elif "FailoverResources" in ptype:
+            out["cpu_failover_pct"] = _i(policy.get("cpuFailoverResourcesPercent"))
+            out["mem_failover_pct"] = _i(policy.get("memoryFailoverResourcesPercent"))
+            out["failover_level"] = _i(policy.get("failoverLevel"))
+            out["policy_label"] = "Cluster resource percentage"
+        elif "FailoverHost" in ptype:
+            hosts = policy.get("failoverHosts")
+            if isinstance(hosts, str):
+                hosts = [hosts]
+            out["failover_hosts"] = [h for h in (hosts or []) if isinstance(h, str)]
+            out["policy_label"] = "Dedicated failover host"
+        rp = policy.get("resourceReductionToToleratePercent")
+        if rp is not None:
+            out["resource_reduction_tolerate_pct"] = _i(rp)
+        return out
+
+    def list_clusters_status(self, *, include_ha_runtime: bool = True) -> List[Dict[str, Any]]:
+        """ClusterComputeResource listesi (canli SOAP, READ-ONLY).
+
+        Ad/HA/DRS durumunun yaninda: effective kapasite, admission control
+        politikasi, host monitoring, DRS migration esigi, host ref listesi ve
+        (include_ha_runtime ise) HA slot bilgisi.
+        """
         soap_url = f"https://{self.host}:{self.port}/sdk"
         soap_session = self._soap_login()
         if not soap_session:
             logger.warning("list_clusters_status: SOAP login failed")
             return []
 
-        root_folder = self._get_root_folder(soap_session, soap_url)
-        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:vim25="urn:vim25"
-                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <soapenv:Body>
-    <vim25:RetrieveProperties>
-      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
-      <vim25:specSet>
-        <vim25:propSet>
-          <vim25:type>ClusterComputeResource</vim25:type>
-          <vim25:all>false</vim25:all>
-          <vim25:pathSet>name</vim25:pathSet>
-          <vim25:pathSet>summary.totalCpu</vim25:pathSet>
-          <vim25:pathSet>summary.numCpuCores</vim25:pathSet>
-          <vim25:pathSet>summary.totalMemory</vim25:pathSet>
-          <vim25:pathSet>summary.numHosts</vim25:pathSet>
-          <vim25:pathSet>summary.overallStatus</vim25:pathSet>
-          <vim25:pathSet>configuration.dasConfig.enabled</vim25:pathSet>
-          <vim25:pathSet>configuration.drsConfig.enabled</vim25:pathSet>
-          <vim25:pathSet>configuration.drsConfig.defaultVmBehavior</vim25:pathSet>
-        </vim25:propSet>
-        <vim25:objectSet>
-          <vim25:obj type="Folder">{root_folder}</vim25:obj>
-          <vim25:skip>false</vim25:skip>
-          <vim25:selectSet xsi:type="vim25:TraversalSpec">
-            <vim25:name>visitFolders</vim25:name>
-            <vim25:type>Folder</vim25:type>
-            <vim25:path>childEntity</vim25:path>
-            <vim25:skip>false</vim25:skip>
-            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
-            <vim25:selectSet><vim25:name>dcToHf</vim25:name></vim25:selectSet>
-            <vim25:selectSet><vim25:name>crToH</vim25:name></vim25:selectSet>
-          </vim25:selectSet>
-          <vim25:selectSet xsi:type="vim25:TraversalSpec">
-            <vim25:name>dcToHf</vim25:name>
-            <vim25:type>Datacenter</vim25:type>
-            <vim25:path>hostFolder</vim25:path>
-            <vim25:skip>false</vim25:skip>
-            <vim25:selectSet><vim25:name>visitFolders</vim25:name></vim25:selectSet>
-          </vim25:selectSet>
-          <vim25:selectSet xsi:type="vim25:TraversalSpec">
-            <vim25:name>crToH</vim25:name>
-            <vim25:type>ComputeResource</vim25:type>
-            <vim25:path>host</vim25:path>
-            <vim25:skip>false</vim25:skip>
-          </vim25:selectSet>
-        </vim25:objectSet>
-      </vim25:specSet>
-    </vim25:RetrieveProperties>
-  </soapenv:Body>
-</soapenv:Envelope>"""
         try:
-            resp = soap_session.post(
-                soap_url, data=soap_body,
-                headers={"Content-Type": "text/xml; charset=utf-8"},
-                verify=self.verify_ssl, timeout=30,
+            rows = self.retrieve_properties(
+                "ClusterComputeResource",
+                [
+                    "name",
+                    "host",
+                    "summary.totalCpu",
+                    "summary.numCpuCores",
+                    "summary.totalMemory",
+                    "summary.numHosts",
+                    "summary.numEffectiveHosts",
+                    "summary.effectiveCpu",
+                    "summary.effectiveMemory",
+                    "summary.numVmotions",
+                    "summary.overallStatus",
+                    "summary.currentFailoverLevel",
+                    # HA/DRS yapılandırması TEK PARÇA olarak istenir.
+                    #
+                    # Neden nokta notasyonu değil: PropertyCollector iç içe
+                    # path'leri STATİK tipe göre doğrular. `configurationEx`
+                    # ComputeResource üzerinde `ComputeResourceConfigInfo` olarak
+                    # bildirildiği için `configurationEx.dasConfig...` sorgusu
+                    # InvalidProperty verir — oysa çalışma zamanında dönen nesne
+                    # `ClusterConfigInfoEx` olup dasConfig/drsConfig içerir.
+                    # Struct'ı bütün olarak alıp _soap_val_to_py ile açmak hem
+                    # sürümden bağımsız hem de daha fazla alan getirir.
+                    "configurationEx",
+                    "configuration",
+                ],
+                limit=200, soap_session=soap_session, soap_url=soap_url,
             )
-            if resp.status_code != 200:
-                logger.warning("list_clusters_status HTTP %s: %s", resp.status_code, resp.text[:200])
-                return []
-
-            root = ET.fromstring(resp.text)
-
-            def _tag(el):
-                return el.tag.split("}")[-1]
-
-            results: List[Dict[str, Any]] = []
-            for rv in root.iter():
-                if _tag(rv) != "returnval":
-                    continue
-                obj_el = next((c for c in rv if _tag(c) == "obj"), None)
-                if obj_el is None:
-                    continue
-                obj_type = obj_el.get("type") or ""
-                if obj_type and obj_type != "ClusterComputeResource":
-                    continue
-                ref = obj_el.text
-
-                flat: Dict[str, str] = {}
-                for ps in rv:
-                    if _tag(ps) != "propSet":
-                        continue
-                    n_el = next((c for c in ps if _tag(c) == "name"), None)
-                    v_el = next((c for c in ps if _tag(c) == "val"), None)
-                    if n_el is None or v_el is None:
-                        continue
-                    pname = n_el.text or ""
-                    if v_el.text and v_el.text.strip():
-                        flat[pname] = v_el.text.strip()
-
-                if not flat.get("name") and not ref:
-                    continue
-                try:
-                    total_mem = float(flat.get("summary.totalMemory", 0) or 0)
-                    mem_gb = round(total_mem / (1024 ** 3), 1) if total_mem else None
-                except (TypeError, ValueError):
-                    mem_gb = None
-                ha = flat.get("configuration.dasConfig.enabled", "").lower()
-                drs = flat.get("configuration.drsConfig.enabled", "").lower()
-                results.append({
-                    "ref": ref,
-                    "name": flat.get("name") or ref,
-                    "hosts": int(flat["summary.numHosts"]) if flat.get("summary.numHosts", "").isdigit() else None,
-                    "cpu_cores": int(flat["summary.numCpuCores"]) if flat.get("summary.numCpuCores", "").isdigit() else None,
-                    "memory_gb": mem_gb,
-                    "overall_status": flat.get("summary.overallStatus"),
-                    "ha_enabled": ha in ("true", "1") if ha else None,
-                    "drs_enabled": drs in ("true", "1") if drs else None,
-                    "drs_behavior": flat.get("configuration.drsConfig.defaultVmBehavior"),
-                })
-            return results
         except Exception as e:
             logger.error("list_clusters_status error: %s", e, exc_info=True)
             return []
+
+        def _i(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _f(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _pick(row: Dict[str, Any], dotted: str) -> Any:
+            """configurationEx (güncel) → configuration (deprecated) sırasıyla
+            iç içe struct'tan değer okur; ör. "dasConfig.admissionControlPolicy"."""
+            for base in ("configurationEx", "configuration"):
+                node = row.get(base)
+                for part in dotted.split("."):
+                    if not isinstance(node, dict):
+                        node = None
+                        break
+                    node = node.get(part)
+                if node is not None:
+                    return node
+            return None
+
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            ref = row.get("_ref")
+            name = row.get("name")
+            if not ref and not name:
+                continue
+
+            total_mem = _f(row.get("summary.totalMemory"))
+            eff_mem_mb = _f(row.get("summary.effectiveMemory"))
+            hosts_prop = row.get("host")
+            if isinstance(hosts_prop, str):
+                hosts_prop = [hosts_prop]
+            host_refs = [h for h in (hosts_prop or []) if isinstance(h, str)]
+
+            ha_enabled = _pick(row, "dasConfig.enabled")
+            drs_enabled = _pick(row, "drsConfig.enabled")
+            ac_enabled = _pick(row, "dasConfig.admissionControlEnabled")
+
+            item: Dict[str, Any] = {
+                "ref": ref,
+                "name": name or ref,
+                "hosts": _i(row.get("summary.numHosts")),
+                "effective_hosts": _i(row.get("summary.numEffectiveHosts")),
+                "host_refs": host_refs,
+                "cpu_cores": _i(row.get("summary.numCpuCores")),
+                "cpu_total_mhz": _f(row.get("summary.totalCpu")),
+                "cpu_effective_mhz": _f(row.get("summary.effectiveCpu")),
+                "memory_gb": round(total_mem / (1024 ** 3), 1) if total_mem else None,
+                "memory_effective_gb": round(eff_mem_mb / 1024, 1) if eff_mem_mb else None,
+                "vmotions": _i(row.get("summary.numVmotions")),
+                "overall_status": row.get("summary.overallStatus"),
+                "current_failover_level": _i(row.get("summary.currentFailoverLevel")),
+                "ha_enabled": ha_enabled if isinstance(ha_enabled, bool) else None,
+                "drs_enabled": drs_enabled if isinstance(drs_enabled, bool) else None,
+                "drs_behavior": _pick(row, "drsConfig.defaultVmBehavior"),
+                "drs_migration_threshold": _i(_pick(row, "drsConfig.vmotionRate")),
+                "admission_control_enabled": ac_enabled if isinstance(ac_enabled, bool) else None,
+                "host_monitoring": _pick(row, "dasConfig.hostMonitoring"),
+                "vm_monitoring": _pick(row, "dasConfig.vmMonitoring"),
+                "unsupported_paths": list(getattr(self, "last_unsupported_paths", []) or []),
+            }
+            item.update(
+                self._admission_policy_summary(_pick(row, "dasConfig.admissionControlPolicy"))
+            )
+
+            if include_ha_runtime and ref and item.get("ha_enabled"):
+                try:
+                    item.update(self._das_advanced_runtime(soap_session, soap_url, ref))
+                except Exception as exc:
+                    logger.debug("das advanced runtime (%s): %s", name, exc)
+
+            results.append(item)
+        return results
+
+    def _enrich_parent_names(self, soap_session, soap_url: str,
+                             host_results: List[Dict]) -> None:
+        """Host'ların parent (ComputeResource / ClusterComputeResource) adlarını
+        tek RetrieveProperties çağrısıyla çözer ve `cluster_name` alanını doldurur.
+
+        Standalone host'larda parent `domain-s*` olur; bu durumda cluster_name
+        None kalır (cluster üyeliği yok demektir, "bilinmiyor" değil).
+        """
+        parent_refs = {
+            r.get("parent_ref") for r in host_results if r.get("parent_ref")
+        }
+        if not parent_refs:
+            return
+        try:
+            rows = self.retrieve_properties(
+                "ComputeResource", ["name"],
+                limit=500, soap_session=soap_session, soap_url=soap_url,
+            )
+        except Exception as exc:
+            logger.debug("_enrich_parent_names: %s", exc)
+            return
+        name_by_ref = {
+            r.get("_ref"): r.get("name") for r in rows if r.get("_ref")
+        }
+        for r in host_results:
+            pref = r.get("parent_ref")
+            if not pref:
+                continue
+            r["parent_name"] = name_by_ref.get(pref)
+            if r.get("cluster_ref"):
+                r["cluster_name"] = name_by_ref.get(pref)
+
+    # ── Host donanım sağlığı (sensor) ─────────────────────────────────────────
+
+    _SENSOR_OK_STATES = ("green", "unknown")
+
+    @staticmethod
+    def _clean_sensor_name(name: Optional[str]) -> Optional[str]:
+        """vSphere sensör adındaki tekrarı sadeleştirir.
+
+        numericSensorInfo.name alanı donanım etiketini iki kez taşıyabiliyor
+        ("Power Supply 2 Power Supply 2 --- Normal"); tabloya iki kez yazılınca
+        okunmaz oluyor.
+        """
+        text = " ".join((name or "").split())
+        if not text:
+            return None
+        text = text.split(" --- ")[0].strip()
+        words = text.split(" ")
+        for size in range(len(words) // 2, 0, -1):
+            if words[:size] == words[size:size * 2]:
+                return " ".join(words[size:]) if len(words) > size * 2 else " ".join(words[:size])
+        return text
+
+    def get_all_host_health(self) -> Dict[str, Dict[str, Any]]:
+        """ESXi host donanım sağlığı: overallStatus + numeric sensor özeti.
+
+        Ayrı bir RetrieveProperties çağrısıdır (host metrik sorgusuna eklenmedi):
+        sensor listesi host başına 100+ satır olabiliyor, metrik sync'i yavaşlatmasın
+        ve bu sorgu hata verse bile metrik toplama etkilenmesin.
+
+        Döner: host_ref → {
+            host_name, overall_status, sensor_total, sensor_bad_count,
+            bad_sensors: [{name, state, reading, unit}], config_issues: [str]
+        }
+        """
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+
+        try:
+            rows = self.retrieve_properties(
+                "HostSystem",
+                [
+                    "name",
+                    "summary.overallStatus",
+                    "runtime.healthSystemRuntime.systemHealthInfo.numericSensorInfo",
+                    "configIssue",
+                ],
+                limit=500, soap_session=soap_session, soap_url=soap_url,
+            )
+        except Exception as exc:
+            logger.warning("get_all_host_health: %s", exc)
+            return {}
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            ref = row.get("_ref")
+            if not ref:
+                continue
+            sensors = row.get(
+                "runtime.healthSystemRuntime.systemHealthInfo.numericSensorInfo"
+            )
+            if isinstance(sensors, dict):
+                sensors = [sensors]
+            sensors = [s for s in (sensors or []) if isinstance(s, dict)]
+
+            bad: List[Dict[str, Any]] = []
+            for s in sensors:
+                status = s.get("healthState") or {}
+                state = (
+                    status.get("key") if isinstance(status, dict) else status
+                ) or ""
+                state = str(state).lower()
+                if state in self._SENSOR_OK_STATES:
+                    continue
+                reading = s.get("currentReading")
+                exponent = s.get("unitModifier")
+                value = None
+                try:
+                    if reading is not None:
+                        value = float(reading) * (10 ** float(exponent or 0))
+                except (TypeError, ValueError):
+                    value = None
+                bad.append({
+                    "name": self._clean_sensor_name(s.get("name")),
+                    "state": state,
+                    "type": s.get("sensorType"),
+                    "reading": round(value, 2) if value is not None else None,
+                    "unit": s.get("baseUnits"),
+                })
+
+            issues = row.get("configIssue")
+            if isinstance(issues, dict):
+                issues = [issues]
+            issue_texts: List[str] = []
+            for it in (issues or []):
+                if not isinstance(it, dict):
+                    continue
+                msg = it.get("fullFormattedMessage") or it.get("_type")
+                if msg:
+                    issue_texts.append(str(msg)[:300])
+
+            out[ref] = {
+                "host_name": row.get("name"),
+                "overall_status": row.get("summary.overallStatus"),
+                "sensor_total": len(sensors),
+                "sensor_bad_count": len(bad),
+                "bad_sensors": bad[:40],
+                "config_issues": issue_texts[:20],
+            }
+        return out
 
     def _enrich_vms_running(self, soap_session, soap_url: str,
                             root_folder: str, results: List[Dict]):
@@ -4016,8 +4430,275 @@ class VCenterClient:
             logger.error("SOAP post error: %s", exc)
             return None
 
+    # ── Jenerik READ-ONLY property okuma katmanı ──────────────────────────────
+    #
+    # Buraya kadarki metodlar her veri tipi için elle yazılmış pathSet + traversal
+    # kullanıyor; yeni bir alan sorulduğunda kod değişikliği gerekiyordu. Aşağıdaki
+    # katman ContainerView + PropertyCollector ile HERHANGİ bir managed object
+    # tipinden HERHANGİ bir property path'ini okuyabilir (yalnız okuma; mutate
+    # method yok — bkz. perf_catalog.SOAP_MUTATE_DENY).
+
+    _XSI_TYPE = "{http://www.w3.org/2001/XMLSchema-instance}type"
+
+    # host:object_type → bu vCenter'da desteklenmeyen property path'leri.
+    # SINIF seviyesinde tutulur: istemci her sorguda yeniden yaratıldığı için
+    # örnek seviyesinde tutulsa aynı InvalidProperty fault'u her turda tekrar
+    # tetiklenir (gereksiz round-trip).
+    _INVALID_PROPS_BY_HOST: Dict[str, set] = {}
+
+    @property
+    def _invalid_prop_cache(self) -> Dict[str, set]:
+        """Bu vCenter host'u için desteklenmeyen property path önbelleği."""
+        host_key = f"{self.host}:"
+        return _HostScopedPropCache(self._INVALID_PROPS_BY_HOST, host_key)
+
+    @staticmethod
+    def _invalid_property_from_fault(xml_text: str) -> Optional[str]:
+        """SOAP fault gövdesinden InvalidProperty path'ini çıkarır."""
+        if not xml_text or "InvalidProperty" not in xml_text:
+            return None
+        import re as _re
+        m = _re.search(
+            r"InvalidProperty[^>]*>\s*<name>([^<]+)</name>", xml_text, _re.S
+        )
+        if m:
+            return m.group(1).strip()
+        m = _re.search(r"<name>([^<]+)</name>\s*</InvalidProperty", xml_text, _re.S)
+        return m.group(1).strip() if m else None
+
+    def _soap_val_to_py(self, el, _depth: int = 0):
+        """SOAP <val> elementini Python yapısına çevirir (dict / list / scalar).
+
+        Eski düzleştirici parser (`flat[tag] = child.text`) iç içe struct'ları
+        kaybediyordu: `runtime.healthSystemRuntime...numericSensorInfo` gibi
+        alanlarda `child.text` None olduğu için veri yok sayılıyordu. Bu
+        dönüştürücü struct ve dizileri koruyarak okur.
+        """
+        if _depth > 16:
+            return None
+        children = list(el)
+        if not children:
+            text = (el.text or "").strip()
+            if text in ("true", "false"):
+                return text == "true"
+            return text or None
+
+        xsi_type = (el.get(self._XSI_TYPE) or "").split(":")[-1]
+        distinct_tags = {self._soap_tag(c) for c in children}
+        is_array = xsi_type.startswith("ArrayOf") or (
+            len(children) > 1 and len(distinct_tags) == 1
+        )
+        if is_array:
+            return [self._soap_val_to_py(c, _depth + 1) for c in children]
+
+        out: Dict[str, Any] = {}
+        for child in children:
+            tag = self._soap_tag(child)
+            val = self._soap_val_to_py(child, _depth + 1)
+            if tag in out:
+                if not isinstance(out[tag], list):
+                    out[tag] = [out[tag]]
+                out[tag].append(val)
+            else:
+                out[tag] = val
+        if xsi_type and not xsi_type.startswith("ArrayOf"):
+            # Polimorfik alanlarda hangi somut tip döndüğü anlam taşır
+            # (ör. ClusterFailoverResourcesAdmissionControlPolicy)
+            out.setdefault("_type", xsi_type)
+        return out
+
+    def _soap_returnval_props(self, rv) -> Dict[str, Any]:
+        """Tek <returnval> (ObjectContent) → {_ref, _type, <propName>: value}."""
+        out: Dict[str, Any] = {}
+        obj_el = next((c for c in rv if self._soap_tag(c) == "obj"), None)
+        if obj_el is not None:
+            out["_ref"] = obj_el.text
+            out["_type"] = obj_el.get("type")
+        for ps in rv:
+            if self._soap_tag(ps) != "propSet":
+                continue
+            n_el = next((c for c in ps if self._soap_tag(c) == "name"), None)
+            v_el = next((c for c in ps if self._soap_tag(c) == "val"), None)
+            if n_el is None or v_el is None or not n_el.text:
+                continue
+            out[n_el.text] = self._soap_val_to_py(v_el)
+        return out
+
+    def _create_container_view(self, soap_session, soap_url: str,
+                               object_type: str, container_ref: str,
+                               view_manager: str = "ViewManager") -> Optional[str]:
+        """ViewManager.CreateContainerView — READ-ONLY geçici görünüm."""
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:CreateContainerView>
+      <vim25:_this type="ViewManager">{view_manager}</vim25:_this>
+      <vim25:container type="Folder">{container_ref}</vim25:container>
+      <vim25:type>{object_type}</vim25:type>
+      <vim25:recursive>true</vim25:recursive>
+    </vim25:CreateContainerView>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body, timeout=30)
+        if root is None:
+            return None
+        for el in root.iter():
+            if self._soap_tag(el) == "returnval" and (el.text or "").strip():
+                return el.text.strip()
+        return None
+
+    def _destroy_view(self, soap_session, soap_url: str, view_ref: str) -> None:
+        """DestroyView — yalnızca kendi oluşturduğumuz görünümü kapatır
+        (envanterde değişiklik yapmaz, oturum nesnesini serbest bırakır)."""
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:DestroyView>
+      <vim25:_this type="ContainerView">{view_ref}</vim25:_this>
+    </vim25:DestroyView>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        try:
+            self._soap_post(soap_session, soap_url, body, timeout=15)
+        except Exception:
+            pass
+
+    def retrieve_properties(
+        self,
+        object_type: str,
+        path_set: Sequence[str],
+        *,
+        name_filter: Optional[str] = None,
+        limit: int = 200,
+        soap_session=None,
+        soap_url: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Herhangi bir managed object tipinden istenen property'leri okur.
+
+        object_type : HostSystem | ClusterComputeResource | Datastore |
+                      VirtualMachine | Datacenter | DistributedVirtualSwitch …
+        path_set    : property path listesi (ör. ["name", "summary.overallStatus"])
+        name_filter : `name` alanına göre (case-insensitive substring) süzme
+        Döner       : [{_ref, _type, <path>: değer}, …]
+
+        READ-ONLY: yalnızca CreateContainerView + RetrieveProperties + DestroyView.
+        """
+        if not object_type or not path_set:
+            return []
+
+        own_session = soap_session is None
+        if own_session:
+            soap_url = f"https://{self.host}:{self.port}/sdk"
+            soap_session = self._soap_login()
+            if not soap_session:
+                logger.warning("retrieve_properties: SOAP login failed")
+                return []
+        soap_url = soap_url or f"https://{self.host}:{self.port}/sdk"
+
+        refs = self._get_service_content_refs(soap_session, soap_url)
+        view_ref = self._create_container_view(
+            soap_session, soap_url, object_type,
+            refs.get("rootFolder") or "group-d1",
+            refs.get("viewManager") or "ViewManager",
+        )
+        if not view_ref:
+            logger.warning("retrieve_properties: ContainerView oluşturulamadı (%s)", object_type)
+            return []
+
+        # Sürüm dayanıklılığı: aynı property path bir vCenter sürümünde geçerli,
+        # diğerinde InvalidProperty fault'u veriyor (ör. summary.numVmotions,
+        # configurationEx.* vs deprecated configuration.*). Tek bir geçersiz path
+        # TÜM sorguyu düşürdüğü için, fault'ta bildirilen path'i çıkarıp tekrar
+        # deniyoruz; desteklenmeyenler `last_unsupported_paths` ile raporlanır.
+        attempt = [p for p in dict.fromkeys(path_set)]
+        rejected: set = self._invalid_prop_cache.setdefault(object_type, set())
+        attempt = [p for p in attempt if p not in rejected] or ["name"]
+        unsupported: List[str] = [p for p in path_set if p in rejected]
+
+        root = None
+        try:
+            for _try in range(8):
+                path_xml = "".join(f"<vim25:pathSet>{p}</vim25:pathSet>" for p in attempt)
+                body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:vim25="urn:vim25"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>{object_type}</vim25:type>
+          <vim25:all>false</vim25:all>
+          {path_xml}
+        </vim25:propSet>
+        <vim25:objectSet>
+          <vim25:obj type="ContainerView">{view_ref}</vim25:obj>
+          <vim25:skip>true</vim25:skip>
+          <vim25:selectSet xsi:type="vim25:TraversalSpec">
+            <vim25:name>viewToObj</vim25:name>
+            <vim25:type>ContainerView</vim25:type>
+            <vim25:path>view</vim25:path>
+            <vim25:skip>false</vim25:skip>
+          </vim25:selectSet>
+        </vim25:objectSet>
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                resp = soap_session.post(
+                    soap_url, data=body.encode("utf-8"),
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=90,
+                )
+                if resp.status_code == 200:
+                    import xml.etree.ElementTree as ET
+                    root = ET.fromstring(resp.text)
+                    break
+
+                bad = self._invalid_property_from_fault(resp.text)
+                if not bad or bad not in attempt:
+                    logger.warning(
+                        "retrieve_properties(%s) SOAP HTTP %s: %s",
+                        object_type, resp.status_code, (resp.text or "")[:300],
+                    )
+                    break
+                attempt.remove(bad)
+                rejected.add(bad)
+                unsupported.append(bad)
+                logger.info(
+                    "retrieve_properties(%s): '%s' bu vCenter sürümünde yok — "
+                    "çıkarılıp tekrar denendi",
+                    object_type, bad,
+                )
+                if not attempt:
+                    break
+        finally:
+            self._destroy_view(soap_session, soap_url, view_ref)
+
+        self.last_unsupported_paths = sorted(set(unsupported))
+        if root is None:
+            return []
+
+        want = (name_filter or "").strip().lower()
+        rows: List[Dict[str, Any]] = []
+        for rv in root.iter():
+            if self._soap_tag(rv) != "returnval":
+                continue
+            row = self._soap_returnval_props(rv)
+            if not row.get("_ref"):
+                continue
+            if want:
+                nm = str(row.get("name") or "").lower()
+                if want not in nm:
+                    continue
+            rows.append(row)
+            if len(rows) >= max(1, int(limit)):
+                break
+        return rows
+
     def _get_service_content_refs(self, soap_session, soap_url: str) -> Dict[str, str]:
-        """eventManager, alarmManager, rootFolder MOR referanslarını döner."""
+        """eventManager, alarmManager, viewManager, rootFolder MOR referansları."""
         body = """<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
   <soapenv:Body>
@@ -4030,6 +4711,7 @@ class VCenterClient:
         refs: Dict[str, str] = {
             "eventManager": "eventManager",
             "alarmManager": "alarmManager",
+            "viewManager": "ViewManager",
             "rootFolder": "group-d1",
         }
         if root is None:
@@ -4379,9 +5061,111 @@ class VCenterClient:
             except Exception:
                 pass
 
+    def _resolve_mor_names(self, soap_session, soap_url: str,
+                           refs_by_type: Dict[str, List[str]]) -> Dict[str, str]:
+        """MOR referanslarını tek RetrieveProperties çağrısıyla ada çevirir.
+
+        PropertyCollector propSet'i nesne TİPİNE göre eşleştirdiği için her tip
+        için bir propSet, her nesne için bir objectSet gönderilir. Traversal
+        gerekmez (nesneler doğrudan hedeflenir).
+        """
+        refs_by_type = {
+            t: sorted({r for r in refs if r})
+            for t, refs in (refs_by_type or {}).items() if refs
+        }
+        if not refs_by_type:
+            return {}
+
+        prop_sets = "".join(
+            f"<vim25:propSet><vim25:type>{t}</vim25:type>"
+            f"<vim25:all>false</vim25:all>"
+            f"<vim25:pathSet>name</vim25:pathSet></vim25:propSet>"
+            for t in refs_by_type
+        )
+        obj_sets = "".join(
+            f'<vim25:objectSet><vim25:obj type="{t}">{ref}</vim25:obj>'
+            f"<vim25:skip>false</vim25:skip></vim25:objectSet>"
+            for t, refs in refs_by_type.items() for ref in refs
+        )
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        {prop_sets}
+        {obj_sets}
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body.encode("utf-8"), timeout=45)
+        if root is None:
+            return {}
+        out: Dict[str, str] = {}
+        for rv in root.iter():
+            if self._soap_tag(rv) != "returnval":
+                continue
+            row = self._soap_returnval_props(rv)
+            ref, name = row.get("_ref"), row.get("name")
+            if ref and name:
+                out[ref] = str(name)
+        return out
+
+    def _resolve_alarm_definitions(self, soap_session, soap_url: str,
+                                   alarm_refs: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Alarm MOR → {name, description}. Alarm nesneleri envanter ağacında
+        olmadığı için ContainerView değil doğrudan objectSet kullanılır."""
+        refs = sorted({r for r in (alarm_refs or []) if r})
+        if not refs:
+            return {}
+        obj_sets = "".join(
+            f'<vim25:objectSet><vim25:obj type="Alarm">{ref}</vim25:obj>'
+            f"<vim25:skip>false</vim25:skip></vim25:objectSet>"
+            for ref in refs
+        )
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:RetrieveProperties>
+      <vim25:_this type="PropertyCollector">propertyCollector</vim25:_this>
+      <vim25:specSet>
+        <vim25:propSet>
+          <vim25:type>Alarm</vim25:type>
+          <vim25:all>false</vim25:all>
+          <vim25:pathSet>info.name</vim25:pathSet>
+          <vim25:pathSet>info.description</vim25:pathSet>
+        </vim25:propSet>
+        {obj_sets}
+      </vim25:specSet>
+    </vim25:RetrieveProperties>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_post(soap_session, soap_url, body.encode("utf-8"), timeout=45)
+        if root is None:
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for rv in root.iter():
+            if self._soap_tag(rv) != "returnval":
+                continue
+            row = self._soap_returnval_props(rv)
+            ref = row.get("_ref")
+            if not ref:
+                continue
+            out[ref] = {
+                "name": row.get("info.name"),
+                "description": row.get("info.description"),
+            }
+        return out
+
     def _query_triggered_alarms(self, soap_session, soap_url: str,
                                 alarm_manager: str, root_folder: str) -> List[Dict]:
-        """AlarmManager.GetAlarmState — tetiklenmiş (red/yellow) alarmlar."""
+        """AlarmManager.GetAlarmState — tetiklenmiş (red/yellow) alarmlar.
+
+        Alarm tanımı adı (info.name), etkilenen nesnenin adı ve acknowledge
+        durumu ayrıca çözümlenir; aksi halde başlık
+        "vCenter alarm (red): HostSystem/host-12" gibi anlamsız kalıyordu.
+        """
         body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
   <soapenv:Body>
@@ -4395,11 +5179,12 @@ class VCenterClient:
         if root is None:
             return []
 
-        alarms: List[Dict] = []
+        raw: List[Dict[str, Any]] = []
         for el in root.iter():
             if self._soap_tag(el) != "returnval":
                 continue
             entity_type = entity_val = alarm_val = status = time_val = None
+            acknowledged = ack_user = ack_time = None
             for child in el:
                 tag = self._soap_tag(child)
                 if tag == "entity":
@@ -4411,26 +5196,78 @@ class VCenterClient:
                     status = (child.text or "").lower()
                 elif tag == "time":
                     time_val = child.text
+                elif tag == "acknowledged":
+                    acknowledged = (child.text or "").strip().lower() == "true"
+                elif tag == "acknowledgedByUser":
+                    ack_user = child.text
+                elif tag == "acknowledgedTime":
+                    ack_time = child.text
 
             if status not in ("red", "yellow"):
                 continue
-
-            vm_ref = entity_val if entity_type == "VirtualMachine" else None
-            host_ref = entity_val if entity_type == "HostSystem" else None
-            alarms.append({
-                "id": f"alarm-{alarm_val}-{entity_type}-{entity_val}",
-                "kind": "vcenter_alarm",
-                "severity": "critical" if status == "red" else "warning",
-                "event_key": f"{alarm_val}:{entity_val}",
-                "title": f"vCenter alarm ({status}): {entity_type}/{entity_val}",
-                "alarm_ref": alarm_val,
+            raw.append({
                 "entity_type": entity_type,
                 "entity_ref": entity_val,
-                "entity_name": None,
-                "vm_ref": vm_ref,
-                "host_ref": host_ref,
+                "alarm_ref": alarm_val,
+                "status": status,
+                "time": time_val,
+                "acknowledged": acknowledged,
+                "acknowledged_by": ack_user,
+                "acknowledged_at": ack_time,
+            })
+
+        # Alarm tanımı adlarını ve etkilenen nesne adlarını çöz (2 ek çağrı)
+        alarm_defs: Dict[str, Dict[str, Any]] = {}
+        entity_names: Dict[str, str] = {}
+        try:
+            alarm_defs = self._resolve_alarm_definitions(
+                soap_session, soap_url, [a["alarm_ref"] for a in raw]
+            )
+        except Exception as exc:
+            logger.debug("alarm tanımı çözümlenemedi: %s", exc)
+        try:
+            refs_by_type: Dict[str, List[str]] = {}
+            for a in raw:
+                if a.get("entity_type") and a.get("entity_ref"):
+                    refs_by_type.setdefault(a["entity_type"], []).append(a["entity_ref"])
+            entity_names = self._resolve_mor_names(soap_session, soap_url, refs_by_type)
+        except Exception as exc:
+            logger.debug("alarm entity adı çözümlenemedi: %s", exc)
+
+        alarms: List[Dict] = []
+        for a in raw:
+            entity_type = a["entity_type"]
+            entity_val = a["entity_ref"]
+            status = a["status"]
+            adef = alarm_defs.get(a["alarm_ref"] or "") or {}
+            alarm_name = adef.get("name")
+            entity_name = entity_names.get(entity_val or "")
+            label = entity_name or f"{entity_type}/{entity_val}"
+            title = (
+                f"vCenter alarm ({status}): {alarm_name} — {label}"
+                if alarm_name else f"vCenter alarm ({status}): {label}"
+            )
+            if a.get("acknowledged"):
+                title += " [ack]"
+            alarms.append({
+                "id": f"alarm-{a['alarm_ref']}-{entity_type}-{entity_val}",
+                "kind": "vcenter_alarm",
+                "severity": "critical" if status == "red" else "warning",
+                "event_key": f"{a['alarm_ref']}:{entity_val}",
+                "title": title,
+                "alarm_ref": a["alarm_ref"],
+                "alarm_name": alarm_name,
+                "alarm_description": adef.get("description"),
+                "entity_type": entity_type,
+                "entity_ref": entity_val,
+                "entity_name": entity_name,
+                "vm_ref": entity_val if entity_type == "VirtualMachine" else None,
+                "host_ref": entity_val if entity_type == "HostSystem" else None,
                 "overall_status": status,
-                "timestamp": time_val,
+                "acknowledged": a.get("acknowledged"),
+                "acknowledged_by": a.get("acknowledged_by"),
+                "acknowledged_at": a.get("acknowledged_at"),
+                "timestamp": a["time"],
             })
         return alarms
 

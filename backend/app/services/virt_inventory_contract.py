@@ -97,8 +97,20 @@ def detect_virt_inventory_kind(message: str) -> Optional[str]:
         return KIND_VM_DISK
 
     # "tüm vm'ler" / poweredOn listesi
+    #
+    # NOT: bu eylem-fiili listesi asla "tam" olamaz (Türkçe'de sonsuz ifade
+    # çeşitliliği — sorgula/getir/çek/ilet/çıkar/kontrol et/incele/bak/ver/
+    # bul/...). Eksik kalması burada YANLIŞ CEVABA yol açmaz: asıl güvenlik
+    # ağı unified_tool_chat.py::_finalize()'daki decouple mekanizmasıdır
+    # (bkz. infer_kind_from_tool_call) — model kendi kararıyla db_list_vms
+    # çağırırsa, bu regex hiçbir şey yakalamasa bile deterministik tablo yine
+    # denenir. Buradaki liste yalnızca PROAKTİF prefetch'i tetikler.
     if _VM_RE.search(m) and any(
-        k in m for k in ("liste", "list", "kaç", "kac", "özet", "ozet", "hepsi", "tüm", "tum", "table", "/table")
+        k in m for k in (
+            "liste", "list", "kaç", "kac", "özet", "ozet", "hepsi", "tüm", "tum", "table", "/table",
+            "sorgula", "getir", "çek", "cek", "ilet", "çıkar", "cikar",
+            "kontrol et", "incele", "teyit et", "doğrula", "dogrula",
+        )
     ):
         if diskish:
             return KIND_VM_DISK
@@ -394,21 +406,69 @@ def format_datastore_table(rows: Sequence[Dict[str, Any]], *, as_of: Optional[st
     return "\n".join(lines)
 
 
+# ESXi tablosu kolon sırası + başlıkları. (alan, başlık, sağa_yasla)
+_ESX_COLUMNS: Tuple[Tuple[str, str, bool], ...] = (
+    ("name", "Host", False),
+    ("ip", "IP", False),
+    ("version", "Version", False),
+    ("cluster", "Cluster", False),
+    ("cpu_pct", "CPU %", True),
+    ("mem_pct", "Mem %", True),
+    ("ds_pct", "Disk %", True),
+    ("vms_running", "VM (açık)", True),
+    ("vms_total", "VM (toplam)", True),
+    ("cpu_cores", "Core", True),
+    ("vendor", "Üretici", False),
+    ("model", "Model", False),
+    ("overall_status", "Donanım", False),
+    ("sensor_bad_count", "Sorunlu sensör", True),
+    ("bad_sensors", "Sensör detayı", False),
+    ("config_issues", "Yapılandırma uyarısı", False),
+    ("connection_state", "Durum", False),
+    ("maintenance", "Bakım", False),
+    ("hypervisor", "vCenter", False),
+)
+
+
+def _cell(value: Any) -> str:
+    """Tablo hücresi — liste/dict alanları da okunur biçime indirger."""
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, bool):
+        return "evet" if value else "hayır"
+    if isinstance(value, (list, tuple)):
+        parts = [_cell(v) for v in value if v not in (None, "")]
+        if not parts:
+            return "—"
+        text = ", ".join(parts[:3])
+        return text + (f" (+{len(parts) - 3})" if len(parts) > 3 else "")
+    if isinstance(value, dict):
+        label = value.get("name") or value.get("title") or value.get("label")
+        return str(label) if label else ", ".join(f"{k}={v}" for k, v in list(value.items())[:3])
+    return str(value)
+
+
 def format_esx_host_table(rows: Sequence[Dict[str, Any]], *, as_of: Optional[str] = None) -> str:
-    lines = [
-        "## ESXi Host Envanteri (kaynak: db_list_esx_hosts)",
-        "",
-        "| Host | IP | Version | CPU % | Mem % | Durum |",
-        "|---|---|---|---:|---:|---|",
+    """Kolonlar satırlardaki GERÇEK alanlardan türetilir.
+
+    Sabit kolon listesi iki yönde de hatalıydı: model donanım sağlığı alanları
+    istediğinde onlar tabloda hiç görünmüyor, istemediğinde ise "CPU % —"
+    gibi boş sütunlar kalıyordu.
+    """
+    data = [r for r in rows if isinstance(r, dict)]
+    present = [
+        (key, title, right)
+        for key, title, right in _ESX_COLUMNS
+        if any(r.get(key) not in (None, "", [], {}) for r in data)
     ]
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        lines.append(
-            f"| {r.get('name') or '—'} | {r.get('ip') or '—'} | {r.get('version') or '—'} | "
-            f"{r.get('cpu_pct', '—')} | {r.get('mem_pct', '—')} | "
-            f"{r.get('connection_state') or '—'} |"
-        )
+    if not present:
+        present = [("name", "Host", False)]
+
+    header = "| " + " | ".join(t for _, t, _ in present) + " |"
+    sep = "|" + "|".join("---:" if right else "---" for _, _, right in present) + "|"
+    lines = ["## ESXi Host Envanteri (kaynak: db_list_esx_hosts)", "", header, sep]
+    for r in data:
+        lines.append("| " + " | ".join(_cell(r.get(k)) for k, _, _ in present) + " |")
     if as_of:
         lines.extend(["", f"as_of: `{as_of}`"])
     return "\n".join(lines)
@@ -538,6 +598,34 @@ def materialize_from_tool_results(
             return render_rows_as_brief(rows, subject="ESXi host listesi")
         return format_esx_host_table(rows, as_of=payload.get("as_of"))
 
+    return None
+
+
+def infer_kind_from_tool_call(tool_name: str, tool_args: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """DECOUPLE: regex niyet tespiti (detect_virt_inventory_kind) başarısız olsa
+    bile, LLM'in KENDİ kararıyla çağırdığı tool'dan envanter sınıfını geriye
+    türetir.
+
+    Neden gerekli: Türkçe ifade çeşitliliği pratikte sonsuzdur (bkz.
+    detect_virt_inventory_kind yorumları) — kelime listesi her zaman bir
+    ifadeyi kaçırabilir. Ama model kendi tool-calling mekanizmasıyla zaten
+    doğru db_* aracını çağırmış olabilir (ör. "... host üzerindeki VM'leri
+    ... sorgula" gibi regex'in tanımadığı ama modelin doğru anladığı bir
+    ifade). Bu durumda deterministik render'ı yalnızca regex'e bağlı tutmak,
+    zaten elde edilmiş doğru sonucu ham/devasa context'e boğar. Bu fonksiyon
+    ikinci bir güvenlik ağı sağlar: render kararı artık YA regex YA DA
+    gerçekleşmiş tool çağrısına dayanabilir.
+    """
+    args = tool_args or {}
+    if tool_name == "db_list_vms":
+        fields = args.get("fields") or []
+        if args.get("include_disks") or "disks" in fields or "disk_gb" in fields:
+            return KIND_VM_DISK
+        return KIND_VM_LIST
+    if tool_name == "db_list_datastores":
+        return KIND_DATASTORE
+    if tool_name == "db_list_esx_hosts":
+        return KIND_ESX_HOST
     return None
 
 

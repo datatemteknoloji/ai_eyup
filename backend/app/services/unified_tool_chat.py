@@ -97,6 +97,15 @@ SYSTEM_PROMPT = (
     "'erişimim yok', 'toplanmamış', 'senkronize edilmiyor' deme — önce ilgili READ_ONLY "
     "aracı çağırıp veriyi çek; sonuç boşsa 'canlı sorguda kayıt dönmedi' veya bağlantı "
     "hatasını yaz.\n"
+    "- KANIT KURALI (mutlak): 'veri mevcut değil', 'kayıt dönmedi', 'bilgi yok' gibi bir "
+    "cümleyi YALNIZCA bu turda gerçekten bir araç çağırıp boş/başarısız sonuç aldıysan "
+    "yazabilirsin. Hiç araç çağırmadan bu cümleleri kullanmak YASAKTIR. Sorunun hangi "
+    "araçla eşleştiğinden emin değilsen en yakın aracı DENE (genel sağlık/durum → "
+    "virt_health_overview veya infra_overview; HA/cluster → db_list_clusters; envanter → "
+    "db_* araçları; ölçüm/trend → vcenter_perf_query; prosedür/geçmiş → knowledge_search; "
+    "hazır analiz → infra_report). Denedikten sonra hâlâ karşılığı yoksa hangi VERİNİN "
+    "eksik olduğunu ve normalde hangi kaynaktan gelmesi gerektiğini açıkça söyle — "
+    "belirsiz bir ret cümlesiyle geçiştirme.\n"
     "- Kullanıcı anlık durum istiyorsa cevap vermeden ÖNCE ilgili aracı çağır "
     "(vcenter_live_alarms, vcenter_live_tasks, list_ocp_events, SSH/WinRM get_*).\n"
     "- BAĞLAM bölümünde zaten toplanmış canlı veri varsa öncelikle onu kullan; "
@@ -610,6 +619,51 @@ def run_read_only_tool_loop(
             ),
         })
 
+    # Araçsız cevaba tek seferlik "kanıt topla" uyarısı — ilk denemede model
+    # soruyu araç yüzeyiyle eşleştirmeyi kaçırdığında ikinci şans verir.
+    _TOOL_EVIDENCE_NUDGE = (
+        "DUR. Bu soru bu ORTAMA ÖZGÜ bir soru ve sen henüz hiçbir araç çağırmadın. "
+        "Araç sonucu olmadan 'veri mevcut değil / kayıt dönmedi / bilgi yok' demen "
+        "YASAK.\n"
+        "Şimdi şunu yap: sorunun ne tür bir bilgi istediğini belirle ve elindeki "
+        "araç listesinden EN YAKIN olanı çağır. Yönlendirme:\n"
+        "- Genel sağlık / 'problem var mı' / 'durum nasıl' → virt_health_overview "
+        "(sanallaştırma) veya infra_overview\n"
+        "- HA / DRS / failover / cluster kapasitesi → db_list_clusters\n"
+        "- Host, VM, datastore listesi veya alanları → db_list_esx_hosts / db_list_vms / "
+        "db_list_datastores (gerekli alanları fields ile iste)\n"
+        "- Donanım sensörü / hardware health → db_list_esx_hosts "
+        "(fields=[name,overall_status,sensor_bad_count,bad_sensors])\n"
+        "- Alarm / event / son N saatte ne oldu → db_virt_alarms, db_list_critical_events\n"
+        "- Anlık ölçüm / latency / canlı sayaç → vcenter_perf_query\n"
+        "- Trend, 'son 7/30 gün', 'ne zaman dolar', 'kötüleşen/right-sizing' → "
+        "db_metric_trend (eğim ve tahmini motor hesaplar)\n"
+        "- Kapasite tahmini / risk / right-sizing / yönetici raporu → infra_report\n"
+        "- Yukarıdakilerin kapsamadığı bir vSphere özelliği → vcenter_property_read\n"
+        "- Prosedür, runbook, geçmiş benzer arıza → knowledge_search\n"
+        "Hiçbiri uymuyorsa vcenter_property_read ile list_catalog=true çağırıp neyin "
+        "okunabildiğine bak. Araç çağırmadan cevap üretme."
+    )
+
+    _nudged = False
+    _intent_cache: Dict[str, Any] = {}
+
+    def _intent_kind_name() -> Optional[str]:
+        if "kind" not in _intent_cache:
+            try:
+                from app.services.chat_intent import classify_chat_intent
+                _intent_cache["kind"] = classify_chat_intent(user_message).kind.value
+            except Exception:
+                _intent_cache["kind"] = None
+        return _intent_cache["kind"]
+
+    def _needs_tool_evidence() -> bool:
+        """Bu soru araç kanıtı gerektiriyor mu (kavramsal sorular hariç)."""
+        kind = _intent_kind_name()
+        if kind is None:
+            return False
+        return kind != "conceptual"
+
     def _finalize(max_steps_reached: bool = False, early_stop: bool = False) -> Dict[str, Any]:
         if used_tools and tools_used:
             try:
@@ -624,11 +678,65 @@ def run_read_only_tool_loop(
             except Exception as e:
                 logger.debug("Playbook kayıt atlandı: %s", e)
         det = None
-        if inv_kind and materialize_from_tool_results and structured_results and not _multi_part_deferred:
+        render_kind, render_filters, render_fields = inv_kind, inv_filters, inv_fields
+        if not render_kind and structured_results and not _multi_part_deferred:
+            # DECOUPLE (bkz. virt_inventory_contract.infer_kind_from_tool_call):
+            # regex niyet tespiti (inv_kind) hiçbir şey yakalamadıysa bile, model
+            # kendi kararıyla başarılı bir db_list_vms/db_list_datastores/
+            # db_list_esx_hosts çağırmışsa deterministik render'ı yine dene.
+            # Kavramsal/rapor/değerlendirme sorularında (narrative cevap
+            # beklenir) bu fallback'i UYGULAMA — yalnızca gerçek envanter/canlı
+            # niyetinde devreye girsin.
+            try:
+                from app.services.chat_intent import classify_chat_intent, ChatIntentKind
+                from app.services.virt_inventory_contract import infer_kind_from_tool_call
+                # Model birden fazla FARKLI aracı başarıyla çağırdıysa cevabı
+                # sentezlemek istiyor (ör. "host arızalanırsa HA yeter mi" →
+                # db_list_clusters + db_list_esx_hosts). Böyle bir turda tek
+                # aracın envanter tablosunu basmak soruyu cevapsız bırakır.
+                _ok_tools = {
+                    tr.get("tool")
+                    for tr in structured_results
+                    if isinstance(tr, dict)
+                    and isinstance(tr.get("result"), dict)
+                    and tr["result"].get("ok")
+                }
+                _ci = classify_chat_intent(user_message)
+                if len(_ok_tools) > 1:
+                    logger.info(
+                        "[UnifiedToolChat] decouple atlandı: %s aracı birlikte "
+                        "çağrıldı, cevap sentez gerektiriyor", sorted(_ok_tools),
+                    )
+                elif _ci.kind not in (ChatIntentKind.CONCEPTUAL, ChatIntentKind.MIXED):
+                    for tr in reversed(structured_results):
+                        if not isinstance(tr, dict):
+                            continue
+                        _res = tr.get("result")
+                        if not (isinstance(_res, dict) and _res.get("ok")):
+                            continue
+                        _kind = infer_kind_from_tool_call(tr.get("tool") or "", tr.get("args"))
+                        if _kind:
+                            render_kind = _kind
+                            if not render_filters:
+                                try:
+                                    from app.services.virt_entity_resolver import extract_entity_filters
+                                    render_filters = extract_entity_filters(db, user_message)
+                                except Exception:
+                                    render_filters = {}
+                            logger.info(
+                                "[UnifiedToolChat] decouple: regex inv_kind boş ama "
+                                "tool=%s çağrısından kind=%s türetildi (fallback render)",
+                                tr.get("tool"), _kind,
+                            )
+                            break
+            except Exception as e:
+                logger.debug("decouple fallback atlandı: %s", e)
+
+        if render_kind and materialize_from_tool_results and structured_results and not _multi_part_deferred:
             try:
                 det = materialize_from_tool_results(
-                    inv_kind, structured_results,
-                    filters=inv_filters, fields=inv_fields, directive=_directive,
+                    render_kind, structured_results,
+                    filters=render_filters, fields=render_fields, directive=_directive,
                 )
             except Exception:
                 det = None
@@ -645,7 +753,7 @@ def run_read_only_tool_loop(
         }
         if det:
             out["deterministic_answer"] = det
-            out["inventory_kind"] = inv_kind
+            out["inventory_kind"] = render_kind
         if max_steps_reached:
             out["max_steps_reached"] = True
         if early_stop:
@@ -660,13 +768,59 @@ def run_read_only_tool_loop(
         llm = chat_with_tools(model, messages, step_specs, timeout=90)
         if llm.get("error"):
             if used_tools:
-                yield {"type": "error", "detail": llm["error"]}
+                # Önceki adımlarda araçlar başarıyla çağrılmış (structured_results/
+                # tool_texts dolu) — bu turdaki LLM hatası yüzünden o veriyi
+                # SESSİZCE kaybetmeyelim. Eskiden burada çıplak {"type":"error"}
+                # yield edilip dönülüyordu; çağıran taraf (chat_source_graph)
+                # bunun üstüne used_tools/tools_used/tool_text'i hep False/[]/""
+                # olarak sıfırlıyordu (bkz. "AgentLLM 'dict' object has no
+                # attribute 'lower'" üretim bulgusu — canlı gateway'den nested
+                # dict hata gövdesi geldiğinde patlıyordu, tools_used yanlışlıkla
+                # [] loglanıyordu ve zaten toplanmış envanter/metrik verisi
+                # fallback'e hiç aktarılmıyordu). Şimdi elimizdeki kısmi sonucu
+                # normal "final" gibi döndürüyoruz; yalnızca hata bilgisini
+                # gözlemlenebilirlik için ekliyoruz.
+                logger.warning(
+                    "[UnifiedToolChat] adım %d LLM hatası ama %d tool zaten "
+                    "çağrılmış — kısmi sonuç korunarak finalize ediliyor: %s",
+                    _step, len(tools_used), llm["error"],
+                )
+                out = _finalize()
+                out["status_detail"] = llm["error"]
+                out["partial_due_to_llm_error"] = True
+                yield out
             else:
                 yield {"type": "skipped", "reason": llm["error"]}
             return
 
         tool_calls = llm.get("tool_calls") or []
         if not tool_calls:
+            # KANIT ZORUNLULUĞU: ortama özgü bir soruda model hiç araç
+            # çağırmadan cevap vermeye kalkarsa (üretimde "vCenter'ın sağlık
+            # durumuna ilişkin canlı veri mevcut değil" cevabı böyle oluştu),
+            # bir kez katalogu hatırlatıp tekrar deniyoruz. İkinci kez de
+            # araçsız dönerse kapsama boşluğu olarak kaydedilir.
+            if not used_tools and not _nudged and _needs_tool_evidence():
+                _nudged = True
+                messages.append({"role": "system", "content": _TOOL_EVIDENCE_NUDGE})
+                logger.info(
+                    "[UnifiedToolChat] araçsız cevap denemesi — kanıt uyarısı "
+                    "gönderildi (platform=%s, q=%r)",
+                    plat, (user_message or "")[:100],
+                )
+                continue
+            if not used_tools and _needs_tool_evidence():
+                try:
+                    from app.services.chat_coverage import record_coverage_miss
+                    record_coverage_miss(
+                        db,
+                        question=user_message,
+                        platform=plat or "unified",
+                        reason="no_tool_called_after_nudge",
+                        intent=_intent_kind_name(),
+                    )
+                except Exception as _cm_e:
+                    logger.debug("coverage miss kaydı atlandı: %s", _cm_e)
             yield _finalize()
             return
 

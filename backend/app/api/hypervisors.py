@@ -773,6 +773,39 @@ async def trigger_esx_metric_sync(hypervisor_id: int, db: Session = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/events/lifecycle-sync")
+async def trigger_lifecycle_event_sync(
+    days: int = 30, db: Session = Depends(get_db),
+):
+    """Manuel tetikleme: tip filtreli GENİŞ pencere (varsayılan 30 gün) vCenter
+    event taraması.
+
+    Periyodik akışta günde bir kez çalışır; DRS migration geçmişi, host bağlantı
+    kaybı, HA restart gibi olayların hemen toplanması istendiğinde bu uç kullanılır.
+    """
+    try:
+        from app.services.vcenter_event_collector import sync_vcenter_lifecycle_events
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: sync_vcenter_lifecycle_events(db, days=max(1, min(days, 365)))
+        )
+        return {"success": result.get("success", False), "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/chat/coverage-misses")
+async def get_chat_coverage_misses(limit: int = 50, db: Session = Depends(get_db)):
+    """Asistanın araç yüzeyiyle eşleştiremediği sorular (kapsama telemetrisi).
+
+    Hangi soru kalıplarının karşılığı olmadığını gösterir; yeni tool veya veri
+    kaynağı ihtiyacı bu listeye göre önceliklendirilir.
+    """
+    from app.services.chat_coverage import coverage_miss_summary
+    return coverage_miss_summary(db, limit=max(1, min(limit, 200)))
+
+
 @router.delete("/{hypervisor_id}", status_code=200)
 async def delete_hypervisor(hypervisor_id: int, request: Request, db: Session = Depends(get_db)):
     """Hypervisor sil (yalnızca Entegrasyonlar) — bu hypervisor'dan senkronize

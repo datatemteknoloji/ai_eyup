@@ -87,6 +87,40 @@ def _latest_host_metrics(db: Session) -> List[Dict]:
     return result
 
 
+def _datastore_capacity_index(db: Session) -> Dict[str, Dict[str, Any]]:
+    """Datastore adı (lower-case) → GERÇEK vCenter kapasitesi (virt_datastores sync).
+
+    Kapasite raporunun "Datastore Bazında VM Disk Tahsisatı" bölümü eskiden
+    yalnızca VM'lerin `disk_gb` (tahsis) alanlarını toplayıp gösteriyordu —
+    datastore'un GERÇEK toplam/boş/doluluk % bilgisi hiç yoktu. Bu, host
+    aggregate doluluğu (örn. %54) düşük görünürken tek bir datastore'un
+    aslında %88 dolu (kritik) olduğu durumları gizliyordu (bkz. üretim
+    bulgusu). Kaynak yoksa/boşsa sessizce {} döner — çağıran taraf eski
+    davranışa (yalnızca tahsis) düşer.
+    """
+    try:
+        rows = db.execute(text("""
+            SELECT name, capacity_gb, free_gb, used_gb, usage_pct, accessible
+            FROM virt_datastores
+        """)).all()
+    except Exception as e:
+        logger.debug("datastore kapasite index okunamadı: %s", e)
+        return {}
+    idx: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        name = (r.name or "").strip()
+        if not name:
+            continue
+        idx[name.lower()] = {
+            "capacity_gb": r.capacity_gb,
+            "free_gb": r.free_gb,
+            "used_gb": r.used_gb,
+            "usage_pct": r.usage_pct,
+            "accessible": r.accessible,
+        }
+    return idx
+
+
 def _get_vms(db: Session) -> List[Dict]:
     from app.models.server import Server
     from app.models.hypervisor import Hypervisor
@@ -556,6 +590,39 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         entry = ds_vm_breakdown[ds_key]
         entry["allocated_disk_gb"] = round(entry["allocated_disk_gb"], 1)
         entry["vms"] = sorted(entry["vms"], key=lambda x: -(x["disk_gb"] or 0))[:20]
+
+    # GERÇEK datastore kapasitesi (vCenter sync) — VM tahsisinden bağımsız.
+    # Host aggregate doluluk (yukarıdaki capacity_items[].storage.used_pct)
+    # tüm datastore'ların ORTALAMASINI/toplamını gösterdiği için tek bir
+    # datastore'un kritik doluluğunu gizleyebilir (örn. host %54 görünürken
+    # bir datastore tek başına %88 dolu olabilir) — bu yüzden per-datastore
+    # gerçek doluluk burada ayrıca hesaplanıp uyarılara ekleniyor.
+    ds_cap_idx = _datastore_capacity_index(db)
+    for ds_key, entry in ds_vm_breakdown.items():
+        if entry.get("is_hypervisor_group"):
+            continue
+        cap = ds_cap_idx.get(ds_key.strip().lower())
+        if not cap:
+            continue
+        entry["capacity_gb"] = cap.get("capacity_gb")
+        entry["free_gb"] = cap.get("free_gb")
+        entry["used_gb"] = cap.get("used_gb")
+        entry["usage_pct"] = cap.get("usage_pct")
+        entry["accessible"] = cap.get("accessible")
+        up = cap.get("usage_pct")
+        if up is not None:
+            if up >= 90:
+                warnings.append(
+                    f"Datastore '{ds_key}' %{up} dolu (KRİTİK, boş {cap.get('free_gb')} GB) — "
+                    f"{entry['vm_count']} VM barındırıyor"
+                )
+            elif up >= 80:
+                warnings.append(
+                    f"Datastore '{ds_key}' %{up} dolu (uyarı eşiği %80, boş {cap.get('free_gb')} GB) — "
+                    f"{entry['vm_count']} VM barındırıyor"
+                )
+        if cap.get("accessible") is False:
+            warnings.append(f"Datastore '{ds_key}' vCenter'da ERİŞİLEMEZ durumda")
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -1462,10 +1529,19 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
             lines += ["", "## ⚠️ Uyarılar"] + [f"- {w}" for w in warns]
         ds_breakdown = data.get("datastore_vm_disk", {})
         if ds_breakdown:
-            lines += ["", "## Datastore Bazında VM Disk Tahsisatı"] + tbl(
-                ["Datastore", "VM Sayısı", "Tahsisli Disk (GB)"],
-                [[ds, info["vm_count"], info["allocated_disk_gb"]]
-                 for ds, info in sorted(ds_breakdown.items(), key=lambda x: -x[1]["allocated_disk_gb"])]
+            # NOT: "Tahsisli Disk" = VM'lerin provisioned disk toplamı (thin/thick
+            # provisioning nedeniyle datastore'un GERÇEK kullanımından farklı
+            # olabilir). "Toplam/Boş/Doluluk %" ise vCenter'ın canlı/sync'lenmiş
+            # datastore kapasitesidir (summary.capacity/freeSpace) — gerçek risk
+            # değerlendirmesi için bu sütunlar esas alınmalı.
+            lines += ["", "## Datastore Bazında Kapasite + VM Disk Tahsisatı"] + tbl(
+                ["Datastore", "VM Sayısı", "Tahsisli Disk (GB)", "Toplam (GB)", "Boş (GB)", "Doluluk %"],
+                [[
+                    ds, info["vm_count"], info["allocated_disk_gb"],
+                    info.get("capacity_gb", "—") if info.get("capacity_gb") is not None else "—",
+                    info.get("free_gb", "—") if info.get("free_gb") is not None else "—",
+                    f"%{info['usage_pct']}" if info.get("usage_pct") is not None else "—",
+                ] for ds, info in sorted(ds_breakdown.items(), key=lambda x: -x[1]["allocated_disk_gb"])]
             )
             lines += ["", "## Datastore VM Disk Detayı"]
             for ds, info in sorted(ds_breakdown.items(), key=lambda x: -x[1]["allocated_disk_gb"]):

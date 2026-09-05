@@ -102,6 +102,19 @@ def chat_with_tools(
             try:
                 err_body = resp.json()
                 err_msg = err_body.get("error", "") if isinstance(err_body, dict) else str(err_body)
+                # Bifrost/LiteLLM gibi uzak gateway'ler OpenAI-uyumlu iç içe
+                # {"error": {"message": ..., "type": ..., "code": ...}} formatı
+                # döndürebilir — bu durumda err_msg bir dict olur ve altta
+                # ".lower()" çağrısı "'dict' object has no attribute 'lower'"
+                # ile patlar (bkz. üretim logu). İç mesajı çıkar, olmazsa str().
+                if isinstance(err_msg, dict):
+                    err_msg = (
+                        err_msg.get("message")
+                        or err_msg.get("error")
+                        or str(err_msg)
+                    )
+                elif not isinstance(err_msg, str):
+                    err_msg = str(err_msg)
             except Exception:
                 err_msg = resp.text or ""
 
@@ -148,5 +161,5 @@ def chat_with_tools(
     except requests.exceptions.Timeout:
         return {"content": "", "tool_calls": [], "error": "LLM zaman aşımına uğradı."}
     except Exception as e:
-        logger.error(f"[AgentLLM] Hata: {e}")
+        logger.error("[AgentLLM] Hata: %s", e, exc_info=True)
         return {"content": "", "tool_calls": [], "error": str(e)}

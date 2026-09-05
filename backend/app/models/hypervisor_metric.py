@@ -67,6 +67,15 @@ class HypervisorHostMetric(Base):
     power_state      = Column(String(32))    # poweredOn / standBy / ...
     maintenance_mode = Column(Integer, default=0)  # 1 = bakım modunda
 
+    # ── Cluster üyeliği ve donanım sağlığı ───────────────────────────────────
+    # cluster_name burada tutulur çünkü cluster trend/karşılaştırma sorguları
+    # (CPU/RAM dengesizliği, cluster kapasite tahmini) bu tabloyu gruplayarak
+    # çalışır — ayrı bir cluster hypertable'ına gerek kalmaz.
+    cluster_name     = Column(String(255), index=True)  # None = standalone host
+    cluster_ref      = Column(String(64))
+    overall_status   = Column(String(32))    # green / yellow / red / gray
+    sensor_bad_count = Column(Integer)       # green/unknown olmayan sensor sayısı
+
     hypervisor = relationship("Hypervisor")
 
     __table_args__ = (

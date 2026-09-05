@@ -39,6 +39,19 @@ class HypervisorHostInventory(Base):
     vnics      = Column(JSON, default=list)   # [{device, portgroup, mtu, ip_address, subnet_mask, dhcp}]
     dns        = Column(JSON, default=dict)   # {host_name, domain_name, dhcp, servers:[...]}
 
+    # ── Cluster üyeliği (HostSystem.parent) ──────────────────────────────────
+    cluster_name = Column(String(255))       # None = cluster'sız (standalone)
+    cluster_ref  = Column(String(64))
+    parent_name  = Column(String(255))       # cluster veya ComputeResource adı
+
+    # ── Donanım sağlığı (numericSensorInfo özeti) ────────────────────────────
+    overall_status    = Column(String(32))   # green / yellow / red / gray
+    sensor_total      = Column(Integer)
+    sensor_bad_count  = Column(Integer)
+    health_sensors    = Column(JSON, default=list)  # [{name,state,type,reading,unit}]
+    config_issues     = Column(JSON, default=list)  # [fullFormattedMessage, …]
+    health_checked_at = Column(DateTime(timezone=True))
+
     last_synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     hypervisor = relationship("Hypervisor")

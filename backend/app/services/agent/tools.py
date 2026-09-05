@@ -483,6 +483,460 @@ def _db_list_esx_hosts_handler(db: Session, args: Dict[str, Any], ctx: Dict[str,
         return {"ok": False, "error": str(e)}
 
 
+def _db_list_clusters_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_db_query import list_clusters_db
+        return list_clusters_db(
+            db,
+            hypervisor=args.get("hypervisor"),
+            name_filter=args.get("name_filter") or args.get("cluster"),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_clusters hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_metric_trend_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Host/VM/datastore zaman serisinden trend + tükenme tahmini (deterministik).
+
+    vCenter'ın tarihsel rollup'ı her ortamda yok (doğrudan ESXi bağlantısında
+    yalnız realtime vardır); bu araç kalıcı hypertable'lardan hesapladığı için
+    o ortamlarda da trend sorularını yanıtlar.
+    """
+    try:
+        from app.services.virt_trend_query import run_metric_trend
+        return run_metric_trend(
+            db,
+            entity_type=args.get("entity_type") or args.get("entity") or "host",
+            metric=args.get("metric"),
+            name_filter=args.get("name_filter") or args.get("name") or args.get("target"),
+            hypervisor=args.get("hypervisor"),
+            days=args.get("days") or args.get("lookback_days") or 7,
+            top_n=args.get("top_n") or args.get("limit") or 10,
+            order=args.get("order") or "worsening",
+            threshold=args.get("threshold"),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_metric_trend hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _virt_health_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanallaştırma ortamının sağlık skoru + kritik/uyarı bulguları.
+
+    Bu veriyi üreten motor (`virt_ops_center`) daha önce yalnızca UI'a REST
+    üzerinden servis ediliyordu; "vCenter sağlıklı mı / ortamda problem var mı"
+    sorularında ajanın çağırabileceği bir araç yoktu.
+    """
+    try:
+        from app.services.virt_ops_center import build_virt_command_center
+        data = build_virt_command_center(db)
+
+        def _slim_host(card: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "host": card.get("host_name") or card.get("hypervisor_name"),
+                "platform": card.get("platform"),
+                "severity": card.get("max_severity"),
+                "cpu_pct": card.get("cpu_usage_pct"),
+                "mem_pct": card.get("mem_usage_pct"),
+                "ds_pct": card.get("ds_usage_pct"),
+                "vms_running": card.get("vms_running"),
+                "connection_state": card.get("connection_state"),
+                "maintenance": card.get("maintenance_mode"),
+                "issues": [
+                    {
+                        "severity": i.get("severity"),
+                        "category": i.get("category"),
+                        "title": i.get("title"),
+                        "detail": i.get("detail"),
+                    }
+                    for i in (card.get("issues") or [])
+                ],
+                "suggested_actions": card.get("suggested_actions") or [],
+            }
+
+        limit = max(1, min(int(args.get("limit") or 20), 60))
+        logs = data.get("platform_logs") or []
+        if bool(args.get("include_logs", True)):
+            log_out = [
+                {
+                    "severity": l.get("severity"),
+                    "category": l.get("category"),
+                    "title": l.get("title"),
+                    "host": l.get("host_name"),
+                    "timestamp": l.get("timestamp"),
+                }
+                for l in logs
+                if (l.get("severity") in ("critical", "emergency", "warning"))
+            ][:limit]
+        else:
+            log_out = []
+
+        # Donanım sensörü özetini buraya da koyuyoruz: model genel sağlık
+        # sorusunda bu aracı seçtiğinde "hangi hostta sensör alarmı var"
+        # sorusunu ikinci bir tur olmadan yanıtlayabilsin.
+        hardware_health: List[Dict[str, Any]] = []
+        try:
+            from app.services.virt_db_query import list_esx_hosts_db
+            hosts = list_esx_hosts_db(
+                db,
+                fields=["name", "cluster", "overall_status", "sensor_bad_count",
+                        "bad_sensors", "config_issues"],
+            )
+            hardware_health = [
+                h for h in (hosts.get("hosts") or [])
+                if (h.get("overall_status") not in (None, "green"))
+                or (h.get("sensor_bad_count") or 0) > 0
+                or (h.get("config_issues") or [])
+            ][:limit]
+        except Exception as hh_e:
+            logger.debug("virt_health_overview donanım sağlığı eki atlandı: %s", hh_e)
+
+        # Küçük modeller skor/kart yapısını yorumlarken "sorun yok" diyebiliyor;
+        # tek cümlelik hazır hüküm bu hatayı büyük ölçüde kapatıyor.
+        _health = data.get("health") or {}
+        _crit = int(data.get("critical_count") or 0)
+        _warn = int(data.get("warning_count") or 0)
+        _worst = ", ".join(
+            f"{c.get('host_name') or c.get('hypervisor_name')}: "
+            + "; ".join((i.get("title") or "") for i in (c.get("issues") or [])[:2])
+            for c in (data.get("critical_hosts") or [])[:3]
+        )
+        if _crit or _warn:
+            verdict = (
+                f"ORTAM SORUNLU — skor {_health.get('score')}/100 "
+                f"({_health.get('label')}), {_crit} kritik / {_warn} uyarı bulgu."
+                + (f" Öne çıkanlar → {_worst}." if _worst else "")
+            )
+        else:
+            verdict = (
+                f"Kritik/uyarı bulgu yok — skor {_health.get('score')}/100 "
+                f"({_health.get('label')})."
+            )
+        if hardware_health:
+            verdict += (
+                " Donanım: "
+                + ", ".join(
+                    f"{h.get('name')} ({h.get('overall_status')}, "
+                    f"{h.get('sensor_bad_count') or 0} sensör)"
+                    for h in hardware_health[:3]
+                )
+                + "."
+            )
+
+        return {
+            "ok": True,
+            "source": "virt_ops_center (hypervisor_host_metrics + system_events)",
+            "verdict": verdict,
+            "verdict_note": "Bu cümle hazır hükümdür; cevabında bunu esas al, tersini iddia etme.",
+            "health": data.get("health"),
+            "hardware_health": hardware_health,
+            "hardware_health_note": (
+                "Yalnız sorunlu host'lar listelenir (overall_status green değil veya "
+                "sensör/yapılandırma uyarısı var). Boşsa donanım sağlığı temizdir."
+            ),
+            "totals": data.get("totals"),
+            "critical_count": data.get("critical_count"),
+            "warning_count": data.get("warning_count"),
+            "critical_hosts": [_slim_host(c) for c in (data.get("critical_hosts") or [])[:limit]],
+            "warning_hosts": [_slim_host(c) for c in (data.get("warning_hosts") or [])[:limit]],
+            "recent_issues": log_out,
+            "window_hours": data.get("window_hours"),
+            "generated_at": data.get("generated_at"),
+            "coverage_note": (
+                "Sağlık skoru host CPU/RAM/datastore eşikleri + son 24 saatlik "
+                "event/alarm kayıtlarından hesaplanır. Donanım sensörü verisi "
+                "db_list_esx_hosts (fields=[name,overall_status,sensor_bad_count]) "
+                "ile, HA/failover durumu db_list_clusters ile sorgulanır."
+            ),
+        }
+    except Exception as e:
+        logger.error("[Tool] virt_health_overview hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+# Jenerik property okuyucu için kürasyonlu path kataloğu — model bu menüden
+# seçer, serbest path de kabul edilir (doğrulama retrieve_properties'te).
+_VC_PROPERTY_CATALOG: Dict[str, Dict[str, str]] = {
+    "HostSystem": {
+        "name": "ESXi host adı",
+        "parent": "Cluster/ComputeResource MOR",
+        "summary.overallStatus": "green/yellow/red",
+        "summary.rebootRequired": "Yeniden başlatma gerekli mi",
+        "config.product.fullName": "ESXi sürüm adı",
+        "hardware.biosInfo.biosVersion": "BIOS sürümü",
+        "runtime.inMaintenanceMode": "Bakım modu",
+        "runtime.bootTime": "Son açılış zamanı",
+        "runtime.healthSystemRuntime.systemHealthInfo.numericSensorInfo": "Donanım sensörleri",
+        "config.storageDevice.multipathInfo": "Multipath/LUN path durumu",
+        "config.dateTimeInfo.ntpConfig.server": "NTP sunucuları",
+        "configIssue": "Yapılandırma uyarıları",
+    },
+    "ClusterComputeResource": {
+        "name": "Cluster adı",
+        "host": "Üye host MOR listesi",
+        "summary.effectiveCpu": "Kullanılabilir CPU (MHz)",
+        "summary.effectiveMemory": "Kullanılabilir RAM (MB)",
+        "configuration.dasConfig.admissionControlPolicy": "HA admission control politikası",
+        "configuration.drsConfig.vmotionRate": "DRS migration eşiği (1-5)",
+        "configurationEx.drsConfig.option": "DRS gelişmiş ayarlar",
+    },
+    "Datastore": {
+        "name": "Datastore adı",
+        "summary.capacity": "Toplam kapasite (byte)",
+        "summary.freeSpace": "Boş alan (byte)",
+        "summary.uncommitted": "Thin provisioning taahhüt edilmemiş alan",
+        "summary.maintenanceMode": "Bakım modu",
+        "summary.accessible": "Erişilebilir mi",
+        "host": "Mount eden host'lar ve mount durumu",
+        "iormConfiguration.enabled": "Storage IO Control açık mı",
+        "info.vmfs.ssd": "SSD mi",
+    },
+    "VirtualMachine": {
+        "name": "VM adı",
+        "runtime.host": "Çalıştığı host MOR",
+        "runtime.powerState": "Güç durumu",
+        "summary.storage.committed": "Kullanılan disk (byte)",
+        "summary.storage.uncommitted": "Taahhüt edilmemiş (snapshot/thin)",
+        "config.version": "Hardware sürümü",
+        "guest.toolsRunningStatus": "VMware Tools durumu",
+        "config.hardware.numCPU": "vCPU",
+        "config.hardware.memoryMB": "RAM (MB)",
+        "snapshot.rootSnapshotList": "Snapshot ağacı",
+    },
+}
+
+
+def _vcenter_property_read_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Jenerik READ-ONLY vSphere property okuyucu.
+
+    Sabit pathSet'lerin kapsamadığı bir alan sorulduğunda kod değişikliği
+    beklemeden yanıt üretir. Yalnız RetrieveProperties + ContainerView; mutate
+    method yüzeyi yok (bkz. perf_catalog.SOAP_MUTATE_DENY).
+    """
+    try:
+        from app.models.hypervisor import Hypervisor, HypervisorType
+        from app.services.hypervisor_credentials import hv_password
+        from app.services.vmware.perf_catalog import is_mutate_method
+        from app.services.vmware.vcenter_client import VCenterClient
+
+        if bool(args.get("list_catalog")):
+            return {
+                "ok": True,
+                "read_only": True,
+                "catalog": _VC_PROPERTY_CATALOG,
+                "hint": (
+                    "object_type + path_set ile çağır. Katalogdaki path'ler "
+                    "önerilerdir; vSphere API'sindeki başka bir path de verilebilir."
+                ),
+            }
+
+        object_type = (args.get("object_type") or "").strip()
+        if not object_type:
+            return {
+                "ok": False,
+                "error": "object_type zorunlu (HostSystem, ClusterComputeResource, Datastore, VirtualMachine …)",
+                "hint": "list_catalog=true ile kullanılabilir tip/path listesine bak",
+            }
+
+        path_set = (
+            args.get("path_set") or args.get("paths")
+            or args.get("properties") or args.get("property_set")
+        )
+        if isinstance(path_set, str):
+            path_set = [p.strip() for p in path_set.replace(";", ",").split(",") if p.strip()]
+        if not isinstance(path_set, list) or not path_set:
+            return {"ok": False, "error": "path_set zorunlu (en az bir property path)"}
+
+        # Savunma: mutate method adı property gibi geçirilmiş olabilir
+        for p in path_set:
+            if is_mutate_method(str(p)):
+                return {"ok": False, "error": f"Mutate method yasak: {p}"}
+        if not any(str(p).strip().lower() == "name" for p in path_set):
+            path_set = ["name"] + list(path_set)
+
+        q = db.query(Hypervisor).filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
+        hv_name = (args.get("hypervisor") or "").strip().lower()
+        hv = None
+        if hv_name:
+            for cand in q.all():
+                if (cand.name or "").lower() == hv_name or (cand.ip_address or "") == hv_name:
+                    hv = cand
+                    break
+        hv = hv or q.first()
+        if not hv:
+            return {"ok": False, "error": "Tanımlı VMware vCenter bulunamadı"}
+
+        client = VCenterClient(
+            host=hv.ip_address or hv.hostname,
+            username=hv.username or (hv.connection_config or {}).get("username", ""),
+            password=hv_password(hv),
+            port=hv.port or 443,
+            verify_ssl=False,
+        )
+        rows = client.retrieve_properties(
+            object_type,
+            path_set,
+            name_filter=args.get("name_filter") or args.get("target"),
+            limit=max(1, min(int(args.get("limit") or 50), 300)),
+        )
+        return {
+            "ok": True,
+            "read_only": True,
+            "mutate": False,
+            "source": "vcenter_soap_retrieve_properties",
+            "hypervisor": hv.name,
+            "object_type": object_type,
+            "path_set": path_set,
+            "count": len(rows),
+            "objects": rows,
+            "note": (
+                "Boş sonuç: path yanlış olabilir veya bu ortamda o özellik "
+                "yapılandırılmamıştır. Kullanılabilir path önerileri için "
+                "list_catalog=true."
+            ) if not rows else None,
+        }
+    except Exception as e:
+        logger.error("[Tool] vcenter_property_read hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _infra_report_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Hazır rapor motoru (kapasite/forecast/risk/anomali…) — hesabı motor yapar.
+
+    Trend/forecast aritmetiğini modele bıraktığımızda uydurma sayı riski var;
+    burada `report_engine` deterministik üretir, model yalnız yorumlar.
+    """
+    try:
+        from app.services.report_engine import (
+            REPORT_REGISTRY, format_report_as_markdown,
+        )
+        rtype = (
+            args.get("report_type") or args.get("type") or args.get("report") or ""
+        ).strip().lower()
+        available = sorted(REPORT_REGISTRY.keys())
+        if not rtype or rtype not in REPORT_REGISTRY:
+            return {
+                "ok": False,
+                "error": f"Geçersiz report_type: {rtype or '(boş)'}",
+                "available_types": available,
+            }
+        data = REPORT_REGISTRY[rtype](db) or {}
+        out: Dict[str, Any] = {
+            "ok": True,
+            "source": "report_engine",
+            "report_type": rtype,
+            "available_types": available,
+        }
+        if bool(args.get("markdown", True)):
+            try:
+                out["markdown"] = format_report_as_markdown(rtype, data)
+            except Exception as fe:
+                logger.debug("format_report_as_markdown(%s): %s", rtype, fe)
+        if bool(args.get("include_raw", False)):
+            out["data"] = data
+        else:
+            # Ham veri bağlamı şişirebilir; yalnız üst düzey özet alanları
+            out["summary"] = {
+                k: v for k, v in data.items()
+                if not isinstance(v, (list, dict))
+            }
+        return out
+    except Exception as e:
+        logger.error("[Tool] infra_report hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _knowledge_search_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Bilgi bankası / runbook / incident geçmişi semantik arama (pgvector).
+
+    RAG şu ana kadar yalnızca endpoint içinde PASİF olarak enjekte ediliyordu:
+    model kendi kararıyla arama yapamıyor, ilk retrieval ıskalarsa ikinci şansı
+    olmuyordu. Bu araç aynı motoru ajanın erişimine açar.
+    """
+    query = (args.get("query") or args.get("question") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query zorunlu"}
+    try:
+        import asyncio
+        from app.services.rag_service import get_rag_context_for_message
+
+        collections = args.get("collections")
+        if isinstance(collections, str):
+            collections = [c.strip() for c in collections.replace(";", ",").split(",") if c.strip()]
+        if not isinstance(collections, list) or not collections:
+            collections = None
+
+        async def _run():
+            return await get_rag_context_for_message(query, collections=collections)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            ctx_out = asyncio.run(_run())
+        else:
+            # Zaten bir event loop içindeyiz (async endpoint) → ayrı thread
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                ctx_out = ex.submit(lambda: asyncio.run(_run())).result(timeout=120)
+
+        found = {k: v for k, v in (ctx_out or {}).items() if (v or "").strip()}
+        return {
+            "ok": True,
+            "source": "rag_pgvector",
+            "query": query,
+            "collections_searched": collections or ["runbook", "incidents", "metrics", "knowledge"],
+            "hits": found,
+            "empty": not found,
+            "note": None if found else (
+                "Bilgi bankasında bu sorguya yakın kayıt bulunamadı. "
+                "Farklı/daha kısa anahtar kelimelerle tekrar denenebilir."
+            ),
+        }
+    except Exception as e:
+        logger.error("[Tool] knowledge_search hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Prometheus/envanter doğal dil sorgusu (NLQ hattı → PromQL + DB).
+
+    `services/nlq` hattı yalnızca kendi sayfasından erişilebiliyordu; hiçbir
+    sohbet yüzeyi bir soruyu buraya yönlendiremiyordu.
+    """
+    question = (args.get("question") or args.get("query") or "").strip()
+    if not question:
+        return {"ok": False, "error": "question zorunlu"}
+    try:
+        from app.services.nlq.pipeline import run_nlq
+        result = run_nlq(
+            db, question,
+            user=(ctx or {}).get("user"),
+            live_check=args.get("live_check"),
+        )
+        status = result.get("status")
+        return {
+            "ok": status == "success",
+            "source": "nlq_prometheus",
+            "status": status,
+            "question": question,
+            "summary": result.get("summary"),
+            "results": (result.get("results") or [])[:100],
+            "answer_markdown": result.get("answer_markdown"),
+            "interpreted_query": result.get("interpreted_query"),
+            "reason": result.get("reason"),
+            "missing_fields": result.get("missing_fields"),
+            "note": (
+                "Bu araç guest OS / envanter metriklerini (node_exporter, "
+                "windows_exporter) sorgular. ESXi/hipervizör seviyesi metrikler "
+                "için db_list_esx_hosts veya vcenter_perf_query kullan."
+            ),
+        }
+    except Exception as e:
+        logger.error("[Tool] prometheus_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _db_virt_alarms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from app.services.virt_db_query import list_virt_alarms_db
@@ -660,6 +1114,11 @@ def _vcenter_perf_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
             top_n=int(args.get("top_n") or 10),
             max_sample=int(args.get("max_sample") or 1),
             interval_id=int(args.get("interval_id") or 20),
+            lookback_hours=(
+                float(args["lookback_hours"])
+                if args.get("lookback_hours") not in (None, "", 0)
+                else None
+            ),
             list_catalog=bool(args.get("list_catalog")),
         )
     except Exception as e:
@@ -1595,7 +2054,10 @@ TOOLS: Dict[str, Tool] = {
                     "items": {"type": "string"},
                     "description": (
                         "İstenen alanlar (dinamik). Örn: name, ip, version, vendor, model, "
-                        "cpu_pct, mem_pct, connection_state, vms_total, hypervisor"
+                        "cpu_pct, mem_pct, connection_state, vms_total, hypervisor, "
+                        "cluster (host'un cluster'ı), overall_status (green/yellow/red), "
+                        "sensor_bad_count (donanım sensör alarmı sayısı), bad_sensors "
+                        "(arızalı sensör detayı), config_issues"
                     ),
                 },
             },
@@ -1605,6 +2067,236 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_db_list_esx_hosts_handler,
         direct_label="DB ESXi host (join+fields)",
+    ),
+    "db_list_clusters": Tool(
+        name="db_list_clusters",
+        description=(
+            "vCenter CLUSTER durumu DATABASE'den (READ-ONLY): HA açık mı, admission control "
+            "politikası, failover slot durumu (total/used/unreserved), DRS otomasyon seviyesi "
+            "ve migration eşiği, effective CPU/RAM kapasitesi, cluster host'larının CPU/RAM "
+            "ortalaması. "
+            "'HA yapılandırması riskli mi', 'bir host arızalanırsa VM'ler ayağa kalkar mı', "
+            "'DRS dengeli mi', 'cluster kapasitesi ne durumda', 'en riskli cluster hangisi' "
+            "sorularında BUNU ÇAĞIR. Her satırda `ha_verdict` alanı hazır deterministik "
+            "değerlendirme içerir — kendi başına failover hesabı YAPMA, bu alanı kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "name_filter": {"type": "string", "description": "Cluster adı filtresi (substring)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_clusters_handler,
+        direct_label="DB cluster HA/DRS durumu",
+    ),
+    "db_metric_trend": Tool(
+        name="db_metric_trend",
+        description=(
+            "TREND ve KAPASİTE TÜKENME TAHMİNİ (READ-ONLY, DB zaman serisi). Host / VM / "
+            "datastore için seçilen metriğin geçmiş penceredeki ilk-son değeri, ortalama, "
+            "p95, günlük eğimi (slope_per_day) ve eşiğe kalan gün (days_to_threshold) "
+            "deterministik hesaplanır. "
+            "'son 7 günde kötüleşen VM'ler', 'datastore ne zaman dolar', '30 günlük trend', "
+            "'kapasite problemi yaşayacak host/cluster', 'uzun süredir düşük kullanan VM'ler "
+            "(right-sizing)', 'performansı bozulan' sorularında BUNU ÇAĞIR — trend/tahmin "
+            "aritmetiğini KENDİN YAPMA. insufficient_history=true olan satırlarda trend "
+            "yorumu yapma, yalnız mevcut değeri bildir."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["host", "vm", "datastore"],
+                    "description": "Varlık tipi (varsayılan host)",
+                },
+                "metric": {
+                    "type": "string",
+                    "description": (
+                        "host: cpu_pct|mem_pct|ds_pct|vms_running · "
+                        "vm: cpu_pct|mem_pct|cpu_ready_pct|disk_latency_ms|balloon_mb|"
+                        "swapped_mb|net_dropped_rx|guest_disk_pct|snapshot_count · "
+                        "datastore: usage_pct|free_gb|used_gb|uncommitted_gb"
+                    ),
+                },
+                "days": {"type": "number", "description": "Geriye dönük pencere (gün, varsayılan 7)"},
+                "top_n": {"type": "integer", "description": "Kaç satır (varsayılan 10)"},
+                "order": {
+                    "type": "string",
+                    "enum": ["worsening", "improving", "highest", "lowest"],
+                    "description": "Sıralama; worsening = en hızlı artan eğim",
+                },
+                "name_filter": {"type": "string", "description": "Ad filtresi (substring)"},
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "threshold": {
+                    "type": "number",
+                    "description": "Tükenme eşiği (varsayılan doluluk %90 / free_gb 0)",
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_metric_trend_handler,
+        direct_label="Trend / kapasite tahmini",
+    ),
+    "virt_health_overview": Tool(
+        name="virt_health_overview",
+        description=(
+            "SANALLAŞTIRMA ORTAMININ GENEL SAĞLIK DEĞERLENDİRMESİ (READ-ONLY, DB). "
+            "Sağlık skoru + seviyesi, kritik/uyarı host kartları (hangi host, hangi metrik, "
+            "hangi eşik), önerilen aksiyonlar ve son 24 saatin kritik event/alarm başlıkları. "
+            "'vCenter sağlıklı mı', 'ortamda problem var mı', 'sağlık durumu nedir', "
+            "'yönetici olarak bilmem gereken bir şey var mı', 'bir sorun görüyor musun', "
+            "'genel durum nasıl', 'risk seviyesi nedir' gibi GENEL/BELİRSİZ sağlık "
+            "sorularında İLK BUNU ÇAĞIR. Detay gerekirse ardından db_list_esx_hosts "
+            "(sensör), db_list_clusters (HA), db_virt_alarms (alarm) ile derinleş."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max host/olay satırı (varsayılan 20)"},
+                "include_logs": {
+                    "type": "boolean",
+                    "description": "Son 24 saatin kritik event başlıklarını ekle (varsayılan true)",
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_virt_health_overview_handler,
+        direct_label="Sanallaştırma sağlık özeti",
+    ),
+    "vcenter_property_read": Tool(
+        name="vcenter_property_read",
+        description=(
+            "JENERİK vSphere property okuyucu (canlı SOAP, READ-ONLY, mutate YOK). "
+            "Diğer araçların kapsamadığı bir vCenter özelliği sorulduğunda bunu kullan: "
+            "object_type (HostSystem | ClusterComputeResource | Datastore | VirtualMachine | "
+            "Datacenter | DistributedVirtualSwitch …) + path_set (vSphere property path listesi). "
+            "Örnekler: multipath/LUN path durumu → HostSystem + config.storageDevice.multipathInfo; "
+            "NTP → HostSystem + config.dateTimeInfo.ntpConfig.server; "
+            "datastore mount durumu → Datastore + host; "
+            "thin provisioning taahhüdü → Datastore + summary.uncommitted; "
+            "VM snapshot ağacı → VirtualMachine + snapshot.rootSnapshotList. "
+            "Hangi path'lerin olduğunu bilmiyorsan önce list_catalog=true ile katalogu al. "
+            "ÖNCE özel araçları dene (db_* / vcenter_perf_query); bu araç son çare esnek yoldur."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "object_type": {
+                    "type": "string",
+                    "description": "vSphere managed object tipi (ör. HostSystem)",
+                },
+                "path_set": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Okunacak property path listesi (name otomatik eklenir)",
+                },
+                "name_filter": {"type": "string", "description": "Nesne adına göre süzme (substring)"},
+                "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "limit": {"type": "integer", "description": "Max nesne (varsayılan 50)"},
+                "list_catalog": {
+                    "type": "boolean",
+                    "description": "true → tip/path önerileri kataloğunu döner, sorgu yapmaz",
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_vcenter_property_read_handler,
+        direct_label="vCenter jenerik property okuma",
+    ),
+    "infra_report": Tool(
+        name="infra_report",
+        description=(
+            "HAZIR RAPOR MOTORU (READ-ONLY, DB). Trend/forecast/risk aritmetiğini motor "
+            "deterministik hesaplar; sen yalnızca yorumlarsın — sayıları KENDİN TÜRETME. "
+            "report_type: capacity (kapasite + datastore doluluk), forecast (30 gün büyüme "
+            "tahmini / kapasite tükenme), risk, anomaly, performance_bottleneck, vm_health, "
+            "consolidation (right-sizing), lifecycle, resource_usage, riskiest_assets, "
+            "operations, sla, business_impact, finance, security_compliance, executive_summary. "
+            "'Önümüzdeki 30 günde kapasite problemi olacak mı', 'yönetici raporu hazırla', "
+            "'right-sizing önerisi', 'en riskli varlıklar' gibi sorularda BUNU ÇAĞIR."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "report_type": {"type": "string", "description": "Rapor tipi (yukarıdaki listeden)"},
+                "markdown": {
+                    "type": "boolean",
+                    "description": "Hazır Markdown tablo üret (varsayılan true)",
+                },
+                "include_raw": {
+                    "type": "boolean",
+                    "description": "Ham JSON veriyi de ekle (bağlamı büyütür, varsayılan false)",
+                },
+            },
+            "required": ["report_type"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_infra_report_handler,
+        direct_label="Altyapı raporu (motor)",
+    ),
+    "knowledge_search": Tool(
+        name="knowledge_search",
+        description=(
+            "BİLGİ BANKASI / RUNBOOK / GEÇMİŞ OLAY semantik arama (pgvector, READ-ONLY). "
+            "Kurum içi doküman, prosedür, daha önce çözülmüş benzer arıza kaydı veya "
+            "yüklenmiş PDF/runbook içeriği gerektiğinde çağır: 'bu hatayı daha önce nasıl "
+            "çözdük', 'prosedür ne diyor', 'runbook var mı', 'benzer incident'. "
+            "Canlı metrik/envanter için kullanma — onlar db_* ve vcenter_* araçlarında."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Arama sorgusu (doğal dil)"},
+                "collections": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "runbook | incidents | metrics | knowledge (boş = hepsi)",
+                },
+            },
+            "required": ["query"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_knowledge_search_handler,
+        direct_label="Bilgi bankası arama (RAG)",
+    ),
+    "prometheus_query": Tool(
+        name="prometheus_query",
+        description=(
+            "GUEST OS metrik/envanter doğal dil sorgusu (NLQ → PromQL + DB, READ-ONLY). "
+            "node_exporter / windows_exporter verisi üzerinden: 'CPU'su %80 üstünde olan "
+            "sunucular', 'disk doluluğu %90'ı geçen makineler', 'RAM kullanımı en yüksek 10 "
+            "sunucu', 'servisi düşmüş olanlar'. "
+            "DİKKAT: Bu araç işletim sistemi içi metrikleri sorgular. ESXi/hipervizör "
+            "seviyesindeki CPU/RAM/datastore için db_list_esx_hosts veya vcenter_perf_query kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Doğal dil sorgu"},
+                "live_check": {
+                    "type": "boolean",
+                    "description": "Sonuçları canlı SSH/agent ile doğrula (yavaş)",
+                },
+            },
+            "required": ["question"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_prometheus_query_handler,
+        direct_label="Prometheus NLQ sorgusu",
     ),
     "db_virt_alarms": Tool(
         name="db_virt_alarms",
@@ -1758,9 +2450,14 @@ TOOLS: Dict[str, Tool] = {
     "vcenter_perf_query": Tool(
         name="vcenter_perf_query",
         description=(
-            "vCenter Monitor tarzı CANLI performans (READ-ONLY QueryPerf). "
+            "vCenter Monitor tarzı performans (READ-ONLY QueryPerf) — anlık VEYA geçmiş. "
             "Geniş counter kataloğundan YALNIZ kullanıcının istediği metrikleri çeker "
-            "(disk_rate, disk_requests, cpu, mem, net, vdisk, overview veya kanonik key). "
+            "(disk_rate, disk_requests, cpu, mem, net, vdisk, overview, mem_pressure, "
+            "contention, latency_breakdown, ds_iops veya kanonik key). "
+            "GEÇMİŞ/TREND soruları için lookback_hours ver (ör. 24, 168) — avg/min/max/p95 döner. "
+            "Storage latency'nin kaynağını ayırmak için entity=host + metrics=[latency_breakdown]: "
+            "device yüksek→array, queue yüksek→host HBA, kernel yüksek→VMkernel. "
+            "Memory pressure için metrics=[mem_pressure] (balloon/swap), CPU contention için [contention]. "
             "Host Disk Rate/Requests Top-N (naa.*/NVMe) için entity=host, "
             "metrics=[disk_rate] veya [disk_requests], target=ESXi adı, top_n=10. "
             "VM için entity=vm + target=VM adı. Envanter ile join (IP, version…). "
@@ -1797,6 +2494,15 @@ TOOLS: Dict[str, Tool] = {
                 "interval_id": {
                     "type": "integer",
                     "description": "Perf interval saniye (realtime=20)",
+                },
+                "lookback_hours": {
+                    "type": "number",
+                    "description": (
+                        "GEÇMİŞE dönük sorgu penceresi (saat). Verilirse vCenter'ın "
+                        "kendi rollup'ından avg/min/max/p95 döner — 'son 24 saat', "
+                        "'son 7 gün', 'trend', 'kötüleşti mi' sorularında kullan. "
+                        "Boş bırakılırsa anlık (realtime) değer döner."
+                    ),
                 },
                 "list_catalog": {
                     "type": "boolean",
@@ -2627,11 +3333,21 @@ TOOLS: Dict[str, Tool] = {
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
+    # "infra" her platformda ortak olduğu için bu üç araç TÜM sohbet
+    # yüzeylerinde (Linux / Windows / Sanallaştırma / OpenShift / Unified)
+    # görünür — bilgi bankası, rapor motoru ve NLQ hattı platforma özel değil.
+    "infra_report": frozenset({"infra"}),
+    "knowledge_search": frozenset({"infra"}),
+    "prometheus_query": frozenset({"infra"}),
     "cross_entity_match": frozenset({"infra", "linux", "windows", "vcenter", "openshift"}),
     "db_list_vms": frozenset({"vcenter", "infra"}),
     "db_vm_detail": frozenset({"vcenter", "infra"}),
     "db_list_datastores": frozenset({"vcenter", "infra"}),
     "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
+    "db_list_clusters": frozenset({"vcenter", "infra"}),
+    "virt_health_overview": frozenset({"vcenter", "infra"}),
+    "db_metric_trend": frozenset({"vcenter", "infra"}),
+    "vcenter_property_read": frozenset({"vcenter"}),
     "db_virt_alarms": frozenset({"vcenter", "infra"}),
     "db_list_critical_events": frozenset({"infra"}),
     "db_virt_cross_match": frozenset({"vcenter", "infra"}),
@@ -2678,13 +3394,32 @@ PLATFORM_TOOL_DOMAINS = {
 }
 
 
+# UI / rapor tanımları platform adını farklı yazabiliyor — tek noktada çöz.
+_PLATFORM_ALIASES: Dict[str, str] = {
+    "virtualization": "virt", "vcenter": "virt", "vmware": "virt",
+    "hypervisor": "virt", "sanallastirma": "virt", "sanallaştırma": "virt",
+    "ocp": "openshift", "kubernetes": "openshift", "k8s": "openshift",
+    "rhel": "linux", "all": "unified", "admin": "unified", "executive": "unified",
+}
+
+
 def domains_for_platform(platform: Optional[str]) -> Optional[frozenset]:
-    """Sohbet platformuna göre tool domain filtresi; bilinmeyen → linux."""
+    """Sohbet platformuna göre tool domain filtresi; bilinmeyen → linux.
+
+    Eşanlamlılar burada çözülür: "virtualization"/"vcenter" gibi bir değer
+    tanınmazsa Linux'a düşüyordu ve o sohbette TÜM vCenter araçları sessizce
+    kayboluyordu — model de "canlı veri mevcut değil" diyordu.
+    """
     if not platform:
         return PLATFORM_TOOL_DOMAINS["linux"]
     key = platform.strip().lower()
+    key = _PLATFORM_ALIASES.get(key, key)
     if key in PLATFORM_TOOL_DOMAINS:
         return PLATFORM_TOOL_DOMAINS[key]
+    logger.warning(
+        "domains_for_platform: bilinmeyen platform %r → linux araç setine düşüldü",
+        platform,
+    )
     return PLATFORM_TOOL_DOMAINS["linux"]
 
 

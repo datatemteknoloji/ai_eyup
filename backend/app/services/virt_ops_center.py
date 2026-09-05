@@ -44,9 +44,14 @@ def _health_score(critical: int, warning: int, host_count: int, manager_count: i
     if manager_count == 0 and host_count == 0:
         return {"score": 100, "grade": "A", "label": "Veri Yok", "color": "slate"}
 
-    penalty = critical * 15 + warning * 5
+    # Ceza iki bileşenli: yaygınlık (etkilenen varlık oranı) + varlık cezası.
+    # Yalnız oran kullanıldığında tek host'lu ortamda bir kritik bulgu 92 puan
+    # ("Sağlıklı") üretiyordu; sabit varlık cezası bunu engeller, oran ise
+    # ortam büyüdükçe bulgu sayısını ayırt etmeyi sürdürür.
     denom = max(host_count + manager_count, 1)
-    score = max(0, min(100, round(100 - penalty / denom)))
+    spread = (critical / denom) * 60 + (warning / denom) * 20
+    presence = 20 if critical else (8 if warning else 0)
+    score = max(0, min(100, round(100 - spread - presence)))
     if score >= 90:
         grade, label, color = "A", "Sağlıklı", "green"
     elif score >= 75:

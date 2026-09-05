@@ -72,12 +72,59 @@ def _upsert_virt_event(db: Session, log: Dict[str, Any], event_type: str, now: d
     return True
 
 
+_LIFECYCLE_STATE_KEY = "vcenter_lifecycle_last_sync"
+
+
+def _run_lifecycle_scan_if_due(db: Session) -> Dict[str, Any]:
+    """Tip filtreli 30 günlük event taramasını günde bir kez çalıştırır.
+
+    Son çalışma zamanı AppSettings'te tutulur; modül değişkeni kullanılmaz ki
+    backend restart'ta tarama gereksiz yere tekrar tetiklenmesin.
+    """
+    from app.models.app_settings import AppSettings
+    from app.services.vcenter_event_collector import sync_vcenter_lifecycle_events
+
+    try:
+        row = (
+            db.query(AppSettings)
+            .filter(AppSettings.key == _LIFECYCLE_STATE_KEY)
+            .first()
+        )
+        if row and row.value:
+            try:
+                last = datetime.fromisoformat(str(row.value))
+                if datetime.utcnow() - last < timedelta(hours=24):
+                    return {"skipped": True, "reason": "not_due", "last_run": row.value}
+            except ValueError:
+                pass
+
+        result = sync_vcenter_lifecycle_events(db, days=30)
+
+        stamp = datetime.utcnow().isoformat()
+        if row is None:
+            db.add(AppSettings(key=_LIFECYCLE_STATE_KEY, value=stamp))
+        else:
+            row.value = stamp
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Lifecycle event taraması atlandı: %s", exc)
+        return {"success": False, "total_saved": 0, "errors": [str(exc)]}
+
+
 def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
     """Virt komuta merkezi + vCenter/OpenShift Virtualization event/alarm kaynaklarından SystemEvent oluştur/güncelle."""
     from app.services.vcenter_event_collector import sync_all_vcenter_events
     from app.services.openshift_virt_event_collector import sync_all_openshift_virt_events
 
     vcenter_result = sync_all_vcenter_events(db, hours=48)
+
+    # 48 saatlik filtresiz tarama "son 7/30 gün" sorularını karşılamıyor
+    # (login/logout gürültüsü sayfaları dolduruyor). Tip filtreli geniş pencere
+    # taraması günde bir kez çalışır — son çalışma zamanı AppSettings'te tutulur.
+    lifecycle_result = _run_lifecycle_scan_if_due(db)
+
     try:
         openshift_virt_result = sync_all_openshift_virt_events(db, hours=48)
     except Exception as exc:
@@ -124,12 +171,19 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
                 logger.warning("[AutoIncident] Virt event #%s: %s", ev.id, exc)
 
     return {
-        "total_saved": saved + vcenter_result.get("total_saved", 0) + openshift_virt_result.get("total_saved", 0),
+        "total_saved": (
+            saved
+            + vcenter_result.get("total_saved", 0)
+            + openshift_virt_result.get("total_saved", 0)
+            + (lifecycle_result.get("total_saved") or 0)
+        ),
         "virt_saved": saved,
         "vcenter_saved": vcenter_result.get("total_saved", 0),
+        "lifecycle_saved": lifecycle_result.get("total_saved") or 0,
         "openshift_virt_saved": openshift_virt_result.get("total_saved", 0),
         "critical_hosts": len(data.get("critical_hosts", [])),
         "platform_logs": len(data.get("platform_logs", [])),
         "vcenter_sync": vcenter_result,
+        "lifecycle_sync": lifecycle_result,
         "openshift_virt_sync": openshift_virt_result,
     }

@@ -313,6 +313,115 @@ def sync_vcenter_events_for_hypervisor(db: Session, hypervisor: Hypervisor, hour
     }
 
 
+# ── Uzun pencereli (30 gün) tip-filtreli event taraması ──────────────────────
+#
+# collect_platform_logs() filtresiz collector kullanır: login/logout gürültüsü
+# sayfaları doldurduğu için 48 saatten geriye güvenilir kapsama vermez.
+# Aşağıdaki liste EventFilterSpec.eventTypeId ile SUNUCU tarafında süzülür;
+# "son 7/30 günde tekrarlayan problem", "DRS kaç kez VM taşıdı", "host bağlantı
+# kaybı yaşandı mı" sorularının veri kaynağı budur.
+LIFECYCLE_EVENT_TYPES: List[str] = [
+    # HA / host erişilebilirlik
+    "HostConnectionLostEvent",
+    "HostReconnectionFailedEvent",
+    "HostSyncFailedEvent",
+    "HostNotRespondingEvent",
+    "DasHostFailedEvent",
+    "DasHostIsolatedEvent",
+    "DasAgentUnavailableEvent",
+    "DasClusterIsolatedEvent",
+    # VM güç / HA restart / hata
+    "VmFailedToPowerOnEvent",
+    "VmFailedToPowerOffEvent",
+    "VmDiskFailedEvent",
+    "VmFailoverFailed",
+    "VmDasBeingResetEvent",
+    "VmDasResetFailedEvent",
+    "VmPoweredOffEvent",
+    "VmPoweredOnEvent",
+    # DRS / migration geçmişi
+    "DrsVmMigratedEvent",
+    "VmMigratedEvent",
+    "VmRelocatedEvent",
+    "DrsVmPoweredOnEvent",
+    "DrsSoftRuleViolationEvent",
+    "NotEnoughResourcesToStartVmEvent",
+    # Storage
+    "DatastoreCapacityIncreasedEvent",
+    "VmDiskConsolidatedFailedEvent",
+    # Yaşam döngüsü
+    "VmCreatedEvent",
+    "VmRemovedEvent",
+    "VmClonedEvent",
+]
+
+
+def sync_vcenter_lifecycle_events(
+    db: Session, days: int = 30, max_events: int = 3000,
+) -> Dict[str, Any]:
+    """Tip filtreli GENİŞ pencere event taraması (varsayılan 30 gün).
+
+    `sync_all_vcenter_events` ile aynı `system_events` tablosuna yazar; aynı
+    external_key üretildiği için mükerrer kayıt oluşmaz (upsert davranışı).
+    """
+    from app.services.vmware.vcenter_client import VCenterClient
+
+    vmware_hvs = [
+        h for h in db.query(Hypervisor).all()
+        if (h.hypervisor_type.value if h.hypervisor_type else "") == "vmware"
+    ]
+    if not vmware_hvs:
+        return {"success": True, "total_saved": 0, "hypervisors": 0}
+
+    now = datetime.utcnow()
+    total_saved = 0
+    fetched = 0
+    errors: List[str] = []
+
+    for hv in vmware_hvs:
+        try:
+            client = VCenterClient(
+                host=hv.ip_address or hv.hostname,
+                username=hv.username or (hv.connection_config or {}).get("username", ""),
+                password=hv_password(hv),
+                port=hv.port or 443,
+            )
+            payload = client.query_lifecycle_events(
+                event_type_ids=LIFECYCLE_EVENT_TYPES,
+                days=days,
+                max_events=max_events,
+            )
+            events = payload.get("events") or []
+            fetched += len(events)
+            errors.extend(payload.get("errors") or [])
+
+            for ev in events:
+                kind = ev.get("kind") or "vcenter_event"
+                source = kind if kind in VCENTER_SOURCES else "vcenter_event"
+                if _upsert_vcenter_event(db, hv, ev, source, kind, now):
+                    total_saved += 1
+            db.commit()
+            logger.info(
+                "vCenter lifecycle event sync: %s → %s olay (%s gün, %s yeni)",
+                hv.name, len(events), days, total_saved,
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.error(
+                "vCenter lifecycle event sync hatası (%s): %s", hv.name, exc, exc_info=True
+            )
+            errors.append(f"{hv.name}: {exc}")
+
+    return {
+        "success": not errors,
+        "hypervisors": len(vmware_hvs),
+        "days": days,
+        "fetched_events": fetched,
+        "total_saved": total_saved,
+        "errors": errors,
+    }
+
+
 def sync_all_vcenter_events(db: Session, hours: int = 48) -> Dict[str, Any]:
     """Tüm VMware hypervisor'lardan vCenter event/alarm sync."""
     hypervisors = db.query(Hypervisor).all()

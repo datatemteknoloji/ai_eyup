@@ -400,6 +400,71 @@ def _get_vms(db: Session, hypervisor_id: Optional[int] = None) -> List[Dict[str,
 
 # ── Context builder ───────────────────────────────────────────────────────────
 
+def _apply_entity_scope(
+    db: Session,
+    question: str,
+    esx_hosts: List[Dict[str, Any]],
+    vms: List[Dict[str, Any]],
+    intents: List[str],
+    vm_names_to_compare: Optional[List[str]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+    """Kullanıcı mesajında belirli bir host/VM/datastore/cluster adı geçiyorsa,
+    detay bölümlerini (host listesi, VM listesi, ağ envanteri, datastore/cluster
+    özeti) o varlığın kapsamına daraltır.
+
+    Neden: `build_context` soru bağımsız olarak TÜM host/VM envanterini dump
+    ediyordu — "X host üzerindeki VM'leri göster" gibi dar kapsamlı bir soru
+    bile 62 host / 3720 VM'lik context üretiyordu (bkz. LLM_CONTEXT log'ları).
+    Token maliyeti böylece FLEET büyüklüğünden değil sorgunun KAPSAMINDAN
+    bağımsız hale gelir — ortam 3700 VM'den 10.000'e çıksa da "bu host'taki
+    VM'ler" sorusunun maliyeti değişmez.
+
+    `compare_vms` intent'i kendi hedef VM seçimini yapar; bu durumda scope
+    UYGULANMAZ (dokunmadan tam liste döner, geriye dönük davranış korunur).
+    """
+    if "compare_vms" in intents and vm_names_to_compare:
+        return esx_hosts, vms, None
+    try:
+        from app.services.virt_entity_resolver import extract_entity_filters
+        filters = extract_entity_filters(db, question) or {}
+    except Exception:
+        filters = {}
+
+    def _eq(a: Optional[str], b: str) -> bool:
+        return (a or "").strip().lower() == b.strip().lower()
+
+    if filters.get("host_name"):
+        host_name = filters["host_name"]
+        scoped_hosts = [h for h in esx_hosts if _eq(h.get("host"), host_name)]
+        scoped_vms = [v for v in vms if _eq(v.get("host"), host_name)]
+        if scoped_hosts or scoped_vms:
+            return scoped_hosts, scoped_vms, f"host={host_name}"
+
+    if filters.get("cluster"):
+        cluster = filters["cluster"]
+        scoped_vms = [v for v in vms if _eq(v.get("cluster"), cluster)]
+        host_names = {(v.get("host") or "").strip().lower() for v in scoped_vms}
+        scoped_hosts = [h for h in esx_hosts if (h.get("host") or "").strip().lower() in host_names]
+        if scoped_vms:
+            return scoped_hosts, scoped_vms, f"cluster={cluster}"
+
+    if filters.get("datastore"):
+        datastore = filters["datastore"]
+        scoped_vms = [v for v in vms if _eq(v.get("datastore"), datastore)]
+        if scoped_vms:
+            # Datastore sorularında host listesi genelde ilgisiz — host'lar
+            # dokunulmadan kalır (ds özeti zaten kendi bölümünde daraltılıyor).
+            return esx_hosts, scoped_vms, f"datastore={datastore}"
+
+    if filters.get("vm_name") and not vm_names_to_compare:
+        vm_name = filters["vm_name"]
+        scoped_vms = [v for v in vms if _eq(v.get("name"), vm_name)]
+        if scoped_vms:
+            return esx_hosts, scoped_vms, f"vm={vm_name}"
+
+    return esx_hosts, vms, None
+
+
 def build_context(
     db: Session,
     question: str,
@@ -408,12 +473,21 @@ def build_context(
     """
     Soruya göre optimize edilmiş bağlam metni oluşturur.
     LLM token limitini aşmamak için gereksiz veriyi kırpar.
+
+    Kullanıcı belirli bir host/VM/datastore/cluster adı belirttiyse (bkz.
+    `_apply_entity_scope`), detay bölümleri yalnızca o varlığın kapsamına
+    daraltılır — "ORTAM TOPLAMLARI" bölümü yine de GERÇEK (tam fleet)
+    sayıları gösterir, kapsam yalnızca bir not olarak eklenir.
     """
     intents = detect_intent(question)
     hypervisors = _get_hypervisors(db)
-    esx_hosts = _get_esx_hosts(db)
+    esx_hosts_all = _get_esx_hosts(db)
     host_inventory = _get_host_inventory(db)
-    vms = _get_vms(db)
+    vms_all = _get_vms(db)
+
+    esx_hosts, vms, scope_note = _apply_entity_scope(
+        db, question, esx_hosts_all, vms_all, intents, vm_names_to_compare,
+    )
 
     # Hypervisor → host mapping
     hv_map = {hv["id"]: hv for hv in hypervisors}
@@ -423,6 +497,15 @@ def build_context(
         host_hv_map[host["host"]] = hv.get("name", "")
 
     parts: List[str] = []
+
+    if scope_note:
+        parts.append(
+            "## KAPSAM DARALTMA\n"
+            f"  Soru belirli bir varlığa işaret ediyor ({scope_note}) — aşağıdaki "
+            "host/VM detayları YALNIZ bu kapsama daraltılmıştır (tam ortam değil). "
+            "Ortam genelindeki gerçek toplamlar en alttaki 'ORTAM TOPLAMLARI' "
+            "bölümündedir."
+        )
 
     # ── Bölüm 1: Hypervisor özeti ────────────────────────────────────────────
     hv_lines = []
@@ -552,8 +635,11 @@ def build_context(
     if ds_summary:
         parts.append(ds_summary)
 
-    # ── Bölüm 5: Ortam özeti (her soruda) ────────────────────────────────────
-    parts.append(_environment_totals_block(hypervisors, esx_hosts, vms))
+    # ── Bölüm 5: Ortam özeti (her soruda) — HER ZAMAN tam fleet üzerinden ─────
+    # (scope_note varsa yukarıdaki detay bölümleri daraltılmış olsa da, burada
+    # gerçek ortam büyüklüğü gösterilir — model/kullanıcı yanlış "toplam VM
+    # sayısı" çıkarımı yapmasın.)
+    parts.append(_environment_totals_block(hypervisors, esx_hosts_all, vms_all, scope_note=scope_note))
 
     return "\n\n".join(parts)
 
@@ -592,14 +678,22 @@ def _environment_totals_block(
     hypervisors: List[Dict],
     esx_hosts: List[Dict],
     vms: List[Dict],
+    *,
+    scope_note: Optional[str] = None,
 ) -> str:
     on = sum(
         1
         for v in vms
         if str(v.get("power_state") or "").lower() in ("powered_on", "poweredon", "up", "running")
     )
+    scope_line = (
+        f"  NOT: Yukarıdaki detay bölümleri '{scope_note}' kapsamına daraltıldı; "
+        "bu toplamlar TÜM ortamı (tam fleet) gösterir.\n"
+        if scope_note else ""
+    )
     return (
         "## ORTAM TOPLAMLARI\n"
+        f"{scope_line}"
         f"  Hypervisor: {len(hypervisors)}\n"
         f"  Host: {len(esx_hosts)}\n"
         f"  VM: {len(vms)} ({on} açık / {len(vms) - on} kapalı veya bilinmeyen)\n"
@@ -1921,10 +2015,157 @@ def h_cluster_ha_drs(db: Session, question: str = "") -> str:
             c.get("overall_status") or "—",
             c.get("hypervisor"),
         ])
-    return "### Cluster HA/DRS Durumu (vCenter canlı)\n\n" + _md_table(
+    out = "### Cluster HA/DRS Durumu (vCenter canlı)\n\n" + _md_table(
         ["Cluster", "HA", "DRS", "DRS davranışı", "Host", "CPU core", "RAM (GB)", "Status", "Hypervisor"],
         rows,
     )
+
+    # Failover kapasitesi — admission control politikası ve slot durumu
+    # ("bir host arızalanırsa VM'ler ayağa kalkar mı" sorusunun asıl cevabı)
+    fo_rows = []
+    for c in r["clusters"]:
+        if c.get("ha_enabled") is not True:
+            continue
+        ac = c.get("admission_control_enabled")
+        slots = (
+            f"{c.get('unreserved_slots')}/{c.get('total_slots')}"
+            if c.get("total_slots") is not None else "—"
+        )
+        reserve = []
+        if c.get("cpu_failover_pct") is not None:
+            reserve.append(f"CPU %{c['cpu_failover_pct']}")
+        if c.get("mem_failover_pct") is not None:
+            reserve.append(f"RAM %{c['mem_failover_pct']}")
+        if c.get("failover_level") is not None:
+            reserve.append(f"{c['failover_level']} host toleransı")
+        fo_rows.append([
+            c.get("name"),
+            "Açık" if ac else ("Kapalı" if ac is False else "—"),
+            c.get("policy_label") or c.get("policy_type") or "—",
+            ", ".join(reserve) or "—",
+            slots,
+            c.get("effective_hosts") if c.get("effective_hosts") is not None else "—",
+            c.get("host_monitoring") or "—",
+        ])
+    if fo_rows:
+        out += "\n\n#### HA Failover Kapasitesi\n\n" + _md_table(
+            ["Cluster", "Admission control", "Politika", "Ayrılan yedek",
+             "Boş/Toplam slot", "Sağlıklı host", "Host monitoring"],
+            fo_rows,
+        )
+        out += (
+            "\n_Slot bilgisi yalnızca slot tabanlı politikada dolar; yüzde tabanlı "
+            "politikada 'Ayrılan yedek' kolonu geçerlidir._"
+        )
+    return out
+
+
+def h_virt_health_overview(db: Session, question: str = "") -> str:
+    """Ortamın genel sağlık değerlendirmesi — skor + kritik bulgular + sensör + HA.
+
+    Önceki davranış: 'vCenter'ın sağlık durumu nedir?' sorusu hiçbir kurala
+    uymuyordu ve LLM araç çağırmadan "canlı veri mevcut değil" diyordu. Burada
+    aynı motor (virt_ops_center) deterministik olarak render edilir.
+    """
+    from app.services.virt_ops_center import build_virt_command_center
+
+    data = build_virt_command_center(db)
+    health = data.get("health") or {}
+    totals = data.get("totals") or {}
+
+    lines = ["### Sanallaştırma Ortamı Sağlık Değerlendirmesi", ""]
+    score = health.get("score")
+    level = health.get("level") or health.get("status")
+    lines.append(
+        f"**Sağlık skoru:** {score if score is not None else '—'}"
+        + (f" ({level})" if level else "")
+    )
+    lines.append(
+        f"**Kapsam:** {totals.get('hypervisor_count', '—')} hypervisor · "
+        f"{totals.get('host_count', '—')} host · "
+        f"{totals.get('vm_running', '—')}/{totals.get('vm_total', '—')} VM çalışıyor · "
+        f"ortalama CPU %{totals.get('avg_cpu_pct', '—')} / RAM %{totals.get('avg_mem_pct', '—')}"
+    )
+    lines.append(
+        f"**Bulgu:** {data.get('critical_count', 0)} kritik, "
+        f"{data.get('warning_count', 0)} uyarı (son 24 saat)"
+    )
+    lines.append("")
+
+    prob_rows = []
+    for card in (data.get("critical_hosts") or []) + (data.get("warning_hosts") or []):
+        for issue in (card.get("issues") or []):
+            prob_rows.append([
+                "🔴" if issue.get("severity") == "critical" else "🟡",
+                card.get("host_name") or card.get("hypervisor_name") or "—",
+                issue.get("category") or "—",
+                issue.get("title") or "—",
+                issue.get("detail") or "—",
+            ])
+    lines.append("#### Öncelik sırasına göre problemler")
+    lines.append("")
+    lines.append(_md_table(
+        ["", "Host", "Kategori", "Problem", "Detay"],
+        prob_rows[:25],
+        "Eşik aşımı veya kritik olay tespit edilmedi.",
+    ))
+
+    # Donanım sensörü ve HA — ayrı veri kaynakları
+    try:
+        from app.services.virt_db_query import list_esx_hosts_db
+        hosts = list_esx_hosts_db(
+            db, fields=["name", "overall_status", "sensor_bad_count", "cluster"]
+        ).get("hosts") or []
+        bad = [
+            h for h in hosts
+            if (h.get("sensor_bad_count") or 0) > 0
+            or (h.get("overall_status") or "").lower() in ("red", "yellow")
+        ]
+        if bad:
+            lines.append("")
+            lines.append("#### Donanım sağlığı (sensör)")
+            lines.append("")
+            lines.append(_md_table(
+                ["Host", "Genel durum", "Sorunlu sensör", "Cluster"],
+                [[
+                    h.get("name"),
+                    h.get("overall_status") or "—",
+                    h.get("sensor_bad_count") or 0,
+                    h.get("cluster") or "—",
+                ] for h in bad[:20]],
+            ))
+    except Exception as exc:
+        logger.debug("health overview sensor bloğu atlandı: %s", exc)
+
+    try:
+        from app.services.virt_db_query import list_clusters_db
+        cl = list_clusters_db(db)
+        clusters = cl.get("clusters") or []
+        if clusters:
+            lines.append("")
+            lines.append("#### Cluster / HA değerlendirmesi")
+            lines.append("")
+            lines.append(_md_table(
+                ["Cluster", "HA", "DRS", "CPU %", "RAM %", "Değerlendirme"],
+                [[
+                    c.get("name"),
+                    "Açık" if c.get("ha_enabled") else "Kapalı",
+                    "Açık" if c.get("drs_enabled") else "Kapalı",
+                    c.get("cpu_pct_avg") if c.get("cpu_pct_avg") is not None else "—",
+                    c.get("mem_pct_avg") if c.get("mem_pct_avg") is not None else "—",
+                    c.get("ha_verdict") or "—",
+                ] for c in clusters[:10]],
+            ))
+    except Exception as exc:
+        logger.debug("health overview cluster bloğu atlandı: %s", exc)
+
+    lines.append("")
+    lines.append(
+        f"_Kaynak: hypervisor_host_metrics + system_events (son "
+        f"{data.get('window_hours', 24)} saat) + virt_clusters. "
+        f"Üretim: {(data.get('generated_at') or '')[:16]}_"
+    )
+    return "\n".join(lines)
 
 
 def h_unused_datastore(db: Session, question: str = "") -> str:
@@ -2639,6 +2880,26 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"en\s*fazla\s*boş\s*(belle[gğk]\w*|ram|hafıza)|boş\s*(belle[gğk]\w*|ram).*(host|en\s*fazla)|ram.?i\s*en\s*boş\s*host|en\s*boş\s*(ram|bellek).*host", h_free_resources),
     (r"disconnect\s*(olan|olmuş)?\s*host|host\s*disconnect|bağlantısı\s*kop(an|muş)\s*host|bağlantı\s*kesilen\s*host", h_host_disconnected),
     (r"vmware\s*tools\s*(kurulu|yüklü)\s*olmayan|tools\s*(kurulu|yüklü)\s*olmayan|guest\s*tools\s*(kurulu|yüklü)\s*olmayan", h_no_tools),
+    # ── Genel sağlık / durum değerlendirmesi ─────────────────────────────────
+    # NOT: Bu kalıp daha önce yalnızca "ortam genel sağlık" / "sağlık
+    # değerlendirmesi" gibi tam ifadeleri yakalıyordu; "vCenter'ın sağlık durumu
+    # nedir?", "ortamda problem var mı?", "bir sorun görüyor musun?" gibi aynı
+    # anlamdaki doğal ifadeler hiçbir kurala uymuyor ve model araç çağırmadan
+    # "canlı veri mevcut değil" diyordu. Kapsam sözcüğü (vcenter / ortam / genel
+    # / sistem / altyapı / sanallaştırma) şart koşularak host'a özel sorulara
+    # ("hangi hostlarda problem var") sızması engellenir.
+    (r"(vcenter|vsphere|ortam|sistem|altyap[ıi]|sanalla[şs]t[ıi]rma|genel)\w*\s*"
+     r"(?:[’'`]?[ıi]n\w*\s*|[’'`]?n[ıi]n\s*)?"
+     # sa[ğg]l[ıi]\w* → sağlık / sağlığı / sağlıklı ve yaygın yazım hatası "sağlım"
+     r"(sa[ğg]l[ıi]\w*|durum|risk|problem|sorun|s[ıi]k[ıi]nt)",
+     h_virt_health_overview),
+    (r"sa[ğg]l[ıi]kl[ıi]\s*m[ıi]\b|sa[ğg]l[ıi]\w*\s*(durum\w*|de[ğg]erlendir|kontrol|skoru)"
+     r"|bir\s*(sorun|problem)\s*g[öo]r[üu]yor\s*mu"
+     r"|(sorun|problem|s[ıi]k[ıi]nt[ıi])\s*var\s*m[ıi]\b"
+     r"|y[öo]netici\s*olarak\s*bilmem\s*gereken"
+     r"|acil\s*olarak\s*bilmem\s*gereken"
+     r"|risk\s*seviyesi|genel\s*risk|ne\s*durumda\b",
+     h_virt_health_overview),
     (r"ortam\s*genel\s*sağlık|genel\s*sağlık\s*değerlendir|sağlık\s*değerlendirmesi|executive\s*summary|yönetici\s*özet", h_health_summary_md),
 
     # VM Durumu
@@ -2771,6 +3032,71 @@ QA_RULES: List[Tuple[str, Any]] = [
 ]
 
 
+_TOOL_EVIDENCE_MARKER = "\n\n[CANLI ARAÇ SONUÇLARI"
+
+
+def _tool_evidence_block(question: str) -> str:
+    """Soruya eklenmiş ham araç çıktısı bloğu (yoksa boş string)."""
+    if _TOOL_EVIDENCE_MARKER not in (question or ""):
+        return ""
+    tail = question.split(_TOOL_EVIDENCE_MARKER, 1)[1]
+    # İlk satır başlığın kalanı ("— yanıtında bunları esas al]") — atılır.
+    return tail.split("\n", 1)[1].strip() if "\n" in tail else ""
+
+
+def _has_tool_evidence(question: str, min_chars: int = 80) -> bool:
+    """Araç kanıtı anlamlı büyüklükte mi (boş bloğa guard uygulanmasın)."""
+    return len(_tool_evidence_block(question)) >= min_chars
+
+
+_ANCHOR_RE = re.compile(r"\d+[\.,]?\d*|\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def _answer_ignores_evidence(answer: str, evidence: str, max_len: int = 400) -> bool:
+    """Kısa cevap, kanıttaki hiçbir somut değeri içermiyor mu?
+
+    "Veri yok" cümlesini kalıp listesiyle kovalamak yetmiyor — model her turda
+    yeni bir ifade uyduruyor ("bağlantı sağlanamadı", "rapor gelmedi"...).
+    Bunun yerine içerik ölçülür: kanıtta sayı/IP varken cevapta hiçbiri
+    geçmiyorsa ve cevap kısaysa, kanıt kullanılmamış demektir.
+    """
+    if not answer or not evidence or len(answer) > max_len:
+        return False
+    anchors = {a for a in _ANCHOR_RE.findall(evidence) if len(a) >= 2}
+    if len(anchors) < 3:
+        return False
+    return not any(a in answer for a in anchors)
+
+
+def _render_tool_evidence_fallback(
+    question: str, max_chars: int = 4000, db: Optional[Session] = None,
+) -> str:
+    """Model kanıtı yorumlamayı reddederse dürüst bir cevap üret.
+
+    Önce deterministik şablon denenir (soru bir QA kuralına uyuyorsa kullanıcı
+    düzgün tabloyu görür); yoksa ham araç çıktısı gösterilir. Yanlış "veri yok"
+    cümlesi hiçbir koşulda döndürülmez.
+    """
+    block = _tool_evidence_block(question)
+    if db is not None:
+        clean_q = question.split(_TOOL_EVIDENCE_MARKER, 1)[0]
+        try:
+            det = try_deterministic_answer(db, clean_q)
+            if det and det.strip():
+                return det
+        except Exception as e:
+            logger.debug("evidence fallback deterministik denemesi: %s", e)
+    if not block:
+        return "Araç çıktısı bu turda boş döndü."
+    return (
+        "Model bu turda araç çıktısını özetleyemedi; toplanan canlı veriyi "
+        "olduğu gibi veriyorum:\n\n```\n"
+        + block[:max_chars]
+        + ("\n… (kısaltıldı)" if len(block) > max_chars else "")
+        + "\n```"
+    )
+
+
 def try_deterministic_answer(db: Session, question: str) -> Optional[str]:
     """QA_RULES tablosunda eşleşen ilk kuralı çalıştırır.
 
@@ -2824,12 +3150,23 @@ def answer_report_question(
     active_model = model or get_active_model(db)
     title = REPORT_TITLES.get(report_type, report_type)
 
+    # ESKİ davranış sabit 3000 char kırpardı — küçük/orta ortamlarda bile
+    # datastore/host kırılımının bir kısmını (özellikle kritik uyarılar altta
+    # kalırsa) LLM'e ulaşmadan keserdi (bkz. "kapasite raporu" datastore
+    # doluluk % eksikliği bulgusu). Artık gateway'in gerçek context tavanına
+    # (`llm_context_hard_cap_tokens`, ileride 64K/128K'ya çıkarılabilir) göre
+    # ölçeklenen bir pay ayırıyoruz — rapor gövdesi büyürse otomatik daha
+    # fazla yer bulur, küçük ortamlarda da tamamı zaten sığar.
+    from app.services.llm_context_budget import get_input_token_budget
+    _report_char_cap = max(3000, min(20000, int(get_input_token_budget() * 3.5 * 0.5)))
+    md_for_prompt = md_preview[:_report_char_cap]
+
     prompt = f"""{_VIRTUALIZATION_PERSONA}
 
 Aşağıdaki rapor verisini bu uzmanlığınla analiz et ve Türkçe, pratik bir özet yaz.
 
 RAPOR: {title}
-{md_preview[:3000]}
+{md_for_prompt}
 
 Kullanıcı sorusu: {question}
 
@@ -2839,6 +3176,11 @@ Raporu şu başlıklar altında özetle:
 3. Öneriler (en kritik 3 aksiyon)
 
 KRİTİK: Raporda yazan host/VM/CPU/RAM sayılarını aynen kullan. "Bilinmiyor", "kaç VM host'ta çalışıyor bilinmiyor" gibi ifadeler YASAK — sayılar raporda varsa mutlaka yaz.
+Kapasite raporunda "Datastore Bazında Kapasite" tablosu varsa her datastore'un
+KENDİ "Doluluk %" değerini de mutlaka değerlendir — host'un genel/ortalama
+disk doluluğu düşük görünse bile TEK BİR datastore kritik (≥%80) olabilir;
+bunu asla host ortalamasının arkasında gizleme, "Öne çıkan bulgular"da adıyla
+ayrıca belirt.
 Tabloları doğrudan kopyalama, anlamlı yorum ekle. Cevabı markdown formatında yaz."""
 
     answer = md_preview  # fallback
@@ -2903,6 +3245,18 @@ def answer_hypervisor_question(
         if not conversation_history and not _has_directive
         else None
     )
+    # "Veri yok" cevabı önbelleğe girmişse (eski sürümden kalmış olabilir)
+    # onu HIT saymıyoruz — aksi halde araç yüzeyi düzeltildikten sonra bile
+    # kullanıcı aynı yanlış cümleyi TTL boyunca görmeye devam eder.
+    if cached is not None:
+        from app.services.chat_coverage import looks_like_no_data_answer
+        if looks_like_no_data_answer(cached.get("answer")):
+            logger.info(
+                "[HVIntelligence] cache'teki 'veri yok' cevabı yok sayıldı q=%r",
+                cache_q[:80],
+            )
+            qa_cache.invalidate_question(cache_q, model)
+            cached = None
     if cached is not None:
         hits = cached.pop("_cache_hits", None)
         cached["cached"] = True
@@ -2926,7 +3280,15 @@ def answer_hypervisor_question(
         result["answer"] = sanitize_llm_answer(result.get("answer") or "")
 
     is_deterministic = "deterministic" in intents
-    should_cache = (is_deterministic or not conversation_history) and not result.get("error") and not _has_directive
+    from app.services.chat_coverage import looks_like_no_data_answer
+    should_cache = (
+        (is_deterministic or not conversation_history)
+        and not result.get("error")
+        and not _has_directive
+        # Başarısız turu kalıcılaştırma: "veri yok" cevabı çoğu zaman geçici
+        # (araç seçimi/sync gecikmesi) — cache'lenirse hata kalıcı görünür.
+        and not looks_like_no_data_answer(result.get("answer"))
+    )
     if should_cache:
         qa_cache.set_cached_answer(cache_q, result, model)
 
@@ -2955,22 +3317,30 @@ def _compute_hypervisor_answer(
     from app.services.chat_intent import classify_chat_intent, ChatIntentKind
     chat_intent = classify_chat_intent(intent_q)
 
-    # Kavramsal soru — tam envanter dump'ı yok, persona ile kısa açıklama
-    if chat_intent.kind == ChatIntentKind.CONCEPTUAL:
+    # Kavramsal soru — tam envanter dump'ı yok, persona ile kısa açıklama.
+    # Araç kanıtı geldiyse soru kavramsal DEĞİLDİR (bu turda gerçekten veri
+    # toplandı); kavramsal dala girersek kanıt çöpe gider ve model haklı olarak
+    # "canlı veri dönmedi" der.
+    if chat_intent.kind == ChatIntentKind.CONCEPTUAL and not _has_tool_evidence(question):
         hist = ""
         if conversation_history:
             for msg in conversation_history[-4:]:
                 role = "Kullanıcı" if msg["role"] == "user" else "Asistan"
                 hist += f"\n{role}: {msg['content']}"
-        prompt = (
+        conceptual_system = (
             f"{_VIRTUALIZATION_PERSONA}\n\n"
             "Kullanıcı kavramsal / eğitim amaçlı soru soruyor. Türkçe, net ve kısa açıkla. "
-            "Envanter tablosu veya canlı metrik listesi VERME unless explicitly asked.\n"
-            f"{hist}\n\nKullanıcı: {intent_q}"
-            f"{_dir_addendum}\n\nYanıt:"
+            "Envanter tablosu veya canlı metrik listesi VERME unless explicitly asked."
         )
-        from app.services.llm_context_budget import apply_prompt_budget
-        prompt, _ = apply_prompt_budget(prompt)
+        # KULLANICI SORUSU her koşulda korunur (asla kesilmez) — yalnızca `hist`
+        # (konuşma geçmişi) gerekirse kısaltılır (bkz. llm_context_budget.budget_sections).
+        protected_tail = f"\n\nKullanıcı: {intent_q}{_dir_addendum}\n\nYanıt:"
+        from app.services.llm_context_budget import budget_sections
+        _sections = budget_sections(
+            system=conceptual_system, context="", history=hist,
+            protected_tail=protected_tail, log_label="HVIntelligence.conceptual",
+        )
+        prompt = f"{conceptual_system}\n{_sections['history']}{protected_tail}"
         active_model = model or get_active_model(db)
         try:
             data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
@@ -3020,7 +3390,7 @@ def _compute_hypervisor_answer(
     vm_names_to_compare = _extract_vm_names(question, [r[0] for r in all_vm_names]) if "compare_vms" in intents else None
 
     context = build_context(db, question, vm_names_to_compare)
-    from app.services.llm_context_budget import apply_prompt_budget
+    from app.services.llm_context_budget import budget_sections
     system_prompt = (
         _VIRTUALIZATION_PERSONA + "\n\n"
         "Sana sağlanan gerçek veri üzerinden Türkçe, kısa, net ve pratik yanıtlar ver. "
@@ -3029,6 +3399,17 @@ def _compute_hypervisor_answer(
         "sadece gerçekten ilgiliyse ve kısaca ekle. "
         "Veri bloğunda yoksa 'bilinmiyor/erişim yok' deme; 'canlı sorguda bu alan dönmedi' de, uydurma."
     )
+    # Araç kanıtı varsa öncelik sırasını AÇIKÇA yaz: aksi halde model boş
+    # görünen envanter dump'ına bakıp "veri yok" diyor (üretim bulgusu).
+    evidence = _tool_evidence_block(question)
+    if evidence:
+        system_prompt += (
+            "\n\nBU TURDA ARAÇ SONUÇLARI VAR (aşağıdaki '=== ARAÇ SONUÇLARI ===' "
+            "bölümü). Cevabını ÖNCE oradan üret; envanter dump'ında alan görünmese "
+            "bile araç sonucu geçerlidir. 'Veri yok / kayıt dönmedi / alınamadı' "
+            "demen YASAK. Bölümde `verdict` gibi hazır bir hüküm varsa onu esas al, "
+            "tersini iddia etme."
+        )
 
     # Konuşma geçmişi + güncel soru
     messages_block = ""
@@ -3038,18 +3419,36 @@ def _compute_hypervisor_answer(
             messages_block += f"\n{role}: {msg['content']}"
         messages_block += "\n"
 
+    # KULLANICI SORUSU + varsa "[CANLI ARAÇ SONUÇLARI]" bloğu (hypervisors.py'nin
+    # ask_question'a eklediği ham tool çıktısı) — bu blok HİÇBİR KOŞULDA kesilmez.
+    # `question` zaten "{ham_soru}\n\n[CANLI ARAÇ SONUÇLARI...]\n{tool_text}" biçiminde
+    # geliyor; bunu tek bir "protected_tail" olarak taşıyoruz — yalnızca `context`
+    # (build_context dump'ı) ve gerekirse `messages_block` (geçmiş) kısaltılır.
+    # Kanıt bloğu soru metninin kuyruğunda değil, KENDİ bölümünde ve envanter
+    # dump'ından ÖNCE durur: model sıralamayı öncelik olarak okuyor.
+    clean_question = question.split(_TOOL_EVIDENCE_MARKER, 1)[0] if evidence else question
+    evidence_section = (
+        f"=== ARAÇ SONUÇLARI (bu turda çalıştırıldı — ÖNCELİKLİ) ===\n{evidence}\n"
+        "=== ARAÇ SONUÇLARI SONU ===\n\n" if evidence else ""
+    )
+    protected_tail = (
+        f"{evidence_section}Kullanıcı Sorusu: {clean_question}\n{_dir_addendum}\n\n"
+        "Lütfen yanıtını ver:"
+    )
+    _sections = budget_sections(
+        system=system_prompt, context=context, history=messages_block,
+        protected_tail=protected_tail, log_label="HVIntelligence",
+    )
+    context = _sections["context"]
+    messages_block = _sections["history"]
+
     prompt = f"""{system_prompt}
 
 === CANLI ALTYAPI VERİSİ ===
 {context}
 === VERİ SONU ===
 {messages_block}
-Kullanıcı Sorusu: {question}
-{_dir_addendum}
-
-Lütfen yanıtını ver:"""
-
-    prompt, _trunc = apply_prompt_budget(prompt)
+{protected_tail}"""
 
     active_model = model or get_active_model(db)
     answer = ""
@@ -3068,6 +3467,53 @@ Lütfen yanıtını ver:"""
     except requests.exceptions.Timeout:
         error = "LLM yanıt süresi aşıldı (120s)"
         answer = error
+
+    # KANIT GUARD: prompt'ta gerçek araç çıktısı varken model "canlı sorguda
+    # kayıt dönmedi" diyebiliyor (belirsiz/genel sorularda gözlendi). Bu cevap
+    # kullanıcı için hem yanlış hem de araştırmayı çıkmaza sokuyor: bir kez
+    # daha, kanıtı okumaya zorlayan talimatla dene; ısrar ederse ham kanıtı
+    # göster — yanlış "veri yok" cümlesini ASLA döndürme.
+    if not error and _has_tool_evidence(question):
+        from app.services.chat_coverage import looks_like_no_data_answer
+        if looks_like_no_data_answer(answer) or _answer_ignores_evidence(answer, evidence):
+            logger.warning(
+                "[HVIntelligence] kanıt varken 'veri yok' cevabı — katı talimatla "
+                "yeniden deneniyor (q=%r)", (user_question or question)[:100],
+            )
+            retry_prompt = (
+                prompt
+                + "\n\nUYARI: Yukarıdaki '=== ARAÇ SONUÇLARI ===' bölümü DOLU ve "
+                "geçerli. 'Veri yok / kayıt dönmedi / bağlantı sağlanamadı' demen "
+                "yasak. O bölümdeki sayısal değerleri (host adı, yüzdeler, sayaçlar) "
+                "cevabında AYNEN kullan; varsa `verdict` cümlesini esas al."
+            )
+            try:
+                retry = llm_gateway.generate_sync(
+                    model=active_model, prompt=retry_prompt, timeout=120,
+                )
+                retry_answer = (retry.get("response") or "").strip()
+            except Exception as re_e:
+                logger.debug("kanıt guard retry hatası: %s", re_e)
+                retry_answer = ""
+            if (
+                retry_answer
+                and not looks_like_no_data_answer(retry_answer)
+                and not _answer_ignores_evidence(retry_answer, evidence)
+            ):
+                answer = retry_answer
+            else:
+                answer = _render_tool_evidence_fallback(question, db=db)
+                intents = list(intents) + ["evidence_fallback"]
+                try:
+                    from app.services.chat_coverage import record_coverage_miss
+                    record_coverage_miss(
+                        db,
+                        question=user_question or question,
+                        platform="virt",
+                        reason="no_data_answer_despite_evidence",
+                    )
+                except Exception as cm_e:
+                    logger.debug("coverage miss kaydı atlandı: %s", cm_e)
 
     latency_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
     logger.info(f"[HVIntelligence] intents={intents} latency={latency_ms}ms model={active_model}")

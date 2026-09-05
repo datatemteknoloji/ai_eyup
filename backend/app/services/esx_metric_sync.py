@@ -62,7 +62,17 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                 errors.append(f"{hv.name}: host verisi alınamadı")
                 continue
 
+            # Donanım sağlığı ayrı SOAP çağrısı — hata verirse metrikler yazılmaya
+            # devam eder (sensor listesi büyük olabildiği için metrik sorgusuna
+            # eklenmedi).
+            health_by_ref: Dict[str, Any] = {}
+            try:
+                health_by_ref = client.get_all_host_health() or {}
+            except Exception as h_e:
+                logger.warning("Host health sorgusu başarısız (%s): %s", hv.name, h_e)
+
             for stat in host_stats:
+                _health = health_by_ref.get(stat.get("host_ref")) or {}
                 record = HypervisorHostMetric(
                     timestamp        = now,
                     hypervisor_id    = hv.id,
@@ -86,6 +96,10 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                     connection_state = stat.get("connection_state"),
                     power_state      = stat.get("power_state"),
                     maintenance_mode = stat.get("maintenance_mode", 0),
+                    cluster_name     = stat.get("cluster_name"),
+                    cluster_ref      = stat.get("cluster_ref"),
+                    overall_status   = _health.get("overall_status") or stat.get("overall_status"),
+                    sensor_bad_count = _health.get("sensor_bad_count"),
                 )
                 db.add(record)
                 total_hosts += 1
@@ -127,6 +141,31 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                     row.as_of = now
                 # Artık vCenter'da olmayan datastore'ları silme — tarihçe kalsın;
                 # erişilemeyenler accessible=false ile gelir.
+                #
+                # Doluluk zaman serisi: virt_datastores UPSERT edildiği için
+                # "datastore ne zaman dolar" sorusuna cevap verecek geçmiş
+                # yoktu. Her turda ayrıca hypertable'a bir satır yazılır.
+                from app.models.virt_metric import VirtDatastoreMetric
+                ds_rows = [
+                    {
+                        "timestamp": now,
+                        "hypervisor_id": hv.id,
+                        "name": (d.get("name") or "").strip(),
+                        "ds_ref": d.get("ref"),
+                        "ds_type": d.get("type"),
+                        "capacity_gb": d.get("capacity_gb"),
+                        "free_gb": d.get("free_gb"),
+                        "used_gb": d.get("used_gb"),
+                        "usage_pct": d.get("usage_pct"),
+                        "uncommitted_gb": d.get("uncommitted_gb"),
+                        "accessible": 1 if d.get("accessible", True) else 0,
+                        "host_count": d.get("host_count"),
+                    }
+                    for d in ds_list
+                    if (d.get("name") or "").strip()
+                ]
+                if ds_rows:
+                    db.bulk_insert_mappings(VirtDatastoreMetric, ds_rows)
                 db.commit()
                 if ds_list:
                     logger.info(
@@ -136,6 +175,66 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                 db.rollback()
                 errors.append(f"{hv.name} (datastore): {ds_e}")
                 logger.warning("Datastore sync hatası (%s): %s", hv.name, ds_e)
+
+            # ── Cluster envanteri (HA/DRS + effective kapasite + slot) ───────
+            try:
+                from app.models.virt_cluster import VirtCluster
+                cl_list = client.list_clusters_status() or []
+                for c in cl_list:
+                    cname = (c.get("name") or "").strip()
+                    if not cname:
+                        continue
+                    row = (
+                        db.query(VirtCluster)
+                        .filter(
+                            VirtCluster.hypervisor_id == hv.id,
+                            VirtCluster.name == cname,
+                        )
+                        .first()
+                    )
+                    if row is None:
+                        row = VirtCluster(hypervisor_id=hv.id, name=cname)
+                        db.add(row)
+                    row.cluster_ref = c.get("ref")
+                    row.hosts = c.get("hosts")
+                    row.effective_hosts = c.get("effective_hosts")
+                    row.cpu_cores = c.get("cpu_cores")
+                    row.cpu_total_mhz = c.get("cpu_total_mhz")
+                    row.cpu_effective_mhz = c.get("cpu_effective_mhz")
+                    row.memory_gb = c.get("memory_gb")
+                    row.memory_effective_gb = c.get("memory_effective_gb")
+                    row.ha_enabled = c.get("ha_enabled")
+                    row.admission_control_enabled = c.get("admission_control_enabled")
+                    row.policy_type = c.get("policy_type")
+                    row.policy_label = c.get("policy_label")
+                    row.failover_level = c.get("failover_level")
+                    row.cpu_failover_pct = c.get("cpu_failover_pct")
+                    row.mem_failover_pct = c.get("mem_failover_pct")
+                    row.current_failover_level = c.get("current_failover_level")
+                    row.host_monitoring = c.get("host_monitoring")
+                    row.vm_monitoring = c.get("vm_monitoring")
+                    row.total_slots = c.get("total_slots")
+                    row.used_slots = c.get("used_slots")
+                    row.unreserved_slots = c.get("unreserved_slots")
+                    row.slot_cpu_mhz = c.get("slot_cpu_mhz")
+                    row.slot_memory_mb = c.get("slot_memory_mb")
+                    row.total_good_hosts = c.get("total_good_hosts")
+                    row.drs_enabled = c.get("drs_enabled")
+                    row.drs_behavior = c.get("drs_behavior")
+                    row.drs_migration_threshold = c.get("drs_migration_threshold")
+                    row.vmotions = c.get("vmotions")
+                    row.overall_status = c.get("overall_status")
+                    row.host_refs = c.get("host_refs") or []
+                    row.as_of = now
+                db.commit()
+                if cl_list:
+                    logger.info(
+                        "Virt cluster sync: %s → %s cluster", hv.name, len(cl_list)
+                    )
+            except Exception as cl_e:
+                db.rollback()
+                errors.append(f"{hv.name} (cluster): {cl_e}")
+                logger.warning("Cluster sync hatası (%s): %s", hv.name, cl_e)
 
         except Exception as e:
             db.rollback()
@@ -148,6 +247,7 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
             cpu_model_by_ref = {
                 stat.get("host_ref"): stat.get("cpu_model") for stat in host_stats
             }
+            stat_by_ref = {stat.get("host_ref"): stat for stat in host_stats}
             net_info = client.get_all_host_network_info()
             for host_ref, info in net_info.items():
                 row = (
@@ -174,6 +274,21 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                 row.portgroups  = info.get("portgroups") or []
                 row.vnics       = info.get("vnics") or []
                 row.dns         = info.get("dns") or {}
+
+                _stat = stat_by_ref.get(host_ref) or {}
+                row.cluster_name = _stat.get("cluster_name")
+                row.cluster_ref  = _stat.get("cluster_ref")
+                row.parent_name  = _stat.get("parent_name")
+
+                _health = (health_by_ref or {}).get(host_ref) or {}
+                if _health:
+                    row.overall_status    = _health.get("overall_status")
+                    row.sensor_total      = _health.get("sensor_total")
+                    row.sensor_bad_count  = _health.get("sensor_bad_count")
+                    row.health_sensors    = _health.get("bad_sensors") or []
+                    row.config_issues     = _health.get("config_issues") or []
+                    row.health_checked_at = now
+
                 row.last_synced_at = now
 
             db.commit()

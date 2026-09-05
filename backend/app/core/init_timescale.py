@@ -103,6 +103,29 @@ def init_timescaledb():
                 ok_substrings=("already exists", "does not exist"),
             )
 
+            # ── virt_vm_metrics / virt_datastore_metrics hypertable ──────────
+            # VM ve datastore trendleri (right-sizing, kapasite tükenme tahmini)
+            for _tbl, _chunk, _keep in (
+                ("virt_vm_metrics", "7 days", "90 days"),
+                ("virt_datastore_metrics", "7 days", "180 days"),
+            ):
+                _run(
+                    conn,
+                    f"""SELECT create_hypertable('{_tbl}', 'timestamp',
+                           chunk_time_interval => INTERVAL '{_chunk}',
+                           if_not_exists => TRUE);""",
+                    f"{_tbl} hypertable",
+                    ok_substrings=("already a hypertable", "does not exist"),
+                )
+                _run(
+                    conn,
+                    f"""SELECT add_retention_policy('{_tbl}',
+                           INTERVAL '{_keep}',
+                           if_not_exists => TRUE);""",
+                    f"{_tbl} retention policy ({_keep})",
+                    ok_substrings=("already exists", "does not exist"),
+                )
+
             try:
                 from app.services.rag_store import ensure_schema
                 ensure_schema()

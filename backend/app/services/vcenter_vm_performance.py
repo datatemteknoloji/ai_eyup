@@ -158,6 +158,13 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
                 "disk_write_latency_ms": io.get("disk_write_latency_ms"),
                 "ds_read_latency_ms": io.get("ds_read_latency_ms"),
                 "ds_write_latency_ms": io.get("ds_write_latency_ms"),
+                # Contention / bellek baskısı / ağ kaybı — anlık counter değerleri
+                "cpu_costop_ms": io.get("cpu_costop_ms"),
+                "mem_balloon_kb": io.get("mem_balloon_kb"),
+                "mem_swapin_kbps": io.get("mem_swapin_kbps"),
+                "mem_swapout_kbps": io.get("mem_swapout_kbps"),
+                "net_dropped_rx": io.get("net_dropped_rx"),
+                "net_dropped_tx": io.get("net_dropped_tx"),
                 "snapshot_space_gb": r.get("snapshot_space_gb"),
                 "storage_uncommitted_bytes": r.get("storage_uncommitted_bytes"),
                 "custom_attrs": r.get("custom_attrs") or [],

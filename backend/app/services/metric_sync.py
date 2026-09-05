@@ -188,6 +188,84 @@ def _vmware_cpu_mem_from_live(stats: dict) -> Tuple[Optional[float], Optional[fl
     )
 
 
+def _write_vm_metric_rows(
+    db,
+    hypervisor_id: int,
+    resolved: List[Any],
+    io_by_ref: Dict[str, Dict[str, Any]],
+    now: datetime,
+) -> int:
+    """`virt_vm_metrics` hypertable'ına VM zaman serisi satırlarını yazar.
+
+    `resolved` → [(Server, quickStats dict, vm_ref)] üçlüleri; `io_by_ref` →
+    get_all_vm_perf_io sonucu. İkisi de bu turda zaten toplanmıştır.
+    """
+    from app.models.virt_metric import VirtVmMetric
+
+    def _f(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    rows: List[Dict[str, Any]] = []
+    for srv, stats, vm_ref in resolved:
+        if not vm_ref:
+            continue
+        stats = stats if isinstance(stats, dict) else {}
+        io = io_by_ref.get(vm_ref) or {}
+        cpu_p, mem_p, mem_used, mem_total = _vmware_cpu_mem_from_live(stats)
+        # quickStats toplam belleği vermez, config'ten gelir; aktif (guest) değer
+        # yoksa host consumed'a düşülür — ikisi de memory pressure göstergesi.
+        mem_total = mem_total or _f(srv.vm_memory_mb)
+        mem_used = mem_used or _f(stats.get("host_mem_usage_mb"))
+        if mem_p is None and mem_used is not None and mem_total:
+            mem_p = round(mem_used / mem_total * 100, 1)
+        ready_ms = _f(io.get("cpu_ready_ms"))
+        # cpu.ready summation 20 sn'lik örnekte ms → % dönüşümü
+        ready_pct = round(ready_ms / 200.0, 2) if ready_ms is not None else None
+        rows.append({
+            "timestamp": now,
+            "hypervisor_id": hypervisor_id,
+            "vm_ref": str(vm_ref),
+            "vm_name": srv.vm_name or srv.name,
+            "server_id": srv.id,
+            "host_name": srv.vm_host_name,
+            "cluster_name": srv.vm_cluster,
+            "datastore": srv.vm_datastore,
+            "power_state": srv.vm_power_state or stats.get("power_state"),
+            "num_cpu": srv.vm_cpu_count or stats.get("num_cpu"),
+            "mem_total_mb": mem_total,
+            "cpu_usage_mhz": _f(stats.get("cpu_mhz") or stats.get("cpu_usage_mhz")),
+            "cpu_usage_pct": _f(cpu_p),
+            "mem_used_mb": _f(mem_used),
+            "mem_usage_pct": _f(mem_p),
+            "guest_disk_pct": _f(stats.get("guest_disk_pct")),
+            "cpu_ready_ms": ready_ms,
+            "cpu_ready_pct": ready_pct,
+            "cpu_costop_ms": _f(io.get("cpu_costop_ms")),
+            "balloon_mb": _f(stats.get("ballooned_mb")),
+            "swapped_mb": _f(stats.get("swapped_mb")),
+            "mem_swapin_kbps": _f(io.get("mem_swapin_kbps")),
+            "mem_swapout_kbps": _f(io.get("mem_swapout_kbps")),
+            "disk_read_iops": _f(io.get("disk_read_iops")),
+            "disk_write_iops": _f(io.get("disk_write_iops")),
+            "disk_latency_ms": _f(io.get("disk_latency_ms")),
+            "net_rx_kbps": _f(io.get("net_rx_kbps")),
+            "net_tx_kbps": _f(io.get("net_tx_kbps")),
+            "net_dropped_rx": _f(io.get("net_dropped_rx")),
+            "net_dropped_tx": _f(io.get("net_dropped_tx")),
+            "snapshot_count": stats.get("snapshot_count"),
+        })
+
+    if not rows:
+        return 0
+    db.bulk_insert_mappings(VirtVmMetric, rows)
+    db.commit()
+    logger.info("virt_vm_metrics: hv=%s → %s VM satırı", hypervisor_id, len(rows))
+    return len(rows)
+
+
 def _vmware_metric_row_dicts(
     server: Server,
     *,
@@ -656,6 +734,18 @@ class MetricSyncService:
                     except Exception as e:
                         db.rollback()
                         logger.warning("VMware QuickStats server commit failed hyp=%s: %s", hyp_id, e)
+
+                    # VM zaman serisi (virt_vm_metrics) — bu turda ZATEN elde
+                    # olan quickStats + QueryPerf sonucundan yazılır, ek SOAP
+                    # çağrısı yok. metric_data yalnız cpu/mem/iops tutuyor;
+                    # cpu_ready, balloon, swap, latency ve paket kaybı trendleri
+                    # right-sizing ve "son 7 günde kötüleşen VM" soruları için
+                    # burada saklanır.
+                    try:
+                        _write_vm_metric_rows(db, hyp_id, resolved, io_by_ref, now)
+                    except Exception as e:
+                        db.rollback()
+                        logger.warning("virt_vm_metrics yazımı atlandı hyp=%s: %s", hyp_id, e)
 
                     if pending_rows:
                         try:

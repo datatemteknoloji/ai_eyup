@@ -56,3 +56,12 @@ def test_hangi_alone_not_inventory():
 def test_hangi_vm_is_inventory():
     intent = classify_chat_intent("hangi vm'ler powered on?")
     assert intent.kind == ChatIntentKind.INVENTORY
+
+
+def test_sorgula_host_vm_question_is_not_general():
+    # Gerçek regresyon: bu ifade önceden GENERAL'e düşüyor, deterministik
+    # katman hiç devreye girmiyordu (bkz. detect_virt_inventory_kind testi).
+    q = "isthol5esxia03.kscloud.local bu esxi host üzerindeki vmleri canlı sorgula"
+    intent = classify_chat_intent(q)
+    assert intent.kind in (ChatIntentKind.LIVE, ChatIntentKind.INVENTORY, ChatIntentKind.MIXED)
+    assert intent.kind != ChatIntentKind.GENERAL

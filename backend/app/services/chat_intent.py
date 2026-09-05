@@ -46,13 +46,27 @@ _EDUCATIONAL_RE = re.compile(
 )
 
 # Açık envanter / operasyonel liste isteği
+#
+# NOT (fiil kapsamı): Türkçe'de aynı isteği ifade eden fiil sayısı pratikte
+# sonsuzdur (listele/getir/çek/sorgula/göster/ver/bul/ilet/çıkar/kontrol et/
+# incele/bak/...). Bu regex'in kaçırdığı yeni bir fiil çıkması KAÇINILMAZ —
+# bu yüzden bu liste TEK savunma katmanı değildir; asıl güvenlik ağı
+# unified_tool_chat.py::_finalize()'daki decouple mekanizmasıdır: regex hiçbir
+# şey yakalamasa bile, model kendi kararıyla db_list_vms/db_list_datastores/
+# db_list_esx_hosts çağırırsa deterministik render yine denenir (bkz.
+# virt_inventory_contract.infer_kind_from_tool_call). Buradaki liste yalnızca
+# PROAKTİF prefetch'i (LLM'e sormadan önce DB'yi çekmek) tetikler — eksik
+# olması yanlış cevaba değil, en fazla bir adım daha yavaş (ama yine doğru)
+# bir cevaba yol açar.
 _INVENTORY_STRONG_RE = re.compile(
     r"("
     r"\b("
     r"listele|liste|göster|goster|kaç|kac|say|toplam|doluluk|kapasite|"
     r"boş\s*(gb|alan|yer)?|bos\s*(gb|alan|yer)?|envanter|inventory|"
     r"içerisinde|icerisinde|barındır|barindir|powered\s*on|powered\s*off|"
-    r"table|/table|tablo|sırala|sirala|filtre"
+    r"table|/table|tablo|sırala|sirala|filtre|"
+    r"sorgula|getir|çek|cek|ilet|çıkar|cikar|"
+    r"kontrol\s*et|incele|teyit\s*et|doğrula|dogrula"
     r")\b"
     r"|hangi\s+(vm|vms|host|esxi|datastore|datastores|cluster|snapshot|alarm)"
     r"|hangi\s+vm.?ler"
@@ -74,7 +88,21 @@ _LIVE_RE = re.compile(
 _ENTITY_RE = re.compile(
     # Sağ tarafta \b YOK: Türkçe ekler kelime köküne bitişik gelir
     # (ör. "snapshotların", "datastore'daki") — yine de varlık say.
-    r"\b(datastore|vm|esxi|host|cluster|snapshot|alarm|disk|sanal)",
+    r"\b(datastore|vm|esxi|host|cluster|snapshot|alarm|disk|sanal|"
+    r"vcenter|hypervisor|ortam|altyapı|altyapi)",
+    re.I,
+)
+
+# Bu ORTAMIN o anki durumunu soran ifadeler. Tek başına "nedir" gramerine
+# bakıp bunları kavramsal saymak, "vCenter'ın sağlık durumu nedir?" gibi
+# soruların envanter/araç kanıtı olmadan yanıtlanmasına yol açıyordu.
+_STATE_RE = re.compile(
+    r"\b("
+    r"sağlık|saglik|sağlıklı|saglikli|durum|durumu|durumda|"
+    r"sorun|problem|risk|arıza|ariza|hata|uyarı|uyari|alarm|"
+    r"performans|yoğunluk|yogunluk|darboğaz|darbogaz|"
+    r"health|status|issue"
+    r")",
     re.I,
 )
 
@@ -116,6 +144,13 @@ def classify_chat_intent(message: str) -> ChatIntent:
     if educational and measurable and has_entity:
         inventory = True
         educational = False
+
+    # "<varlık> sağlıklı mı / durumu nedir / sorun var mı" — tanım değil, BU
+    # ortamın o anki durumu soruluyor. Kavramsal sayılırsa boru hattı envanteri
+    # ve araç kanıtını atıyor, model de "canlı veri dönmedi" diyordu.
+    if has_entity and _STATE_RE.search(m):
+        educational = False
+        inventory = True
 
     # Eğitim/teşhis senaryosu: "hangi metrik" envanter değil
     if educational and not inventory:

@@ -27,13 +27,23 @@ ESXI_HOST_FIELD_ALIASES: Dict[str, tuple] = {
     "connection_state": ("connection_state", "state", "status", "connection"),
     "maintenance": ("maintenance", "maintenance_mode", "bakim"),
     "hypervisor": ("hypervisor", "vcenter", "vcenter_name"),
-    "cluster": ("cluster",),
+    "cluster": ("cluster", "cluster_name"),
     "cpu_cores": ("cpu_cores", "cores"),
     "cpu_model": ("cpu_model",),
+    # Donanım sağlığı (numericSensorInfo özeti — esx_metric_sync ile toplanır)
+    "overall_status": ("overall_status", "health", "saglik", "sağlık", "health_status"),
+    "sensor_bad_count": ("sensor_bad_count", "bad_sensors", "sensor_alarm", "arizali_sensor"),
+    "bad_sensors": ("bad_sensor_list", "sensor_detail"),
+    "config_issues": ("config_issues", "yapilandirma_uyarisi"),
 }
 
-# Varsayılan kısa özet (fields verilmezse)
-ESXI_HOST_DEFAULT_FIELDS: tuple = ("name", "ip", "version", "connection_state", "hypervisor")
+# Varsayılan kısa özet (fields verilmezse). Host sayısı VM'lere göre düşük
+# olduğundan kapasite/sağlık kolonlarını da taşırız; aksi halde "kapasite
+# raporu" gibi sorularda tabloda CPU/RAM sütunları boş kalıyordu.
+ESXI_HOST_DEFAULT_FIELDS: tuple = (
+    "name", "ip", "version", "cluster", "cpu_pct", "mem_pct", "ds_pct",
+    "vms_running", "overall_status", "connection_state", "hypervisor",
+)
 
 VM_FIELD_ALIASES: Dict[str, tuple] = {
     "name": ("name", "vm", "vm_name", "guest"),

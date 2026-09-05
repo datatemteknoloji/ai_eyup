@@ -439,6 +439,18 @@ def list_esx_hosts_db(
             "vms_total": r.vms_total,
             "connection_state": r.connection_state,
             "maintenance": bool(r.maintenance_mode),
+            # Cluster üyeliği: önce metrik satırı (her sync'te yazılır),
+            # yoksa envanter satırı
+            "cluster": r.cluster_name or (getattr(inv, "cluster_name", None) if inv else None),
+            # Donanım sağlığı
+            "overall_status": r.overall_status or (getattr(inv, "overall_status", None) if inv else None),
+            "sensor_bad_count": (
+                r.sensor_bad_count
+                if r.sensor_bad_count is not None
+                else (getattr(inv, "sensor_bad_count", None) if inv else None)
+            ),
+            "bad_sensors": (getattr(inv, "health_sensors", None) if inv else None) or [],
+            "config_issues": (getattr(inv, "config_issues", None) if inv else None) or [],
             "as_of": r.timestamp.isoformat() if r.timestamp else None,
             "_inventory_joined": inv is not None,
         })
@@ -462,6 +474,194 @@ def list_esx_hosts_db(
         "fields": proj["fields"],
         "missing_fields": proj["missing_fields"],
         "hosts": proj["items"],
+    }
+
+
+def list_clusters_db(
+    db: Session,
+    *,
+    hypervisor: Optional[str] = None,
+    name_filter: Optional[str] = None,
+    include_hosts: bool = True,
+) -> Dict[str, Any]:
+    """Cluster listesi — HA/DRS yapılandırması, effective kapasite, HA slot durumu.
+
+    SoT: `virt_clusters` (esx_metric_sync ile upsert). Host CPU/RAM ortalamaları
+    `hypervisor_host_metrics` üzerinden cluster_name ile gruplanarak eklenir —
+    cluster için ayrı zaman serisi tutulmaz.
+
+    `ha_verdict` alanı admission control + slot bilgisinden deterministik
+    üretilir: "bir host arızalanırsa VM'ler ayağa kalkar mı" sorusunun cevabı.
+    """
+    from sqlalchemy import func as sa_func
+    from app.models.virt_cluster import VirtCluster
+
+    q = db.query(VirtCluster)
+    if hypervisor:
+        hv = (
+            db.query(Hypervisor)
+            .filter(Hypervisor.name.ilike(f"%{hypervisor.strip()}%"))
+            .first()
+        )
+        if hv:
+            q = q.filter(VirtCluster.hypervisor_id == hv.id)
+    if name_filter:
+        q = q.filter(VirtCluster.name.ilike(f"%{name_filter.strip()}%"))
+
+    rows = q.order_by(VirtCluster.name.asc()).all()
+    if not rows:
+        return {
+            "ok": True,
+            "source": "db",
+            "count": 0,
+            "clusters": [],
+            "note": (
+                "virt_clusters tablosu boş. ESX metrik sync henüz çalışmadıysa "
+                "(veya ortamda cluster yoksa — tek/standalone ESXi) bu normaldir. "
+                "Canlı doğrulama için vcenter_ask ile 'HA DRS durumu' sorulabilir."
+            ),
+        }
+
+    hv_map = {
+        h.id: h.name
+        for h in db.query(Hypervisor)
+        .filter(Hypervisor.id.in_({r.hypervisor_id for r in rows}))
+        .all()
+    }
+
+    # Cluster başına canlı host metrik ortalaması (son ölçüm başına host)
+    usage_by_cluster: Dict[tuple, Dict[str, Any]] = {}
+    if include_hosts:
+        sub = (
+            db.query(
+                HypervisorHostMetric.hypervisor_id,
+                HypervisorHostMetric.host_name,
+                sa_func.max(HypervisorHostMetric.timestamp).label("last_ts"),
+            )
+            .group_by(HypervisorHostMetric.hypervisor_id, HypervisorHostMetric.host_name)
+            .subquery()
+        )
+        latest = (
+            db.query(HypervisorHostMetric)
+            .join(
+                sub,
+                (HypervisorHostMetric.hypervisor_id == sub.c.hypervisor_id)
+                & (HypervisorHostMetric.host_name == sub.c.host_name)
+                & (HypervisorHostMetric.timestamp == sub.c.last_ts),
+            )
+            .filter(HypervisorHostMetric.cluster_name.isnot(None))
+            .all()
+        )
+        for m in latest:
+            key = (m.hypervisor_id, (m.cluster_name or "").lower())
+            acc = usage_by_cluster.setdefault(
+                key, {"cpu": [], "mem": [], "hosts": [], "vms_running": 0}
+            )
+            if m.cpu_usage_pct is not None:
+                acc["cpu"].append(m.cpu_usage_pct)
+            if m.mem_usage_pct is not None:
+                acc["mem"].append(m.mem_usage_pct)
+            acc["hosts"].append(m.host_name)
+            acc["vms_running"] += m.vms_running or 0
+
+    def _avg(vals: List[float]) -> Optional[float]:
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    items: List[Dict[str, Any]] = []
+    for r in rows:
+        usage = usage_by_cluster.get((r.hypervisor_id, (r.name or "").lower())) or {}
+        cpu_avg = _avg(usage.get("cpu") or [])
+        mem_avg = _avg(usage.get("mem") or [])
+
+        # HA değerlendirmesi — veriye dayalı, tahmin değil
+        verdict: str
+        if r.ha_enabled is False:
+            verdict = "HA KAPALI — host arızasında VM'ler otomatik yeniden başlamaz"
+        elif r.ha_enabled is None:
+            verdict = "HA durumu okunamadı"
+        elif r.admission_control_enabled is False:
+            verdict = (
+                "HA açık ama admission control KAPALI — failover kapasitesi "
+                "garanti edilmiyor, kaynak yetmezse VM'ler başlamayabilir"
+            )
+        elif r.unreserved_slots is not None and r.total_slots is not None:
+            if r.unreserved_slots <= 0:
+                verdict = (
+                    f"Slot tükendi (toplam {r.total_slots}, kullanılan {r.used_slots}) "
+                    "— yeni/failover VM için kapasite yok"
+                )
+            else:
+                verdict = (
+                    f"Failover kapasitesi var — {r.unreserved_slots} boş slot "
+                    f"(toplam {r.total_slots}, kullanılan {r.used_slots})"
+                )
+        elif r.cpu_failover_pct is not None or r.mem_failover_pct is not None:
+            parts = []
+            if r.cpu_failover_pct is not None:
+                parts.append(f"CPU %{r.cpu_failover_pct}")
+            if r.mem_failover_pct is not None:
+                parts.append(f"RAM %{r.mem_failover_pct}")
+            verdict = (
+                "Yüzde tabanlı admission control ayrılmış (" + ", ".join(parts) + ")"
+            )
+            if mem_avg is not None and r.mem_failover_pct is not None:
+                if mem_avg > (100 - r.mem_failover_pct):
+                    verdict += (
+                        f" — ANCAK host RAM ortalaması %{mem_avg}, ayrılan yedek "
+                        "kapasitenin üzerinde; failover riskli"
+                    )
+            verdict += (
+                ". Slot bilgisi bu politikada dönmez; kesin doğrulama için "
+                "vCenter HA özet ekranına bakılmalı."
+            )
+        else:
+            verdict = "HA açık; admission control detayı okunamadı"
+
+        items.append({
+            "name": r.name,
+            "cluster_ref": r.cluster_ref,
+            "hypervisor": hv_map.get(r.hypervisor_id),
+            "hosts": r.hosts,
+            "effective_hosts": r.effective_hosts,
+            "host_names": sorted(usage.get("hosts") or []),
+            "cpu_cores": r.cpu_cores,
+            "cpu_total_mhz": r.cpu_total_mhz,
+            "cpu_effective_mhz": r.cpu_effective_mhz,
+            "memory_gb": r.memory_gb,
+            "memory_effective_gb": r.memory_effective_gb,
+            "cpu_pct_avg": cpu_avg,
+            "mem_pct_avg": mem_avg,
+            "vms_running": usage.get("vms_running"),
+            "overall_status": r.overall_status,
+            "ha_enabled": r.ha_enabled,
+            "admission_control_enabled": r.admission_control_enabled,
+            "policy": r.policy_label or r.policy_type,
+            "failover_level": r.failover_level,
+            "current_failover_level": r.current_failover_level,
+            "cpu_failover_pct": r.cpu_failover_pct,
+            "mem_failover_pct": r.mem_failover_pct,
+            "host_monitoring": r.host_monitoring,
+            "vm_monitoring": r.vm_monitoring,
+            "total_slots": r.total_slots,
+            "used_slots": r.used_slots,
+            "unreserved_slots": r.unreserved_slots,
+            "drs_enabled": r.drs_enabled,
+            "drs_behavior": r.drs_behavior,
+            "drs_migration_threshold": r.drs_migration_threshold,
+            "vmotions": r.vmotions,
+            "ha_verdict": verdict,
+            "as_of": r.as_of.isoformat() if r.as_of else None,
+        })
+
+    newest = max((r.as_of for r in rows if r.as_of), default=None)
+    return {
+        "ok": True,
+        "source": "db",
+        "join": "virt_clusters ⋈ hypervisor_host_metrics(cluster_name)",
+        "count": len(items),
+        "as_of": newest.isoformat() if newest else None,
+        "stale": _stale(newest, 45 * 60),
+        "clusters": items,
     }
 
 

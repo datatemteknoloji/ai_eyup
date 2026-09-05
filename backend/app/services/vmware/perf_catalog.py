@@ -30,6 +30,14 @@ SOAP_READ_ALLOW = frozenset({
     "QueryPerfCounter", "QueryAvailablePerfMetric", "QueryPerfProviderSummary",
     "RetrieveServiceContent", "Login", "Logout", "FindByInventoryPath",
     "FindByDnsName", "FindByIp", "FindByUuid", "CurrentTime",
+    # Jenerik property okuma katmanı (ContainerView) — envanteri değiştirmez,
+    # yalnızca oturuma bağlı geçici görünüm nesnesi oluşturur/kapatır.
+    "CreateContainerView", "DestroyView",
+    # HA slot / failover kapasitesi okuma (admission control analizi)
+    "RetrieveDasAdvancedRuntimeInfo",
+    # Event / alarm okuma
+    "CreateCollectorForEvents", "DestroyCollector", "SetCollectorPageSize",
+    "ReadPreviousEvents", "QueryEvents", "GetAlarmState", "QueryDescriptions",
 })
 
 
@@ -149,6 +157,68 @@ PERF_METRICS: Tuple[PerfMetricDef, ...] = (
         ("net_tx", "network_tx", "bytes_tx", "net transmit", "net"),
         "Ağ gönderim KBps",
     ),
+    PerfMetricDef(
+        "net_dropped_rx", "net", "droppedRx", "summation", "both", "number",
+        ("net_drop_rx", "dropped_rx", "paket_kaybi_rx", "droppedrx"),
+        "Düşürülen alış paketi — ağ problemi göstergesi",
+    ),
+    PerfMetricDef(
+        "net_dropped_tx", "net", "droppedTx", "summation", "both", "number",
+        ("net_drop_tx", "dropped_tx", "paket_kaybi_tx", "droppedtx"),
+        "Düşürülen gönderim paketi — ağ problemi göstergesi",
+    ),
+    # ── Bellek baskısı (ballooning / swap) ─────────────────────────────────
+    PerfMetricDef(
+        "mem_balloon_kb", "mem", "vmmemctl", "average", "both", "KB",
+        ("balloon", "ballooning", "vmmemctl", "mem_balloon"),
+        "Balloon (vmmemctl) — host RAM baskısı göstergesi",
+    ),
+    PerfMetricDef(
+        "mem_swapin_rate_kbps", "mem", "swapinRate", "average", "both", "KBps",
+        ("swapin", "swap_in", "swapinrate"),
+        "Swap-in hızı — kritik bellek baskısı",
+    ),
+    PerfMetricDef(
+        "mem_swapout_rate_kbps", "mem", "swapoutRate", "average", "both", "KBps",
+        ("swapout", "swap_out", "swapoutrate"),
+        "Swap-out hızı — kritik bellek baskısı",
+    ),
+    # ── CPU contention ─────────────────────────────────────────────────────
+    PerfMetricDef(
+        "cpu_costop_ms", "cpu", "costop", "summation", "vm", "ms",
+        ("costop", "co_stop", "cpu_costop"),
+        "CPU co-stop (fazla vCPU / SMP contention)",
+    ),
+    # ── Host storage latency ayrıştırma (device / kernel / queue) ──────────
+    # Bu üçlü "problem array'de mi, host'ta mı" ayrımını deterministik yapar:
+    # device yüksek → storage array; queue yüksek → host HBA doygun;
+    # kernel yüksek → host VMkernel darboğazı.
+    PerfMetricDef(
+        "disk_device_latency_ms", "disk", "deviceLatency", "average", "host", "ms",
+        ("device_latency", "array_latency", "devicelatency"),
+        "Fiziksel cihaz (array) gecikmesi",
+    ),
+    PerfMetricDef(
+        "disk_kernel_latency_ms", "disk", "kernelLatency", "average", "host", "ms",
+        ("kernel_latency", "kernellatency"),
+        "VMkernel gecikmesi",
+    ),
+    PerfMetricDef(
+        "disk_queue_latency_ms", "disk", "queueLatency", "average", "host", "ms",
+        ("queue_latency", "queuelatency"),
+        "Kuyruk gecikmesi (HBA doygunluğu)",
+    ),
+    # ── Datastore IOPS ─────────────────────────────────────────────────────
+    PerfMetricDef(
+        "ds_read_iops", "datastore", "numberReadAveraged", "average", "host", "number",
+        ("datastore_read_iops", "ds_read_req"),
+        "Datastore okuma IOPS",
+    ),
+    PerfMetricDef(
+        "ds_write_iops", "datastore", "numberWriteAveraged", "average", "host", "number",
+        ("datastore_write_iops", "ds_write_req"),
+        "Datastore yazma IOPS",
+    ),
 )
 
 # Monitor kısayol paketleri — kullanıcı "disk_rate" derse birden fazla counter
@@ -159,9 +229,25 @@ METRIC_BUNDLES: Dict[str, Tuple[str, ...]] = {
     "cpu": ("cpu_usage_pct", "cpu_usage_mhz", "cpu_ready_ms"),
     "mem": ("mem_usage_pct", "mem_active_kb", "mem_consumed_kb"),
     "memory": ("mem_usage_pct", "mem_active_kb", "mem_consumed_kb"),
-    "net": ("net_rx_kbps", "net_tx_kbps"),
-    "network": ("net_rx_kbps", "net_tx_kbps"),
+    "net": ("net_rx_kbps", "net_tx_kbps", "net_dropped_rx", "net_dropped_tx"),
+    "network": ("net_rx_kbps", "net_tx_kbps", "net_dropped_rx", "net_dropped_tx"),
     "vdisk": ("vdisk_read_iops", "vdisk_write_iops", "vdisk_read_latency_ms", "vdisk_write_latency_ms"),
+    # Bellek baskısı teşhisi — "memory pressure yaşayan VM" sorusu
+    "mem_pressure": ("mem_usage_pct", "mem_balloon_kb", "mem_swapin_rate_kbps", "mem_swapout_rate_kbps"),
+    "memory_pressure": ("mem_usage_pct", "mem_balloon_kb", "mem_swapin_rate_kbps", "mem_swapout_rate_kbps"),
+    # CPU contention teşhisi
+    "contention": ("cpu_usage_pct", "cpu_ready_ms", "cpu_costop_ms"),
+    "cpu_contention": ("cpu_usage_pct", "cpu_ready_ms", "cpu_costop_ms"),
+    # Storage latency kaynak ayrıştırma (host)
+    "latency_breakdown": (
+        "disk_total_latency_ms", "disk_device_latency_ms",
+        "disk_kernel_latency_ms", "disk_queue_latency_ms",
+    ),
+    "storage_latency": (
+        "disk_total_latency_ms", "disk_device_latency_ms",
+        "disk_kernel_latency_ms", "disk_queue_latency_ms",
+    ),
+    "ds_iops": ("ds_read_iops", "ds_write_iops"),
     "overview": (
         "cpu_usage_pct", "mem_usage_pct",
         "disk_read_kbps", "disk_write_kbps",

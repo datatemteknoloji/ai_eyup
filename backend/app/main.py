@@ -287,6 +287,21 @@ async def startup_tasks():
                 "ALTER TABLE linux_inventory ADD COLUMN IF NOT EXISTS metrics_extra JSONB",
                 "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS product_version VARCHAR(64)",
                 "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS product_full_name VARCHAR(255)",
+                # ESXi cluster üyeliği + donanım sağlığı (numericSensorInfo özeti)
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS cluster_name VARCHAR(255)",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS cluster_ref VARCHAR(64)",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS parent_name VARCHAR(255)",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS overall_status VARCHAR(32)",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS sensor_total INTEGER",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS sensor_bad_count INTEGER",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS health_sensors JSONB",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS config_issues JSONB",
+                "ALTER TABLE hypervisor_host_inventory ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cluster_name VARCHAR(255)",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cluster_ref VARCHAR(64)",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS overall_status VARCHAR(32)",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS sensor_bad_count INTEGER",
+                "CREATE INDEX IF NOT EXISTS ix_hvm_cluster_name ON hypervisor_host_metrics (cluster_name)",
             ]:
                 _conn.execute(_sa_text(_col_sql))
             _conn.execute(_sa_text(

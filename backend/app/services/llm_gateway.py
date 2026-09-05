@@ -130,6 +130,50 @@ def _normalize_messages_openai(messages: List[Dict[str, Any]]) -> List[Dict[str,
     return out
 
 
+def _normalize_messages_ollama(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Transcript'i native Ollama /api/chat sözleşmesine çevir.
+
+    OpenAI'nin tersi: `tool_calls.function.arguments` OBJE olmalı. String
+    gönderilirse Ollama isteği çözemez ve HTTP 400 "Value looks like object,
+    but can't find closing '}' symbol" döner — araç çağrısı içeren her çok
+    adımlı sohbet ilk turdan sonra bu hataya düşüyordu.
+    Ayrıca native API `tool_call_id` alanını tanımaz.
+    """
+    out: List[Dict[str, Any]] = []
+    for raw in messages or []:
+        if not isinstance(raw, dict):
+            continue
+        m = dict(raw)
+
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            new_tcs = []
+            for tc in m.get("tool_calls") or []:
+                if not isinstance(tc, dict):
+                    continue
+                tc = dict(tc)
+                fn = dict(tc.get("function") or {})
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args.strip() else {}
+                    except Exception:
+                        args = {}
+                fn["arguments"] = args if isinstance(args, dict) else {}
+                tc["function"] = fn
+                tc.pop("id", None)
+                tc.pop("type", None)
+                new_tcs.append(tc)
+            m["tool_calls"] = new_tcs
+            m["content"] = m.get("content") or ""
+
+        if m.get("role") == "tool":
+            m.pop("tool_call_id", None)
+            m["content"] = m.get("content") if m.get("content") is not None else ""
+
+        out.append(m)
+    return out
+
+
 def active_model_label(requested_model: Optional[str] = None) -> str:
     """UI/loglarda gösterilecek 'şu an kullanılan model' etiketi."""
     if remote_llm_enabled():
@@ -224,7 +268,11 @@ def chat_sync(
         msg = choice.get("message", {}) or {}
         return _SyncChatResult(200, resp.text, {"message": msg, "done": True})
 
-    payload = {"model": model, "messages": messages, "stream": False}
+    payload = {
+        "model": model,
+        "messages": _normalize_messages_ollama(messages),
+        "stream": False,
+    }
     if options:
         payload["options"] = options
     if tools:

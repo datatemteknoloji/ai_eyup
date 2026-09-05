@@ -99,6 +99,20 @@ def set_cached_answer(question: str, result: Dict[str, Any], model: Optional[str
         logger.warning("[QACache] yazma hatası: %s", exc)
 
 
+def invalidate_question(question: str, model: Optional[str] = None) -> bool:
+    """Tek bir sorunun önbellek kaydını siler (ör. hatalı cevap tespitinde)."""
+    r = _get_redis()
+    if not r or not question:
+        return False
+    key = _cache_key(question, model)
+    try:
+        r.delete(_KEY_PREFIX + key, _HIT_PREFIX + key)
+        return True
+    except Exception as exc:
+        logger.warning("[QACache] tek kayıt silme hatası: %s", exc)
+        return False
+
+
 def invalidate_all() -> int:
     """Altyapı verisi tazelendiğinde (sync sonrası) tüm önbelleği temizler."""
     r = _get_redis()

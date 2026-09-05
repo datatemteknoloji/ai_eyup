@@ -83,6 +83,7 @@ def run_virt_perf_query(
     top_n: int = 10,
     max_sample: int = 1,
     interval_id: int = 20,
+    lookback_hours: Optional[float] = None,
     list_catalog: bool = False,
 ) -> Dict[str, Any]:
     """Ana giriş — asistan tool handler bunu çağırır."""
@@ -278,6 +279,7 @@ def run_virt_perf_query(
         interval_id=interval_id,
         instance="*",
         top_n=top_n if wants_per_device else None,
+        lookback_hours=lookback_hours,
     )
     if not perf.get("ok"):
         return {
@@ -304,8 +306,13 @@ def run_virt_perf_query(
         "interval_id": perf.get("interval_id"),
         "max_sample": perf.get("max_sample"),
         "entity_type": perf.get("entity_type"),
+        "historical": bool(perf.get("historical")),
+        "lookback_hours": perf.get("lookback_hours"),
+        "summary_kind": perf.get("summary_kind") or "latest",
+        "note": perf.get("note"),
         "hint": (
             "READ-ONLY QueryPerf. Yalnız istenen metrikler. "
-            "Disk Rate/Requests için series satırlarında instance=naa.*/t10.* görünür."
+            "Disk Rate/Requests için series satırlarında instance=naa.*/t10.* görünür. "
+            "lookback_hours verilirse geçmiş rollup'tan avg/min/max/p95 döner."
         ),
     }

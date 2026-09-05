@@ -485,6 +485,19 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "Aşımda bağlam otomatik kısaltılır.",
         "env": "LLM_CONTEXT_TOKEN_BUDGET",
     },
+    "llm_context_hard_cap_tokens": {
+        "default": "32768", "type": "str",
+        "choices": ["8192", "16384", "32768", "49152", "65536", "128000"],
+        "group": "llm_context", "label": "Gateway/model gerçek context tavanı (güvenlik sınırı)",
+        "help": "Uzak gateway'in (Bifrost/LiteLLM) arkasındaki modelin GERÇEK maksimum "
+                "context penceresi (ör. gpt-oss-120b → 32768). 'LLM context token bütçesi' "
+                "bu değeri aşarsa otomatik olarak buna kırpılır — böylece bütçe ayarı ne "
+                "kadar büyük seçilirse seçilsin gateway'e asla model limitini aşan bir "
+                "istek gönderilmez (HTTP 400 'exceeds model's maximum context length' "
+                "hatasına karşı sabit koruma). Model/gateway değişip pencere büyürse "
+                "(ör. 64K/128K) yalnızca bu ayarı güncellemeniz yeterlidir.",
+        "env": "LLM_CONTEXT_HARD_CAP_TOKENS",
+    },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
     "rag_reranker_enabled": {
         "default": True, "type": "bool", "min": 0, "max": 1,

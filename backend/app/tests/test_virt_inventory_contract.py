@@ -254,6 +254,43 @@ def test_materialize_datastore_json_directive():
     assert "NVME_DS" in out
 
 
+# ── keyword genişletme + decouple fallback (regex kaçırsa bile doğru render) ──
+
+def test_sorgula_verb_is_detected_as_vm_list():
+    # Gerçek regresyon: "X host üzerindeki VM'leri ... sorgula" — "sorgula"
+    # önceden regex'te yoktu, deterministik render hiç tetiklenmiyordu.
+    q = "isthol5esxia03.kscloud.local bu esxi host üzerindeki vmleri canlı sorgula"
+    assert vic.detect_virt_inventory_kind(q) == vic.KIND_VM_LIST
+
+
+def test_other_expanded_verbs_detected():
+    for q in [
+        "X host'un VM envanterini getir",
+        "X host üzerindeki VM'leri çek",
+        "X host'un VM'lerini ilet",
+        "X host üzerindeki sanal makineleri çıkar",
+    ]:
+        assert vic.detect_virt_inventory_kind(q) == vic.KIND_VM_LIST, q
+
+
+def test_infer_kind_from_tool_call_vm_list():
+    assert vic.infer_kind_from_tool_call("db_list_vms", {"fields": ["name"]}) == vic.KIND_VM_LIST
+
+
+def test_infer_kind_from_tool_call_vm_disk_when_disks_requested():
+    assert vic.infer_kind_from_tool_call("db_list_vms", {"include_disks": True}) == vic.KIND_VM_DISK
+    assert vic.infer_kind_from_tool_call("db_list_vms", {"fields": ["name", "disk_gb"]}) == vic.KIND_VM_DISK
+
+
+def test_infer_kind_from_tool_call_datastore_and_esx_host():
+    assert vic.infer_kind_from_tool_call("db_list_datastores") == vic.KIND_DATASTORE
+    assert vic.infer_kind_from_tool_call("db_list_esx_hosts") == vic.KIND_ESX_HOST
+
+
+def test_infer_kind_from_tool_call_unknown_tool_returns_none():
+    assert vic.infer_kind_from_tool_call("vcenter_ask") is None
+
+
 def test_materialize_esx_host_kind_defensive_filter():
     payload = {
         "ok": True,
