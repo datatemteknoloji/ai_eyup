@@ -177,6 +177,14 @@ def run_preview(session: Session, job: Job) -> PreviewArtifact:
     job.status = JobStatus.previewed
     job.dry_run = True
     job.summary_tr = summary_tr[:1024]
+    # Yeniden önizleme → stale bayrağını temizle
+    if isinstance(job.payload, dict) and job.payload.get("_stale"):
+        payload = dict(job.payload)
+        for k in ("_stale", "_stale_by_job_id", "_stale_reason"):
+            payload.pop(k, None)
+        job.payload = payload
+        if (job.error_message or "").startswith("Sunucu durumu iş #"):
+            job.error_message = ""
     job.previewed_at = datetime.now(UTC)
     job.updated_at = datetime.now(UTC)
     job.error_message = "" if ok_count else "Önizleme: uygulanabilir hedef yok"
@@ -218,6 +226,30 @@ def apply_job(session: Session, job: Job, *, only_failed: bool = False) -> Job:
     if not ok_hosts and not only_failed:
         raise ValueError("Uygulanabilir sunucu yok")
 
+    from app.services.host_op_lock import HostLockError, acquire_server_locks, release_server_locks
+    from app.services.preview_freshness import StalePreviewError, revalidate_job_preview
+
+    held_locks: list[int] = []
+    try:
+        held_locks = acquire_server_locks(session, job)
+    except HostLockError:
+        raise
+
+    try:
+        # Apply öncesi taze plan — bayat preview kör uygulanmasın
+        revalidate_job_preview(session, job)
+        return _apply_job_locked(session, job, artifact=artifact, only_failed=only_failed)
+    finally:
+        release_server_locks(job, held_locks)
+
+
+def _apply_job_locked(
+    session: Session,
+    job: Job,
+    *,
+    artifact: PreviewArtifact,
+    only_failed: bool = False,
+) -> Job:
     mod = get_module(job.module)
     job.status = JobStatus.running
     job.dry_run = False
@@ -535,4 +567,14 @@ def apply_job(session: Session, job: Job, *, only_failed: bool = False) -> Job:
         talep_id=job.talep_id,
         job_id=job.id,
     )
+
+    if final in {JobStatus.success, JobStatus.partial}:
+        try:
+            from app.services.preview_freshness import mark_overlapping_previews_stale
+
+            mark_overlapping_previews_stale(session, job)
+        except Exception as e:
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("overlapping preview stale mark failed: %s", e)
+
     return job

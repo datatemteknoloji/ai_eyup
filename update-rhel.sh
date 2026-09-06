@@ -638,6 +638,15 @@ sync_postgres_password() {
     docker exec "$container" pg_isready -U "$user" >/dev/null 2>&1 && break
     sleep 1
   done
+  # Recovery modunda (crash recovery) ALTER/DDL kabul edilmez — yazılabilir olana kadar bekle.
+  for i in $(seq 1 90); do
+    local rec
+    rec="$(docker exec "$container" psql -U "$user" -d postgres -tAc "SELECT pg_is_in_recovery();" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$rec" == "f" ]]; then
+      break
+    fi
+    sleep 1
+  done
   local esc="${password//\'/\'\'}"
   if docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
       -c "ALTER USER ${user} WITH PASSWORD '${esc}';" >/dev/null 2>&1; then
@@ -645,6 +654,27 @@ sync_postgres_password() {
   else
     c_yellow "${label} şifre senkronu atlandı (${container} SQL kabul etmiyor)."
   fi
+}
+
+wait_postgres_writable() {
+  local container="$1"
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+    return 0
+  fi
+  local i rec
+  for i in $(seq 1 90); do
+    if ! docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
+      sleep 1
+      continue
+    fi
+    rec="$(docker exec "$container" psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$rec" == "f" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  c_yellow "Uyarı: ${container} hâlâ recovery modunda olabilir — backend migrasyonları gecikebilir."
+  return 0
 }
 
 step "Veri katmanı başlatılıyor (DB/Redis)"
@@ -664,23 +694,38 @@ if grep -q 'docker-compose.dropt.yml' "$COMPOSE_FILE" 2>/dev/null || [[ -f docke
 fi
 
 step "Servisler yeniden başlatılıyor (--no-build)"
+wait_postgres_writable "server_management_db"
 if ! compose_up; then
   c_yellow "İlk up tam bitmedi — backend/Dropt yeniden deneniyor"
+  wait_postgres_writable "server_management_db"
   compose_up backend dropt-api dropt-worker || compose_up backend || true
 fi
 
 step "Sağlık kontrolü"
 READY=0
-for i in $(seq 1 40); do
-  if curl -sf "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+VER_OK=0
+for i in $(seq 1 60); do
+  if curl -sf "http://127.0.0.1:8000/health" >/dev/null 2>&1 \
+     || curl -sf "http://127.0.0.1:8000/api/v1/public/version" >/dev/null 2>&1; then
     READY=1
-    break
+    _api_ver="$(curl -sf "http://127.0.0.1:8000/api/v1/public/version" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+    if [[ -n "$_api_ver" && "$_api_ver" == "$NEW_VERSION" ]]; then
+      VER_OK=1
+      break
+    fi
+    # API ayakta ama sürüm henüz eşleşmiyorsa biraz daha bekle (çok worker / migrasyon)
+    if [[ $i -ge 20 && -n "$_api_ver" ]]; then
+      break
+    fi
   fi
   sleep 3
 done
 
 echo
-if [[ "$READY" -eq 1 ]]; then
+if [[ "$READY" -eq 1 && "$VER_OK" -eq 1 ]]; then
+  c_green "✔ Güncelleme tamamlandı: ${OLD_VERSION} → ${NEW_VERSION}"
+elif [[ "$READY" -eq 1 ]]; then
+  c_yellow "✔ Backend ayakta; API sürümü: ${_api_ver:-bilinmiyor} (beklenen ${NEW_VERSION})"
   c_green "✔ Güncelleme tamamlandı: ${OLD_VERSION} → ${NEW_VERSION}"
 else
   c_red "⚠ Backend henüz yanıt vermiyor."

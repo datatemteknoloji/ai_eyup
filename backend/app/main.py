@@ -200,24 +200,25 @@ async def startup_tasks():
     _role = (os.getenv("AINEW_SERVICE_ROLE") or "all").strip().lower()
 
     try:
-        from app.services.rag_store import ensure_schema
-        ensure_schema()
-        if _role in ("all", "chat", ""):
-            from app.services.rag_chroma_migrate import migrate_chroma_if_needed
-            summary = migrate_chroma_if_needed()
-            logger.info("RAG Chroma→pgvector migrate: %s", summary)
-    except Exception as e:
-        logger.warning("RAG pgvector init: %s", e)
-
-    try:
         from app.services.chat_orchestrator.service import start_consumer_if_needed
         start_consumer_if_needed()
     except Exception as e:
         logger.warning("Chat orchestrator: %s", e)
 
-    # Hafif şema güncellemeleri (mevcut tablolara eksik kolon ekle — idempotent)
+    # Hafif şema güncellemeleri (mevcut tablolara eksik kolon ekle — idempotent).
+    # ÖNEMLİ: pgvector/RAG init'ten ÖNCE çalışır. Eski CPU'larda CREATE EXTENSION
+    # vector SIGILL ile Postgres'i recovery'ye sokarsa kolon ALTER'ları kaçmasın.
     try:
         from sqlalchemy import text as _sa_text
+
+        def _ddl(sql: str) -> None:
+            """Her DDL ayrı transaction — biri fail olsa diğerleri uygulansın."""
+            try:
+                with engine.begin() as _c:
+                    _c.execute(_sa_text(sql))
+            except Exception as _ddl_e:
+                logger.debug("schema ddl skip (%s): %s", sql[:60], _ddl_e)
+
         # Postgres enum'a yeni hypervisor tipleri ekle — ayrı transaction, bazı Postgres
         # sürümlerinde ADD VALUE diğer DDL'lerle aynı transaction'da hata verebiliyor.
         # NOT: SQLAlchemy `Enum(HypervisorType)` sütunu değer olarak enum ÜYE ADINI
@@ -231,18 +232,11 @@ async def startup_tasks():
                     ))
             except Exception as _enum_e:
                 logger.debug(f"hypervisortype enum migration skip ({_enum_value}): {_enum_e}")
-        with engine.begin() as _conn:
-            _conn.execute(_sa_text(
-                "ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(10) DEFAULT 'skip'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_retention VARCHAR(20) DEFAULT '1w'"
-            ))
-            # VM detay kolonları — hypervisor'dan senkronize edilen tüm VM bilgileri
-            for _col_sql in [
+        _ddl("ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE")
+        _ddl("ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(10) DEFAULT 'skip'")
+        _ddl("ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_retention VARCHAR(20) DEFAULT '1w'")
+        # VM detay kolonları — hypervisor'dan senkronize edilen tüm VM bilgileri
+        for _col_sql in [
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_name VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_guest_hostname VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_guest_ip VARCHAR(45)",
@@ -303,77 +297,57 @@ async def startup_tasks():
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS sensor_bad_count INTEGER",
                 "CREATE INDEX IF NOT EXISTS ix_hvm_cluster_name ON hypervisor_host_metrics (cluster_name)",
             ]:
-                _conn.execute(_sa_text(_col_sql))
-            _conn.execute(_sa_text(
-                "ALTER TABLE package_jobs ADD COLUMN IF NOT EXISTS live_log JSONB DEFAULT '{}'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS category VARCHAR(32) DEFAULT 'linux'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_tiers JSONB"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(16) DEFAULT 'dark'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'tr'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(20) DEFAULT 'local'"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS rejected BOOLEAN DEFAULT FALSE"
-            ))
-            _conn.execute(_sa_text(
-                "ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"
-            ))
-            try:
-                _conn.execute(_sa_text(
-                    "ALTER TABLE chat_qa_cache ALTER COLUMN context_key TYPE VARCHAR(80)"
-                ))
-            except Exception:
-                pass
-            _conn.execute(_sa_text(
-                "CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_context_key ON chat_qa_cache (context_key)"
-            ))
-            _conn.execute(_sa_text(
-                "CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_expires_at ON chat_qa_cache (expires_at)"
-            ))
-            for _idx in [
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_uptime ON linux_inventory (uptime_seconds)",
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_boot ON linux_inventory (boot_time)",
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_time ON linux_inventory (collection_time)",
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_status ON linux_inventory (collection_status)",
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_cpu ON linux_inventory (cpu_usage_percent)",
-                "CREATE INDEX IF NOT EXISTS ix_linux_inventory_mem ON linux_inventory (memory_usage_percent)",
-                "CREATE INDEX IF NOT EXISTS ix_fs_metrics_usage ON filesystem_metrics (usage_percent)",
-                "CREATE INDEX IF NOT EXISTS ix_service_status_name ON service_status (service_name)",
-                "CREATE INDEX IF NOT EXISTS ix_service_status_active ON service_status (active_state)",
-                # system_events: last_seen/created_at neredeyse her sorguda ">= since"
-                # ile filtrelenir (ops_center, anomaly detection, log collector, RCA vb.)
-                # ama index'leri yoktu — 288K+ satırda her seferinde tam tablo taraması
-                # oluyordu (DB CPU/IO üzerinden dolaylı "hang" kaynağı).
-                "CREATE INDEX IF NOT EXISTS ix_system_events_created_at ON system_events (created_at)",
-                "CREATE INDEX IF NOT EXISTS ix_system_events_last_seen ON system_events (last_seen)",
-                "CREATE INDEX IF NOT EXISTS ix_system_events_server_last_seen ON system_events (server_id, last_seen)",
-                # servers.status — ONLINE/ai_ready filtreleri (anomaly, metric sync, health)
-                "CREATE INDEX IF NOT EXISTS ix_servers_status ON servers (status)",
-                "CREATE INDEX IF NOT EXISTS ix_servers_status_ai_ready ON servers (status, ai_ready)",
-            ]:
-                try:
-                    _conn.execute(_sa_text(_idx))
-                except Exception:
-                    pass
+                _ddl(_col_sql)
+        _ddl("ALTER TABLE package_jobs ADD COLUMN IF NOT EXISTS live_log JSONB DEFAULT '{}'")
+        _ddl("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS category VARCHAR(32) DEFAULT 'linux'")
+        _ddl("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'")
+        _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_tiers JSONB")
+        _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(16) DEFAULT 'dark'")
+        _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'tr'")
+        _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(20) DEFAULT 'local'")
+        _ddl("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL")
+        _ddl("ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS rejected BOOLEAN DEFAULT FALSE")
+        _ddl("ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
+        _ddl("ALTER TABLE chat_qa_cache ALTER COLUMN context_key TYPE VARCHAR(80)")
+        _ddl("CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_context_key ON chat_qa_cache (context_key)")
+        _ddl("CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_expires_at ON chat_qa_cache (expires_at)")
+        for _idx in [
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_uptime ON linux_inventory (uptime_seconds)",
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_boot ON linux_inventory (boot_time)",
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_time ON linux_inventory (collection_time)",
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_coll_status ON linux_inventory (collection_status)",
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_cpu ON linux_inventory (cpu_usage_percent)",
+            "CREATE INDEX IF NOT EXISTS ix_linux_inventory_mem ON linux_inventory (memory_usage_percent)",
+            "CREATE INDEX IF NOT EXISTS ix_fs_metrics_usage ON filesystem_metrics (usage_percent)",
+            "CREATE INDEX IF NOT EXISTS ix_service_status_name ON service_status (service_name)",
+            "CREATE INDEX IF NOT EXISTS ix_service_status_active ON service_status (active_state)",
+            # system_events: last_seen/created_at neredeyse her sorguda ">= since"
+            # ile filtrelenir (ops_center, anomaly detection, log collector, RCA vb.)
+            # ama index'leri yoktu — 288K+ satırda her seferinde tam tablo taraması
+            # oluyordu (DB CPU/IO üzerinden dolaylı "hang" kaynağı).
+            "CREATE INDEX IF NOT EXISTS ix_system_events_created_at ON system_events (created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_system_events_last_seen ON system_events (last_seen)",
+            "CREATE INDEX IF NOT EXISTS ix_system_events_server_last_seen ON system_events (server_id, last_seen)",
+            # servers.status — ONLINE/ai_ready filtreleri (anomaly, metric sync, health)
+            "CREATE INDEX IF NOT EXISTS ix_servers_status ON servers (status)",
+            "CREATE INDEX IF NOT EXISTS ix_servers_status_ai_ready ON servers (status, ai_ready)",
+        ]:
+            _ddl(_idx)
     except Exception as _mig_e:
         logger.debug(f"schema migration skip: {_mig_e}")
-    
+
+    # RAG / pgvector — şema ALTER'larından SONRA. AVX'siz CPU'da CREATE EXTENSION
+    # SIGILL ile Postgres'i düşürebilir; ensure_schema bunu atlar (marker).
+    try:
+        from app.services.rag_store import ensure_schema
+        ensure_schema()
+        if _role in ("all", "chat", ""):
+            from app.services.rag_chroma_migrate import migrate_chroma_if_needed
+            summary = migrate_chroma_if_needed()
+            logger.info("RAG Chroma→pgvector migrate: %s", summary)
+    except Exception as e:
+        logger.warning("RAG pgvector init: %s", e)
+
     # Varsayılan admin kullanıcısını oluştur (yoksa) — sistem kilitlenmesin
     try:
         import os as _os

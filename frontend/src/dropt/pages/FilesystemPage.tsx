@@ -25,7 +25,8 @@ import { useAfterPreview, useOpsWizard } from "@dropt/hooks/useOpsWizard";
 import { useT } from "@dropt/i18n/I18nProvider";
 import { getToken } from "@dropt/session";
 import { cn } from "@dropt/lib/utils";
-import { ArrowLeft, FolderPlus, Maximize2, Folders } from "lucide-react";
+import { FolderPlus, Maximize2, Folders } from "lucide-react";
+import { BackNavButton } from "@dropt/components/BackNavButton";
 
 /** Partition/LVM overhead — backend DISK_USABLE_RESERVE_BYTES ile aynı */
 const DISK_USABLE_RESERVE = 16 * 1024 * 1024;
@@ -655,14 +656,9 @@ export function FilesystemPage() {
   return (
     <div className={cn("flex min-h-0 flex-col", embedded ? "px-4 py-3 md:px-5 md:py-4" : "px-6 py-5")}>
       <div className="mb-3 shrink-0">
-        <button
-          type="button"
-          onClick={goChoice}
-          className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--bg-elevated,var(--color-secondary))] px-2.5 py-1.5 text-xs font-medium text-[var(--color-foreground)] transition hover:border-[var(--accent)]/40"
-        >
-          <ArrowLeft className="h-3.5 w-3.5 opacity-70" />
-          İşlem seçimine dön
-        </button>
+        <div className="mb-2">
+          <BackNavButton label={t("network_back_to_choice")} onClick={goChoice} />
+        </div>
         <h2 className="text-lg font-semibold tracking-tight">{modeTitle}</h2>
         <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
           {hostname ? `${hostname}` : ""}

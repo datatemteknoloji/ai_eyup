@@ -113,7 +113,8 @@ def init_timescaledb():
                     conn,
                     f"""SELECT create_hypertable('{_tbl}', 'timestamp',
                            chunk_time_interval => INTERVAL '{_chunk}',
-                           if_not_exists => TRUE);""",
+                           if_not_exists => TRUE,
+                           migrate_data => TRUE);""",
                     f"{_tbl} hypertable",
                     ok_substrings=("already a hypertable", "does not exist"),
                 )

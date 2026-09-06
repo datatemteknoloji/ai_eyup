@@ -47,10 +47,19 @@ def apply_job_task(job_id: int, only_failed: bool = False) -> dict:
 
                 from app.models.job import JobStatus
                 from app.services.job_events import publish_job_event
+                from app.services.preview_freshness import StalePreviewError
 
-                job.status = JobStatus.failed
-                job.error_message = str(exc)[:1024]
-                job.finished_at = datetime.now(UTC)
+                # Bayat önizleme → failed değil, yeniden preview edilebilir
+                if isinstance(exc, StalePreviewError):
+                    job.status = JobStatus.previewed
+                    job.error_message = str(exc)[:1024]
+                    job.finished_at = None
+                    end_status = JobStatus.previewed.value
+                else:
+                    job.status = JobStatus.failed
+                    job.error_message = str(exc)[:1024]
+                    job.finished_at = datetime.now(UTC)
+                    end_status = JobStatus.failed.value
                 session.add(job)
                 session.commit()
                 # UI WS job_end bekler; aksi halde "kuyruğa alındı %0" da kalır
@@ -59,11 +68,12 @@ def apply_job_task(job_id: int, only_failed: bool = False) -> dict:
                     {
                         "type": "job_end",
                         "job_id": job.id,
-                        "status": JobStatus.failed.value,
+                        "status": end_status,
                         "success": 0,
-                        "failed": 1,
+                        "failed": 0 if isinstance(exc, StalePreviewError) else 1,
                         "skipped": 0,
                         "error": str(exc)[:400],
+                        "stale_preview": isinstance(exc, StalePreviewError),
                     },
                 )
             return {"ok": False, "error": str(exc)}

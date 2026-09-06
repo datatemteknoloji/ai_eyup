@@ -105,9 +105,12 @@ def test_get_vm_snapshot_sizes_assigns_deltas_in_chain_order(monkeypatch):
     )
 
     def _fake_search(soap_session, soap_url, browser_ref, ds_name, folder, filenames):
+        # Gerçek datastore: descriptor ~1KB + delta extent = asıl boyut
         sizes = {
-            "enes-94-clone_2-000001.vmdk": 1_000_000,
-            "enes-94-clone_2-000002.vmdk": 2_000_000,
+            "enes-94-clone_2-000001.vmdk": 900,
+            "enes-94-clone_2-000001-delta.vmdk": 1_000_000,
+            "enes-94-clone_2-000002.vmdk": 950,
+            "enes-94-clone_2-000002-delta.vmdk": 2_000_000,
         }
         return {f: sizes[f] for f in filenames if f in sizes}
 
@@ -115,10 +118,21 @@ def test_get_vm_snapshot_sizes_assigns_deltas_in_chain_order(monkeypatch):
 
     sizes = client.get_vm_snapshot_sizes("vm-9026")
 
-    assert sizes["snapshot-11015"]["size_bytes"] == 1_000_000
-    assert sizes["snapshot-11017"]["size_bytes"] == 2_000_000
+    assert sizes["snapshot-11015"]["size_bytes"] == 900 + 1_000_000
+    assert sizes["snapshot-11017"]["size_bytes"] == 950 + 2_000_000
     assert sizes["snapshot-11015"]["exact"] is True
     assert sizes["snapshot-11017"]["exact"] is True
+
+
+def test_vmdk_size_candidates_include_extents():
+    c = VCenterClient._vmdk_size_candidates
+    assert c("disk-000001.vmdk") == [
+        "disk-000001.vmdk",
+        "disk-000001-delta.vmdk",
+        "disk-000001-sesparse.vmdk",
+        "disk-000001-flat.vmdk",
+    ]
+    assert c("disk-000001-delta.vmdk") == ["disk-000001-delta.vmdk"]
 
 
 def test_get_vm_snapshot_sizes_skips_irregular_chain(monkeypatch):

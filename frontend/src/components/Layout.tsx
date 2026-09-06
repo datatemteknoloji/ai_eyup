@@ -396,23 +396,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const pageTitle = allLinks.find(l => isActive(l.path))?.name || t('nav_dashboard')
 
-  const renderLinkChild = (child: LinkChild, indent = false) => {
+  const renderLinkChild = (child: LinkChild, depth: 1 | 2 = 1) => {
     const childActive = isActive(child.path)
     const badge = child.badge?.()
+    const isDeep = depth === 2
     return (
       <li key={child.path}>
         <Link
           to={child.path}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
-            indent ? 'pl-2' : ''
+          className={`flex items-center gap-2 rounded-lg transition-all duration-200 ${
+            isDeep
+              ? 'px-2.5 py-1 pl-2 text-[11px] leading-snug [&_svg]:h-3 [&_svg]:w-3'
+              : 'px-3 py-1.5 text-xs leading-snug [&_svg]:h-3.5 [&_svg]:w-3.5'
           } ${
             childActive
               ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
-              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              : isDeep
+                ? 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
-          <span className="font-medium truncate flex-1">{child.name}</span>
+          <span className={`truncate flex-1 ${isDeep ? 'font-normal' : 'font-medium'}`}>{child.name}</span>
           {badge}
         </Link>
       </li>
@@ -423,7 +428,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     if (!childVisible(child, hasModule, isAdmin)) return null
 
     if (child.type === 'link') {
-      return renderLinkChild(child)
+      return renderLinkChild(child, 1)
     }
 
     const subPaths = collectGroupPaths(child.children)
@@ -435,18 +440,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <li key={child.key} className="pt-1">
         <button
           onClick={() => toggleGroup(child.key, subActive)}
-          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
-            subActive ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-xs leading-snug [&_svg]:h-3.5 [&_svg]:w-3.5 ${
+            subActive
+              ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]'
+              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
           }`}
         >
           <span className="flex-shrink-0 text-current">{child.icon}</span>
           <span className="font-medium truncate flex-1 text-left">{child.name}</span>
           {subBadge}
-          <ChevronRight size={12} className={`text-slate-500 transition-transform duration-200 flex-shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
+          <ChevronRight size={11} className={`text-slate-500 transition-transform duration-200 flex-shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
         </button>
         {isSubOpen && (
           <ul className="mt-0.5 ml-2 pl-2 border-l border-slate-700/40 space-y-0.5">
-            {child.children.filter(c => childVisible(c, hasModule, isAdmin)).map(link => renderLinkChild(link, true))}
+            {child.children.filter(c => childVisible(c, hasModule, isAdmin)).map(link => renderLinkChild(link, 2))}
           </ul>
         )}
       </li>
@@ -476,7 +483,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           <span className="flex-shrink-0 text-current">{item.icon}</span>
           {sidebarOpen && (
             <>
-              <span className="font-medium ml-3 flex-1 text-left text-sm">{item.name}</span>
+              <span className="font-semibold ml-3 flex-1 text-left text-sm tracking-tight">{item.name}</span>
               <ChevronRight size={13} className={`text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
             </>
           )}
@@ -585,7 +592,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       }`}
                     >
                       <span className="flex-shrink-0 text-current">{item.icon}</span>
-                      {sidebarOpen && <span className="font-medium text-sm truncate">{item.name}</span>}
+                      {sidebarOpen && <span className="font-semibold text-sm tracking-tight truncate">{item.name}</span>}
                     </Link>
                   </li>
                 )
@@ -709,7 +716,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         {/* Page Content — chat/konsol tam ekran; diğer sayfalar main scroll */}
         <main
-          className={`flex-1 min-h-0 p-5 ${
+          className={`flex-1 min-h-0 ${
           (() => {
             const p = location.pathname
             const isChat = p.endsWith('/chat')
@@ -717,7 +724,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               || p.includes('unified-chat')
               || /\/(linux|windows|virt|exadata|openshift)\/.*chat/.test(p)
             const isLevel1Fill = p.startsWith('/level1/console') || p.startsWith('/level1/ops')
-            return (isChat || isLevel1Fill) ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+            if (isChat || isLevel1Fill) {
+              // Console/ops: less padding so İş Konsolu viewport içinde kalsın
+              return isLevel1Fill
+                ? 'overflow-hidden flex flex-col p-3'
+                : 'overflow-hidden flex flex-col p-5'
+            }
+            return 'overflow-y-auto p-5'
           })()
         }`}
           style={{ background: 'var(--bg-base)' }}

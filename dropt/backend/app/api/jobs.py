@@ -255,11 +255,32 @@ def apply_job_endpoint(
             detail="Önce önizleme yapılmalı",
         )
 
+    from app.services.host_op_lock import HostLockError, assert_servers_free
+    from app.services.preview_freshness import StalePreviewError
+
+    try:
+        assert_servers_free(session, job)
+    except HostLockError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    # Soft-stale bayrağı (başka apply sonrası işaretlenmiş preview)
+    payload = dict(job.payload or {})
+    if payload.get("_stale"):
+        reason = str(payload.get("_stale_reason") or "Önizleme güncelliğini yitirdi.").strip()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{reason} Lütfen yeniden önizleyin.",
+        )
+
     if sync:
         from app.services.job_engine import apply_job
 
         try:
             job = apply_job(session, job, only_failed=only_failed)
+        except HostLockError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except StalePreviewError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return _job_public(session, job, detail=True)

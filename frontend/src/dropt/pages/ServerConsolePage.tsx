@@ -14,6 +14,7 @@ import {
   ServerFacts,
   ServerPublic,
 } from "@dropt/api";
+import { BackNavButton } from "@dropt/components/BackNavButton";
 import { SERVER_OPS, buildOpsUrl, findOpsByPath } from "@dropt/components/ServerOpsMenu";
 import { Badge } from "@dropt/components/ui/badge";
 import { Button } from "@dropt/components/ui/button";
@@ -489,40 +490,65 @@ export function ServerConsolePage() {
   return (
     <div className="l1-server-console flex h-full min-h-0 flex-1 flex-col">
       {/* Genel üst bilgi — hostname sunucuya göre değişir */}
-      <header className="l1-console-header shrink-0 border-b border-white/[0.06] bg-[var(--bg-surface)]/80 px-4 py-4 md:px-5">
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <Link
-              to="/level1"
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent)]"
-            >
-              ← {t("console_back")}
-            </Link>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-              <h1 className="truncate text-xl font-bold tracking-tight text-[var(--text-primary)] md:text-[22px]">
-                {hostTitle}
-              </h1>
-              <span className="rounded-md border border-white/[0.08] bg-[var(--bg-elevated)] px-2 py-0.5 font-mono text-[13px] text-[var(--info)]">
-                {hostIp}
-              </span>
-              {server ? (
-                <span
-                  className={cn(
-                    "rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                    server.status === "ready"
-                      ? "bg-[var(--success-bg)] text-[var(--success)]"
-                      : "bg-white/[0.06] text-[var(--text-secondary)]",
-                  )}
-                >
-                  {server.status}
-                </span>
-              ) : null}
-            </div>
+      <header className="l1-console-header shrink-0 border-b border-white/[0.06] bg-[var(--bg-surface)]/80 px-4 py-2 md:px-5">
+        {/* Geri ikonu + fact chip’leri aynı satır */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <BackNavButton to="/level1" label={t("console_back")} />
+
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            {factsLoading && !facts
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-7 w-[5.5rem] animate-pulse rounded-md border border-white/[0.05] bg-[var(--bg-elevated)]/60"
+                  />
+                ))
+              : factChips.map((chip) => (
+                  <div
+                    key={chip.label}
+                    className="inline-flex max-w-[11rem] items-baseline gap-1 rounded-md border border-white/[0.06] bg-[var(--bg-elevated)]/45 px-1.5 py-0.5 xl:max-w-[14rem]"
+                    title={`${chip.label}: ${chip.value}`}
+                  >
+                    <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                      {chip.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "min-w-0 truncate text-[10px] leading-tight text-[var(--text-primary)]",
+                        chip.mono && "font-mono text-[9px] text-[var(--text-secondary)]",
+                      )}
+                    >
+                      {chip.value}
+                    </span>
+                  </div>
+                ))}
           </div>
+        </div>
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <h1 className="shrink-0 truncate text-lg font-bold tracking-tight text-[var(--text-primary)] md:text-xl">
+            {hostTitle}
+          </h1>
+          <span className="shrink-0 rounded-md border border-white/[0.08] bg-[var(--bg-elevated)] px-2 py-0.5 font-mono text-[12px] text-[var(--info)]">
+            {hostIp}
+          </span>
+          {server ? (
+            <span
+              className={cn(
+                "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                server.status === "ready"
+                  ? "bg-[var(--success-bg)] text-[var(--success)]"
+                  : "bg-white/[0.06] text-[var(--text-secondary)]",
+              )}
+            >
+              {server.status}
+            </span>
+          ) : null}
+
           <Button
             variant="secondary"
             size="sm"
-            className="shrink-0 border border-white/[0.08] bg-[var(--bg-elevated)] hover:bg-[var(--bg-overlay)]"
+            className="ml-auto shrink-0 border border-white/[0.08] bg-[var(--bg-elevated)] hover:bg-[var(--bg-overlay)]"
             disabled={factsLoading}
             onClick={() => void loadFacts()}
           >
@@ -530,46 +556,17 @@ export function ServerConsolePage() {
           </Button>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {factsLoading && !facts
-            ? Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-[3.25rem] animate-pulse rounded-lg border border-white/[0.05] bg-[var(--bg-elevated)]/60"
-                />
-              ))
-            : factChips.map((chip) => (
-                <div
-                  key={chip.label}
-                  className="min-w-0 rounded-lg border border-white/[0.06] bg-[var(--bg-elevated)]/50 px-2.5 py-2"
-                  title={`${chip.label}: ${chip.value}`}
-                >
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                    {chip.label}
-                  </div>
-                  <div
-                    className={cn(
-                      "mt-0.5 truncate text-[12px] text-[var(--text-primary)]",
-                      chip.mono && "font-mono text-[11px] text-[var(--text-secondary)]",
-                    )}
-                  >
-                    {chip.value}
-                  </div>
-                </div>
-              ))}
-        </div>
-
         {factsError ? (
-          <p className="mt-3 rounded-lg border border-[var(--error)]/30 bg-[var(--error-bg)] px-3 py-2 text-xs text-[var(--error)]">
+          <p className="mt-1.5 rounded-lg border border-[var(--error)]/30 bg-[var(--error-bg)] px-3 py-1.5 text-xs text-[var(--error)]">
             {factsError}
           </p>
         ) : null}
 
-        <div className="mt-4">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+        <div className="mt-2.5">
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             {t("operations")}
           </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
             {SERVER_OPS.map((op) => {
               const Icon = op.icon;
               return (
@@ -580,7 +577,7 @@ export function ServerConsolePage() {
                   className={cn("l1-op-tile", opTone(op.path))}
                 >
                   <span className="l1-op-tile__icon">
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3.5 w-3.5" />
                   </span>
                   <span className="l1-op-tile__label">{t(op.key)}</span>
                 </button>
@@ -591,8 +588,8 @@ export function ServerConsolePage() {
       </header>
 
       {activeJob ? (
-        <div className="shrink-0 border-b border-white/[0.06] bg-[var(--bg-elevated)]/40 px-4 py-3 md:px-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="shrink-0 border-b border-white/[0.06] bg-[var(--bg-elevated)]/40 px-4 py-2 md:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                 <span className="font-mono text-[var(--text-secondary)]">#{activeJob.id}</span>
@@ -619,36 +616,36 @@ export function ServerConsolePage() {
             </div>
           </div>
           {activeJob.preview ? (
-            <div className="mt-2 rounded-lg border border-white/[0.06] bg-[var(--bg-deep)]/50 px-3 py-2 text-sm text-[var(--text-primary)]">
-              <p>{activeJob.preview.summary_tr}</p>
+            <div className="mt-1.5 rounded-lg border border-white/[0.06] bg-[var(--bg-deep)]/50 px-3 py-1.5 text-sm text-[var(--text-primary)]">
+              <p className="line-clamp-2">{activeJob.preview.summary_tr}</p>
               <button
                 type="button"
-                className="mt-1 text-xs font-medium text-[var(--accent)] hover:underline"
+                className="mt-0.5 text-xs font-medium text-[var(--accent)] hover:underline"
                 onClick={() => setShowTech((v) => !v)}
               >
                 {showTech ? t("hide_technical") : t("technical_detail")}
               </button>
               {showTech ? (
-                <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-white/[0.06] bg-[var(--bg-base)] p-2 font-mono text-xs text-[var(--text-secondary)]">
+                <pre className="mt-1.5 max-h-28 overflow-auto rounded-md border border-white/[0.06] bg-[var(--bg-base)] p-2 font-mono text-xs text-[var(--text-secondary)]">
                   {activeJob.preview.technical_detail || "(boş)"}
                 </pre>
               ) : null}
             </div>
           ) : null}
-          {error ? <p className="mt-2 text-sm text-[var(--error)]">{error}</p> : null}
+          {error ? <p className="mt-1.5 text-sm text-[var(--error)]">{error}</p> : null}
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3 md:px-5">
-        <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2 md:px-5">
+        <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             {t("console_log_title")}
           </p>
           <p className="text-[10px] text-[var(--text-muted)]">Salt okunur önizleme · etkileşimli shell değil</p>
         </div>
         {jobProgress && (busy || jobProgress.percent < 100) ? (
-          <div className="mb-3 rounded-xl border border-white/[0.08] bg-[var(--bg-surface)] px-4 py-3">
-            <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+          <div className="mb-2 shrink-0 rounded-xl border border-white/[0.08] bg-[var(--bg-surface)] px-3 py-2">
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs">
               <span className="truncate text-[var(--text-secondary)]" title={jobProgress.label}>
                 {jobProgress.label || "İlerleme"}
               </span>
@@ -657,7 +654,7 @@ export function ServerConsolePage() {
                 {jobProgress.total > 0 ? ` · ${jobProgress.done}/${jobProgress.total}` : ""}
               </span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-deep)]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-deep)]">
               <div
                 className={cn(
                   "h-full rounded-full bg-[var(--accent)] transition-[width] duration-500 ease-out",
@@ -668,11 +665,15 @@ export function ServerConsolePage() {
             </div>
           </div>
         ) : null}
+        <div
+          ref={hostRef}
+          className="l1-job-console min-h-0 flex-1 overflow-hidden rounded-xl border border-white/[0.08] bg-[var(--theme-terminal-bg,#060a12)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+        />
         {applyResult ? (
           <div
             role="status"
             className={cn(
-              "mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3",
+              "mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2",
               applyResult.status === "success" && "border-[var(--success)]/40 bg-[var(--success-bg)]",
               applyResult.status === "partial" && "border-[var(--warning)]/40 bg-[var(--warning-bg)]",
               applyResult.status !== "success" &&
@@ -680,7 +681,7 @@ export function ServerConsolePage() {
                 "border-[var(--error)]/40 bg-[var(--error-bg)]",
             )}
           >
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-semibold text-[var(--text-primary)]">
                 {applyResult.status === "success"
                   ? `✓ ${t("console_done_success")}`
@@ -688,7 +689,7 @@ export function ServerConsolePage() {
                     ? `⚠ ${t("console_done_partial")}`
                     : `✗ ${t("console_done_failed")}`}
               </p>
-              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+              <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
                 {applyResult.title} · {applyResult.status} (ok={applyResult.success} fail=
                 {applyResult.failed} skip={applyResult.skipped})
               </p>
@@ -706,10 +707,6 @@ export function ServerConsolePage() {
             </Button>
           </div>
         ) : null}
-        <div
-          ref={hostRef}
-          className="l1-job-console min-h-[min(52vh,520px)] flex-1 overflow-hidden rounded-xl border border-white/[0.08] bg-[var(--theme-terminal-bg,#060a12)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-        />
       </div>
 
       <Dialog open={Boolean(wizardPath)} onOpenChange={(o) => !o && setWizardPath(null)}>

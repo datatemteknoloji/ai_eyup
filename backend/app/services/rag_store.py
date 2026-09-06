@@ -4,12 +4,18 @@ RAG vector store — pgvector (TimescaleDB/Postgres).
 Chroma PersistentClient process-safe olmadığı için runtime yolu tamamen
 PostgreSQL `rag_embeddings` tablosudur. Eski Chroma verisi startup'ta
 bir kez `rag_chroma_migrate` ile taşınır; chroma volume silinmez.
+
+Not: Bazı eski CPU'larda (AVX'siz Xeon X56xx vb.) pgvector .so yüklenirken
+SIGILL ile Postgres process'i düşer ve küme recovery'ye girer. Bu durumda
+CREATE EXTENSION ASLA denenmez; marker dosyası ile kalıcı olarak atlanır.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+from pathlib import Path
 from typing import Any, List, Optional
 
 from sqlalchemy import text
@@ -27,6 +33,32 @@ EMBEDDING_DIM = 768
 
 _schema_lock = threading.Lock()
 _schema_ready = False
+_vector_disabled = False
+
+
+def _unsupported_marker() -> Path:
+    # /app/uploads compose'ta DATA_DIR/uploads'a mount edilir — kalıcı ve yazılabilir.
+    for cand in ("/app/uploads", os.getenv("AINEW_DATA_DIR"), os.getenv("DATA_DIR")):
+        if cand:
+            return Path(cand) / ".pgvector_unsupported"
+    return Path("/tmp/.pgvector_unsupported")
+
+
+def _host_has_avx() -> bool:
+    """pgvector binary'leri genelde AVX ister; yoksa CREATE EXTENSION SIGILL üretir."""
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("flags") or line.startswith("Features"):
+                    flags = f" {line.split(':', 1)[-1]} "
+                    return " avx " in flags or " avx2 " in flags
+    except OSError:
+        pass
+    return True  # okunamazsa engelleme (modern host varsayımı)
+
+
+def is_vector_disabled() -> bool:
+    return _vector_disabled
 
 
 def _vec_literal(embedding: List[float]) -> str:
@@ -43,14 +75,60 @@ def _vec_literal(embedding: List[float]) -> str:
 
 def ensure_schema() -> None:
     """Idempotent DDL — init_timescale da çağırır; store ilk kullanımda da güvence."""
-    global _schema_ready
-    if _schema_ready:
+    global _schema_ready, _vector_disabled
+    if _schema_ready or _vector_disabled:
         return
     with _schema_lock:
-        if _schema_ready:
+        if _schema_ready or _vector_disabled:
             return
+
+        marker = _unsupported_marker()
+        if marker.is_file() or not _host_has_avx():
+            _vector_disabled = True
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(
+                    "pgvector skipped: host CPU lacks AVX (or previous SIGILL).\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            logger.warning(
+                "RAG pgvector atlandı (CPU AVX yok veya önceki SIGILL marker). "
+                "Semantik RAG bu hostta kapalı; diğer özellikler etkilenmez."
+            )
+            return
+
+        # Extension zaten yüklü mü? (yoksa CREATE denemeden önce kontrol)
+        try:
+            with engine.connect() as conn:
+                installed = conn.execute(
+                    text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+                ).scalar()
+        except Exception as e:
+            logger.warning("RAG pgvector extension kontrolü başarısız: %s", e)
+            installed = None
+
+        if not installed:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            except Exception as e:
+                # SIGILL sonrası bağlantı kopması / recovery — bir daha deneme.
+                _vector_disabled = True
+                try:
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text(f"pgvector CREATE EXTENSION failed: {e}\n", encoding="utf-8")
+                except OSError:
+                    pass
+                logger.error(
+                    "RAG pgvector CREATE EXTENSION başarısız (muhtemel CPU SIGILL): %s. "
+                    "Marker yazıldı; sonraki başlangıçlarda atlanacak.",
+                    e,
+                )
+                return
+
         ddl = [
-            "CREATE EXTENSION IF NOT EXISTS vector",
             """
             CREATE TABLE IF NOT EXISTS rag_embeddings (
                 id TEXT PRIMARY KEY,
@@ -89,6 +167,12 @@ def ensure_schema() -> None:
         logger.info("RAG pgvector schema hazır")
 
 
+
+def _ensure_vector_ready() -> bool:
+    """Schema hazır ve pgvector kullanılabilir mi?"""
+    ensure_schema()
+    return (not is_vector_disabled()) and _schema_ready
+
 def _meta_json(metadatas: Optional[List[dict]], n: int) -> List[str]:
     if not metadatas:
         return ["{}"] * n
@@ -114,7 +198,8 @@ def add_chunks(
         return
     if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return
     metas = _meta_json(metadatas, len(ids))
     with engine.begin() as conn:
         for i, cid in enumerate(ids):
@@ -148,7 +233,8 @@ def upsert_chunks(
         return
     if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return
     metas = _meta_json(metadatas, len(ids))
     with engine.begin() as conn:
         for i, cid in enumerate(ids):
@@ -182,7 +268,8 @@ def query_collection(
     n_results: int = 5,
     where: Optional[dict] = None,
 ) -> List[dict]:
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return []
     k = min(max(1, int(n_results or 5)), 100)
     sql = """
         SELECT id, document, metadata,
@@ -227,7 +314,8 @@ def lexical_search_collection(
     q = (query or "").strip()
     if not q:
         return []
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return []
     k = min(max(1, int(n_results or 8)), 40)
     like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     out: List[dict] = []
@@ -294,7 +382,8 @@ def format_runbook_hits(hits: List[dict]) -> List[dict]:
 
 
 def clear_collection(collection_name: str) -> None:
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return
     with engine.begin() as conn:
         conn.execute(
             text("DELETE FROM rag_embeddings WHERE collection = :coll"),
@@ -306,7 +395,8 @@ def clear_collection(collection_name: str) -> None:
 def delete_chunk_ids(collection_name: str, ids: List[str]) -> int:
     if not ids:
         return 0
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return 0
     n = 0
     with engine.begin() as conn:
         for i in range(0, len(ids), 400):
@@ -329,7 +419,8 @@ def prune_ids_not_in_keep(
     id_prefix: str,
     scan_limit: int = 20000,
 ) -> int:
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return 0
     keep = {str(x) for x in (keep_ids or set())}
     with engine.begin() as conn:
         rows = conn.execute(
@@ -351,7 +442,8 @@ def prune_ids_not_in_keep(
 
 def count_collection(collection_name: str) -> int:
     try:
-        ensure_schema()
+        if not _ensure_vector_ready():
+            return 0
         with engine.connect() as conn:
             n = conn.execute(
                 text("SELECT COUNT(*) FROM rag_embeddings WHERE collection = :coll"),
@@ -364,7 +456,8 @@ def count_collection(collection_name: str) -> int:
 
 def list_runbook_documents(limit: int = 5000) -> List[dict]:
     try:
-        ensure_schema()
+        if not _ensure_vector_ready():
+            return []
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
@@ -398,7 +491,8 @@ def delete_runbook_by_title(title: str) -> int:
     if not title or not title.strip():
         return 0
     title = title.strip()
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return 0
     with engine.begin() as conn:
         res = conn.execute(
             text(
@@ -415,7 +509,8 @@ def delete_runbook_by_title(title: str) -> int:
 
 
 def load_seed_state() -> dict:
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return {}
     try:
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT title, version FROM rag_seed_state"))
@@ -425,7 +520,8 @@ def load_seed_state() -> dict:
 
 
 def save_seed_state(state: dict) -> None:
-    ensure_schema()
+    if not _ensure_vector_ready():
+        return
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM rag_seed_state"))
         for title, version in (state or {}).items():

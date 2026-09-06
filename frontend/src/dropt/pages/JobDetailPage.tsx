@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { applyJob, downloadJobArtifact, getJob, JobPublic, previewJob } from "@dropt/api";
+import { BackNavButton } from "@dropt/components/BackNavButton";
 import { Badge } from "@dropt/components/ui/badge";
 import { Button } from "@dropt/components/ui/button";
 import { useI18n } from "@dropt/i18n/I18nProvider";
@@ -110,10 +111,10 @@ export function JobDetailPage() {
   return (
     <div className="px-6 py-6">
       <div className="mb-4">
-        <Link to="/level1/jobs" className="text-xs text-[var(--color-muted-foreground)] hover:underline">
-          {t("back_jobs")}
-        </Link>
-        <h2 className="mt-2 text-xl font-semibold">
+        <div className="mb-2 flex items-center gap-2">
+          <BackNavButton to="/level1/jobs" label={t("back_jobs")} />
+        </div>
+        <h2 className="text-xl font-semibold">
           #{job.id} · {job.title}
         </h2>
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">

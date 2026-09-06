@@ -807,7 +807,9 @@ class VCenterClient:
         3) Bir snapshot'ın YARATTIĞI delta = zincirde bir SONRAKİ dosya (bir sonraki
            snapshot'ın/güncel diskin bildiği ama bu snapshot'ın bilmediği dosya).
         4) Delta dosyalarının gerçek boyutu SearchDatastore_Task ile datastore'dan
-           okunur (tahmin değil, gerçek dosya sistemi boyutu).
+           okunur. layout'taki .vmdk çoğu zaman ~1KB descriptor'dır; asıl yer
+           kaplayan *-delta.vmdk / *-sesparse.vmdk extent'leri de aranır ve
+           toplama dahil edilir (tahmin değil, gerçek dosya sistemi boyutu).
 
         Zincir düzensizse (silinmiş ara snapshot, dallanma) per-snapshot ayrıştırma
         YAPILMAZ — sessizce {} döner (çağıran taraf toplam/adet gibi bilinen alanlara
@@ -848,6 +850,8 @@ class VCenterClient:
 
         # Dosyaları datastore + klasöre göre grupla (tek arama/klasör)
         # path formatı: "[dsname] folder/sub/file.vmdk"
+        # VMware sparse: layout'taki *.vmdk çoğu zaman ~1KB descriptor'dır;
+        # asıl veri *-delta.vmdk / *-sesparse.vmdk extent'inde. İkisini de ara.
         import re as _re
         path_re = _re.compile(r"^\[([^\]]+)\]\s*(.*)$")
         by_ds_folder: Dict[Tuple[str, str], List[str]] = {}
@@ -868,8 +872,11 @@ class VCenterClient:
             browser_ref = browser_map.get(ds_name)
             if not browser_ref:
                 continue
+            expanded: List[str] = []
+            for fn in fnames:
+                expanded.extend(self._vmdk_size_candidates(fn))
             sizes = self._search_datastore_file_sizes(
-                soap_session, soap_url, browser_ref, ds_name, folder, list(set(fnames)),
+                soap_session, soap_url, browser_ref, ds_name, folder, list(set(expanded)),
             )
             size_by_fname.update(sizes)
 
@@ -879,11 +886,21 @@ class VCenterClient:
             found_all = True
             for full in files:
                 fname = file_to_full.get(full)
-                sz = size_by_fname.get(fname) if fname else None
-                if sz is None:
+                if not fname:
                     found_all = False
                     continue
-                total_bytes += sz
+                file_total = 0
+                any_found = False
+                for cand in self._vmdk_size_candidates(fname):
+                    sz = size_by_fname.get(cand)
+                    if sz is None:
+                        continue
+                    file_total += int(sz)
+                    any_found = True
+                if not any_found:
+                    found_all = False
+                    continue
+                total_bytes += file_total
             if total_bytes > 0:
                 result[sk] = {
                     "size_bytes": total_bytes,
@@ -891,6 +908,25 @@ class VCenterClient:
                     "exact": found_all,
                 }
         return result
+
+    @staticmethod
+    def _vmdk_size_candidates(fname: str) -> List[str]:
+        """Descriptor + sparse extent adayları (delta/sesparse/flat)."""
+        if not fname:
+            return []
+        lower = fname.lower()
+        if not lower.endswith(".vmdk"):
+            return [fname]
+        stem = fname[:-5]
+        stem_l = stem.lower()
+        if stem_l.endswith("-delta") or stem_l.endswith("-sesparse") or stem_l.endswith("-flat"):
+            return [fname]
+        return [
+            fname,
+            f"{stem}-delta.vmdk",
+            f"{stem}-sesparse.vmdk",
+            f"{stem}-flat.vmdk",
+        ]
 
     def _create_snapshot_soap(self, vm_id: str, name: str,
                                description: str = "") -> Tuple[bool, str, Optional[str]]:

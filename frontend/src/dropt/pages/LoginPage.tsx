@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import {
   getMe,
   getPublicSettings,
@@ -221,7 +222,8 @@ export function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("login_submitting") : t("login_mfa_submit")}
             </Button>
-            <Button type="button" variant="ghost" className="w-full" onClick={onBackToCredentials}>
+            <Button type="button" variant="ghost" className="w-full gap-2" onClick={onBackToCredentials}>
+              <ArrowLeft className="h-4 w-4" strokeWidth={2.25} />
               {t("login_mfa_back")}
             </Button>
           </form>
@@ -265,7 +267,8 @@ export function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("login_submitting") : t("login_mfa_enroll_submit")}
             </Button>
-            <Button type="button" variant="ghost" className="w-full" onClick={onBackToCredentials}>
+            <Button type="button" variant="ghost" className="w-full gap-2" onClick={onBackToCredentials}>
+              <ArrowLeft className="h-4 w-4" strokeWidth={2.25} />
               {t("login_mfa_back")}
             </Button>
           </form>

@@ -34,6 +34,7 @@ import {
 import { getToken } from "@dropt/session";
 import { VlanPage } from "@dropt/pages/VlanPage";
 import { Cable, Layers, ArrowLeftRight } from "lucide-react";
+import { BackNavButton } from "@dropt/components/BackNavButton";
 
 function prefixToMask(prefix: number): string {
   if (prefix < 0 || prefix > 32) return "";
@@ -59,14 +60,7 @@ function NetworkBackBar({ onBack }: { onBack: () => void }) {
   const t = useT();
   return (
     <div className="mb-3 flex items-center gap-2">
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--bg-elevated,var(--color-secondary))] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary,var(--color-foreground))] transition hover:border-[var(--accent,var(--color-primary))]/40 hover:bg-[var(--accent-subtle,var(--color-accent))]"
-      >
-        <span aria-hidden className="text-[var(--text-secondary,var(--color-muted-foreground))]">←</span>
-        {t("network_back_to_choice")}
-      </button>
+      <BackNavButton label={t("network_back_to_choice")} onClick={onBack} />
     </div>
   );
 }

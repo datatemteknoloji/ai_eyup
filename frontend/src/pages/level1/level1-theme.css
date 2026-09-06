@@ -167,10 +167,10 @@
 .l1-op-tile {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  min-height: 2.75rem;
-  padding: 0.55rem 0.75rem;
-  border-radius: 0.65rem;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.5rem;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-primary);
@@ -187,18 +187,22 @@
 .l1-op-tile__icon {
   display: grid;
   place-items: center;
-  width: 1.85rem;
-  height: 1.85rem;
+  width: 1.45rem;
+  height: 1.45rem;
   flex-shrink: 0;
-  border-radius: 0.45rem;
+  border-radius: 0.35rem;
   background: var(--accent-subtle);
   color: var(--accent);
 }
+.l1-op-tile__icon svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
 .l1-op-tile__label {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 .l1-op-tile--accent {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
