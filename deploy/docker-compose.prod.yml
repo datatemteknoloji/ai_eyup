@@ -134,6 +134,7 @@ services:
       - HOST_ETC_HOSTS=/host-etc-hosts
       - AINEW_INSTALL_MOUNT=/ainew-install
       - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
+      - PRODUCT_GUIDE_PATH=${PRODUCT_GUIDE_PATH:-/app/docs/guides}
       - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
       - AINEW_SERVICE_ROLE=${AINEW_SERVICE_ROLE:-all}
@@ -141,6 +142,7 @@ services:
       - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-30}
     volumes:
       - ./docs/rag_seed:/app/docs/rag_seed:ro
+      - ./docs/guides:/app/docs/guides:ro
       - ./backend/static:/app/static:Z
       - ./VERSION:/app/VERSION:ro
       - ./prometheus/targets:/prometheus/targets:Z

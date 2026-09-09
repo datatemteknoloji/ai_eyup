@@ -107,6 +107,7 @@ services:
       # olmazsa her container recreate'inde ~2GB model yeniden indirilir.
       - HF_HOME=/app/hf_cache
       - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}
+      - PRODUCT_GUIDE_PATH=${PRODUCT_GUIDE_PATH:-/app/docs/guides}
       - DOCKER_SOCK=/var/run/docker.sock
       - DROPT_POSTGRES_USER=${DROPT_POSTGRES_USER:-dtt}
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
@@ -125,6 +126,7 @@ services:
       - ./backend/VERSION:/app/VERSION:ro
       - ./backend/docker-entrypoint.sh:/app/docker-entrypoint.sh:ro
       - ./docs/rag_seed:/app/docs/rag_seed:ro
+      - ./docs/guides:/app/docs/guides:ro
       - ./prometheus/targets:/prometheus/targets
       - ./prometheus/targets:/etc/prometheus/targets
       - ${DATA_DIR:-./data}/chroma:/app/chroma

@@ -170,6 +170,10 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   if [[ -d docs/rag_seed ]]; then
     cp -a docs/rag_seed/. backend/docs/rag_seed/
   fi
+  mkdir -p backend/docs/guides
+  if [[ -d docs/guides ]]; then
+    cp -a docs/guides/. backend/docs/guides/
+  fi
   docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false \
     --build-arg "APP_VERSION=${VERSION}" \
     -t "ainew-backend:${VERSION}" --load ./backend

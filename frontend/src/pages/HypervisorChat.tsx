@@ -9,7 +9,9 @@ import {
   MessageSquare, Lightbulb, Loader2, AlertCircle,
   ChevronDown, ChevronUp, FileDown, BarChart3,
 } from 'lucide-react'
-import { exportMarkdownToPrintWindow, exportChatMessagesToPrintWindow } from '../utils/pdfExport'
+import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
+import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -334,6 +336,7 @@ export default function HypervisorChat({
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const pdfSelect = useChatPdfSelect()
   const loading = stream.isLoading
   const [selectedModel, setSelectedModel] = useState<string>(
     () => localStorage.getItem('virt_chat_selected_model') || localStorage.getItem('chat_selected_model') || 'llama3:70b',
@@ -566,26 +569,20 @@ export default function HypervisorChat({
             </div>
           </div>
         )}
-        {messages.length > 0 && (
-          <button
-            type="button"
-            onClick={() => exportChatMessagesToPrintWindow(
-              messages.map(m => ({
-                role: m.role,
-                content: m.content,
-                created_at: m.timestamp?.toISOString?.() || undefined,
-              })),
-              {
-                title: t('chat_pdf_virt'),
-                subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
-                filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
-              },
-            )}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-          >
-            <FileDown size={13} /> {t('chat_pdf_chat')}
-          </button>
-        )}
+        <ChatPdfToolbar
+          pairs={pairChatMessages(messages.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            created_at: m.timestamp?.toISOString?.() || undefined,
+          })))}
+          select={pdfSelect}
+          fullExport={{
+            title: t('chat_pdf_virt'),
+            subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
+            filename: `virt_ai_${new Date().toISOString().slice(0, 10)}`,
+          }}
+        />
         <NlModelSelect
           value={selectedModel}
           onChange={setSelectedModel}
@@ -620,17 +617,29 @@ export default function HypervisorChat({
           </div>
         ) : (
           <div className={nlChatColumnClass}>
-            {messages.map((msg, i) => {
-              let question = ''
-              if (msg.role === 'assistant') {
-                for (let j = i - 1; j >= 0; j--) {
-                  if (messages[j].role === 'user') {
-                    question = messages[j].content
-                    break
-                  }
-                }
-              }
-              return <MessageBubble key={msg.id} msg={msg} question={question} />
+            {pairChatMessages(messages).map((pair) => {
+              return (
+                <ChatPdfPairWrap
+                  key={pair.id}
+                  selectMode={pdfSelect.selectMode}
+                  checked={pdfSelect.selected.has(pair.id)}
+                  onToggle={() => pdfSelect.toggle(pair.id)}
+                >
+                  {pair.messages.map((msg) => {
+                    let question = ''
+                    if (msg.role === 'assistant') {
+                      const i = messages.findIndex(m => m.id === msg.id)
+                      for (let j = i - 1; j >= 0; j--) {
+                        if (messages[j].role === 'user') {
+                          question = messages[j].content
+                          break
+                        }
+                      }
+                    }
+                    return <MessageBubble key={msg.id} msg={msg} question={question} />
+                  })}
+                </ChatPdfPairWrap>
+              )
             })}
             {loading && <TypingIndicator />}
             <div ref={bottomRef} />
@@ -673,7 +682,10 @@ export default function HypervisorChat({
         selectedId={selectedSessionId}
         search={historySearch}
         onSearchChange={setHistorySearch}
-        onSelect={id => setSelectedSessionId(id)}
+        onSelect={id => {
+          if (id !== selectedSessionId) pdfSelect.reset()
+          setSelectedSessionId(id)
+        }}
         onNew={startNewChat}
         onDelete={id => deleteSessionMutation.mutate(id)}
         onClearAll={() => {

@@ -5,7 +5,9 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import { FileDown, Shield, Wrench } from 'lucide-react'
-import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
+import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
@@ -171,6 +173,7 @@ const WindowsChat: React.FC<{
   const [serverSearch, setServerSearch] = useState('')
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('windows_chat_selected_model') || 'llama3:70b')
+  const pdfSelect = useChatPdfSelect()
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -448,6 +451,7 @@ const WindowsChat: React.FC<{
           onSelect={id => {
             if (id !== selectedSessionId) {
               abortChatStream(streamChannel, { keepPartial: false })
+              pdfSelect.reset()
             }
             setSelectedSessionId(id)
             setInput('')
@@ -466,20 +470,15 @@ const WindowsChat: React.FC<{
         />
         <NlChatPanel>
           <NlTopBar>
-            {messages.length > 0 && (
-              <button
-                type="button"
-                onClick={() => exportChatMessagesToPrintWindow(messages, {
-                  title: 'Windows AI Asistan',
-                  subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
-                  filename: `windows_ai_${new Date().toISOString().slice(0, 10)}`,
-                })}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-                title={t('chat_pdf_title')}
-              >
-                <FileDown size={13} /> {t('chat_pdf_chat')}
-              </button>
-            )}
+            <ChatPdfToolbar
+              pairs={pairChatMessages(messages)}
+              select={pdfSelect}
+              fullExport={{
+                title: 'Windows AI Asistan',
+                subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
+                filename: `windows_ai_${new Date().toISOString().slice(0, 10)}`,
+              }}
+            />
             <NlModelSelect
               value={selectedModel}
               onChange={setSelectedModel}
@@ -574,12 +573,19 @@ const WindowsChat: React.FC<{
               />
             ) : (
               <div className={`${nlChatColumnClass} space-y-4`}>
-                {[
+                {pairChatMessages([
                   ...messages,
                   ...(pendingUserMessage && streamBelongsHere
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
-                ].map(msg => (
+                ]).map(pair => (
+                  <ChatPdfPairWrap
+                    key={pair.id}
+                    selectMode={pdfSelect.selectMode}
+                    checked={pdfSelect.selected.has(pair.id)}
+                    onToggle={() => pdfSelect.toggle(pair.id)}
+                  >
+                  {pair.messages.map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
@@ -643,6 +649,8 @@ const WindowsChat: React.FC<{
                       </div>
                     </div>
                   </div>
+                  ))}
+                  </ChatPdfPairWrap>
                 ))}
 
                 {isLoading && streamBelongsHere && (

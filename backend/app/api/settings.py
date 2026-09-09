@@ -2121,3 +2121,42 @@ def db_backup_migration_secrets_export(
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/architecture-guide")
+def architecture_guide_snapshot(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Eski canlı envanter özeti — UI artık /product-guide kullanır."""
+    from app.services.architecture_guide import collect_architecture_snapshot
+    return collect_architecture_snapshot(db)
+
+
+@router.get("/product-guide/catalog")
+def product_guide_catalog(
+    locale: str = "tr",
+    _admin: User = Depends(require_role("admin")),
+):
+    """İndirilebilir ürün GUIDE paketleri (tam + modül)."""
+    from app.services.product_guide import list_packs
+    loc = "en" if locale == "en" else "tr"
+    return {"locale": loc, "packs": list_packs(loc)}
+
+
+@router.get("/product-guide")
+def product_guide_document(
+    pack: str = "full",
+    locale: str = "tr",
+    _admin: User = Depends(require_role("admin")),
+):
+    """Ürün GUIDE HTML (Ayarlar'dan yazdır / PDF). RAG'e yazılmaz."""
+    from app.services.product_guide import PACKS, build_product_guide
+
+    if pack not in PACKS:
+        raise HTTPException(status_code=404, detail="Bilinmeyen GUIDE paketi")
+    loc = "en" if locale == "en" else "tr"
+    try:
+        return build_product_guide(pack, loc)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e

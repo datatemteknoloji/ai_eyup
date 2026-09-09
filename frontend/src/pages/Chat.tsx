@@ -9,7 +9,9 @@ import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetric
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
 import { FileDown, Server as ServerIcon, Boxes, Layers, Wrench } from 'lucide-react'
-import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
+import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
@@ -183,6 +185,7 @@ const Chat: React.FC<{
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3:70b')
   const [localInventoryMessages, setLocalInventoryMessages] = useState<Message[]>([])
+  const pdfSelect = useChatPdfSelect()
   // Envanter NLQ UI kaldırıldı — doğal dil = canlı/agentic (Virt formu)
   const effectiveInventoryMode = false
   const inventoryMsgSeq = useRef(-1000)
@@ -574,6 +577,7 @@ const Chat: React.FC<{
       // Başka session'a geçerken bu channel stream'ini iptal et
       abortChatStream(streamChannel, { keepPartial: false })
       setLocalInventoryMessages([])
+      pdfSelect.reset()
     }
     setSelectedSessionId(id)
     setInput('')
@@ -600,20 +604,18 @@ const Chat: React.FC<{
         />
         <NlChatPanel>
           <NlTopBar>
-            {messages.length > 0 && (
-              <button
-                type="button"
-                onClick={() => exportChatMessagesToPrintWindow(messages, {
-                  title: pdfTitle,
-                  subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
-                  filename: `${inventoryPlatform}_ai_${new Date().toISOString().slice(0, 10)}`,
-                })}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-                title={t('chat_pdf_title')}
-              >
-                <FileDown size={13} /> {t('chat_pdf_chat')}
-              </button>
-            )}
+            <ChatPdfToolbar
+              pairs={pairChatMessages([
+                ...messages,
+                ...localInventoryMessages,
+              ])}
+              select={pdfSelect}
+              fullExport={{
+                title: pdfTitle,
+                subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
+                filename: `${inventoryPlatform}_ai_${new Date().toISOString().slice(0, 10)}`,
+              }}
+            />
             <NlModelSelect
               value={selectedModel}
               onChange={setSelectedModel}
@@ -691,15 +693,22 @@ const Chat: React.FC<{
               <NlEmptyState icon={emptyIcon} description={emptyDescription} />
             ) : (
               <div className={nlChatColumnClass}>
-                {[
+                {pairChatMessages([
                   ...messages,
                   ...localInventoryMessages,
                   ...(pendingUserMessage && streamBelongsHere
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
-                ].map(msg => {
+                ]).map(pair => {
                   const thread = [...messages, ...localInventoryMessages]
                   return (
+                  <ChatPdfPairWrap
+                    key={pair.id}
+                    selectMode={pdfSelect.selectMode}
+                    checked={pdfSelect.selected.has(pair.id)}
+                    onToggle={() => pdfSelect.toggle(pair.id)}
+                  >
+                  {pair.messages.map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
                     <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
@@ -734,7 +743,7 @@ const Chat: React.FC<{
                               </>
                             )}
                           </div>
-                          {msg.id > 0 && (
+                          {typeof msg.id === 'number' && msg.id > 0 && (
                             <>
                               <ChatFeedbackButtons
                                 platform={inventoryPlatform}
@@ -760,6 +769,8 @@ const Chat: React.FC<{
                       </div>
                     </div>
                   </div>
+                  ))}
+                  </ChatPdfPairWrap>
                   )
                 })}
 

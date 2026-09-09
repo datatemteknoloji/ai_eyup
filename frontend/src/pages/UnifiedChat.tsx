@@ -4,7 +4,9 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import { FileDown, Globe, Wrench } from 'lucide-react'
-import { exportChatMessagesToPrintWindow, exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
+import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
+import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
@@ -191,6 +193,7 @@ const UnifiedChat: React.FC<{
   )
   const [input, setInput] = useState('')
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('unified_chat_selected_model') || 'llama3:70b')
+  const pdfSelect = useChatPdfSelect()
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     message: string
@@ -423,6 +426,7 @@ const UnifiedChat: React.FC<{
           onSelect={id => {
             if (id !== selectedSessionId) {
               abortChatStream(streamChannel, { keepPartial: false })
+              pdfSelect.reset()
             }
             setSelectedSessionId(id)
             setInput('')
@@ -444,20 +448,15 @@ const UnifiedChat: React.FC<{
             <span className="px-2.5 py-1 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 text-[11px] font-medium">
               {t('chat_fleet')}
             </span>
-            {messages.length > 0 && (
-              <button
-                type="button"
-                onClick={() => exportChatMessagesToPrintWindow(messages, {
-                  title: t('chat_pdf_unified'),
-                  subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
-                  filename: `unified_ai_${new Date().toISOString().slice(0, 10)}`,
-                })}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
-                title={t('chat_pdf_title')}
-              >
-                <FileDown size={13} /> {t('chat_pdf_chat')}
-              </button>
-            )}
+            <ChatPdfToolbar
+              pairs={pairChatMessages(messages)}
+              select={pdfSelect}
+              fullExport={{
+                title: t('chat_pdf_unified'),
+                subtitle: new Date().toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
+                filename: `unified_ai_${new Date().toISOString().slice(0, 10)}`,
+              }}
+            />
             <NlModelSelect
               value={selectedModel}
               onChange={setSelectedModel}
@@ -480,12 +479,19 @@ const UnifiedChat: React.FC<{
               />
             ) : (
               <div className={`${nlChatColumnClass} space-y-4`}>
-                {[
+                {pairChatMessages([
                   ...messages,
                   ...(pendingUserMessage && streamBelongsHere
                     ? [{ id: -1, role: 'user' as const, content: pendingUserMessage, created_at: new Date().toISOString() }]
                     : [])
-                ].map(msg => (
+                ]).map(pair => (
+                  <ChatPdfPairWrap
+                    key={pair.id}
+                    selectMode={pdfSelect.selectMode}
+                    checked={pdfSelect.selected.has(pair.id)}
+                    onToggle={() => pdfSelect.toggle(pair.id)}
+                  >
+                  {pair.messages.map(msg => (
                   <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={msg.role === 'user' ? nlUserBubbleClass : nlAssistantBubbleClass}>
                       {msg.role === 'user' ? (
@@ -548,6 +554,8 @@ const UnifiedChat: React.FC<{
                       )}
                     </div>
                   </div>
+                  ))}
+                  </ChatPdfPairWrap>
                 ))}
 
                 {isLoading && streamBelongsHere && (

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search, FileDown } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -8,6 +8,7 @@ import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
 import { PlatformStatusTab } from '../components/PlatformStatusTab'
 import SecuritySettings from './SecuritySettings'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { exportProductGuide } from '../utils/productGuideExport'
 
 interface Credential {
   id: number
@@ -1527,8 +1528,13 @@ const AdvancedSettingsTab: React.FC = () => {
 
 const Settings: React.FC = () => {
   const t = useT()
+  const { locale } = useLocale()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
+  const [guideBusy, setGuideBusy] = useState(false)
+  const [guideBusyPack, setGuideBusyPack] = useState('')
+  const [guideErr, setGuideErr] = useState('')
+  const [guideLang, setGuideLang] = useState<'tr' | 'en'>(locale === 'en' ? 'en' : 'tr')
   const [activeTab, setActiveTab] = useState('credentials')
   const [showForm, setShowForm] = useState(false)
   const [editingCred, setEditingCred] = useState<Credential | null>(null)
@@ -3086,6 +3092,79 @@ const Settings: React.FC = () => {
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Database</p><p className="text-white font-medium">PostgreSQL</p></div>
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">AI</p><p className="text-white font-medium">Ollama + LLaMA</p></div>
                 </div>
+                {isAdmin && (
+                  <div className="mt-6 pt-5 border-t border-white/[0.06]">
+                    <p className="text-sm text-slate-400 mb-3">{t('set_guide_desc')}</p>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs text-slate-500">{t('set_guide_lang')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setGuideLang('tr')}
+                        className={`px-2.5 py-1 rounded text-xs font-medium border ${guideLang === 'tr' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
+                      >
+                        TR
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGuideLang('en')}
+                        className={`px-2.5 py-1 rounded text-xs font-medium border ${guideLang === 'en' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
+                      >
+                        EN
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ['full', 'set_guide_full'],
+                        ['linux', 'set_guide_linux'],
+                        ['virtualization', 'set_guide_virt'],
+                        ['windows', 'set_guide_windows'],
+                        ['openshift', 'set_guide_openshift'],
+                      ] as const).map(([pack, label]) => (
+                        <button
+                          key={pack}
+                          type="button"
+                          disabled={guideBusy}
+                          onClick={async () => {
+                            setGuideErr('')
+                            setGuideBusy(true)
+                            setGuideBusyPack(pack)
+                            try {
+                              const r = await fetch(
+                                `${API_BASE_URL}/settings/product-guide?pack=${encodeURIComponent(pack)}&locale=${guideLang}`,
+                              )
+                              if (!r.ok) {
+                                const err = await r.json().catch(() => null)
+                                throw new Error(err?.detail || t('set_guide_fail'))
+                              }
+                              const doc = await r.json()
+                              exportProductGuide({
+                                title: doc.title,
+                                version: doc.version,
+                                html: doc.html,
+                                locale: guideLang,
+                                filename: doc.filename,
+                              })
+                            } catch (e: any) {
+                              setGuideErr(e?.message || t('set_guide_fail'))
+                            } finally {
+                              setGuideBusy(false)
+                              setGuideBusyPack('')
+                            }
+                          }}
+                          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-50 ${
+                            pack === 'full'
+                              ? 'bg-blue-600/30 text-blue-200 border-blue-500/50 hover:bg-blue-600/40'
+                              : 'bg-blue-600/10 text-blue-300 border-blue-500/30 hover:bg-blue-600/25'
+                          }`}
+                        >
+                          <FileDown size={14} />
+                          {guideBusyPack === pack ? t('set_guide_busy') : t(label)}
+                        </button>
+                      ))}
+                    </div>
+                    {guideErr && <p className="text-xs text-red-400 mt-2">{guideErr}</p>}
+                  </div>
+                )}
               </div>
             </div>
           )}

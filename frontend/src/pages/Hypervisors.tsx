@@ -103,8 +103,20 @@ interface EsxHost {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
-const fmtMem = (mb: number) => mb >= 1024 ? `${(mb/1024).toFixed(0)} GB` : `${mb} MB`
+const fmtMem = (mb: number) => mb >= 1024 ? `${(mb/1024).toFixed(0)} GB` : `${Math.round(mb)} MB`
 const fmtDisk = (gb: number) => gb >= 1024 ? `${(gb/1024).toFixed(1)} TB` : `${gb.toFixed(0)} GB`
+/** Host CPU — vCenter/OLVM değerleri MHz; büyük değerleri GHz göster. */
+const fmtCpu = (mhz: number) => {
+  const n = Number(mhz) || 0
+  if (n >= 1000) return `${(n / 1000).toFixed(1)} GHz`
+  return `${Math.round(n)} MHz`
+}
+const fmtResource = (value: number, unit: string) => {
+  if (unit === 'GB') return fmtDisk(value)
+  if (unit === 'MB') return fmtMem(value)
+  if (unit === 'MHz') return fmtCpu(value)
+  return `${Math.round(value)} ${unit}`
+}
 
 // ── Confirm Modal ───────────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -179,8 +191,8 @@ const ResourceGauge = ({ label, used, total, unit, accent }: {
         />
       </div>
       <div className="flex justify-between text-xs">
-        <span className="text-slate-400">{t('hv_used')}: <span className="text-white font-medium">{unit === 'GB' ? fmtDisk(used) : fmtMem(used)}</span></span>
-        <span className="text-slate-400">{t('hv_free')}: <span className="text-green-400 font-medium">{unit === 'GB' ? fmtDisk(free) : fmtMem(free)}</span></span>
+        <span className="text-slate-400">{t('hv_used')}: <span className="text-white font-medium">{fmtResource(used, unit)}</span></span>
+        <span className="text-slate-400">{t('hv_free')}: <span className="text-green-400 font-medium">{fmtResource(free, unit)}</span></span>
       </div>
     </div>
   )
@@ -801,7 +813,7 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
               <div className="flex justify-between text-xs mb-1">
                 <span className="text-slate-400">{r.label}</span>
                 <span className="text-slate-300">
-                  {r.unit === 'GB' ? fmtDisk(r.used) : fmtMem(r.used)} / {r.unit === 'GB' ? fmtDisk(r.total) : fmtMem(r.total)}
+                  {fmtResource(r.used, r.unit)} / {fmtResource(r.total, r.unit)}
                   <span className="ml-2" style={{ color: getStatusColor(r.pct) }}>({r.pct?.toFixed(0)}%)</span>
                 </span>
               </div>
