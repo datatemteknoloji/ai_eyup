@@ -22,7 +22,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 from sqlalchemy import text
@@ -381,6 +381,7 @@ def _get_vms(db: Session, hypervisor_id: Optional[int] = None) -> List[Dict[str,
             "disk_gb": vm.vm_disk_gb,
             "power_state": vm.vm_power_state or "unknown",
             "tools_status": vm.vm_tools_status or "unknown",
+            "tools_version_status": vm.vm_tools_version_status or "",
             "cluster": vm.vm_cluster or "",
             "datastore": vm.vm_datastore or "",
             "host": vm.vm_host_name or "",
@@ -421,48 +422,50 @@ def _apply_entity_scope(
 
     `compare_vms` intent'i kendi hedef VM seçimini yapar; bu durumda scope
     UYGULANMAZ (dokunmadan tam liste döner, geriye dönük davranış korunur).
+
+    Dönen 4. değer `Scope` nesnesidir: kapsam bir kez çözülür ve bağlamın TÜM
+    bölümlerine (host, VM, cluster, datastore, toplamlar) aynı nesne uygulanır.
+    Eskiden yalnız host/VM listeleri kesiliyordu; datastore ve cluster
+    bölümleri kapsamı hiç görmediği için tek bir VM sorulduğunda bile tüm
+    ortamın datastore tablosu prompt'a giriyordu.
     """
+    from app.services.virt_scope import Scope, filter_rows, resolve_scope, scope_note
+
     if "compare_vms" in intents and vm_names_to_compare:
-        return esx_hosts, vms, None
+        return esx_hosts, vms, None, Scope()
     try:
-        from app.services.virt_entity_resolver import extract_entity_filters
-        filters = extract_entity_filters(db, question) or {}
+        scope = resolve_scope(db, question)
     except Exception:
-        filters = {}
+        scope = Scope()
+    if scope.is_empty():
+        return esx_hosts, vms, None, scope
 
-    def _eq(a: Optional[str], b: str) -> bool:
-        return (a or "").strip().lower() == b.strip().lower()
+    scoped_vms = filter_rows("vm", vms, scope)
 
-    if filters.get("host_name"):
-        host_name = filters["host_name"]
-        scoped_hosts = [h for h in esx_hosts if _eq(h.get("host"), host_name)]
-        scoped_vms = [v for v in vms if _eq(v.get("host"), host_name)]
-        if scoped_hosts or scoped_vms:
-            return scoped_hosts, scoped_vms, f"host={host_name}"
+    # Host listesi: doğrudan host kapsamı varsa ondan, yoksa kapsanan VM'lerin
+    # ÜZERİNDE ÇALIŞTIĞI host'lardan türetilir. Türetilemiyorsa boş bırakılır —
+    # filtresiz tam host dökümü basmak kapsam sızıntısıdır.
+    if scope.filters.get("host_name") or scope.filters.get("cluster"):
+        scoped_hosts = filter_rows("host", esx_hosts, scope)
+    else:
+        scoped_hosts = []
+    if not scoped_hosts:
+        derived = {
+            (v.get("host") or "").strip().lower()
+            for v in scoped_vms
+            if (v.get("host") or "").strip()
+        }
+        scoped_hosts = [
+            h for h in esx_hosts
+            if (h.get("host") or "").strip().lower() in derived
+        ]
 
-    if filters.get("cluster"):
-        cluster = filters["cluster"]
-        scoped_vms = [v for v in vms if _eq(v.get("cluster"), cluster)]
-        host_names = {(v.get("host") or "").strip().lower() for v in scoped_vms}
-        scoped_hosts = [h for h in esx_hosts if (h.get("host") or "").strip().lower() in host_names]
-        if scoped_vms:
-            return scoped_hosts, scoped_vms, f"cluster={cluster}"
+    if scoped_hosts or scoped_vms:
+        return scoped_hosts, scoped_vms, scope_note(scope), scope
 
-    if filters.get("datastore"):
-        datastore = filters["datastore"]
-        scoped_vms = [v for v in vms if _eq(v.get("datastore"), datastore)]
-        if scoped_vms:
-            # Datastore sorularında host listesi genelde ilgisiz — host'lar
-            # dokunulmadan kalır (ds özeti zaten kendi bölümünde daraltılıyor).
-            return esx_hosts, scoped_vms, f"datastore={datastore}"
-
-    if filters.get("vm_name") and not vm_names_to_compare:
-        vm_name = filters["vm_name"]
-        scoped_vms = [v for v in vms if _eq(v.get("name"), vm_name)]
-        if scoped_vms:
-            return esx_hosts, scoped_vms, f"vm={vm_name}"
-
-    return esx_hosts, vms, None
+    # Veri tutarsızlığı / edge case: isim çözüldü ama listelerde eşleşme yok →
+    # boş bağlam üretmek yerine güvenli varsayılana (tam liste) dön.
+    return esx_hosts, vms, None, Scope()
 
 
 def build_context(
@@ -485,7 +488,7 @@ def build_context(
     host_inventory = _get_host_inventory(db)
     vms_all = _get_vms(db)
 
-    esx_hosts, vms, scope_note = _apply_entity_scope(
+    esx_hosts, vms, scope_note, scope = _apply_entity_scope(
         db, question, esx_hosts_all, vms_all, intents, vm_names_to_compare,
     )
 
@@ -499,11 +502,23 @@ def build_context(
     parts: List[str] = []
 
     if scope_note:
+        locked_line = (
+            "  Kullanıcı kapsamı AÇIKÇA sınırladı ('sadece/yalnızca') — kapsam dışı "
+            "hiçbir özet/toplu tablo bu bağlama EKLENMEMİŞTİR; cevapta da verilmemeli.\n"
+            if getattr(scope, "locked", False) else ""
+        )
+        child_line = (
+            "  Satır granülerliği ALT VARLIK (disk): her disk ayrı satır olarak "
+            "verilmeli (etiket, kapasite, datastore).\n"
+            if getattr(scope, "is_child", None) and scope.is_child() else ""
+        )
         parts.append(
             "## KAPSAM DARALTMA\n"
             f"  Soru belirli bir varlığa işaret ediyor ({scope_note}) — aşağıdaki "
-            "host/VM detayları YALNIZ bu kapsama daraltılmıştır (tam ortam değil). "
-            "Ortam genelindeki gerçek toplamlar en alttaki 'ORTAM TOPLAMLARI' "
+            "TÜM detay bölümleri (host, VM, cluster, datastore) YALNIZ bu kapsama "
+            "daraltılmıştır (tam ortam değil).\n"
+            f"{locked_line}{child_line}"
+            "  Ortam genelindeki gerçek toplamlar en alttaki 'ORTAM TOPLAMLARI' "
             "bölümündedir."
         )
 
@@ -521,6 +536,8 @@ def build_context(
     )
 
     # ── Bölüm 2: ESX host durumu ────────────────────────────────────────────
+    # Kapsam aktif ve host listesi türetilemediyse bölüm TAMAMEN düşer
+    # (deny-by-default): filtresiz tam host dökümü basmak kapsam sızıntısıdır.
     host_lines = []
     for h in sorted(esx_hosts, key=lambda x: -x["cpu_pct"]):
         hv_name = hv_map.get(h["hypervisor_id"], {}).get("name", "?")
@@ -539,7 +556,10 @@ def build_context(
             f"    VM: {h['vms_running']} çalışan / {h['vms_total']} toplam"
             f"{hw_line}"
         )
-    parts.append(f"## ESX / KVM HOST'LARI ({len(esx_hosts)} adet)\n" + "\n".join(host_lines))
+    if host_lines:
+        parts.append(f"## ESX / KVM HOST'LARI ({len(esx_hosts)} adet)\n" + "\n".join(host_lines))
+    elif not scope_note:
+        parts.append("## ESX / KVM HOST'LARI (0 adet)\n  Host metriği bulunamadı.")
 
     # ── Bölüm 2b: Ağ envanteri (NIC/vSwitch/port group/VLAN/VMkernel) ────────
     # Network / capacity / genel envanter sorularında detay ekle.
@@ -622,24 +642,53 @@ def build_context(
         parts.append(_vm_list_block(vms, hv_map, intents))
 
     # ── Bölüm 3b: Cluster özeti (vm_cluster alanına göre) ─────────────────────
-    cluster_parts = _cluster_summary_block(vms, esx_hosts)
-    if cluster_parts:
-        parts.append(cluster_parts)
+    # Kilitli kapsamda ("sadece bu VM") cluster/host özeti kapsam dışı toplu
+    # bilgidir — hiç eklenmez.
+    if not getattr(scope, "locked", False):
+        cluster_parts = _cluster_summary_block(vms, esx_hosts)
+        if cluster_parts:
+            parts.append(cluster_parts)
 
     # ── Bölüm 4: Datastore kapasite (vCenter canlı) + VM disk tahsisi ────────
     for vm in vms:
         vm["hypervisor"] = hv_map.get(vm["hypervisor_id"], {}).get("name", "Bilinmiyor")
 
-    live_ds = _get_live_datastores(db)
-    ds_summary = _datastore_vm_disk_summary(vms, esx_hosts, live_datastores=live_ds)
-    if ds_summary:
-        parts.append(ds_summary)
+    # Kapsam datastore bölümüne de uygulanır. Eskiden bu çağrı `datastore_filter`
+    # parametresini HİÇ geçmiyordu (fonksiyon destekliyor, QA handler'ı
+    # kullanıyor) — bu yüzden tek bir VM sorulduğunda tüm ortamın datastore
+    # tablosu prompt'a giriyor ve model "bütün datastore'ları" listeliyordu.
+    ds_allowed: Optional[Set[str]] = None
+    ds_filter = None
+    if not scope.is_empty():
+        ds_filter = scope.filters.get("datastore")
+        if not ds_filter:
+            from app.services.virt_scope import child_datastore_names
+
+            ds_allowed = child_datastore_names(vms)
+    if scope.is_empty() or ds_filter or ds_allowed:
+        live_ds = _get_live_datastores(db)
+        ds_summary = _datastore_vm_disk_summary(
+            vms, esx_hosts, live_datastores=live_ds,
+            datastore_filter=ds_filter, allowed_names=ds_allowed,
+        )
+        if ds_summary:
+            parts.append(ds_summary)
 
     # ── Bölüm 5: Ortam özeti (her soruda) — HER ZAMAN tam fleet üzerinden ─────
     # (scope_note varsa yukarıdaki detay bölümleri daraltılmış olsa da, burada
     # gerçek ortam büyüklüğü gösterilir — model/kullanıcı yanlış "toplam VM
     # sayısı" çıkarımı yapmasın.)
-    parts.append(_environment_totals_block(hypervisors, esx_hosts_all, vms_all, scope_note=scope_note))
+    if getattr(scope, "locked", False):
+        # Kilitli kapsam: ortam toplamları da kapsam DIŞI toplu bilgidir.
+        parts.append(
+            "## ORTAM TOPLAMLARI\n"
+            f"  Kapsam kullanıcı tarafından açıkça sınırlandı ({scope_note}); "
+            "ortam geneli toplamlar bilinçli olarak bu bağlama dahil edilmedi."
+        )
+    else:
+        parts.append(
+            _environment_totals_block(hypervisors, esx_hosts_all, vms_all, scope_note=scope_note)
+        )
 
     return "\n\n".join(parts)
 
@@ -703,6 +752,30 @@ def _environment_totals_block(
     )
 
 
+def _vm_disk_lines(vm: Dict[str, Any]) -> str:
+    """Disk BAŞINA kırılım: etiket, kapasite ve datastore.
+
+    `servers.vm_disks` her disk için datastore'u zaten tutuyor (VMDK backing
+    parse'ı) ama detay bloğu yalnız toplam boyutu ve tek bir `vm_datastore`
+    değerini basıyordu; diskleri farklı datastore'lara yayılmış VM'de bu
+    EKSİK cevaba yol açıyor.
+    """
+    disks = vm.get("disks")
+    if not isinstance(disks, list) or not disks:
+        return "  Disk kırılımı yok (envanter sync gerekir)"
+    out = []
+    for d in disks:
+        if not isinstance(d, dict):
+            continue
+        label = d.get("label") or "disk"
+        cap = d.get("capacity_gb")
+        ds = (d.get("datastore") or "").strip() or "DB null (sync gerekir)"
+        thin = d.get("thin")
+        thin_txt = "" if thin is None else (" · thin" if thin else " · thick")
+        out.append(f"  {label}: {cap if cap is not None else '?'} GB · datastore={ds}{thin_txt}")
+    return "\n    ".join(out) or "  Disk kırılımı yok"
+
+
 def _vm_detail_block(vm: Dict[str, Any], hv_map: Dict) -> str:
     hv_name = hv_map.get(vm["hypervisor_id"], {}).get("name", "?")
     hv_ip = hv_map.get(vm["hypervisor_id"], {}).get("ip", "")
@@ -725,7 +798,8 @@ def _vm_detail_block(vm: Dict[str, Any], hv_map: Dict) -> str:
         f"  Güç Durumu   : {vm['power_state']}\n"
         f"  VMware Tools : {vm['tools_status']}\n"
         f"  Cluster      : {vm['cluster'] or '-'}\n"
-        f"  Datastore    : {vm['datastore'] or '-'}\n"
+        f"  Datastore    : {vm['datastore'] or '-'} (birincil)\n"
+        f"  Diskler (disk başına datastore):\n    {_vm_disk_lines(vm)}\n"
         f"  HW Versiyonu : {vm['hw_version'] or '-'}\n"
         f"  Ortam Tieri  : {vm['tier']}\n"
         f"  Ağ Adaptörleri:\n    {nets}\n"
@@ -738,6 +812,7 @@ def _datastore_vm_disk_summary(
     esx_hosts: List[Dict],
     live_datastores: Optional[List[Dict[str, Any]]] = None,
     datastore_filter: Optional[str] = None,
+    allowed_names: Optional[Set[str]] = None,
 ) -> str:
     """
     Datastore bazında: vCenter kapasite (toplam/boş) + VM disk tahsisi.
@@ -746,6 +821,11 @@ def _datastore_vm_disk_summary(
     datastore_filter: verilmişse (bkz. _extract_datastore_filter) yalnız adı
     eşleşen datastore grubu döner — kullanıcı belirli bir datastore adı verdiğinde
     TÜM datastore'ları basmak yerine kapsam daraltılır (bilgi kirliliği önlemi).
+
+    allowed_names: kapsam datastore DIŞI bir boyutta ise (ör. tek VM, tek host)
+    o kapsamın FİİLEN kullandığı datastore adları. Yalnız bu küme basılır —
+    "web01'in datastore'u nedir" sorusunda tüm ortamın datastore tablosunun
+    prompt'a girmesini engelleyen kısıt budur (bkz. virt_scope).
     """
     from collections import defaultdict
 
@@ -767,6 +847,16 @@ def _datastore_vm_disk_summary(
         needle = datastore_filter.strip().lower()
         groups = {k: v for k, v in groups.items() if needle in k.lower()}
         live_datastores = [d for d in live_datastores if needle in (d.get("name") or "").lower()]
+    elif allowed_names is not None:
+        allow = {(n or "").strip().lower() for n in allowed_names if (n or "").strip()}
+        groups = {
+            k: v for k, v in groups.items()
+            if k.strip().lower() in allow or k.startswith("Hypervisor:")
+        }
+        live_datastores = [
+            d for d in live_datastores
+            if (d.get("name") or "").strip().lower() in allow
+        ]
 
     live_idx = _datastore_capacity_index(live_datastores)
 
@@ -2060,6 +2150,74 @@ def h_cluster_ha_drs(db: Session, question: str = "") -> str:
     return out
 
 
+def h_bottleneck_diagnose(db: Session, question: str = "") -> str:
+    """'VM mi yavaş, host mu yavaş?' — katman kararı + kanıt sayıları.
+
+    Bu soru daha önce h_cpu_ready gibi tek metrik gösteren kurallara düşüyordu;
+    "ready %12" görmek operatöre suçlunun VM mi host mu olduğunu söylemiyor ve
+    yorum LLM'e kalıyordu. Burada karar `virt_diagnostics` kural motorundan
+    gelir, bu fonksiyon yalnız tabloya çevirir.
+    """
+    from app.services.virt_diagnostics import TH, classify_bottleneck
+
+    vm_name = _extract_vm_name_filter(db, question)
+    hours = 24.0
+    m = re.search(r"son\s*(\d{1,3})\s*(saat|g[üu]n)", (question or "").lower())
+    if m:
+        hours = float(m.group(1)) * (24.0 if m.group(2).startswith("g") else 1.0)
+
+    res = classify_bottleneck(db, vm_name=vm_name, hours=hours, limit=10 if not vm_name else 5)
+    if not res.get("ok"):
+        return _na(f"Darboğaz teşhisi yapılamadı: {res.get('error')}")
+    if not res.get("items"):
+        return _na(res.get("note") or "Teşhis için yeterli zaman serisi yok.")
+
+    _LAYER = {
+        "host": "🖥️ HOST", "vm": "📦 VM (yapılandırma)", "guest": "📦 VM (iş yükü)",
+        "datastore": "💾 DEPOLAMA", "network": "🌐 AĞ", "none": "✅ —",
+    }
+    rows, details = [], []
+    for it in res["items"]:
+        top = it["findings"][0]
+        rows.append([
+            it["vm"], it.get("host") or "—",
+            _LAYER.get(it["primary_layer"], it["primary_layer"]),
+            top.get("resource"), top.get("severity"), it.get("samples"),
+        ])
+        for f in it["findings"]:
+            if f["severity"] == "none":
+                continue
+            ev = ", ".join(
+                f"{k}={v}" for k, v in (f.get("evidence") or {}).items() if v is not None
+            )
+            details.append(
+                f"- **{it['vm']}** → {_LAYER.get(f['layer'], f['layer'])} / {f['resource']}: "
+                f"{f['verdict']}\n  - Kanıt: {ev or '—'}\n  - Aksiyon: {f['action']}"
+            )
+
+    out = [
+        f"### Darboğaz Teşhisi (son {res['window_hours']:g} saat)",
+        "",
+        (f"**Kapsam:** {vm_name}" if vm_name else
+         "**Kapsam:** en çok kaynak bekleyen VM'ler (filo taraması)"),
+        "",
+        _md_table(
+            ["VM", "Host", "Darboğaz katmanı", "Kaynak", "Şiddet", "Örnek"],
+            rows,
+        ),
+    ]
+    if details:
+        out += ["", "#### Bulgular ve öneriler", "", "\n".join(details)]
+    out += [
+        "",
+        "_Yöntem: VM p95 değerleri AYNI penceredeki host p95'leriyle karşılaştırılır; "
+        f"karar tek metrikle değil çiftin birlikte eşiği aşmasına dayanır (ready %{TH['cpu_ready_pct']:g}, "
+        f"host CPU %{TH['host_cpu_pct']:g}, host RAM %{TH['host_mem_pct']:g}, "
+        f"disk gecikmesi {TH['disk_latency_ms']:g} ms)._",
+    ]
+    return "\n".join(out)
+
+
 def h_virt_health_overview(db: Session, question: str = "") -> str:
     """Ortamın genel sağlık değerlendirmesi — skor + kritik bulgular + sensör + HA.
 
@@ -2724,18 +2882,67 @@ _TOOLS_VERSION_TR = {
 }
 
 
+_TOOLS_RUNNING_TR = {
+    "guestToolsRunning": "Çalışıyor",
+    "guestToolsNotRunning": "Çalışmıyor",
+    "guestToolsExecutingScripts": "Başlatılıyor (script çalıştırıyor)",
+}
+
+
 def h_tools_version_outdated(db: Session, question: str = "") -> str:
+    """VMware Tools ÇALIŞMAYAN veya GÜNCEL OLMAYAN VM'leri birlikte listeler
+    (bkz. soru: "VMware Tools çalışmayan veya güncel olmayan VM'leri bul").
+    Öncelik DB'dir (vm_tools_status/vm_tools_version_status — her metric_sync
+    turunda güncellenir); DB boşsa (henüz hiç senkron olmadıysa) canlı vCenter
+    sorgusuna düşer.
+    """
+    db_vms = [v for v in _get_vms(db)]
+    with_db_data = [
+        v for v in db_vms
+        if (v.get("tools_status") and v["tools_status"] != "unknown") or v.get("tools_version_status")
+    ]
+    if with_db_data:
+        problem = [
+            v for v in with_db_data
+            if (v.get("tools_status") not in (None, "unknown", "guestToolsRunning"))
+            or (v.get("tools_version_status") and v["tools_version_status"] not in ("guestToolsCurrent", "guestToolsSupportedNew"))
+        ]
+        rows = [[
+            v["name"],
+            _TOOLS_RUNNING_TR.get(v.get("tools_status"), v.get("tools_status") or "?"),
+            _TOOLS_VERSION_TR.get(v.get("tools_version_status"), v.get("tools_version_status") or "?"),
+            v.get("host") or v.get("hypervisor_id"),
+        ] for v in problem]
+        return (
+            f"### VMware Tools Çalışmayan / Güncel Olmayan VM'ler\n\n"
+            f"_{len(with_db_data)}/{len(db_vms)} VM'de Tools durumu DB'de mevcut "
+            f"(son metrik senkronundan; Tools kapalıysa veri gelmeyebilir)._\n\n"
+            + _md_table(["VM", "Çalışma Durumu", "Versiyon Durumu", "ESXi Host"], rows,
+                        "Tüm VM'lerde Tools çalışıyor ve versiyon güncel.")
+        )
+
+    # DB boş — canlı vCenter sorgusuna düş
     from app.services import vcenter_vm_performance as perf
     r = perf.fetch_live_vm_stats(db)
-    with_data = [v for v in r["vms"] if v.get("tools_version_status")]
+    with_data = [v for v in r["vms"] if v.get("tools_version_status") or v.get("tools_running_status")]
     if not with_data:
-        return _na("Canlı VMware Tools versiyon durumu sorgusu sonuç döndürmedi.")
-    outdated = [v for v in with_data if v["tools_version_status"] not in ("guestToolsCurrent", "guestToolsSupportedNew")]
-    rows = [[v["name"], _TOOLS_VERSION_TR.get(v["tools_version_status"], v["tools_version_status"]), v["hypervisor"]] for v in outdated]
+        return _na("VMware Tools durumu ne DB'de ne canlı sorguda bulunabildi.")
+    outdated = [
+        v for v in with_data
+        if v.get("tools_version_status") not in ("guestToolsCurrent", "guestToolsSupportedNew")
+        or (v.get("tools_running_status") and v["tools_running_status"] != "guestToolsRunning")
+    ]
+    rows = [[
+        v["name"],
+        _TOOLS_RUNNING_TR.get(v.get("tools_running_status"), v.get("tools_running_status") or "?"),
+        _TOOLS_VERSION_TR.get(v.get("tools_version_status"), v.get("tools_version_status") or "?"),
+        v["hypervisor"],
+    ] for v in outdated]
     return (
-        f"### VMware Tools Versiyonu Güncel Olmayan VM'ler\n\n"
+        f"### VMware Tools Çalışmayan / Güncel Olmayan VM'ler (canlı)\n\n"
         f"_{len(with_data)}/{len(r['vms'])} VM'de Tools durumu okunabildi (Tools kapalıysa veri gelmez)._\n\n"
-        + _md_table(["VM", "Tools Durumu", "Hypervisor"], rows, "Tüm VM'lerde Tools versiyonu güncel.")
+        + _md_table(["VM", "Çalışma Durumu", "Versiyon Durumu", "Hypervisor"], rows,
+                    "Tüm VM'lerde Tools çalışıyor ve versiyon güncel.")
     )
 
 
@@ -2916,6 +3123,16 @@ QA_RULES: List[Tuple[str, Any]] = [
     # CPU
     (r"cpu\s*kullanımı\s*%?\s*90|cpu.*90.*üzer|cpu.?su\s*%?\s*90", h_cpu_usage_over_90),
     (r"en\s*çok\s*cpu\s*tüketen|cpu.*tüketen\s*20\s*vm|ortalama\s*cpu\s*kullanımına\s*göre|cpu\s*top\s*20|en\s*yoğun\s*cpu\s*vm", h_cpu_top20_now),
+    # Darboğaz teşhisi — "cpu ready" kuralından ÖNCE. "Bu VM neden yavaş" sorusu
+    # tek sayaç listesine (h_cpu_ready) düşerse operatör suçlunun VM mi host mu
+    # olduğunu öğrenemez; katman kararı virt_diagnostics'ten gelir.
+    (r"(neden|niye|niçin)\s*(bu\s*kadar\s*)?(yava[şs]|kas[ıi]yor|d[üu][şs][üu]k\s*performans)"
+     r"|yava[şs]l[ıi]k\s*(sebeb|nedeni|kayna[ğg])"
+     r"|(sorun|problem|darbo[ğg]az|s[ıi]k[ıi]nt[ıi])\s*(vm.?de\s*mi|vm.?da\s*mi|nerede)"
+     r"|vm.?de\s*mi\s*host.?ta\s*m[ıi]|host.?ta\s*m[ıi]\s*vm.?de\s*mi"
+     r"|darbo[ğg]az|bottleneck|kaynak\s*[çc]eki[şs]me|contention"
+     r"|kaynak\s*bekl\w*|vcpu\s*ekle\w*\s*mi",
+     h_bottleneck_diagnose),
     (r"cpu\s*ready|ready\s*time|cpu\s*bekleme", h_cpu_ready),
     (r"cpu\s*hot\s*add|hot.?add.*cpu", h_cpu_hot_add),
     (r"vcpu\s*say.s.\s*en\s*yüksek|en\s*yüksek\s*vcpu|en\s*fazla\s*vcpu", h_highest_vcpu),

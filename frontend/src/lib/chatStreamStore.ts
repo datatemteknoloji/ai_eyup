@@ -4,6 +4,20 @@
  */
 import { useSyncExternalStore } from 'react'
 import { API_BASE_URL } from '../config/api'
+import { getToken } from '../auth/authStore'
+
+/**
+ * Sohbet uçlarına kimlik başlığı.
+ *
+ * Bu istekler token göndermiyordu; bu yüzden sunucu turu kime ait olduğunu
+ * bilemiyor ve `/chat-turns/*` uçları (olay akışı, snapshot, iptal) yalnız
+ * turn_id bilen herkese açık kalıyordu. Başlık gönderildiğinde sunucu turu
+ * kullanıcıya bağlar ve sahiplik kontrolü devreye girer (bkz. chat_turns.py).
+ */
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 export type ThinkingPhase = 'idle' | 'queued' | 'context' | 'tools' | 'streaming'
 
@@ -12,6 +26,14 @@ export type ToolCallProgress = { tool: string; label: string; done: boolean }
 export type ClarifyOption = { id: string; label: string; prompt: string }
 
 export type ChatSuggestion = { type?: string; label: string }
+
+/** Sağlayıcının bildirdiği token tüketimi (yalnız admin göstergesi). */
+export type ChatUsage = {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  calls?: number
+}
 
 export type ChatStreamSnapshot = {
   channel: string
@@ -25,6 +47,9 @@ export type ChatStreamSnapshot = {
   clarifyOptions: ClarifyOption[] | null
   suggestions: ChatSuggestion[] | null
   queueMessage: string | null
+  lastUsage: ChatUsage | null
+  /** Son akış kullanıcı isteğiyle durduruldu mu? */
+  cancelled: boolean
 }
 
 type Entry = {
@@ -47,6 +72,8 @@ const emptySnap = (channel: string): ChatStreamSnapshot => ({
   clarifyOptions: null,
   suggestions: null,
   queueMessage: null,
+  lastUsage: null,
+  cancelled: false,
 })
 
 function ensure(channel: string): Entry {
@@ -96,13 +123,28 @@ export function useChatStream(channel: string): ChatStreamSnapshot {
   )
 }
 
-export function abortChatStream(channel: string) {
+/**
+ * Akışı durdur.
+ *
+ * `keepPartial` (varsayılan): o ana kadar üretilmiş metin ekranda KALIR.
+ * Eskiden snapshot tamamen sıfırlanıyordu ve kullanıcı "durdur"a bastığında
+ * yarım cevap da silindiği için 40 saniyelik üretim boşa gidiyordu. Kısmi
+ * cevap sohbet geçmişine yazılmaz (tamamlanmamış bir yanıttır) ama yeni bir
+ * mesaj gönderilene kadar görünür kalır.
+ *
+ * Oturum değiştirme gibi durumlarda çağıran `keepPartial: false` verir.
+ */
+export function abortChatStream(channel: string, opts?: { keepPartial?: boolean }) {
   const e = entries.get(channel)
   if (!e) return
+  const keepPartial = opts?.keepPartial !== false
   const turnId = e.snap.turnId || loadPersistedTurnId(channel)
   if (turnId) {
     try {
-      fetch(`${API_BASE_URL}/chat-turns/${turnId}/cancel`, { method: 'POST' }).catch(() => undefined)
+      fetch(`${API_BASE_URL}/chat-turns/${turnId}/cancel`, {
+        method: 'POST',
+        headers: authHeaders(),
+      }).catch(() => undefined)
     } catch {
       /* */
     }
@@ -110,9 +152,13 @@ export function abortChatStream(channel: string) {
   }
   e.abort?.abort()
   e.abort = null
+  const partial = keepPartial ? (e.snap.streamingText || '') : ''
   e.snap = {
     ...emptySnap(channel),
     sessionId: e.snap.sessionId,
+    pendingUserMessage: keepPartial ? e.snap.pendingUserMessage : null,
+    streamingText: partial ? `${partial}\n\n_(Yanıt kullanıcı isteğiyle durduruldu.)_` : '',
+    cancelled: Boolean(partial) || keepPartial,
   }
   emit(channel)
 }
@@ -181,6 +227,8 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     isLoading: true,
     toolCalls: [],
     clarifyOptions: null,
+    lastUsage: null,
+    cancelled: false,
   })
 
   let activeSessionId = sessionId
@@ -189,7 +237,10 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
   try {
     const res = await fetch(url, {
       method,
-      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      headers:
+        method === 'POST'
+          ? { 'Content-Type': 'application/json', ...authHeaders() }
+          : authHeaders(),
       body: method === 'POST' ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
     })
@@ -272,6 +323,10 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
             patch(channel, { clarifyOptions: chunk.clarify_options as ClarifyOption[] })
           }
 
+          if (chunk.usage && typeof chunk.usage === 'object') {
+            patch(channel, { lastUsage: chunk.usage as ChatUsage })
+          }
+
           if (Array.isArray(chunk.suggestions) && chunk.suggestions.length) {
             patch(channel, {
               suggestions: chunk.suggestions.map((s: any) =>
@@ -298,6 +353,18 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
               /* refetch hatası stream'i bozmasın */
             }
             persistTurnId(channel, null)
+            if (chunk.cancelled) {
+              // Sunucu iptali onayladı (bkz. chat_orchestrator.cancel_turn):
+              // o ana kadar üretilen metin korunur, sohbet geçmişine yazılmaz.
+              const notice = String(chunk.notice || 'Yanıt üretimi durduruldu.')
+              finishIdle(channel, {
+                sessionId: activeSessionId,
+                turnId: null,
+                cancelled: true,
+                streamingText: accumulated ? `${accumulated}\n\n_(${notice})_` : `_(${notice})_`,
+              })
+              return
+            }
             finishIdle(channel, { sessionId: activeSessionId, turnId: null })
             return
           }

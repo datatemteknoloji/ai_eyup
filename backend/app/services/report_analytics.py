@@ -2,6 +2,8 @@
 Altyapı raporları — ortak istatistik ve tahmin yardımcıları.
 
 Naif OLS % extrapolasyonu yerine:
+- Eğim: Theil–Sen (ikili eğimlerin medyanı) — tek bir spike trendi bozmaz
+- Belirsizlik: ikili eğim dağılımının %25–%75 aralığı → "35–60 gün" gibi aralık
 - Disk/Memory: mutlak GB trend + medyan taban
 - CPU: ortalama trend extrapolasyonu yok; p95 tabanlı stabil projeksiyon
 - Kalite kapısı: yetersiz örnek / düşük güven → tahmin yok veya mevcut seviye
@@ -19,6 +21,10 @@ class TrendResult:
     confidence: str  # high | medium | low | none
     sample_count: int
     r_squared: Optional[float] = None
+    # İkili eğim dağılımının alt/üst çeyreği — tahmin aralığı için
+    slope_low: Optional[float] = None
+    slope_high: Optional[float] = None
+    method: str = "theil_sen"
 
 
 @dataclass
@@ -56,6 +62,36 @@ def linear_regression_slope(xs: Sequence[float], ys: Sequence[float]) -> Tuple[f
     return slope, round(r2, 4)
 
 
+def pairwise_slopes(xs: Sequence[float], ys: Sequence[float]) -> List[float]:
+    """Tüm nokta çiftleri için (y2-y1)/(x2-x1). Theil–Sen'in temeli."""
+    n = min(len(xs), len(ys))
+    out: List[float] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = float(xs[j]) - float(xs[i])
+            if dx == 0:
+                continue
+            out.append((float(ys[j]) - float(ys[i])) / dx)
+    return out
+
+
+def theil_sen_slope(
+    xs: Sequence[float],
+    ys: Sequence[float],
+) -> Tuple[float, Optional[float], Optional[float]]:
+    """Dayanıklı eğim: (medyan, %25, %75).
+
+    OLS tek bir sıçramadan (VM taşındı, yedek işi) ciddi etkilenir; ikili
+    eğimlerin medyanı bu tür aykırı değerlere karşı dayanıklıdır. %25/%75
+    çeyrekleri tahmini "aralık" olarak sunmayı sağlar.
+    """
+    slopes = pairwise_slopes(xs, ys)
+    if not slopes:
+        return 0.0, None, None
+    med = percentile(slopes, 50) or 0.0
+    return float(med), percentile(slopes, 25), percentile(slopes, 75)
+
+
 def compute_trend_from_series(
     values: Sequence[Optional[float]],
     *,
@@ -68,9 +104,9 @@ def compute_trend_from_series(
 
     # Günlük aggregate varsayımı: her nokta ~1 gün
     xs = list(range(len(clean)))
-    slope, r2 = linear_regression_slope(xs, clean)
-    # n nokta → günlük değişim (n-1 gün aralığı normalize)
-    daily = slope  # zaten per-index; index = gün
+    # Güven seviyesi için OLS R² (uyum iyiliği), eğim için Theil–Sen
+    _ols_slope, r2 = linear_regression_slope(xs, clean)
+    daily, slope_low, slope_high = theil_sen_slope(xs, clean)
 
     if r2 is None:
         conf = "low"
@@ -81,7 +117,14 @@ def compute_trend_from_series(
     else:
         conf = "low"
 
-    return TrendResult(daily_slope=daily, confidence=conf, sample_count=len(clean), r_squared=r2)
+    return TrendResult(
+        daily_slope=daily,
+        confidence=conf,
+        sample_count=len(clean),
+        r_squared=r2,
+        slope_low=slope_low,
+        slope_high=slope_high,
+    )
 
 
 def days_to_threshold(
@@ -101,6 +144,48 @@ def days_to_threshold(
     if daily_growth <= 0.001:
         return None
     return int((threshold - current_pct) / daily_growth)
+
+
+def days_to_threshold_range(
+    current_pct: Optional[float],
+    trend: TrendResult,
+    threshold: float = 80.0,
+) -> Optional[Dict[str, Any]]:
+    """Eşiğe kalan gün ARALIĞI: {"typical", "fastest", "slowest"}.
+
+    Tek bir "43 gün" yerine eğim belirsizliğini yansıtır. `slowest` None ise
+    "bu senaryoda eşiğe hiç ulaşılmıyor" demektir (yavaş uçta trend düz/negatif).
+    """
+    typical = days_to_threshold(
+        current_pct, trend.daily_slope, threshold, confidence=trend.confidence,
+    )
+    if typical is None:
+        return None
+    out: Dict[str, Any] = {"typical": typical, "fastest": typical, "slowest": typical}
+    if typical == 0:
+        return out
+    # Hızlı uç = en dik eğim, yavaş uç = en yatay eğim
+    fastest = days_to_threshold(
+        current_pct, trend.slope_high if trend.slope_high is not None else trend.daily_slope,
+        threshold, confidence=trend.confidence,
+    )
+    slowest = days_to_threshold(
+        current_pct, trend.slope_low if trend.slope_low is not None else trend.daily_slope,
+        threshold, confidence=trend.confidence,
+    )
+    out["fastest"] = min(x for x in (fastest, typical) if x is not None)
+    out["slowest"] = slowest if slowest is None else max(slowest, typical)
+    return out
+
+
+def pct_per_day_to_gb(daily_slope_pct: float, total_gb: Optional[float]) -> Optional[float]:
+    """Yüzde/gün → GB/gün (kapasite biliniyorsa). Rapor metni için."""
+    if not total_gb:
+        return None
+    try:
+        return round(float(daily_slope_pct) * float(total_gb) / 100.0, 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def project_storage_memory(
@@ -206,6 +291,39 @@ def percentile(values: Sequence[float], pct: float) -> Optional[float]:
     return s[f] * (c - k) + s[c] * (k - f)
 
 
+def build_threshold_forecast(
+    current_pct: Optional[float],
+    series: Sequence[Optional[float]],
+    *,
+    threshold: float = 80.0,
+    min_samples: int = 7,
+    total_gb: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Tek metrik için kompakt tahmin paketi (Linux/Windows kapasite raporları).
+
+    Günlük seri yeterli değilse `confidence="none"` ve tahmin üretilmez —
+    "veri yok" ile "büyüme yok" karıştırılmaz.
+    """
+    trend = compute_trend_from_series(series, min_samples=min_samples)
+    out: Dict[str, Any] = {
+        "current_pct": None if current_pct is None else _clamp_pct(current_pct),
+        "daily_growth_pct": round(trend.daily_slope, 4),
+        "daily_growth_gb": pct_per_day_to_gb(trend.daily_slope, total_gb),
+        "trend_confidence": trend.confidence,
+        "sample_days": trend.sample_count,
+        "days_to_threshold": None,
+        "days_to_threshold_range": None,
+        "threshold_pct": threshold,
+    }
+    if trend.confidence == "none" or current_pct is None:
+        return out
+    out["days_to_threshold"] = days_to_threshold(
+        current_pct, trend.daily_slope, threshold, confidence=trend.confidence,
+    )
+    out["days_to_threshold_range"] = days_to_threshold_range(current_pct, trend, threshold)
+    return out
+
+
 def build_forecast_payload(
     host: str,
     current: Dict[str, float],
@@ -230,7 +348,12 @@ def build_forecast_payload(
             "memory": mem_trend.confidence,
             "storage": ds_trend.confidence,
         },
+        "days_to_80pct": {
+            "memory": days_to_threshold_range(current.get("mem_pct"), mem_trend),
+            "storage": days_to_threshold_range(current.get("ds_pct"), ds_trend),
+        },
         "methodology": (
+            "Eğim: Theil–Sen (dayanıklı), aralık: ikili eğim %25–%75; "
             "Disk/Memory: günlük trend + düşüşte taban; "
             "CPU: p95 tabanlı, %0 extrapolasyonu yok"
         ),

@@ -440,6 +440,136 @@ def prune_ids_not_in_keep(
     return delete_chunk_ids(collection_name, to_delete)
 
 
+_ORPHAN_SOURCES = {
+    # id_prefix -> kaynak tablo (chunk id formatı: "<prefix><kaynak satır id>")
+    "event_": "system_events",
+    "incident_": "incidents",
+}
+
+
+def prune_orphan_source_chunks(
+    collection_name: str,
+    *,
+    id_prefix: str,
+    batch_size: int = 2000,
+    max_delete: int = 50000,
+    dry_run: bool = False,
+) -> dict:
+    """Kaynak satırı DB'de kalmayan chunk'ları siler (retention sonrası bakım).
+
+    Event/incident retention temizliği kaynak tabloyu boşaltır ama gömme
+    (embedding) satırları kalır; zamanla RAG store gereksiz büyür ve arama
+    kalitesi düşer. Bu iş, silinmiş kayıtların chunk'larını SQL tarafında
+    (NOT EXISTS) bulur — tüm id'leri Python'a çekmez.
+
+    Kontrollü: `batch_size` kadar parçalar hâlinde siler, `max_delete` üst
+    sınırını aşmaz ve `dry_run` ile yalnızca sayar.
+    """
+    source_table = _ORPHAN_SOURCES.get(id_prefix)
+    if not source_table:
+        raise ValueError(f"Bilinmeyen id_prefix: {id_prefix}")
+    if not _ensure_vector_ready():
+        return {"collection": collection_name, "prefix": id_prefix, "deleted": 0, "skipped": "vector_disabled"}
+
+    like = f"{id_prefix}%"
+    regex = f"^{id_prefix}[0-9]+$"
+    offset = len(id_prefix) + 1  # SQL substring 1-tabanlı
+    select_orphans = text(
+        f"""
+        SELECT r.id
+        FROM rag_embeddings r
+        WHERE r.collection = :coll
+          AND r.id LIKE :like
+          AND r.id ~ :regex
+          AND NOT EXISTS (
+              SELECT 1 FROM {source_table} s
+              WHERE s.id = CAST(substring(r.id FROM :offset) AS BIGINT)
+          )
+        LIMIT :lim
+        """
+    )
+    params = {
+        "coll": collection_name,
+        "like": like,
+        "regex": regex,
+        "offset": offset,
+        "lim": int(batch_size),
+    }
+
+    if dry_run:
+        with engine.connect() as conn:
+            rows = conn.execute(select_orphans, {**params, "lim": int(max_delete)}).fetchall()
+        return {
+            "collection": collection_name,
+            "prefix": id_prefix,
+            "orphans": len(rows),
+            "deleted": 0,
+            "dry_run": True,
+        }
+
+    deleted = 0
+    batches = 0
+    while deleted < max_delete:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                select_orphans,
+                {**params, "lim": min(int(batch_size), max_delete - deleted)},
+            ).fetchall()
+        ids = [str(r[0]) for r in rows]
+        if not ids:
+            break
+        deleted += delete_chunk_ids(collection_name, ids)
+        batches += 1
+        if len(ids) < batch_size:
+            break
+    if deleted:
+        logger.info(
+            "RAG store: %s koleksiyonunda %s öksüz '%s' chunk silindi (%s parti)",
+            collection_name, deleted, id_prefix, batches,
+        )
+    return {
+        "collection": collection_name,
+        "prefix": id_prefix,
+        "deleted": deleted,
+        "batches": batches,
+        "capped": deleted >= max_delete,
+    }
+
+
+def existing_content_hashes(collection_name: str, ids: List[str]) -> dict:
+    """`{chunk_id: metadata.chash}` — değişmemiş kaydı yeniden embed etmemek için.
+
+    Yalnızca sorulan id'ler okunur (koleksiyon yüz binlerce satır olabilir).
+    İçerik imzası (`chash`) eşitse o kayıt zaten indekslidir; embedding çağrısı
+    hiç yapılmaz — periyodik reindex'in asıl maliyeti buradaydı.
+    """
+    if not ids:
+        return {}
+    try:
+        if not _ensure_vector_ready():
+            return {}
+        out: dict = {}
+        wanted = [str(x) for x in ids]
+        with engine.connect() as conn:
+            for i in range(0, len(wanted), 1000):
+                rows = conn.execute(
+                    text(
+                        """
+                        SELECT id, metadata->>'chash' AS chash
+                        FROM rag_embeddings
+                        WHERE collection = :coll AND id = ANY(:ids)
+                        """
+                    ),
+                    {"coll": collection_name, "ids": wanted[i : i + 1000]},
+                )
+                for r in rows:
+                    out[str(r[0])] = r[1] or ""
+        return out
+    except Exception as e:
+        logger.warning("RAG store: content hash listesi okunamadı (%s): %s", collection_name, e)
+        return {}
+
+
 def count_collection(collection_name: str) -> int:
     try:
         if not _ensure_vector_ready():

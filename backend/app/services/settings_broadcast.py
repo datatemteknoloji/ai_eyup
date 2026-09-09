@@ -72,11 +72,55 @@ def broadcast_settings_reload() -> bool:
         return False
 
 
-def _listener_loop(pubsub) -> None:
-    for msg in pubsub.listen():
-        if msg.get("type") != "message":
-            continue
-        reload_runtime_settings_from_db()
+def _listen_once() -> None:
+    """Tek bir pubsub oturumu — hata/timeout'ta çağırana döner."""
+    from app.core.redis_client import get_redis, reset_redis_client
+
+    r = get_redis(force_retry=True)
+    if r is None:
+        raise RuntimeError("Redis erişilemiyor")
+    pubsub = r.pubsub(ignore_subscribe_messages=True)
+    try:
+        pubsub.subscribe(CHANNEL)
+        logger.info("Settings reload listener dinlemede")
+        while True:
+            # timeout'lu okuma: Redis sessizken de döngü canlı kalır
+            msg = pubsub.get_message(timeout=30.0)
+            if msg is None:
+                continue
+            if msg.get("type") != "message":
+                continue
+            reload_runtime_settings_from_db()
+    finally:
+        try:
+            pubsub.close()
+        except Exception:
+            pass
+        # Bozulmuş bağlantı bir sonraki turda yeniden kurulsun
+        try:
+            reset_redis_client()
+        except Exception:
+            pass
+
+
+def _listener_supervisor() -> None:
+    """Redis kesintisinde listener'ı kendi kendine yeniden kurar.
+
+    Eski davranışta `pubsub.listen()` bir TimeoutError'da thread'i sessizce
+    bitiriyordu; o worker bir daha ayar değişikliği duymuyordu (uzak LLM
+    ayarları dahil).
+    """
+    import time
+
+    delay = 2.0
+    while True:
+        try:
+            _listen_once()
+            delay = 2.0
+        except Exception as e:
+            logger.warning("Settings listener koptu, %.0f sn sonra yeniden: %s", delay, e)
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
 
 
 def start_settings_reload_listener() -> None:
@@ -85,15 +129,11 @@ def start_settings_reload_listener() -> None:
         if _listener_started:
             return
         try:
-            from app.core.redis_client import get_redis
-            r = get_redis()
-            if r is None:
-                return
-            pubsub = r.pubsub(ignore_subscribe_messages=True)
-            pubsub.subscribe(CHANNEL)
-            t = threading.Thread(target=_listener_loop, args=(pubsub,), daemon=True, name="settings-reload")
+            t = threading.Thread(
+                target=_listener_supervisor, daemon=True, name="settings-reload",
+            )
             t.start()
             _listener_started = True
-            logger.info("Settings reload listener başlatıldı")
+            logger.info("Settings reload listener başlatıldı (otomatik yeniden bağlanır)")
         except Exception as e:
             logger.debug("Settings listener başlatılamadı: %s", e)

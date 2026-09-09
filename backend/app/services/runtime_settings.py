@@ -239,6 +239,20 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Bilgi tabanı yeniden indeksleme.",
         "env": "RAG_REINDEX_INTERVAL_SEC",
     },
+    "rag_maintenance_interval_sec": {
+        "default": 86400, "type": "int", "min": 3600, "max": 604800,
+        "group": "background", "label": "RAG bakım aralığı (sn)",
+        "help": "Kaynağı silinmiş (event retention sonrası) RAG chunk'larının "
+                "temizlenmesi. Embedding yapmaz, yalnızca DB temizliği.",
+        "env": "RAG_MAINTENANCE_INTERVAL_SEC",
+    },
+    "rag_maintenance_max_delete": {
+        "default": 50000, "type": "int", "min": 1000, "max": 1000000,
+        "group": "background", "label": "RAG bakım tur başına silme sınırı",
+        "help": "Tek bakım turunda silinecek en fazla öksüz chunk sayısı — "
+                "büyük birikmelerde DB'yi tek seferde yormamak için.",
+        "env": "RAG_MAINTENANCE_MAX_DELETE",
+    },
     "snapshot_cleanup_interval_sec": {
         "default": 3600, "type": "int", "min": 600, "max": 86400,
         "group": "background", "label": "Snapshot temizleme aralığı (sn)",
@@ -517,6 +531,14 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "(CPU'da 15 aday ~10sn) bir alternatif için 'BAAI/bge-reranker-v2-m3' "
                 "girilebilir — yalnızca chat gecikmesi sorun değilse önerilir.",
         "env": "RAG_RERANKER_MODEL",
+    },
+    "rag_embed_concurrency": {
+        "default": 4, "type": "int", "min": 1, "max": 32,
+        "group": "rag_reranker", "label": "Embedding eşzamanlılığı",
+        "help": "RAG embedding sırasında Ollama'ya aynı anda gönderilecek istek sayısı. "
+                "Embedding CPU (GPU yoksa) tüketir; düşürmek sistemi rahatlatır, embed "
+                "süresini uzatır. Reindex ayrı worker'da çalıştığı için API etkilenmez.",
+        "env": "OLLAMA_EMBED_CONCURRENCY",
     },
     "rag_reranker_candidates": {
         "default": 15, "type": "int", "min": 5, "max": 50,

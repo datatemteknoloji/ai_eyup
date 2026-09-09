@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.models.chat_turn import ChatTurn
+from app.services import chat_cancel
 from app.services.chat_orchestrator import ai_gate, events
 from app.services.chat_source_planner import plan_sources, build_followup_suggestions
 
@@ -82,13 +83,27 @@ def get_turn(db: Session, turn_id: str) -> Optional[ChatTurn]:
 
 
 def cancel_turn(db: Session, turn_id: str) -> bool:
+    """Turu iptal et — DB durumu + ÇALIŞAN pipeline'a ulaşan Redis bayrağı.
+
+    Bayrak olmadan iptal kozmetikti: durum "cancelled" olsa bile pipeline
+    döngüsü bunu görmediği için model token üretmeye ve `ai_gate` kotasını
+    tutmaya devam ediyordu (bkz. chat_cancel).
+    """
     row = get_turn(db, turn_id)
     if not row or row.status in ("completed", "failed", "cancelled"):
         return False
+    # Bayrak DB commit'inden ÖNCE yazılır: pipeline döngüsü bayrağı ne kadar
+    # erken görürse o kadar az token/kaynak harcanır.
+    events.request_cancel(turn_id)
     row.status = "cancelled"
     row.finished_at = _now()
     db.commit()
-    events.publish_event(turn_id, {"error": "İptal edildi", "done": True, "cancelled": True})
+    events.publish_event(turn_id, {
+        "cancelled": True,
+        "done": True,
+        "notice": "Yanıt üretimi kullanıcı isteğiyle durduruldu.",
+        "partial_response": row.partial_response or "",
+    })
     return True
 
 
@@ -146,14 +161,39 @@ async def run_turn(turn_id: str) -> None:
             events.publish_event(turn_id, {"error": row.error, "done": True})
             return
 
+        # Kuyrukta beklerken iptal edilmiş olabilir — kotayı alıp hemen bırak,
+        # pipeline'ı hiç başlatma.
+        if chat_cancel.is_cancelled_for(turn_id):
+            ai_gate.release()
+            row.status = "cancelled"
+            row.finished_at = _now()
+            db.commit()
+            events.clear_cancel(turn_id)
+            events.publish_event(turn_id, {
+                "cancelled": True, "done": True, "turn_id": turn_id,
+                "notice": "İstek kuyrukta beklerken iptal edildi.",
+            })
+            return
+
         full = []
         token_n = 0
+        cancelled = False
+        cancel_token = chat_cancel.bind(turn_id)
+        gen = None
         try:
             payload = dict(row.payload or {})
             payload.setdefault("message", row.message)
             payload.setdefault("session_id", row.session_id)
-            async for raw in pipeline(payload, db):
+            gen = pipeline(payload, db)
+            async for raw in gen:
                 events.refresh_turn_lock(turn_id)
+                # İptal kontrolü: her olayda, Redis okuması 250 ms kısmalı
+                # (bkz. chat_cancel). Döngüden çıkmak generator'ı kapatır ve
+                # GeneratorExit `async with client.stream(...)` bloklarına
+                # kadar yayılır → uzak LLM bağlantısı fiilen kesilir.
+                if chat_cancel.is_cancelled():
+                    cancelled = True
+                    break
                 chunk = _parse_sse_chunk(raw)
                 if not chunk:
                     continue
@@ -177,13 +217,53 @@ async def run_turn(turn_id: str) -> None:
                 if chunk.get("done"):
                     break
                 events.publish_event(turn_id, chunk)
+        except chat_cancel.ChatCancelled:
+            cancelled = True
         finally:
+            chat_cancel.unbind(cancel_token)
+            if gen is not None:
+                # Generator'ı AÇIKÇA kapat: `break` ile çıkıldığında kapanma
+                # GC'ye bırakılırsa HTTP stream'i (ve uzak model üretimi)
+                # belirsiz bir süre daha açık kalabilir.
+                try:
+                    await gen.aclose()
+                except Exception:
+                    pass
             ai_gate.release()
 
         text = "".join(full).strip()
+        # Durum başka bir worker'dan iptal edilmiş olabilir; kendi oturumumuzdaki
+        # eski değere güvenip "completed" yazmak iptali sessizce ezerdi. Kontrol
+        # partial_response yazılmadan ÖNCE yapılır (refresh bekleyen değişikliği
+        # geri alır).
+        if not cancelled:
+            try:
+                db.refresh(row)
+            except Exception:
+                pass
+            cancelled = (
+                row.status == "cancelled"
+                or chat_cancel.is_cancelled_for(turn_id)
+            )
         row.partial_response = text
-        if row.status != "cancelled":
-            row.status = "completed"
+        if cancelled:
+            row.status = "cancelled"
+            row.finished_at = _now()
+            db.commit()
+            events.clear_cancel(turn_id)
+            events.publish_event(turn_id, {
+                "cancelled": True,
+                "done": True,
+                "session_id": row.session_id,
+                "turn_id": turn_id,
+                "notice": "Yanıt üretimi kullanıcı isteğiyle durduruldu.",
+            })
+            logger.info(
+                "[ChatTurn] %s kullanıcı isteğiyle iptal edildi (%s token üretilmişti)",
+                turn_id, token_n,
+            )
+            return
+        row.status = "completed"
         row.finished_at = _now()
         plan = row.source_plan if isinstance(row.source_plan, dict) else {}
         try:

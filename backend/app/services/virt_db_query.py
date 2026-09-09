@@ -5,9 +5,11 @@ Freshness: as_of / vm_last_sync / vm_stats_as_of ile stale bayrağı.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.hypervisor import Hypervisor
@@ -16,6 +18,8 @@ from app.models.server import Server
 from app.models.virt_datastore import VirtDatastore
 from app.models.event import SystemEvent
 from app.services.platform_scope import vm_filter_condition
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -143,6 +147,8 @@ def list_vms_db(
             "vcenter": hv_map.get(s.hypervisor_id),
             "cpu_mhz": s.vm_cpu_usage_mhz,
             "mem_active_mb": s.vm_mem_active_mb,
+            "tools_status": s.vm_tools_status,
+            "tools_version_status": s.vm_tools_version_status,
             "vm_last_sync": sync.isoformat() if sync else None,
             "stats_as_of": s.vm_stats_as_of.isoformat() if s.vm_stats_as_of else None,
         }
@@ -223,6 +229,7 @@ def vm_detail_db(db: Session, *, name: Optional[str] = None, server_id: Optional
             "ip": s.vm_guest_ip or s.ip_address,
             "power_state": s.vm_power_state,
             "tools": s.vm_tools_status,
+            "tools_version_status": s.vm_tools_version_status,
             "vcpu": s.vm_cpu_count,
             "memory_mb": s.vm_memory_mb,
             "disk_gb": s.vm_disk_gb,
@@ -710,6 +717,45 @@ def list_virt_alarms_db(
     }
 
 
+def _latest_vm_utilization(
+    db: Session, *, hours: int = 24, limit: int = 2000
+) -> Dict[str, Dict[str, Any]]:
+    """VM adı → en güncel `virt_vm_metrics` satırı (yalnız yük göstergeleri).
+
+    `servers` tablosu VM için yüzde tutmaz (yalnız cpu_mhz / mem_active_mb);
+    "CPU'su %80 üstü VM" gibi sorularda yüzdeyi zaman serisinden almak gerekir.
+    DISTINCT ON ile VM başına tek (en yeni) satır alınır.
+    """
+    from app.services.entity_projection import norm_join_key
+
+    sql = text(
+        """
+        SELECT DISTINCT ON (vm_name)
+               vm_name, timestamp, cpu_usage_pct, mem_usage_pct, cpu_ready_pct,
+               disk_latency_ms, balloon_mb, swapped_mb, power_state
+        FROM virt_vm_metrics
+        WHERE vm_name IS NOT NULL
+          AND timestamp >= now() - (:hours * interval '1 hour')
+        ORDER BY vm_name, timestamp DESC
+        LIMIT :lim
+        """
+    )
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        rows = db.execute(
+            sql, {"hours": max(1, int(hours or 24)), "lim": max(1, int(limit or 2000))}
+        )
+    except Exception as e:  # tablo/uzantı yoksa çapraz eşleştirme yine çalışsın
+        logger.warning("[cross_match] VM metrik okunamadı: %s", e)
+        return out
+    for r in rows:
+        m = dict(r._mapping)
+        key = norm_join_key(str(m.get("vm_name") or ""))
+        if key:
+            out[key] = m
+    return out
+
+
 def cross_match_virt_db(
     db: Session,
     *,
@@ -720,17 +766,28 @@ def cross_match_virt_db(
     fields: Optional[List[str]] = None,
     hours: int = 48,
     limit: int = 100,
+    vm_name: Optional[str] = None,
+    min_cpu_pct: Optional[float] = None,
+    min_mem_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     """READ-ONLY çapraz eşleştirme — ESXi / VM / datastore / alarm SoT'larını join et.
 
     join_on:
       - host: ESXi satırı eksen; VM + DS + alarm bağlanır
+      - vm: VM satırı eksen; VM'in kendi yükü + üstündeki host'un yükü +
+        datastore + alarm aynı satırda. "Şu VM'ler hangi hostta çalışıyor ve
+        host'un RAM'i ne durumda" sorusunu tek çağrıda cevaplar (host ekseni
+        VM'leri yalnız ad listesi olarak verdiği için bunu yapamıyordu).
       - datastore: datastore eksen; o DS'teki VM'ler + ilgili host özeti
       - entity: alarm entity adı → host veya VM eşleşmesi
+
+    min_cpu_pct / min_mem_pct: EKSEN VARLIĞININ kendi kullanımına uygulanan
+    alt sınır (vm ekseninde VM'in, host ekseninde host'un yüzdesi).
     """
     from app.services.entity_projection import (
         CROSS_MATCH_DEFAULT_FIELDS,
         CROSS_MATCH_FIELD_ALIASES,
+        CROSS_MATCH_VM_DEFAULT_FIELDS,
         index_by_key,
         norm_join_key,
         normalize_fields,
@@ -738,7 +795,9 @@ def cross_match_virt_db(
     )
 
     axis = (join_on or "host").strip().lower()
-    if axis not in ("host", "datastore", "entity"):
+    if axis in ("vms", "guest", "sanal_makine"):
+        axis = "vm"
+    if axis not in ("host", "vm", "datastore", "entity"):
         axis = "host"
 
     wanted_src = {
@@ -755,7 +814,7 @@ def cross_match_virt_db(
     as_ofs: List[Optional[str]] = []
     stale_any = False
 
-    if "hosts" in wanted_src or axis == "host":
+    if "hosts" in wanted_src or axis in ("host", "vm"):
         hres = list_esx_hosts_db(
             db,
             hypervisor=hypervisor,
@@ -768,18 +827,19 @@ def cross_match_virt_db(
         as_ofs.append(hres.get("as_of"))
         stale_any = stale_any or bool(hres.get("stale"))
 
-    if "vms" in wanted_src or axis in ("host", "datastore", "entity"):
+    if "vms" in wanted_src or axis in ("host", "vm", "datastore", "entity"):
         vres = list_vms_db(
             db,
             hypervisor=hypervisor,
             host_name=host_name,
+            name_filter=vm_name,
             limit=max(1, min(int(limit or 100), 500)),
         )
         vms_raw = list(vres.get("vms") or [])
         as_ofs.append(vres.get("as_of"))
         stale_any = stale_any or bool(vres.get("stale"))
 
-    if "datastores" in wanted_src or axis == "datastore":
+    if "datastores" in wanted_src or axis in ("datastore", "vm"):
         dres = list_datastores_db(db, hypervisor=hypervisor)
         ds_raw = list(dres.get("datastores") or [])
         as_ofs.append(dres.get("as_of"))
@@ -887,6 +947,60 @@ def cross_match_virt_db(
                 "alarms": _alarm_titles(uniq_alarms),
             })
 
+    elif axis == "vm":
+        # VM'in yüzdeleri envanterde değil zaman serisinde; host'unki ise host
+        # satırında. İkisi tek satırda birleşince "VM yükü mü host yükü mü"
+        # sorusu ek çağrı olmadan görülebilir.
+        vm_util = _latest_vm_utilization(db, hours=max(1, min(int(hours or 48), 168)))
+        for v in vms_raw:
+            vname = str(v.get("name") or "")
+            vkey = norm_join_key(vname)
+            if not vkey:
+                continue
+            util = vm_util.get(vkey) or {}
+            hkey = norm_join_key(str(v.get("host") or ""))
+            h = (hosts_by_name.get(hkey) or [{}])[0]
+            d = (ds_by_name.get(norm_join_key(str(v.get("datastore") or ""))) or [{}])[0]
+            alarms = alarms_by_entity.get(vkey, [])
+            ts = util.get("timestamp")
+            joined.append({
+                "match_key": vname,
+                "match_axis": "vm",
+                "vm": vname,
+                "vm_ip": v.get("ip"),
+                "power_state": v.get("power_state") or util.get("power_state"),
+                "vcpu": v.get("vcpu"),
+                "memory_mb": v.get("memory_mb"),
+                "disk_gb": v.get("disk_gb"),
+                "vm_cpu_pct": util.get("cpu_usage_pct"),
+                "vm_mem_pct": util.get("mem_usage_pct"),
+                "vm_ready_pct": util.get("cpu_ready_pct"),
+                "metrics_as_of": ts.isoformat() if hasattr(ts, "isoformat") else ts,
+                "host": v.get("host") or h.get("name"),
+                "host_ip": h.get("ip"),
+                "host_version": h.get("version"),
+                # cpu_pct/mem_pct diğer eksenlerde host'u gösterir; VM ekseninde
+                # de aynı anlamı korur, VM'inki ayrı alanda.
+                "cpu_pct": h.get("cpu_pct"),
+                "mem_pct": h.get("mem_pct"),
+                "host_cpu_pct": h.get("cpu_pct"),
+                "host_mem_pct": h.get("mem_pct"),
+                # Q: "CPU Ready yüksek VM'lerin host'unda kaç VM var" gibi
+                # sorularda host'un ne kadar kalabalık olduğu (contention
+                # şüphesi) tek satırda görünsün diye eklendi.
+                "host_vm_count": h.get("vms_total"),
+                "connection_state": h.get("connection_state"),
+                "cluster": v.get("cluster") or h.get("cluster"),
+                "hypervisor": v.get("hypervisor") or h.get("hypervisor"),
+                "vm_count": 1,
+                "vms": [vname],
+                "datastore": v.get("datastore") or d.get("name"),
+                "ds_usage_pct": d.get("usage_pct"),
+                "ds_free_gb": d.get("free_gb"),
+                "alarm_count": len(alarms),
+                "alarms": _alarm_titles(alarms),
+            })
+
     elif axis == "datastore":
         keys = sorted(set(ds_by_name.keys()) | set(vms_by_ds.keys()))
         for k in keys:
@@ -975,13 +1089,36 @@ def cross_match_virt_db(
                 "alarms": _alarm_titles([a]),
             })
 
+    # Kullanım eşiği: eksen varlığının KENDİ yüzdesine uygulanır. VM ekseninde
+    # host'un yüzdesiyle filtrelemek "yüksek CPU'lu VM'ler" sorusunu yanlış
+    # cevaplardı (yoğun host'taki boşta VM'ler de listeye girerdi).
+    cpu_key = "vm_cpu_pct" if axis == "vm" else "cpu_pct"
+    mem_key = "vm_mem_pct" if axis == "vm" else "mem_pct"
+    total_before_filter = len(joined)
+    filters_applied: Dict[str, Any] = {}
+    for bound, key in ((min_cpu_pct, cpu_key), (min_mem_pct, mem_key)):
+        try:
+            limit_pct = float(bound) if bound is not None else None
+        except (TypeError, ValueError):
+            limit_pct = None
+        if limit_pct is None:
+            continue
+        filters_applied[key] = limit_pct
+        joined = [
+            r for r in joined
+            if r.get(key) is not None and float(r[key]) >= limit_pct
+        ]
+
+    matched = len(joined)
     # Host ekseninde yalnız alarm/dolu filtre istenebilir — hepsini döndür; limit uygula
     joined = joined[: max(1, min(int(limit or 100), 200))]
 
     wanted = normalize_fields(
         fields,
         aliases=CROSS_MATCH_FIELD_ALIASES,
-        default=CROSS_MATCH_DEFAULT_FIELDS,
+        default=(
+            CROSS_MATCH_VM_DEFAULT_FIELDS if axis == "vm" else CROSS_MATCH_DEFAULT_FIELDS
+        ),
     )
     proj = project_rows(joined, wanted)
     newest = next((x for x in as_ofs if x), None)
@@ -993,6 +1130,9 @@ def cross_match_virt_db(
         "join_on": axis,
         "include": sorted(wanted_src),
         "count": len(joined),
+        "matched": matched,
+        "scanned": total_before_filter,
+        "filters": filters_applied or None,
         "as_of": newest,
         "stale": stale_any,
         "fields": proj["fields"],
@@ -1001,5 +1141,17 @@ def cross_match_virt_db(
         "hint": (
             "READ-ONLY çapraz eşleştirme. Write/power/destroy yok. "
             "Eksik alan → ilgili sync veya (stale ise) canlı vcenter read tool."
+            + (
+                " vm ekseni: vm_cpu_pct/vm_mem_pct VM'in KENDİ yükü, "
+                "host_cpu_pct/host_mem_pct üzerinde çalıştığı ESXi host'un yükü — "
+                "karıştırma."
+                if axis == "vm"
+                else ""
+            )
+            + (
+                f" Filtre sonrası {matched}/{total_before_filter} satır eşleşti."
+                if filters_applied
+                else ""
+            )
         ),
     }

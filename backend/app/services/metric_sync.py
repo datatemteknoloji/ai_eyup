@@ -222,8 +222,20 @@ def _write_vm_metric_rows(
         if mem_p is None and mem_used is not None and mem_total:
             mem_p = round(mem_used / mem_total * 100, 1)
         ready_ms = _f(io.get("cpu_ready_ms"))
-        # cpu.ready summation 20 sn'lik örnekte ms → % dönüşümü
-        ready_pct = round(ready_ms / 200.0, 2) if ready_ms is not None else None
+        num_cpu = srv.vm_cpu_count or stats.get("num_cpu")
+        # cpu.ready summation 20 sn'lik örnekte ms → %. Sayaç TÜM vCPU'ların
+        # toplamı olduğu için vCPU sayısına bölünmeli: aksi halde 8 vCPU'lu bir
+        # VM'de %9'luk çekişme %75 görünür ve eşik kıyaslamaları
+        # (virt_diagnostics, %5) yanlış katmanı suçlar. Aynı normalizasyon
+        # canlı yolda (vcenter_vm_performance) ve host tarafında da kullanılır.
+        try:
+            _vcpu = float(num_cpu) if num_cpu else 1.0
+        except (TypeError, ValueError):
+            _vcpu = 1.0
+        ready_pct = (
+            round(ready_ms / (200.0 * max(_vcpu, 1.0)), 2)
+            if ready_ms is not None else None
+        )
         rows.append({
             "timestamp": now,
             "hypervisor_id": hypervisor_id,
@@ -234,7 +246,7 @@ def _write_vm_metric_rows(
             "cluster_name": srv.vm_cluster,
             "datastore": srv.vm_datastore,
             "power_state": srv.vm_power_state or stats.get("power_state"),
-            "num_cpu": srv.vm_cpu_count or stats.get("num_cpu"),
+            "num_cpu": num_cpu,
             "mem_total_mb": mem_total,
             "cpu_usage_mhz": _f(stats.get("cpu_mhz") or stats.get("cpu_usage_mhz")),
             "cpu_usage_pct": _f(cpu_p),
@@ -244,7 +256,14 @@ def _write_vm_metric_rows(
             "cpu_ready_ms": ready_ms,
             "cpu_ready_pct": ready_pct,
             "cpu_costop_ms": _f(io.get("cpu_costop_ms")),
-            "balloon_mb": _f(stats.get("ballooned_mb")),
+            # quickStats.balloonedMemory bazı sürümlerde/erişim seviyelerinde
+            # hiç dönmez ve kolon NULL kalır; bu da bellek baskısı teşhisini
+            # (virt_diagnostics) kanıtsız bırakır. QueryPerf mem.vmmemctl
+            # (KB) yedek kaynak olarak kullanılır.
+            "balloon_mb": _f(stats.get("ballooned_mb")) or (
+                round(_f(io.get("mem_balloon_kb")) / 1024.0, 2)
+                if _f(io.get("mem_balloon_kb")) is not None else None
+            ),
             "swapped_mb": _f(stats.get("swapped_mb")),
             "mem_swapin_kbps": _f(io.get("mem_swapin_kbps")),
             "mem_swapout_kbps": _f(io.get("mem_swapout_kbps")),
@@ -331,13 +350,34 @@ def _write_vmware_metric_rows(
     if not rows:
         return 0
     try:
-        db.bulk_insert_mappings(MetricData, rows)
-        db.commit()
+        _insert_metric_rows(db, rows)
     except Exception as e:
         db.rollback()
         logger.warning("VMware metric write failed server=%s: %s", server.name, e)
         return 0
     return len(rows)
+
+
+def _insert_metric_rows(db: Session, rows: List[Dict[str, Any]]) -> int:
+    """metric_data satırlarını çakışmaya dayanıklı yazar; yazılan adedi döner.
+
+    İki nedenle ON CONFLICT DO NOTHING şart:
+      * Prometheus `query_range` her turda ÖRTÜŞEN pencere döner (minutes=12,
+        periyot 10 dk) — aynı (sunucu, metrik, zaman) üçlüsü tekrar gelir.
+      * Aynı sunucunun aynı turdaki metrikleri tek zaman damgasını paylaşır.
+    Tekrar eden satır sessizce atlanır, tüm batch'in düşmesi yerine.
+    """
+    if not rows:
+        return 0
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+    stmt = _pg_insert(MetricData.__table__).values(rows)
+    result = db.execute(stmt.on_conflict_do_nothing())
+    db.commit()
+    # rowcount = GERÇEKTEN eklenen satır; atlanan tekrarları "yazıldı" saymak
+    # sync sayaçlarını şişirir.
+    written = result.rowcount
+    return len(rows) if written is None or written < 0 else written
 
 
 def _flush_metric_mappings(db: Session, pending: List[Dict[str, Any]], chunk: int = 2000) -> int:
@@ -347,9 +387,7 @@ def _flush_metric_mappings(db: Session, pending: List[Dict[str, Any]], chunk: in
         batch = pending[:chunk]
         del pending[:chunk]
         try:
-            db.bulk_insert_mappings(MetricData, batch)
-            db.commit()
-            written += len(batch)
+            written += _insert_metric_rows(db, batch)
         except Exception as e:
             db.rollback()
             logger.warning("Metric bulk insert failed (%d rows): %s", len(batch), e)
@@ -425,24 +463,24 @@ class MetricSyncService:
                             (data.get("error") or data.get("errorType") or "")[:300],
                         )
                         continue
+                    _rows: List[Dict[str, Any]] = []
                     for result in data.get("data", {}).get("result", []):
                         for ts, val in result.get("values", []):
                             try:
                                 float_val = float(val)
                                 if float_val != float_val or float_val == float('inf'):
                                     continue
-                                db.add(MetricData(
-                                    server_id=server.id,
-                                    metric_name=db_metric_name,
-                                    value=float_val,
-                                    unit=unit,
-                                    labels=category,
-                                    timestamp=datetime.utcfromtimestamp(float(ts))
-                                ))
-                                synced_count += 1
+                                _rows.append({
+                                    "server_id": server.id,
+                                    "metric_name": db_metric_name,
+                                    "value": float_val,
+                                    "unit": unit,
+                                    "labels": category,
+                                    "timestamp": datetime.utcfromtimestamp(float(ts)),
+                                })
                             except Exception:
                                 pass
-                    db.commit()
+                    synced_count += _insert_metric_rows(db, _rows)
                 except Exception as e:
                     logger.debug(f"Metric sync error {db_metric_name}/{instance}: {e}")
                     try:
@@ -585,9 +623,7 @@ class MetricSyncService:
         total += _flush_metric_mappings(db, pending)
         if pending:
             try:
-                db.bulk_insert_mappings(MetricData, pending)
-                db.commit()
-                total += len(pending)
+                total += _insert_metric_rows(db, pending)
                 pending.clear()
             except Exception as e:
                 db.rollback()
@@ -720,6 +756,16 @@ class MetricSyncService:
                             href = stats.get("host_ref")
                             if href and not srv.vm_host_ref:
                                 srv.vm_host_ref = str(href)
+                            # VMware Tools durumu — get_vm_full_details() bunu hep NULL
+                            # yazıyordu (guest/identity REST cevabında bu alan yok);
+                            # gerçek kaynak get_all_vm_live_stats'ın SOAP guest.tools*
+                            # sayaçları, her metrik turunda burada güncellenir.
+                            trs = stats.get("tools_running_status")
+                            if trs:
+                                srv.vm_tools_status = str(trs)
+                            tvs = stats.get("tools_version_status")
+                            if tvs:
+                                srv.vm_tools_version_status = str(tvs)
                             from datetime import timezone as _tz
                             srv.vm_stats_as_of = (
                                 now.replace(tzinfo=_tz.utc) if now.tzinfo is None else now
@@ -753,9 +799,7 @@ class MetricSyncService:
                             while pending_rows:
                                 batch = pending_rows[:2000]
                                 del pending_rows[:2000]
-                                db.bulk_insert_mappings(MetricData, batch)
-                                db.commit()
-                                total_metrics += len(batch)
+                                total_metrics += _insert_metric_rows(db, batch)
                         except Exception as e:
                             db.rollback()
                             logger.warning("VMware metric bulk write failed hyp=%s: %s", hyp_id, e)

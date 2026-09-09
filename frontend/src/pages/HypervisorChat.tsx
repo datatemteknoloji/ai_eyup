@@ -658,6 +658,7 @@ export default function HypervisorChat({
         value={input}
         onChange={setInput}
         onSubmit={() => sendQuestion(input)}
+        onAbort={() => abortChatStream('hypervisor')}
         loading={loading}
         placeholder={t('chat_hv_ph')}
         hint={t('chat_hv_hint')}

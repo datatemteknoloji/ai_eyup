@@ -4,7 +4,7 @@ VMware vCenter REST API Client
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import requests
 from urllib3.exceptions import InsecureRequestWarning
@@ -38,6 +38,45 @@ def _xml_text(value: Optional[str]) -> str:
     """
     from xml.sax.saxutils import escape
     return escape(value or "", entities={'"': "&quot;", "'": "&apos;"})
+
+
+def _ds_uuid_from_url(url: Optional[str]) -> Optional[str]:
+    """`/vmfs/volumes/<uuid>/` → `<uuid>`.
+
+    Host entity'sindeki `datastore.*` performans sayaçları datastore MOR'u
+    ("datastore-15") ile değil VMFS UUID'siyle instance'lanır; eşleme bu
+    UUID üzerinden yapılır. NFS gibi UUID'siz URL'lerde son yol parçası döner.
+    """
+    if not url:
+        return None
+    part = url.strip().rstrip("/").rsplit("/", 1)[-1]
+    return part or None
+
+
+def _reduce_instances(
+    per_instance: Dict[str, List[float]], reduce_fn: str, scale: float = 1.0,
+) -> Optional[float]:
+    """QueryPerf'in instance kırılımını tek değere indirger.
+
+    Üç kural birlikte gerekli:
+      * Toplam satırı (instance="") varsa cihaz satırlarıyla TOPLANMAZ —
+        yoksa değer iki katına çıkar.
+      * IOPS/bant genişliği cihazlar arası toplanır (host'un toplam yükü).
+      * Gecikme toplanmaz (4 LUN × 5 ms = 20 ms diye uydurma darboğaz üretir);
+        en kötü cihazın değeri alınır.
+
+    Veri yoksa None döner — 0.0 yazmak "ölçüldü ve sıfırdı" anlamına gelir.
+    """
+    if not per_instance:
+        return None
+    if "" in per_instance and len(per_instance) > 1:
+        values = [sum(per_instance[""])]
+    else:
+        values = [sum(v) for v in per_instance.values()]
+    if not values:
+        return None
+    agg = max(values) if reduce_fn == "max" else sum(values)
+    return round(agg * scale, 2)
 
 
 class _HostScopedPropCache:
@@ -1880,6 +1919,21 @@ class VCenterClient:
             ("virtualDisk", "totalWriteLatency", "average"): "disk_write_lat",
             ("datastore", "totalReadLatency", "average"): "ds_read_lat",
             ("datastore", "totalWriteLatency", "average"): "ds_write_lat",
+            ("datastore", "numberReadAveraged", "average"): "ds_read_iops",
+            ("datastore", "numberWriteAveraged", "average"): "ds_write_iops",
+            # ── HOST seviyesi sayaçlar ──────────────────────────────────────
+            # Host ağı `net.bytesRx` DEĞİL `net.received` ile ölçülür (bytesRx
+            # yalnız VM/vNIC nesnelerinde vardır) — host net kolonlarının
+            # yıllardır NULL kalmasının sebebi buydu.
+            ("net", "received", "average"): "host_net_rx",
+            ("net", "transmitted", "average"): "host_net_tx",
+            # Host depolama: IOPS + cihaz gecikmesi (VM'in mi host'un mu
+            # yavaş olduğunu ayırt etmek için gerekli — bkz. virt_diagnostics)
+            ("disk", "numberReadAveraged", "average"): "host_disk_read",
+            ("disk", "numberWriteAveraged", "average"): "host_disk_write",
+            ("disk", "deviceLatency", "average"): "host_disk_dev_lat",
+            # Host bellek baskısı: fiilen swap'lanmış alan
+            ("mem", "swapused", "average"): "host_mem_swapused",
         }
         found: Dict[str, int] = {}
         # Each PerfCounterInfo is typically under val/*/ or PropSet children
@@ -2463,11 +2517,16 @@ class VCenterClient:
                     sums[current_cid].append(float(v))
 
             def _sum_slot(slot: str) -> Optional[float]:
+                # Veri yoksa None döner — 0.0 yazmak "ölçüldü ve sıfırdı" anlamına
+                # gelir (bkz. _reduce_instances, host'ta aynı sınıf hataydı).
+                # Bu VM tekil-sorgu yolu SUM kullanır (host'taki max/sum ayrımı
+                # burada tek entity olduğu için gerekmez, çoklu-cihaz toplamı
+                # zaten IOPS/latency için kabul edilebilir yaklaşık değerdir).
                 cid = found.get(slot)
                 if cid is None:
                     return None
                 vals = sums.get(cid, [])
-                return sum(vals) if vals else 0.0
+                return round(sum(vals), 2) if vals else None
 
             read_iops = _sum_slot("read")
             write_iops = _sum_slot("write")
@@ -2606,11 +2665,16 @@ class VCenterClient:
                             sums.setdefault(cid, []).extend(nums)
 
                     def _sum_slot(slot: str) -> Optional[float]:
+                        # Veri yoksa None döner — 0.0 "ölçüldü ve sıfırdı" demektir.
+                        # Bu tam host'taki _reduce_instances hatasının VM tarafındaki
+                        # eşi: latency/IOPS sayaçları örnek dönmediğinde sessizce 0.0
+                        # yazılıyordu, "disk latency her VM'de 0ms" gibi yanıltıcı bir
+                        # veri kümesi oluşuyordu.
                         cid = found.get(slot)
                         if cid is None:
                             return None
                         vals = sums.get(cid, [])
-                        return round(sum(vals), 2) if vals else 0.0
+                        return round(sum(vals), 2) if vals else None
 
                     results[vm_ref] = {
                         "disk_read_iops": _sum_slot("read"),
@@ -2635,6 +2699,188 @@ class VCenterClient:
 
         return results
 
+
+    def _enrich_host_perf(self, results: List[Dict]) -> None:
+        """`get_all_host_stats` çıktısını QueryPerf sayaçlarıyla zenginleştirir.
+
+        Sayaç toplama başarısız olsa bile host satırları (CPU/RAM/DS) aynen
+        döner — perf verisi "olursa iyi" bir ektir, envanteri bloke etmez.
+        """
+        try:
+            refs = [r.get("host_ref") for r in results if r.get("host_ref")]
+            perf = self.get_all_host_perf(refs)
+        except Exception as e:
+            logger.warning("host perf zenginleştirme atlandı: %s", e)
+            return
+        if not perf:
+            return
+        for r in results:
+            row = perf.get(r.get("host_ref") or "")
+            if not row:
+                continue
+            r.update(row)
+            # CPU ready normalizasyonu: toplam ms tek başına host'lar arasında
+            # kıyaslanamaz (çekirdek sayısı farklı). 20 sn'lik örnekte
+            # ready_ms / (20000 * thread) → % contention.
+            ready_ms = row.get("cpu_ready_ms")
+            threads = r.get("cpu_threads") or r.get("cpu_cores")
+            if ready_ms is not None and threads:
+                r["cpu_ready_pct"] = round(
+                    (float(ready_ms) / (20000.0 * float(threads))) * 100.0, 2,
+                )
+
+    # Host QueryPerf sonucu → HypervisorHostMetric kolonları.
+    # (sayaç slotu, çıktı anahtarı, ölçek çarpanı, instance deseni, indirgeme)
+    #
+    # instance ayrımı kritik: host'ta `net.*` ve `mem.*` sayaçlarının TOPLAM
+    # (instance="") satırı vardır, ama `disk.*` sayaçları YALNIZCA cihaz başına
+    # (naa.../t10.NVMe... LUN) yayınlanır — toplam satırı yoktur. instance=""
+    # ile sorulduğunda bu kolonlar bu yüzden hep NULL kalıyordu.
+    #
+    # İndirgeme de sayaca göre değişir: IOPS cihazlar arası TOPLANIR (host'un
+    # toplam iş yükü), gecikme ise TOPLANMAZ — 4 LUN × 5 ms = 20 ms diye
+    # uydurma bir darboğaz üretirdi; en kötü cihazın değeri (max) alınır.
+    _HOST_PERF_SLOTS: Tuple[Tuple[str, str, float, str, str], ...] = (
+        ("host_net_rx", "net_rx_kbps", 1.0, "", "sum"),
+        ("host_net_tx", "net_tx_kbps", 1.0, "", "sum"),
+        ("host_disk_read", "disk_read_iops", 1.0, "*", "sum"),
+        ("host_disk_write", "disk_write_iops", 1.0, "*", "sum"),
+        ("disk_latency", "disk_latency_ms", 1.0, "*", "max"),
+        ("host_disk_dev_lat", "disk_device_latency_ms", 1.0, "*", "max"),
+        ("cpu_ready", "cpu_ready_ms", 1.0, "", "sum"),
+        ("mem_balloon", "mem_balloon_mb", 1.0 / 1024.0, "", "sum"),   # KB → MB
+        ("host_mem_swapused", "mem_swap_used_mb", 1.0 / 1024.0, "", "sum"),
+        ("net_dropped_rx", "net_dropped_rx", 1.0, "", "sum"),
+        ("net_dropped_tx", "net_dropped_tx", 1.0, "", "sum"),
+    )
+
+    def get_all_host_perf(self, host_refs: List[str]) -> Dict[str, Dict]:
+        """Host'lar için QueryPerf ile performans sayaçları (toplu, chunk'lı).
+
+        Host zaman serisi bugüne kadar YALNIZ property (quickStats) okumasıyla
+        besleniyordu; bu yüzden ağ, disk IOPS/gecikme ve CPU ready gibi
+        sayaçlar DB'de hiç yoktu ("host'un diskinde gecikme var mı" sorusu
+        cevaplanamıyordu). Bu metot VM tarafındaki `get_all_vm_perf_io` ile
+        aynı deseni host nesnelerine uygular.
+
+        `instance=""` (yalnız toplam) kullanılır: `*` ile hem toplam hem
+        cihaz/NIC başına satırlar dönüp toplanınca değerler İKİ KAT çıkar.
+        Toplamı olmayan sayaçlar için değer boş kalır (None) — uydurma değer
+        üretmemek, eksik bırakmaktan daha kötüdür.
+
+        Dönen: host_ref -> {net_rx_kbps, disk_read_iops, cpu_ready_ms, ...}
+        """
+        import xml.etree.ElementTree as ET
+
+        if not host_refs:
+            return {}
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+
+        cache = self._perf_manager_and_counters(soap_session, soap_url)
+        if not cache:
+            return {}
+        perf_mgr, found = cache
+        if not found:
+            return {}
+
+        wanted = [
+            (slot, inst) for slot, _, _, inst, _ in self._HOST_PERF_SLOTS if slot in found
+        ]
+        if not wanted:
+            return {}
+        metric_xml = "".join(
+            f"<vim25:metricId><vim25:counterId>{found[slot]}</vim25:counterId>"
+            f"<vim25:instance>{inst}</vim25:instance></vim25:metricId>"
+            for slot, inst in wanted
+        )
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        results: Dict[str, Dict] = {}
+        chunk_size = 50
+        for i in range(0, len(host_refs), chunk_size):
+            chunk = [r for r in host_refs[i:i + chunk_size] if r and r != "unknown"]
+            if not chunk:
+                continue
+            query_specs = "".join(
+                f'<vim25:querySpec><vim25:entity type="HostSystem">{ref}</vim25:entity>'
+                f"<vim25:maxSample>1</vim25:maxSample>{metric_xml}"
+                f"<vim25:intervalId>20</vim25:intervalId></vim25:querySpec>"
+                for ref in chunk
+            )
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      {query_specs}
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(
+                    soap_url, data=body,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=45,
+                )
+                if resp.status_code != 200:
+                    logger.debug("get_all_host_perf HTTP %s: %s", resp.status_code, resp.text[:200])
+                    continue
+                root = ET.fromstring(resp.text)
+                for rv in root.iter():
+                    if _tag(rv) != "returnval":
+                        continue
+                    entity_el = next((c for c in rv if _tag(c) == "entity"), None)
+                    if entity_el is None or not entity_el.text:
+                        continue
+                    host_ref = entity_el.text
+
+                    # counterId → instance → örnek değerleri. instance kırılımı
+                    # korunmalı: gecikme sayaçlarında cihazlar arası toplama
+                    # yanlış sonuç verir (bkz. _HOST_PERF_SLOTS notu).
+                    by_counter: Dict[int, Dict[str, List[float]]] = {}
+                    for val_el in rv:
+                        if _tag(val_el) != "value":
+                            continue
+                        id_el = next((c for c in val_el if _tag(c) == "id"), None)
+                        cid = None
+                        inst = ""
+                        if id_el is not None:
+                            cid_el = next((c for c in id_el if _tag(c) == "counterId"), None)
+                            if cid_el is not None and cid_el.text:
+                                try:
+                                    cid = int(cid_el.text)
+                                except ValueError:
+                                    cid = None
+                            inst_el = next((c for c in id_el if _tag(c) == "instance"), None)
+                            inst = (inst_el.text or "").strip() if inst_el is not None else ""
+                        if cid is None:
+                            continue
+                        for c in val_el:
+                            if _tag(c) == "value" and c.text and c.text.strip():
+                                try:
+                                    by_counter.setdefault(cid, {}).setdefault(
+                                        inst, []
+                                    ).append(float(c.text.strip()))
+                                except ValueError:
+                                    pass
+
+                    row: Dict[str, Any] = {}
+                    for slot, out_key, scale, _inst, reduce_fn in self._HOST_PERF_SLOTS:
+                        cid = found.get(slot)
+                        per_inst = by_counter.get(cid) or {} if cid is not None else {}
+                        row[out_key] = _reduce_instances(per_inst, reduce_fn, scale)
+                    results[host_ref] = row
+            except Exception as e:
+                logger.warning("get_all_host_perf chunk error: %s", e)
+
+        logger.info("get_all_host_perf: %s/%s host için sayaç alındı (%s)",
+                    len(results), len(host_refs), self.host)
+        return results
 
     # ── ESX Host İstatistikleri ──────────────────────────────────────────────
 
@@ -2853,6 +3099,7 @@ class VCenterClient:
                 self._enrich_datastores(soap_session, soap_url, root_folder, results)
                 self._enrich_vms_running(soap_session, soap_url, root_folder, results)
                 self._enrich_parent_names(soap_session, soap_url, results)
+                self._enrich_host_perf(results)
                 for r in results:
                     r.pop("_ds_refs", None)
 
@@ -2930,6 +3177,7 @@ class VCenterClient:
           <vim25:pathSet>config.hardware.numCPU</vim25:pathSet>
           <vim25:pathSet>guest.disk</vim25:pathSet>
           <vim25:pathSet>guest.toolsVersionStatus2</vim25:pathSet>
+          <vim25:pathSet>guest.toolsRunningStatus</vim25:pathSet>
           <vim25:pathSet>config.cpuHotAddEnabled</vim25:pathSet>
           <vim25:pathSet>config.memoryHotAddEnabled</vim25:pathSet>
           <vim25:pathSet>config.cpuAllocation</vim25:pathSet>
@@ -3159,6 +3407,11 @@ class VCenterClient:
                     "memory_reservation_mb": _i("memAlloc_reservation"),
                     "memory_limit_mb": _i("memAlloc_limit"),
                     "tools_version_status": flat.get("guest.toolsVersionStatus2"),
+                    # guestToolsRunning / guestToolsNotRunning / guestToolsExecutingScripts.
+                    # get_vm_full_details() eskiden bunu guest/identity REST cevabından
+                    # (`tools_status` anahtarı) okumaya çalışıyordu ama o endpoint bu
+                    # alanı HİÇ döndürmez — vm_tools_status DB'de her zaman NULL kalıyordu.
+                    "tools_running_status": flat.get("guest.toolsRunningStatus"),
                 })
 
             logger.info(f"get_all_vm_live_stats: {len(results)} VM ({self.host})")
@@ -3342,6 +3595,8 @@ class VCenterClient:
           <vim25:pathSet>summary.capacity</vim25:pathSet>
           <vim25:pathSet>summary.freeSpace</vim25:pathSet>
           <vim25:pathSet>summary.accessible</vim25:pathSet>
+          <vim25:pathSet>summary.uncommitted</vim25:pathSet>
+          <vim25:pathSet>summary.url</vim25:pathSet>
           <vim25:pathSet>host</vim25:pathSet>
         </vim25:propSet>
         <vim25:objectSet>
@@ -3381,6 +3636,7 @@ class VCenterClient:
                 return el.tag.split("}")[-1]
 
             results: List[Dict[str, Any]] = []
+            mount_hosts: Set[str] = set()
             for rv in root.iter():
                 if _tag(rv) != "returnval":
                     continue
@@ -3398,7 +3654,16 @@ class VCenterClient:
                         continue
                     pname = n_el.text or ""
                     if pname == "host":
-                        host_count = sum(1 for c in v_el if _tag(c) == "DatastoreHostMount")
+                        mounts = [c for c in v_el if _tag(c) == "DatastoreHostMount"]
+                        host_count = len(mounts)
+                        # Mount eden host MOR'ları: datastore performans
+                        # sayaçları host entity'sinde yayınlandığı için
+                        # (bkz. _datastore_perf_via_hosts) ayrıca toplanır —
+                        # böylece fallback ek bir envanter çağrısı yapmaz.
+                        for mount in mounts:
+                            k_el = next((c for c in mount if _tag(c) == "key"), None)
+                            if k_el is not None and (k_el.text or "").strip():
+                                mount_hosts.add(k_el.text.strip())
                         continue
                     if v_el.text and v_el.text.strip():
                         flat[pname] = v_el.text.strip()
@@ -3408,6 +3673,15 @@ class VCenterClient:
                     free = float(flat.get("summary.freeSpace", 0) or 0)
                 except (TypeError, ValueError):
                     cap = free = 0.0
+                # summary.uncommitted: thin disk + snapshot buyumesi ile
+                # TAAHHUT EDILMIS ama henuz ayrilmamis alan. free_gb tek basina
+                # "asiri tahsis (overcommit) riski var mi" sorusunu
+                # cevaplayamaz; bu alan cekilmediginden uncommitted_gb kolonu
+                # DB'de hep NULL kaliyordu.
+                try:
+                    uncommitted = float(flat.get("summary.uncommitted", 0) or 0)
+                except (TypeError, ValueError):
+                    uncommitted = 0.0
 
                 results.append({
                     "ref": ds_ref,
@@ -3417,13 +3691,273 @@ class VCenterClient:
                     "free_gb": round(free / (1024 ** 3), 1) if cap > 0 else None,
                     "used_gb": round((cap - free) / (1024 ** 3), 1) if cap > 0 else None,
                     "usage_pct": round((cap - free) / cap * 100, 1) if cap > 0 else None,
+                    "uncommitted_gb": (
+                        round(uncommitted / (1024 ** 3), 1)
+                        if "summary.uncommitted" in flat else None
+                    ),
                     "accessible": flat.get("summary.accessible", "true").lower() != "false",
                     "host_count": host_count,
+                    # /vmfs/volumes/<uuid>/ → performans sayaçlarının instance
+                    # kimliği. Host entity'sindeki datastore.* sayaçları bu
+                    # UUID ile yayınlandığı için eşleme anahtarı olarak tutulur.
+                    "ds_uuid": _ds_uuid_from_url(flat.get("summary.url")),
                 })
+            self._enrich_datastore_perf(results, sorted(mount_hosts))
             return results
         except Exception as e:
             logger.error("list_datastores_status error: %s", e, exc_info=True)
             return []
+
+    # Datastore QueryPerf sonucu → VirtDatastoreMetric kolonları.
+    _DS_PERF_SLOTS: Tuple[Tuple[str, str], ...] = (
+        ("ds_read_iops", "read_iops"),
+        ("ds_write_iops", "write_iops"),
+        ("ds_read_lat", "read_latency_ms"),
+        ("ds_write_lat", "write_latency_ms"),
+    )
+
+    def _enrich_datastore_perf(
+        self, results: List[Dict[str, Any]], mount_hosts: Optional[List[str]] = None,
+    ) -> None:
+        """Datastore listesini QueryPerf (IOPS + gecikme) ile zenginleştirir.
+
+        Datastore performansı bugüne kadar YALNIZ anlık/on-demand sorgularla
+        (virt_perf_query) alınabiliyordu; zaman serisine hiç yazılmadığı için
+        "hangi datastore'un gecikmesi son 7 günde arttı" sorusu
+        cevaplanamıyordu. Kapasite verisi gibi periyodik sync'e bağlanır.
+
+        Hata durumunda sessizce atlanır — kapasite envanteri bloke edilmez.
+        """
+        if not results:
+            return
+        try:
+            refs = [r.get("ref") for r in results if r.get("ref")]
+            perf = self.query_datastore_perf(refs)
+        except Exception as e:
+            logger.warning("datastore perf zenginleştirme atlandı: %s", e)
+            perf = {}
+
+        def _blank(row: Optional[Dict[str, Any]]) -> bool:
+            """Satır yok VEYA tüm sayaçları None → veri gelmemiş sayılır.
+
+            Datastore entity sorgusu, veri olmasa bile her anahtarı None olan
+            bir satır döner; bu satır "dolu" sayılırsa aşağıdaki host fallback'i
+            hiç çalışmaz ve kolonlar sessizce NULL kalır.
+            """
+            return not row or all(v is None for v in row.values())
+
+        missing = [r for r in results if _blank(perf.get(r.get("ref") or ""))]
+        if missing and mount_hosts:
+            # Datastore nesnesinin kendi zaman serisi yalnızca vCenter'ın
+            # tarihsel rollup'ında (300 sn) vardır. DOĞRUDAN ESXi bağlantısında
+            # sadece realtime aralık bulunur ve datastore sayaçları HOST
+            # entity'sinde, instance=<VMFS UUID> olarak yayınlanır — bu yüzden
+            # Datastore sorgusu boş dönüyor ve kolonlar NULL kalıyordu.
+            try:
+                by_uuid = self._datastore_perf_via_hosts(mount_hosts)
+            except Exception as e:
+                logger.warning("datastore perf host fallback atlandı: %s", e)
+                by_uuid = {}
+            for r in missing:
+                row = by_uuid.get(r.get("ds_uuid") or "")
+                if row:
+                    perf[r.get("ref") or ""] = row
+
+        for r in results:
+            row = perf.get(r.get("ref") or "")
+            if not _blank(row):
+                r.update(row)
+
+    def _datastore_perf_via_hosts(self, host_refs: List[str]) -> Dict[str, Dict]:
+        """Host entity'sinden `datastore.*` sayaçları — anahtar: VMFS UUID.
+
+        Aynı datastore birden çok host tarafından mount edilebilir: IOPS
+        host'lar arası TOPLANIR (datastore'un gördüğü toplam yük), gecikme
+        TOPLANMAZ — en kötü host'un değeri alınır.
+        """
+        import xml.etree.ElementTree as ET
+
+        if not host_refs:
+            return {}
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+        cache = self._perf_manager_and_counters(soap_session, soap_url)
+        if not cache:
+            return {}
+        perf_mgr, found = cache
+        slots = [(s, k) for s, k in self._DS_PERF_SLOTS if s in found]
+        if not slots:
+            return {}
+
+        metric_xml = "".join(
+            f"<vim25:metricId><vim25:counterId>{found[s]}</vim25:counterId>"
+            f"<vim25:instance>*</vim25:instance></vim25:metricId>"
+            for s, _ in slots
+        )
+        query_specs = "".join(
+            f'<vim25:querySpec><vim25:entity type="HostSystem">{ref}</vim25:entity>'
+            f"<vim25:maxSample>1</vim25:maxSample>{metric_xml}"
+            f"<vim25:intervalId>20</vim25:intervalId></vim25:querySpec>"
+            for ref in host_refs
+        )
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      {query_specs}
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        resp = soap_session.post(
+            soap_url, data=body,
+            headers={"Content-Type": "text/xml; charset=utf-8"},
+            verify=self.verify_ssl, timeout=45,
+        )
+        if resp.status_code != 200:
+            logger.debug("_datastore_perf_via_hosts HTTP %s", resp.status_code)
+            return {}
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        slot_by_cid = {found[s]: k for s, k in slots}
+        # uuid → çıktı anahtarı → host'lardan gelen değerler
+        acc: Dict[str, Dict[str, List[float]]] = {}
+        root = ET.fromstring(resp.text)
+        for rv in root.iter():
+            if _tag(rv) != "returnval":
+                continue
+            for val_el in rv:
+                if _tag(val_el) != "value":
+                    continue
+                id_el = next((c for c in val_el if _tag(c) == "id"), None)
+                if id_el is None:
+                    continue
+                cid_el = next((c for c in id_el if _tag(c) == "counterId"), None)
+                inst_el = next((c for c in id_el if _tag(c) == "instance"), None)
+                if cid_el is None or not (cid_el.text or "").isdigit():
+                    continue
+                key = slot_by_cid.get(int(cid_el.text))
+                uuid = (inst_el.text or "").strip() if inst_el is not None else ""
+                if not key or not uuid:
+                    continue
+                nums = [
+                    float(c.text.strip()) for c in val_el
+                    if _tag(c) == "value" and c.text and c.text.strip()
+                    and c.text.strip().lstrip("-").isdigit()
+                ]
+                if nums:
+                    acc.setdefault(uuid, {}).setdefault(key, []).append(sum(nums))
+
+        out: Dict[str, Dict] = {}
+        for uuid, keys in acc.items():
+            row: Dict[str, Any] = {}
+            for key, vals in keys.items():
+                agg = max(vals) if "latency" in key else sum(vals)
+                # Gecikme sayaçları ms cinsinden gelir; IOPS zaten adet/sn.
+                row[key] = round(agg, 2)
+            out[uuid] = row
+        logger.info("datastore perf (host fallback): %s datastore için sayaç", len(out))
+        return out
+
+    def query_datastore_perf(self, ds_refs: List[str]) -> Dict[str, Dict]:
+        """Datastore nesneleri için QueryPerf — read/write IOPS ve gecikme."""
+        import xml.etree.ElementTree as ET
+
+        if not ds_refs:
+            return {}
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {}
+        cache = self._perf_manager_and_counters(soap_session, soap_url)
+        if not cache:
+            return {}
+        perf_mgr, found = cache
+
+        # Datastore IOPS sayaçları katalogda ayrı isimlerle gelir; yoksa
+        # yalnız gecikme sayaçlarıyla devam edilir.
+        slots = [(s, k) for s, k in self._DS_PERF_SLOTS if s in found]
+        if not slots:
+            return {}
+        metric_xml = "".join(
+            f"<vim25:metricId><vim25:counterId>{found[s]}</vim25:counterId>"
+            f"<vim25:instance></vim25:instance></vim25:metricId>"
+            for s, _ in slots
+        )
+
+        def _tag(el):
+            return el.tag.split("}")[-1]
+
+        out: Dict[str, Dict] = {}
+        chunk_size = 50
+        for i in range(0, len(ds_refs), chunk_size):
+            chunk = [r for r in ds_refs[i:i + chunk_size] if r]
+            if not chunk:
+                continue
+            query_specs = "".join(
+                f'<vim25:querySpec><vim25:entity type="Datastore">{ref}</vim25:entity>'
+                f"<vim25:maxSample>1</vim25:maxSample>{metric_xml}"
+                f"<vim25:intervalId>300</vim25:intervalId></vim25:querySpec>"
+                for ref in chunk
+            )
+            body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryPerf>
+      <vim25:_this type="PerformanceManager">{perf_mgr}</vim25:_this>
+      {query_specs}
+    </vim25:QueryPerf>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+            try:
+                resp = soap_session.post(
+                    soap_url, data=body,
+                    headers={"Content-Type": "text/xml; charset=utf-8"},
+                    verify=self.verify_ssl, timeout=45,
+                )
+                if resp.status_code != 200:
+                    logger.debug("query_datastore_perf HTTP %s", resp.status_code)
+                    continue
+                root = ET.fromstring(resp.text)
+                for rv in root.iter():
+                    if _tag(rv) != "returnval":
+                        continue
+                    entity_el = next((c for c in rv if _tag(c) == "entity"), None)
+                    if entity_el is None or not entity_el.text:
+                        continue
+                    by_counter: Dict[int, List[float]] = {}
+                    for val_el in rv:
+                        if _tag(val_el) != "value":
+                            continue
+                        id_el = next((c for c in val_el if _tag(c) == "id"), None)
+                        cid = None
+                        if id_el is not None:
+                            cid_el = next((c for c in id_el if _tag(c) == "counterId"), None)
+                            if cid_el is not None and cid_el.text:
+                                try:
+                                    cid = int(cid_el.text)
+                                except ValueError:
+                                    cid = None
+                        if cid is None:
+                            continue
+                        for c in val_el:
+                            if _tag(c) == "value" and c.text and c.text.strip():
+                                try:
+                                    by_counter.setdefault(cid, []).append(float(c.text.strip()))
+                                except ValueError:
+                                    pass
+                    row: Dict[str, Any] = {}
+                    for slot, key in slots:
+                        vals = by_counter.get(found[slot], [])
+                        row[key] = round(sum(vals), 2) if vals else None
+                    out[entity_el.text] = row
+            except Exception as e:
+                logger.warning("query_datastore_perf chunk error: %s", e)
+        return out
 
     # Slot bilgisi için HA advanced runtime (READ-ONLY method)
     def _das_advanced_runtime(self, soap_session, soap_url: str,

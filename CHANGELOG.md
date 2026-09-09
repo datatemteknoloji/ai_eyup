@@ -11,6 +11,31 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.31] - 2026-09-09
+
+### AI / LLM
+- Uzak model kopunca sessiz local fallback yok; fail-fast + kibar hata; ayar yayını ile worker yeniden bağlanır.
+- LLM token kullanımı admin sohbet UI’da (SSE metadata); context hard-gate + karakter/token kalibrasyonu.
+- Boş yanıt / Ollama tool-parse kaçaklarında final-cevap nudge + geçici LLM hatalarında 1 otomatik retry.
+- Sohbet iptali (AbortController + Redis kooperatif iptal) tüm AI chat modüllerinde.
+
+### RAG
+- Re-index Celery worker’da; içerik hash ile incremental embed; concurrency / seed backoff.
+- Eski/orphan RAG event chunk bakım işi.
+
+### Kapasite / raporlar
+- Theil–Sen eğim, eşik gün belirsizlik aralığı, GB/gün büyüme; Linux kapasite raporlarında trend.
+- Rapor metodolojisi info tooltip’leri.
+
+### Sanallaştırma asistanı
+- Birleşik Scope / entity projection; VM disk↔datastore eşlemesi; tek varlık sorularında filo dump yok.
+- `db_virt_cross_match` VM ekseni + host_vm_count; `db_metric_trend` min/max değer filtresi + spike/sustained `pattern`.
+- Disk latency “veri yok” ≠ 0.0; VMware Tools running/version persist; VM network (net_rx/tx_kbps) trend metrikleri.
+- `metric_data` bileşik PK + ON CONFLICT; `cpu_ready_pct` vCPU normalizasyonu / backfill.
+
+### UI
+- Açık tema: sağ tık menü ve sabit hex arka planların light remap’i.
+
 ## [1.0.9.29] - 2026-09-04
 
 ### OpenShift / KubeVirt asistan

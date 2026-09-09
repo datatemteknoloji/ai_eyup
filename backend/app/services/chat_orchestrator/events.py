@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _STREAM = "ainew:chat:evt:{turn_id}"
 _QUEUE = "ainew:chat:queue"
 _LOCK = "ainew:chat:lock:{turn_id}"
+_CANCEL = "ainew:chat:cancel:{turn_id}"
 _MAXLEN = 4000
 _TTL_SEC = 6 * 3600
 
@@ -78,6 +79,50 @@ def release_turn_lock(turn_id: str) -> None:
         return
     try:
         r.delete(_lock_key(turn_id))
+    except Exception:
+        pass
+
+
+def _cancel_key(turn_id: str) -> str:
+    return _CANCEL.format(turn_id=turn_id)
+
+
+def request_cancel(turn_id: str) -> bool:
+    """İptal bayrağını Redis'e yaz.
+
+    Neden DB durumu yetmiyor: iptal isteği herhangi bir uvicorn worker'ına
+    düşebilir (UVICORN_WORKERS=2) ama turu çalıştıran döngü başka bir
+    worker'da olabilir. Bayrağın paylaşımlı ve ÇOK UCUZ okunabilir olması
+    gerekir — pipeline bunu token başına kontrol ediyor, her kontrolde DB
+    sorgusu atmak kabul edilemez.
+    """
+    r = get_redis()
+    if r is None:
+        return False
+    try:
+        r.set(_cancel_key(turn_id), "1", ex=_TTL_SEC)
+        return True
+    except Exception as e:
+        logger.warning("chat cancel flag yazılamadı: %s", e)
+        return False
+
+
+def is_cancel_requested(turn_id: str) -> bool:
+    r = get_redis()
+    if r is None:
+        return False
+    try:
+        return bool(r.exists(_cancel_key(turn_id)))
+    except Exception:
+        return False
+
+
+def clear_cancel(turn_id: str) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        r.delete(_cancel_key(turn_id))
     except Exception:
         pass
 

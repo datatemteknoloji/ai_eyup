@@ -77,8 +77,14 @@ def llm_node(state: AgentGraphState, config) -> AgentGraphState:
 
     # Tool çağrısı yoksa → final yanıt.
     if not tool_calls:
-        return {"result": {"status": "done", "answer": content or "(boş yanıt)",
-                           "steps": steps, "session_id": ctx.get("session_id")}}
+        return {"result": {
+            "status": "done",
+            "answer": content or (
+                "Modelden bu soru için bir metin yanıt alınamadı (geçici bir "
+                "model/parse hatası olabilir). Lütfen soruyu tekrar sorun."
+            ),
+            "steps": steps, "session_id": ctx.get("session_id"),
+        }}
 
     # Asistanın tool isteğini transcript'e ekle (OpenAI: arguments STRING + id).
     messages = messages + [{

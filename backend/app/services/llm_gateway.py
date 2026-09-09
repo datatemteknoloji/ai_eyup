@@ -21,12 +21,64 @@ import httpx
 import requests
 
 from app.core.config import settings, remote_llm_enabled, remote_llm_ssl_verify
+from app.services import (
+    chat_cancel,
+    llm_availability,
+    llm_context_budget as budget,
+    llm_usage,
+)
 
 logger = logging.getLogger(__name__)
 
 
+def _payload_chars(messages: List[Dict[str, Any]]) -> int:
+    total = 0
+    for m in messages or []:
+        c = m.get("content")
+        total += len(c) if isinstance(c, str) else len(str(c or ""))
+    return total
+
+
+def _note_prompt_tokens(prompt_chars: int, data: Dict[str, Any]) -> None:
+    """Gerçek prompt token sayısıyla karakter/token tahminini kalibre eder."""
+    try:
+        usage = (data or {}).get("usage") or {}
+        actual = (
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or (data or {}).get("prompt_eval_count")
+        )
+        if actual:
+            budget.record_actual_usage(prompt_chars, int(actual))
+    except Exception:
+        pass
+
+
 def _remote_chat_url() -> str:
     return settings.REMOTE_LLM_URL.rstrip("/") + "/v1/chat/completions"
+
+
+def _requests_timeout(timeout: Optional[float]) -> Any:
+    """(connect, read) — bağlanamayan gateway'de uzun beklemeyi keser."""
+    read = 120.0 if timeout is None else float(timeout)
+    return (llm_availability.CONNECT_TIMEOUT_SEC, read)
+
+
+def _httpx_timeout(timeout: Optional[float]) -> httpx.Timeout:
+    read = 180.0 if timeout is None else float(timeout)
+    return httpx.Timeout(read, connect=llm_availability.CONNECT_TIMEOUT_SEC)
+
+
+# Gateway `stream_options` (usage) alanını reddettiyse bir daha gönderilmez.
+_stream_usage_supported = True
+
+
+def _note_remote_status(status_code: int, body: str = "") -> None:
+    """Uzak yanıtın devre kesiciye etkisi (4xx istek hatası sayılmaz)."""
+    if status_code == 200:
+        llm_availability.record_success()
+    elif llm_availability.is_retryable_status(status_code):
+        llm_availability.record_failure(f"HTTP {status_code}: {(body or '')[:200]}")
 
 
 def _remote_headers(
@@ -240,7 +292,11 @@ def chat_sync(
     Ollama /api/chat ile aynı sözleşmeye sahip senkron sohbet çağrısı.
     Dönüş: .status_code, .json() -> {"message": {"content", "tool_calls"?}}
     """
+    messages, _ = budget.enforce_messages_budget(messages, label="chat_sync")
     if remote_llm_enabled():
+        if llm_availability.is_open():
+            # Yerel modele sessizce düşmüyoruz — istek hızlıca reddedilir.
+            return _SyncChatResult(503, llm_availability.friendly_error())
         payload: Dict[str, Any] = {
             "model": _resolve_model(model),
             "messages": _normalize_messages_openai(messages),
@@ -252,18 +308,23 @@ def chat_sync(
             payload["temperature"] = temp
         try:
             resp = requests.post(
-                _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout,
+                _remote_chat_url(), headers=_remote_headers(), json=payload,
+                timeout=_requests_timeout(timeout),
                 verify=remote_llm_ssl_verify(),
             )
         except Exception as e:
             logger.error(f"[LLMGateway] uzak sohbet hatası: {e}")
-            return _SyncChatResult(599, str(e))
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return _SyncChatResult(599, llm_availability.friendly_error(str(e)))
+        _note_remote_status(resp.status_code, resp.text)
         if resp.status_code != 200:
             return _SyncChatResult(resp.status_code, resp.text)
         try:
             data = resp.json()
         except Exception:
             return _SyncChatResult(resp.status_code, resp.text)
+        llm_usage.record(data)
+        _note_prompt_tokens(_payload_chars(payload.get("messages") or []), data)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message", {}) or {}
         return _SyncChatResult(200, resp.text, {"message": msg, "done": True})
@@ -278,6 +339,11 @@ def chat_sync(
     if tools:
         payload["tools"] = tools
     resp = requests.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/chat", json=payload, timeout=timeout)
+    if resp.status_code == 200:
+        try:
+            llm_usage.record(resp.json())
+        except Exception:
+            pass
     return resp
 
 
@@ -298,7 +364,14 @@ async def generate_async(
     Ollama /api/generate (stream=False) ile aynı sözleşmeye sahip async çağrı.
     Dönüş: {"response": str, "done": True}
     """
+    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="generate_async")
     if remote_llm_enabled():
+        if llm_availability.is_open():
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(),
+                "remote_unavailable": True,
+            }
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -310,11 +383,26 @@ async def generate_async(
         # Not: burada CALLER'ın (yerel Ollama için oluşturulmuş, verify=True) client'ı değil,
         # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz — kurumsal
         # self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
-        async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
-            resp = await remote_client.post(_remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout)
+        try:
+            async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
+                resp = await remote_client.post(
+                    _remote_chat_url(), headers=_remote_headers(), json=payload,
+                    timeout=_httpx_timeout(timeout),
+                )
+        except Exception as e:
+            logger.error("[LLMGateway] uzak generate hatası: %s", e)
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
+        _note_remote_status(resp.status_code, resp.text)
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
+        llm_usage.record(data)
+        _note_prompt_tokens(_payload_chars(messages), data)
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message", {}) or {}).get("content", "")
         return {"response": text, "done": True}
@@ -327,7 +415,9 @@ async def generate_async(
     resp = await client.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/generate", json=payload, timeout=timeout)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
-    return resp.json()
+    data = resp.json()
+    llm_usage.record(data)
+    return data
 
 
 def generate_sync(
@@ -339,7 +429,14 @@ def generate_sync(
     timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """generate_async'in senkron (requests tabanlı) eşleniği."""
+    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="generate_sync")
     if remote_llm_enabled():
+        if llm_availability.is_open():
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(),
+                "remote_unavailable": True,
+            }
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -348,13 +445,26 @@ def generate_sync(
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
-        resp = requests.post(
-            _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=timeout,
-            verify=remote_llm_ssl_verify(),
-        )
+        try:
+            resp = requests.post(
+                _remote_chat_url(), headers=_remote_headers(), json=payload,
+                timeout=_requests_timeout(timeout),
+                verify=remote_llm_ssl_verify(),
+            )
+        except Exception as e:
+            logger.error("[LLMGateway] uzak generate_sync hatası: %s", e)
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
+        _note_remote_status(resp.status_code, resp.text)
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
+        llm_usage.record(data)
+        _note_prompt_tokens(_payload_chars(messages), data)
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message", {}) or {}).get("content", "")
         return {"response": text, "done": True}
@@ -367,7 +477,9 @@ def generate_sync(
     resp = requests.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/generate", json=payload, timeout=timeout)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
-    return resp.json()
+    data = resp.json()
+    llm_usage.record(data)
+    return data
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -387,7 +499,17 @@ async def stream_generate(
     Ollama /api/generate (stream=True) ile aynı sözleşmeye sahip async üreteç.
     Her adımda {"response": <delta metin>, "done": bool} verir.
     """
+    global _stream_usage_supported
+
+    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="stream_generate")
     if remote_llm_enabled():
+        if llm_availability.is_open():
+            yield {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(),
+                "remote_unavailable": True,
+            }
+            return
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -396,35 +518,71 @@ async def stream_generate(
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
+        # Token sayımı için son chunk'ta usage istenir. Desteklemeyen gateway
+        # 400 dönerse alan kaldırılıp aynı istek bir kez yeniden denenir ve
+        # bir daha hiç gönderilmez (sohbet bu yüzden bozulmaz).
+        if _stream_usage_supported:
+            payload["stream_options"] = {"include_usage": True}
         try:
             # Not: CALLER'ın client'ı (yerel Ollama için verify=True ile oluşturulmuş) yerine
             # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz —
             # kurumsal self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
-            req_timeout = timeout if timeout is not None else 180.0
+            req_timeout = _httpx_timeout(timeout)
             async with httpx.AsyncClient(verify=remote_llm_ssl_verify(), timeout=req_timeout) as remote_client:
-                async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=req_timeout) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:].strip()
-                        if data == "[DONE]":
-                            yield {"response": "", "done": True}
+                for attempt in (1, 2):
+                    async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=req_timeout) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode(errors="ignore")
+                            if attempt == 1 and resp.status_code == 400 and "stream_options" in payload:
+                                _stream_usage_supported = False
+                                logger.warning(
+                                    "[LLMGateway] gateway stream usage (stream_options) kabul etmedi, "
+                                    "token sayımı olmadan devam: %s", body[:200],
+                                )
+                                payload.pop("stream_options", None)
+                                continue
+                            _note_remote_status(resp.status_code, body)
+                            yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body[:300]}"}
                             return
-                        try:
-                            chunk = json.loads(data)
-                            token = chunk["choices"][0]["delta"].get("content", "")
-                        except Exception:
-                            continue
-                        if token:
-                            yield {"response": token, "done": False}
-                    yield {"response": "", "done": True}
+                        llm_availability.record_success()
+                        async for line in resp.aiter_lines():
+                            # Kullanıcı iptali: `return` ile çıkmak `async with
+                            # client.stream(...)` bloğunu kapatır → HTTP bağlantısı
+                            # düşer ve uzak model üretimi fiilen durur (aksi hâlde
+                            # iptalden sonra da token faturası işlemeye devam eder).
+                            if chat_cancel.is_cancelled():
+                                logger.info("[LLMGateway] uzak stream kullanıcı iptaliyle kapatıldı")
+                                yield {"response": "", "done": True, "cancelled": True}
+                                return
+                            if not line.startswith("data: "):
+                                continue
+                            data = line[6:].strip()
+                            if data == "[DONE]":
+                                yield {"response": "", "done": True}
+                                return
+                            try:
+                                chunk = json.loads(data)
+                            except Exception:
+                                continue
+                            llm_usage.record(chunk)
+                            if chunk.get("usage"):
+                                _note_prompt_tokens(_payload_chars(messages), chunk)
+                            try:
+                                token = chunk["choices"][0]["delta"].get("content", "")
+                            except Exception:
+                                continue
+                            if token:
+                                yield {"response": token, "done": False}
+                        yield {"response": "", "done": True}
+                        return
         except Exception as e:
             logger.error(f"[LLMGateway] uzak stream hatası: {e}")
-            yield {"response": "", "done": True, "error": str(e)}
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            yield {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
         return
 
     payload = {"model": model, "prompt": prompt, "stream": True}
@@ -438,12 +596,18 @@ async def stream_generate(
             yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}
             return
         async for line in resp.aiter_lines():
+            if chat_cancel.is_cancelled():
+                logger.info("[LLMGateway] yerel stream kullanıcı iptaliyle kapatıldı")
+                yield {"response": "", "done": True, "cancelled": True}
+                return
             if not line.strip():
                 continue
             try:
                 chunk = json.loads(line)
             except Exception:
                 continue
+            if chunk.get("done"):
+                llm_usage.record(chunk)
             yield chunk
             if chunk.get("done"):
                 return

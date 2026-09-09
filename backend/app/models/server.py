@@ -40,7 +40,8 @@ class Server(Base):
     vm_memory_mb      = Column(Integer,     nullable=True)        # Tahsis edilen RAM (MB)
     vm_disk_gb        = Column(Integer,     nullable=True)        # Toplam disk (GB, tüm disk'ler)
     vm_power_state    = Column(String(30),  nullable=True)        # poweredOn / poweredOff / up / down / suspended
-    vm_tools_status   = Column(String(50),  nullable=True)        # guestToolsRunning / toolsNotInstalled vb.
+    vm_tools_status   = Column(String(50),  nullable=True)        # guestToolsRunning / guestToolsNotRunning vb. (çalışma durumu)
+    vm_tools_version_status = Column(String(50), nullable=True)   # guestToolsCurrent / guestToolsNeedUpgrade vb. (sürüm durumu)
     vm_network_info   = Column(JSON,        nullable=True)        # [{adapter, mac, ips:[...]}] listesi
     vm_cluster        = Column(String(255), nullable=True)        # Hangi cluster / datacenter
     vm_datastore      = Column(String(255), nullable=True)        # Birincil datastore / storage domain adı

@@ -15,6 +15,7 @@ import json as _json
 import logging
 import httpx
 
+from app.core.auth import get_current_user_optional
 from app.core.database import get_db
 from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
@@ -387,21 +388,40 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
         "   ve once yedek/onay al de.",
     ])
 
-    prompt_parts = [identity]
-    if collection_summary:
-        prompt_parts.append("TOPLAMA DURUMU:\n" + collection_summary)
-    prompt_parts.append(rules)
-    prompt_parts.append("BAGLAM:\n" + context_str)
-    if history_block:
-        prompt_parts.append("ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n" + history_block)
-    prompt_parts.append("KULLANICI SORUSU: " + message)
     from app.services.chat_output_directives import directive_system_addendum
     _dir_add = directive_system_addendum(output_directive)
+
+    system_block = "\n\n".join(
+        [identity]
+        + (["TOPLAMA DURUMU:\n" + collection_summary] if collection_summary else [])
+        + [rules]
+    )
+    tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:
-        prompt_parts.append(_dir_add.strip())
-        prompt_parts.append("YANIT:")
+        tail_parts.append(_dir_add.strip())
+        tail_parts.append("YANIT:")
     else:
-        prompt_parts.append("YANIT (Markdown, Turkce):")
+        tail_parts.append("YANIT (Markdown, Turkce):")
+    tail_block = "\n\n".join(tail_parts)
+
+    # system (persona/kurallar) + soru asla kesilmez; gerekirse BAGLAM, sonra
+    # ONCEKI KONUSMA kisaltilir (bkz. llm_context_budget.budget_sections).
+    from app.services.llm_context_budget import budget_sections
+    _sections = budget_sections(
+        system=system_block,
+        context=context_str,
+        history=history_block,
+        protected_tail=tail_block,
+        log_label="WindowsChat",
+    )
+
+    prompt_parts = [system_block, "BAGLAM:\n" + _sections["context"]]
+    if _sections["history"]:
+        prompt_parts.append(
+            "ONCEKI KONUSMA (bu oturumdaki son mesajlar, sadece baglam/niyet icin):\n"
+            + _sections["history"]
+        )
+    prompt_parts.append(tail_block)
     return "\n\n".join(prompt_parts)
 
 
@@ -601,7 +621,11 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
+async def chat_stream(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_optional),
+):
     """Streaming Windows chat: paralel WinRM + Event Log DB + RAG bağlamı → LLM SSE."""
     payload = request.model_dump()
 
@@ -1173,4 +1197,5 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
         message=payload.get("message") or "",
         session_id=payload.get("session_id"),
         pipeline=pipeline,
+        user_id=getattr(_auth_user, "id", None),
     )

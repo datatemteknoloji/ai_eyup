@@ -18,7 +18,9 @@ from app.services.rag_store import (
     format_runbook_hits,
     clear_collection,
     count_collection,
+    existing_content_hashes,
     prune_ids_not_in_keep,
+    prune_orphan_source_chunks,
     COLLECTION_RUNBOOK,
     COLLECTION_INCIDENTS,
     COLLECTION_METRICS,
@@ -94,6 +96,40 @@ def chunk_text(text: str, chunk_size: int = RUNBOOK_CHUNK_SIZE, overlap: int = R
             chunks.append(chunk)
         start = end - overlap if overlap < (end - start) else end
     return chunks
+
+
+def content_hash(text: str, *, model: Optional[str] = None) -> str:
+    """İçerik imzası — aynı metin + aynı embedding modeli ise yeniden embed yok."""
+    import hashlib
+
+    if model is None:
+        try:
+            from app.services.embedding import embed_model_name
+            model = embed_model_name()
+        except Exception:
+            model = ""
+    raw = f"{model}|{text or ''}".encode("utf-8", errors="replace")
+    return hashlib.sha256(raw).hexdigest()[:32]
+
+
+def select_changed_chunks(ids, texts, metadatas, existing_hashes: dict):
+    """İmzası değişmiş (veya yeni) kayıtları seç; metadata'ya `chash` ekler.
+
+    Dönüş: (ids, texts, metadatas, skipped_count)
+    """
+    keep_i, keep_t, keep_m = [], [], []
+    skipped = 0
+    for cid, text_val, meta in zip(ids, texts, metadatas):
+        chash = content_hash(text_val)
+        if (existing_hashes or {}).get(str(cid)) == chash:
+            skipped += 1
+            continue
+        meta = dict(meta or {})
+        meta["chash"] = chash
+        keep_i.append(cid)
+        keep_t.append(text_val)
+        keep_m.append(meta)
+    return keep_i, keep_t, keep_m, skipped
 
 
 def _filter_valid_embeddings(texts, embeddings, metadatas, ids):
@@ -250,6 +286,12 @@ async def ingest_incidents_from_db(db: Session, *, force_full: bool = False) -> 
         ids.append(f"incident_{r.id}")
         texts.append(t)
         metadatas.append({"incident_id": r.id, "title": (r.title or "")[:200], "severity": r.severity or ""})
+
+    existing = existing_content_hashes(COLLECTION_INCIDENTS, ids)
+    ids, texts, metadatas, skipped = select_changed_chunks(ids, texts, metadatas, existing)
+    if skipped:
+        logger.info("RAG incidents: %s kayıt değişmemiş, embed atlandı", skipped)
+
     if not texts:
         if do_full:
             _last_full_incident_ingest = now_mono
@@ -263,13 +305,13 @@ async def ingest_incidents_from_db(db: Session, *, force_full: bool = False) -> 
     if do_full:
         _last_full_incident_ingest = now_mono
         try:
-            # Stale incident_* chunk'larını temizle (DB'de olmayan id)
-            all_ids = {f"incident_{i}" for (i,) in db.query(Incident.id).all()}
-            pruned = prune_ids_not_in_keep(
-                COLLECTION_INCIDENTS, all_ids, id_prefix="incident_",
+            # Kaynağı silinmiş incident_* chunk'larını temizle (SQL tarafında;
+            # tüm id'leri Python'a çekmeden).
+            res = prune_orphan_source_chunks(
+                COLLECTION_INCIDENTS, id_prefix="incident_", max_delete=20000,
             )
-            if pruned:
-                logger.info("RAG incidents prune: %s stale chunk silindi", pruned)
+            if res.get("deleted"):
+                logger.info("RAG incidents prune: %s stale chunk silindi", res["deleted"])
         except Exception as e:
             logger.warning("RAG incidents prune atlandı: %s", e)
     return len(ids)
@@ -298,6 +340,13 @@ async def ingest_events_from_db(db: Session, limit: int = 2000) -> int:
         ids.append(f"event_{r.id}")
         texts.append(t)
         metadatas.append({"event_id": r.id, "title": (r.title or "")[:200], "event_type": r.event_type or ""})
+
+    # Event kayıtları değişmez: zaten indekslenmiş olanlar yeniden embed edilmez.
+    existing = existing_content_hashes(COLLECTION_INCIDENTS, ids)
+    ids, texts, metadatas, skipped = select_changed_chunks(ids, texts, metadatas, existing)
+    if skipped:
+        logger.info("RAG events: %s kayıt değişmemiş, embed atlandı", skipped)
+
     if not texts:
         return 0
     embeddings = await get_embeddings_batch(texts)
@@ -307,12 +356,12 @@ async def ingest_events_from_db(db: Session, limit: int = 2000) -> int:
         raise RuntimeError(f"Event RAG ingest: {detail}")
     upsert_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
     try:
-        all_event_ids = {f"event_{i}" for (i,) in db.query(SystemEvent.id).all()}
-        pruned = prune_ids_not_in_keep(
-            COLLECTION_INCIDENTS, all_event_ids, id_prefix="event_",
+        # Retention ile DB'den silinmiş event'lerin chunk'ları (SQL tarafında)
+        res = prune_orphan_source_chunks(
+            COLLECTION_INCIDENTS, id_prefix="event_", max_delete=20000,
         )
-        if pruned:
-            logger.info("RAG events prune: %s stale chunk silindi", pruned)
+        if res.get("deleted"):
+            logger.info("RAG events prune: %s stale chunk silindi", res["deleted"])
     except Exception as e:
         logger.warning("RAG events prune atlandı: %s", e)
     return len(ids)
@@ -371,7 +420,6 @@ async def ingest_knowledge_from_db(db: Session, *, force: bool = False) -> int:
         logger.debug("RAG knowledge: imza değişmedi, reindex atlandı")
         return 0
 
-    clear_collection(COLLECTION_KNOWLEDGE)
     rows = db.query(LearnedFact).order_by(
         LearnedFact.server_id, LearnedFact.category, LearnedFact.key
     ).all()
@@ -421,12 +469,35 @@ async def ingest_knowledge_from_db(db: Session, *, force: bool = False) -> int:
     if not texts:
         _knowledge_sig = sig
         return 0
+
+    # Eski davranış: her turda koleksiyonu silip her chunk'ı yeniden embed etmek.
+    # Artık yalnızca içeriği değişen chunk embed edilir; kalanlar için stale
+    # kayıtlar prune ile temizlenir (worker restart'ında da idempotent).
+    all_ids = set(ids)
+    existing = existing_content_hashes(COLLECTION_KNOWLEDGE, ids)
+    ids, texts, metadatas, skipped = select_changed_chunks(ids, texts, metadatas, existing)
+    if skipped:
+        logger.info("RAG knowledge: %s chunk değişmemiş, embed atlandı", skipped)
+
+    if not texts:
+        _knowledge_sig = sig
+        return 0
+
     embeddings = await get_embeddings_batch(texts)
     texts, embeddings, metadatas, ids = _filter_valid_embeddings(texts, embeddings, metadatas, ids)
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Bilgi Bankası RAG ingest: {detail}")
     upsert_chunks(COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    for prefix in ("kb_", "inv_", "apps_"):
+        try:
+            pruned = prune_ids_not_in_keep(
+                COLLECTION_KNOWLEDGE, all_ids, id_prefix=prefix,
+            )
+            if pruned:
+                logger.info("RAG knowledge prune (%s): %s stale chunk silindi", prefix, pruned)
+        except Exception as e:
+            logger.warning("RAG knowledge prune atlandı (%s): %s", prefix, e)
     _knowledge_sig = sig
     return len(ids)
 

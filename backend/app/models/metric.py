@@ -11,10 +11,20 @@ class MetricData(Base):
     """Time-series metric data (hypertable for TimescaleDB)"""
     __tablename__ = "metric_data"
     
-    # Composite primary key for TimescaleDB hypertable
+    # Composite primary key for TimescaleDB hypertable.
+    #
+    # ÖNEMLİ: birincil anahtar YALNIZCA `timestamp` olamaz. Bir sync turunda
+    # tüm satırlar aynı zaman damgasını paylaştığı için ikinci satır
+    # "duplicate key" ile düşer ve TÜM batch geri alınır — tablo sessizce boş
+    # kalır (bu hata uzun süre fark edilmedi). TimescaleDB de bölümleme
+    # kolonunun anahtarda bulunmasını şart koştuğu için `timestamp` kalır,
+    # yanına satırı gerçekten tekilleştiren iki kolon eklenir.
     id = Column(Integer, autoincrement=True)
-    server_id = Column(Integer, ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
-    metric_name = Column(String(255), nullable=False, index=True)  # cpu_usage, memory_usage, disk_usage, etc.
+    server_id = Column(
+        Integer, ForeignKey("servers.id", ondelete="CASCADE"),
+        nullable=False, index=True, primary_key=True,
+    )
+    metric_name = Column(String(255), nullable=False, index=True, primary_key=True)  # cpu_usage, memory_usage, disk_usage, etc.
     value = Column(Float, nullable=False)
     unit = Column(String(50))  # percent, bytes, count, etc.
     labels = Column(Text)  # JSON string for additional labels (disk=/dev/sda1, interface=eth0)

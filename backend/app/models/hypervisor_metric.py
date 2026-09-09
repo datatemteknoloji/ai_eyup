@@ -55,8 +55,26 @@ class HypervisorHostMetric(Base):
     ds_usage_pct    = Column(Float)          # Yüzde kullanım (0-100)
 
     # ── Ağ ───────────────────────────────────────────────────────────────────
-    net_rx_kbps     = Column(Float)          # Alınan veri (kbps)
-    net_tx_kbps     = Column(Float)          # Gönderilen veri (kbps)
+    # Bu iki kolon uzun süre NULL kaldı: host ağı `net.bytesRx` ile değil
+    # `net.received.average` sayacıyla ölçülür ve host senkronizasyonu hiç
+    # QueryPerf çağırmıyordu (yalnız quickStats property'leri). Artık
+    # vcenter_client.get_all_host_perf ile doldurulur.
+    net_rx_kbps     = Column(Float)          # Alınan veri (KBps)
+    net_tx_kbps     = Column(Float)          # Gönderilen veri (KBps)
+    net_dropped_rx  = Column(Float)          # Düşen paket (rx, örnek başına)
+    net_dropped_tx  = Column(Float)          # Düşen paket (tx, örnek başına)
+
+    # ── Host performans sayaçları (QueryPerf, 20 sn realtime örnek) ───────────
+    # "VM mi yavaş host mu yavaş" ayrımı bu kolonlar olmadan yapılamıyordu
+    # (bkz. virt_diagnostics.classify_bottleneck).
+    cpu_ready_ms          = Column(Float)    # cpu.ready.summation (ham, ms)
+    cpu_ready_pct         = Column(Float)    # thread sayısına normalize edilmiş %
+    mem_balloon_mb        = Column(Float)    # mem.vmmemctl.average
+    mem_swap_used_mb      = Column(Float)    # mem.swapused.average
+    disk_read_iops        = Column(Float)    # disk.numberReadAveraged.average
+    disk_write_iops       = Column(Float)    # disk.numberWriteAveraged.average
+    disk_latency_ms       = Column(Float)    # disk.totalLatency.average
+    disk_device_latency_ms = Column(Float)   # disk.deviceLatency.average
 
     # ── VM sayıları ──────────────────────────────────────────────────────────
     vms_running     = Column(Integer)        # Açık VM sayısı

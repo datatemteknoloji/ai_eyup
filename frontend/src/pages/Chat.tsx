@@ -340,7 +340,7 @@ const Chat: React.FC<{
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['chat-sessions', inventoryPlatform] })
-      abortChatStream(streamChannel)
+      abortChatStream(streamChannel, { keepPartial: false })
       setSelectedSessionId(data.id)
       setInput('')
     }
@@ -572,7 +572,7 @@ const Chat: React.FC<{
   const handleSessionSelect = (id: number) => {
     if (id !== selectedSessionId) {
       // Başka session'a geçerken bu channel stream'ini iptal et
-      abortChatStream(streamChannel)
+      abortChatStream(streamChannel, { keepPartial: false })
       setLocalInventoryMessages([])
     }
     setSelectedSessionId(id)

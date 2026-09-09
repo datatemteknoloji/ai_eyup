@@ -84,6 +84,39 @@ export const PLATFORM_REPORT_CATALOGS: Record<PlatformKey, ReportCatalogItem[]> 
   openshift: OPENSHIFT_CATALOG,
 }
 
+/** Rapor kartındaki ⓘ metni — "bu rapor hangi matematikle hesaplanıyor?".
+ *  Önce `platform:type`, sonra `type` aranır. Rapor payload'ında
+ *  `methodology` / `forecast_methodology` varsa UI onu da ekler. */
+const REPORT_METHODOLOGY_KEYS: Record<string, TranslationKey> = {
+  'linux:capacity': 'rpt_method_capacity_linux',
+  'virt:capacity': 'rpt_method_capacity_virt',
+  'exadata:capacity': 'rpt_method_capacity_exa',
+  'windows:security': 'rpt_method_sec_win',
+  executive_summary: 'rpt_method_exec',
+  operations: 'rpt_method_ops',
+  risk: 'rpt_method_risk',
+  performance: 'rpt_method_perf',
+  patch_status: 'rpt_method_patch',
+  security: 'rpt_method_security',
+  sla: 'rpt_method_sla',
+  monitoring_coverage: 'rpt_method_mon',
+  vm_health: 'rpt_method_vm_health',
+  resource_usage: 'rpt_method_resource',
+  security_compliance: 'rpt_method_sec_comp',
+  consolidation: 'rpt_method_consol',
+  forecast: 'rpt_method_forecast',
+  riskiest_assets: 'rpt_method_riskiest',
+  node_health: 'rpt_method_node_health',
+}
+
+export function reportMethodologyKey(
+  platform: PlatformKey,
+  reportType: string,
+): TranslationKey | undefined {
+  return REPORT_METHODOLOGY_KEYS[`${platform}:${reportType}`]
+    || REPORT_METHODOLOGY_KEYS[reportType]
+}
+
 export function reportsApiBase(platform: PlatformKey): string {
   return platform === 'virt'
     ? '/hypervisors/reports'

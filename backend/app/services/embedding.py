@@ -25,6 +25,19 @@ OLLAMA_EMBED_TIMEOUT = float(os.getenv("OLLAMA_EMBED_TIMEOUT", "60"))
 # Büyük PDF'lerde sıralı embed dakikalar sürer; paralel sınırla hızlandır
 EMBED_CONCURRENCY = max(1, min(int(os.getenv("OLLAMA_EMBED_CONCURRENCY", "8")), 32))
 
+
+def embed_concurrency() -> int:
+    """Eşzamanlı embedding isteği sınırı (Gelişmiş ayarlardan, restart gerekmez).
+
+    Ollama CPU'da çalışıyorsa bu sayı doğrudan CPU baskısını belirler; ayar
+    düşürülünce embed yavaşlar ama sistem rahatlar.
+    """
+    try:
+        from app.services import runtime_settings
+        return max(1, min(32, int(runtime_settings.get_int("rag_embed_concurrency"))))
+    except Exception:
+        return EMBED_CONCURRENCY
+
 # Son başarısız embedding ayrıntısı (UI/RuntimeError için)
 _last_embed_error: Optional[str] = None
 
@@ -277,7 +290,8 @@ async def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
 
-    sem = asyncio.Semaphore(EMBED_CONCURRENCY)
+    concurrency = embed_concurrency()
+    sem = asyncio.Semaphore(concurrency)
     results: List[Optional[List[float]]] = [None] * len(texts)
 
     async with httpx.AsyncClient(timeout=OLLAMA_EMBED_TIMEOUT) as client:
@@ -300,7 +314,7 @@ async def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
         if total >= 20:
             logger.info(
                 "RAG embed batch start: %s chunk, concurrency=%s, model=%s",
-                total, EMBED_CONCURRENCY, embed_model_name(),
+                total, concurrency, embed_model_name(),
             )
 
         await asyncio.gather(*[_one(i, t) for i, t in enumerate(texts)])

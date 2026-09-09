@@ -5,6 +5,7 @@ import logging
 import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.metric import MetricData, MetricAggregation
 from app.models.server import Server
@@ -140,8 +141,12 @@ class MetricCollector:
                     for item in results:
                         value = float(item["value"][1])
                         labels = item.get("metric", {})
-                        
-                        # Store metric
+
+                        # Store metric — aynı metriğin çok serili (ör. disk
+                        # başına) sonuçları tek zaman damgasını paylaşır ve
+                        # metric_data birincil anahtarıyla (timestamp,
+                        # server_id, metric_name) çakışır; tekrar eden satır
+                        # tüm turu düşürmesin diye atlanır.
                         metric = MetricData(
                             server_id=server.id,
                             metric_name=metric_config["name"],
@@ -149,8 +154,16 @@ class MetricCollector:
                             unit=metric_config["unit"],
                             labels=str(labels) if labels else None
                         )
-                        db.add(metric)
-                        collected += 1
+                        try:
+                            with db.begin_nested():
+                                db.add(metric)
+                                db.flush()
+                            collected += 1
+                        except IntegrityError:
+                            logger.debug(
+                                "metric_data tekrar eden satır atlandı: %s/%s",
+                                server.hostname, metric_config["name"],
+                            )
             except Exception as e:
                 logger.error(f"Error collecting {metric_config['name']} for {server.hostname}: {e}")
         

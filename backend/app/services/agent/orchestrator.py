@@ -239,7 +239,10 @@ def _run_loop_legacy(
 
         # Tool çağrısı yoksa → final yanıt
         if not tool_calls:
-            return {"status": "done", "answer": content or "(boş yanıt)",
+            return {"status": "done", "answer": content or (
+                "Modelden bu soru için bir metin yanıt alınamadı (geçici bir "
+                "model/parse hatası olabilir). Lütfen soruyu tekrar sorun."
+            ),
                     "steps": steps, "session_id": ctx.get("session_id")}
 
         # Asistanın tool isteğini transcript'e ekle (OpenAI: arguments STRING + id)

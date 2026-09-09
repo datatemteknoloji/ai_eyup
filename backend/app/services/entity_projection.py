@@ -70,6 +70,8 @@ VM_FIELD_ALIASES: Dict[str, tuple] = {
     "vcenter_endpoint": ("vcenter_endpoint", "vcenter_ip", "vcenter_host"),
     "cpu_mhz": ("cpu_mhz",),
     "mem_active_mb": ("mem_active_mb", "mem_active"),
+    "tools_status": ("tools_status", "tools", "vmware_tools", "vm_tools"),
+    "tools_version_status": ("tools_version_status", "tools_version"),
 }
 
 # Varsayılan özet — disk toplamı her zaman (model fields ile düşüremesin diye
@@ -118,12 +120,78 @@ CROSS_MATCH_FIELD_ALIASES: Dict[str, tuple] = {
     "ds_free_gb": ("ds_free_gb",),
     "alarm_count": ("alarm_count", "alarms_count", "n_alarms"),
     "alarms": ("alarms", "alarm_titles"),
+    # VM ekseni (join_on="vm"): satır bir VM'dir, host onun ÜSTÜNDEKİ katmandır.
+    # `cpu_pct`/`mem_pct` diğer eksenlerde host'u gösterdiği için burada VM ve
+    # host değerleri ayrı, kendini açıklayan adlarla taşınır — aynı satırda iki
+    # katmanın yüzdesi varken "cpu_pct kimin?" belirsizliği yanlış yoruma yol açar.
+    "vm": ("vm", "vm_name", "guest"),
+    "vm_cpu_pct": ("vm_cpu_pct", "vm_cpu", "guest_cpu_pct"),
+    "vm_mem_pct": ("vm_mem_pct", "vm_mem", "guest_mem_pct"),
+    "vm_ready_pct": ("vm_ready_pct", "cpu_ready_pct", "ready_pct"),
+    "host_cpu_pct": ("host_cpu_pct", "esxi_cpu_pct"),
+    "host_mem_pct": ("host_mem_pct", "esxi_mem_pct", "host_ram_pct"),
+    "host_vm_count": ("host_vm_count", "host_vms_count", "esxi_vm_count"),
+    "power_state": ("power_state", "state", "guc_durumu"),
+    "vcpu": ("vcpu", "cpu_count", "num_cpu"),
+    "memory_mb": ("memory_mb", "ram_mb", "mem_mb"),
+    "disk_gb": ("disk_gb", "storage_gb"),
+    "cluster": ("cluster", "cluster_name"),
+    "metrics_as_of": ("metrics_as_of", "stats_as_of"),
 }
 
 CROSS_MATCH_DEFAULT_FIELDS: tuple = (
     "match_key", "host", "host_ip", "vm_count", "vms",
     "datastore", "ds_usage_pct", "alarm_count", "alarms", "hypervisor",
 )
+
+# VM ekseninde varsayılan sütunlar: VM'in kendi yükü + üstünde çalıştığı host'un
+# yükü + bağlı depolama. "Şu VM'ler hangi hostta ve host'un RAM'i ne durumda"
+# sorusu tek satırda cevaplanabilsin diye iki katman yan yana verilir.
+CROSS_MATCH_VM_DEFAULT_FIELDS: tuple = (
+    "vm", "power_state", "vm_cpu_pct", "vm_mem_pct", "vm_ready_pct", "host",
+    "host_cpu_pct", "host_mem_pct", "host_vm_count", "datastore", "ds_usage_pct",
+    "alarm_count", "hypervisor",
+)
+
+# ── Alt (nested) koleksiyonlar ───────────────────────────────────────────────
+# Bir varlığın İÇİNDEKİ kayıt listesi. Üst alanlar tek değer taşır; alt
+# koleksiyon satır başına birden çok değer taşıyabilir — bu yüzden ayrı bir
+# granülerlik gerekir (bkz. virt_scope.detect_granularity).
+#
+# Neden gerekli: `servers.vm_disks` her disk için {label, capacity_gb, thin,
+# datastore} tutuyor (vcenter_client per-disk VMDK backing'inden çıkarır) ama
+# render katmanı bunu yalnız "label: GB" olarak düzleştirip datastore'u
+# düşürüyordu. Bir VM'in diskleri farklı datastore'lara yayılabildiğinden
+# (Storage DRS / vMotion) VM seviyesindeki tek `vm_datastore` değeri o
+# durumda EKSİK cevap verir; doğru cevap yalnız disk başına verilebilir.
+#
+#   keywords     : alt koleksiyondan söz edildiğini gösteren kelimeler
+#   base_fields  : child satırında her zaman gösterilecek kolonlar
+#   pivot_fields : istendiğinde child granülerliğini TETİKLEYEN alanlar
+#                  (üst seviyede tek değerle doğru gösterilemeyenler)
+VM_CHILD_COLLECTIONS: Dict[str, Dict[str, Any]] = {
+    "disks": {
+        "row_key": "disks",
+        "keywords": (
+            "disk", "disks", "vmdk", "hard disk", "sanal disk", "diskler",
+        ),
+        "base_fields": ("label", "capacity_gb"),
+        "pivot_fields": ("datastore", "thin"),
+        "fields": {
+            "label": ("label", "etiket", "disk adı", "disk adi", "disk ismi"),
+            "capacity_gb": ("capacity_gb", "kapasite", "boyut", "size", "gb"),
+            "thin": ("thin", "thick", "provision", "provisioned"),
+            "datastore": ("datastore", "datastore'", "ds ", "depolama alanı", "depolama alani"),
+        },
+        "labels": {
+            "label": "Disk",
+            "capacity_gb": "Kapasite (GB)",
+            "thin": "Thin",
+            "datastore": "Datastore",
+        },
+        "numeric": ("capacity_gb",),
+    },
+}
 
 
 def normalize_fields(

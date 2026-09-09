@@ -233,6 +233,31 @@ async def rag_knowledge_reindex(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/maintenance")
+async def rag_maintenance(dry_run: bool = False, max_delete: int = 50000):
+    """Öksüz chunk temizliği — kaynağı (event/incident) DB'de kalmayan kayıtlar.
+
+    Event retention temizliği kaynak satırları siler, gömme satırları kalır.
+    `dry_run=true` yalnızca sayar. Periyodik hâli `fleet.rag_maintenance`.
+    """
+    from app.services.rag_store import prune_orphan_source_chunks
+
+    try:
+        out = {}
+        for prefix in ("event_", "incident_"):
+            res = prune_orphan_source_chunks(
+                COLLECTION_INCIDENTS,
+                id_prefix=prefix,
+                max_delete=max(0, int(max_delete)),
+                dry_run=bool(dry_run),
+            )
+            out[prefix.rstrip("_")] = res
+        return {"success": True, "dry_run": bool(dry_run), "result": out}
+    except Exception as e:
+        logger.exception("RAG maintenance failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/metrics/seed")
 async def rag_metrics_seed(body: Optional[MetricDescriptionsSeedRequest] = None):
     """Metrik açıklamalarını RAG'e ekle. body boş veya items verilmezse varsayılan liste kullanılır."""

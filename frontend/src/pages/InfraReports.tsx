@@ -25,6 +25,7 @@ import {
   PLATFORM_REPORT_CATALOGS,
   PLATFORM_REPORT_TITLE_KEYS,
   PLATFORM_REPORT_SUBTITLE_KEYS,
+  reportMethodologyKey,
   reportsApiBase,
 } from '../config/infraReportCatalog'
 
@@ -244,15 +245,58 @@ function SectionHeader({ title, count, icon }: { title: string; count?: number; 
 
 // ── Report Card ──────────────────────────────────────────────────────────────
 
+/** Raporun hesaplama yöntemi — ⓘ ile açılan kısa açıklama.
+ *  `extra`: rapor payload'ından gelen (backend tarafında üretilmiş) tahmin notu. */
+function MethodologyInfo({ text, extra, align = 'right' }: {
+  text?: string
+  extra?: string
+  align?: 'left' | 'right'
+}) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  if (!text && !extra) return null
+  return (
+    <div className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={t('rpt_method_btn')}
+        title={t('rpt_method_btn')}
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="text-slate-500 hover:text-blue-400 transition-colors"
+      >
+        <Info size={13} />
+      </button>
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute z-40 top-5 ${align === 'right' ? 'right-0' : 'left-0'} w-80 max-w-[85vw]
+            bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 text-left`}
+        >
+          <p className="text-[11px] font-medium text-blue-300 mb-1">{t('rpt_method_title')}</p>
+          {text && <p className="text-[11px] text-slate-300 leading-relaxed">{text}</p>}
+          {extra && (
+            <p className="text-[11px] text-slate-400 leading-relaxed mt-2 pt-2 border-t border-slate-700/60">
+              <span className="text-slate-500">{t('rpt_method_backend')}: </span>{extra}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ReportCard({
   type, title, icon, color, desc,
-  onGenerate, isLoading, lastGenerated, badge,
+  onGenerate, isLoading, lastGenerated, badge, methodText,
 }: {
   type: string; title: string; icon: React.ReactNode; color: string; desc: string
   onGenerate: (type: string) => void
   isLoading: boolean
   lastGenerated?: string
   badge?: string
+  methodText?: string
 }) {
   const t = useT()
   const { locale } = useLocale()
@@ -271,6 +315,7 @@ function ReportCard({
                 {badge}
               </span>
             )}
+            <MethodologyInfo text={methodText} align="left" />
           </div>
           <p className="text-slate-400 text-xs mt-0.5 leading-relaxed">{desc}</p>
         </div>
@@ -299,10 +344,11 @@ function ReportCard({
 
 // ── Rapor Viewer ─────────────────────────────────────────────────────────────
 
-function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, regenerating, preferMarkdown }: {
+function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, regenerating, preferMarkdown, methodText }: {
   type: string; title: string; data: Record<string, unknown>; markdown?: string; onClose: () => void
   onRegenerate?: (type: string) => void; regenerating?: boolean
   preferMarkdown?: boolean
+  methodText?: string
 }) {
   const t = useT()
   const { locale } = useLocale()
@@ -319,7 +365,18 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
           <div>
-            <h2 className="text-white font-semibold text-lg">{title}</h2>
+            <h2 className="text-white font-semibold text-lg flex items-center gap-2">
+              {title}
+              <MethodologyInfo
+                text={methodText}
+                extra={
+                  ((data as any).forecast_methodology as string)
+                  || ((data as any).methodology as string)
+                  || undefined
+                }
+                align="left"
+              />
+            </h2>
             <p className="text-slate-500 text-xs mt-0.5">
               {(data as any).generated_at
                 ? t('rpt_generated', { dt: new Date((data as any).generated_at).toLocaleString(dateLoc(locale)) })
@@ -495,6 +552,21 @@ function ExecSummaryView({ d }: { d: any }) {
   )
 }
 
+/** Eşiğe kalan süre: tek sayı yerine belirsizlik aralığı (backend Theil–Sen). */
+function daysToThresholdText(
+  days: number | null | undefined,
+  range: { fastest?: number | null; slowest?: number | null } | null | undefined,
+  t: ReturnType<typeof useT>,
+): string {
+  const fastest = range?.fastest
+  const slowest = range?.slowest
+  if (range && fastest != null && slowest == null) return t('rpt_days_80_open', { a: fastest })
+  if (range && fastest != null && slowest != null && slowest > fastest) {
+    return t('rpt_days_80_range', { a: fastest, b: slowest })
+  }
+  return t('rpt_days_80', { n: days ?? '—' })
+}
+
 function CapacityView({ d }: { d: any }) {
   const t = useT()
   const { locale } = useLocale()
@@ -543,13 +615,13 @@ function CapacityView({ d }: { d: any }) {
               <div>
                 <ProgressBar pct={item.memory?.used_pct ?? 0} label={t('memory')} sub={t('rpt_gb_free', { n: item.memory?.free_gb ?? 0 })} />
                 {item.memory?.days_to_80pct && (
-                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {t('rpt_days_80', { n: item.memory.days_to_80pct })}</p>
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {daysToThresholdText(item.memory.days_to_80pct, item.memory.days_to_80pct_range, t)}</p>
                 )}
               </div>
               <div>
                 <ProgressBar pct={item.storage?.used_pct ?? 0} label="Disk" sub={t('rpt_gb_free', { n: item.storage?.free_gb ?? 0 })} />
                 {item.storage?.days_to_80pct && (
-                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {t('rpt_days_80', { n: item.storage.days_to_80pct })}</p>
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {daysToThresholdText(item.storage.days_to_80pct, item.storage.days_to_80pct_range, t)}</p>
                 )}
               </div>
             </div>
@@ -618,6 +690,7 @@ function ServerCapacityView({ d }: { d: any }) {
   const { locale } = useLocale()
   const servers: any[] = d.top_servers || []
   const nodes: any[] = d.nodes || []
+  const forecastRows: any[] = d.forecast || []
 
   if (servers.length > 0 || d.sampled_servers !== undefined) {
     const maxCpu = Math.max(...servers.map((s) => s.cpu_usage_percent || 0), 1)
@@ -632,6 +705,29 @@ function ServerCapacityView({ d }: { d: any }) {
           <KpiCard label={t('rpt_high_disk')} value={d.high_disk_count ?? 0}
             color={(d.high_disk_count ?? 0) > 0 ? 'amber' : 'green'} icon={<HardDrive size={12} />} />
         </div>
+        {forecastRows.length > 0 && (
+          <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+            <SectionHeader title={t('rpt_forecast_section')} icon={<Zap size={14} />} count={forecastRows.length} />
+            <div className="space-y-1.5 mt-2">
+              {forecastRows.map((f: any, i: number) => (
+                <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-slate-300 truncate">
+                    {f.server} <span className="text-slate-500">· {f.resource} %{f.current_pct ?? '—'}</span>
+                  </span>
+                  <span className="flex items-center gap-2 whitespace-nowrap">
+                    <span className={f.days_to_80pct <= 30 ? 'text-red-400' : 'text-amber-400'}>
+                      {daysToThresholdText(f.days_to_80pct, f.days_to_80pct_range, t)}
+                    </span>
+                    <span className="text-slate-500">{t('rpt_forecast_growth', { n: f.daily_growth_pct })}</span>
+                    <span className="text-slate-600">
+                      {f.confidence === 'high' ? t('rpt_conf_high') : f.confidence === 'medium' ? t('rpt_conf_medium') : t('rpt_conf_low')}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {servers.length > 0 ? (
           <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
             <SectionHeader title={t('rpt_top_cpu')} icon={<Cpu size={14} />} count={servers.length} />
@@ -2244,6 +2340,10 @@ export default function InfraReports({
   const { locale } = useLocale()
   const catalog = PLATFORM_REPORT_CATALOGS[platform]
   const apiBase = `${API_BASE_URL}${reportsApiBase(platform)}`
+  const methodTextFor = (reportType: string) => {
+    const key = reportMethodologyKey(platform, reportType)
+    return key ? t(key) : undefined
+  }
   const showChat = platform === 'virt' || platform === 'linux' || platform === 'windows'
   const showCompare = platform === 'virt' || platform === 'linux' || platform === 'windows'
   const [mainTab, setMainTab] = useState<'reports' | 'chat' | 'compare'>(() => {
@@ -2587,6 +2687,7 @@ export default function InfraReports({
                 onGenerate={handleGenerate}
                 isLoading={generating === cat.type}
                 lastGenerated={lastGenTimes[cat.type] || histMap[cat.type]}
+                methodText={methodTextFor(cat.type)}
               />
             </div>
           ))}
@@ -2701,6 +2802,7 @@ export default function InfraReports({
           onClose={() => setViewReport(null)}
           onRegenerate={handleGenerate}
           regenerating={generating === viewReport.type}
+          methodText={methodTextFor(viewReport.type)}
         />
       )}
       </>)}

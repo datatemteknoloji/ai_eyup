@@ -515,9 +515,34 @@ def _db_metric_trend_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, A
             top_n=args.get("top_n") or args.get("limit") or 10,
             order=args.get("order") or "worsening",
             threshold=args.get("threshold"),
+            min_value=args.get("min_value") if args.get("min_value") is not None else args.get("above"),
+            max_value=args.get("max_value") if args.get("max_value") is not None else args.get("below"),
+            value_basis=args.get("value_basis") or args.get("basis"),
         )
     except Exception as e:
         logger.error("[Tool] db_metric_trend hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _virt_bottleneck_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Darboğaz katmanı teşhisi: VM mi host mu (deterministik kural motoru).
+
+    "VM yavaş, sebebi ne" sorusunda tek metriğe bakmak yanıltıcı: CPU %95 iken
+    suçlu VM'in kendi yükü de olabilir, host çekişmesi de. Karar VM ve host
+    p95'lerinin BİRLİKTE değerlendirilmesini gerektirdiği için modele
+    bırakılmaz; burada ölçüye dayalı hesaplanıp kanıt sayılarıyla döner.
+    """
+    try:
+        from app.services.virt_diagnostics import classify_bottleneck
+        return classify_bottleneck(
+            db,
+            vm_name=args.get("vm_name") or args.get("vm") or args.get("name"),
+            host_name=args.get("host_name") or args.get("host"),
+            hours=args.get("hours") or args.get("lookback_hours") or 24,
+            limit=args.get("limit") or args.get("top_n") or 10,
+        )
+    except Exception as e:
+        logger.error("[Tool] virt_bottleneck_diagnose hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -970,6 +995,9 @@ def _db_virt_cross_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[st
             fields=fields if isinstance(fields, list) else None,
             hours=int(args.get("hours") or 48),
             limit=int(args.get("limit") or 100),
+            vm_name=args.get("vm_name") or args.get("vm") or args.get("name"),
+            min_cpu_pct=args.get("min_cpu_pct"),
+            min_mem_pct=args.get("min_mem_pct"),
         )
     except Exception as e:
         logger.error("[Tool] db_virt_cross_match hata: %s", e, exc_info=True)
@@ -2097,30 +2125,52 @@ TOOLS: Dict[str, Tool] = {
         name="db_metric_trend",
         description=(
             "TREND ve KAPASİTE TÜKENME TAHMİNİ (READ-ONLY, DB zaman serisi). Host / VM / "
-            "datastore için seçilen metriğin geçmiş penceredeki ilk-son değeri, ortalama, "
+            "datastore / CLUSTER için seçilen metriğin geçmiş penceredeki ilk-son değeri, ortalama, "
             "p95, günlük eğimi (slope_per_day) ve eşiğe kalan gün (days_to_threshold) "
             "deterministik hesaplanır. "
             "'son 7 günde kötüleşen VM'ler', 'datastore ne zaman dolar', '30 günlük trend', "
             "'kapasite problemi yaşayacak host/cluster', 'uzun süredir düşük kullanan VM'ler "
-            "(right-sizing)', 'performansı bozulan' sorularında BUNU ÇAĞIR — trend/tahmin "
-            "aritmetiğini KENDİN YAPMA. insufficient_history=true olan satırlarda trend "
-            "yorumu yapma, yalnız mevcut değeri bildir."
+            "(right-sizing)', 'performansı bozulan', 'memory ballooning/swap kullanan VM'ler', "
+            "'CPU Ready yüksek VM'ler', 'disk latency yüksek VM'ler', 'network paket kaybı olan "
+            "VM'ler' sorularında BUNU ÇAĞIR (entity_type=vm, metric=balloon_mb/swapped_mb/"
+            "cpu_ready_pct/disk_latency_ms/net_dropped_rx) — vcenter_perf_query/vcenter_ask CANLI "
+            "sorgudur ve tüm VM'leri taramaz, DB trend sorguları için bunu KULLANMA. "
+            "Trend/tahmin aritmetiğini KENDİN YAPMA. "
+            "EŞİKLİ sorular ('CPU'su %80 üzerinde olan VM'ler', 'doluluğu %85'i geçen "
+            "datastore'lar', '%5 altında kalan atıl VM'ler') için min_value/max_value "
+            "kullan — listeyi çekip KENDİN filtreleme. "
+            "insufficient_history=true olan satırlarda trend "
+            "yorumu yapma, yalnız mevcut değeri bildir. "
+            "'Ani spike ile sürekli/kalıcı yükselişi ayır' türü sorularda her satırdaki "
+            "`pattern` alanını kullan (sürekli_yükseliş/sürekli_düşüş/ani_sıçrama/"
+            "dalgalı_artış/kararlı) — kendi başına spike/trend ayrımı YAPMA."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "entity_type": {
                     "type": "string",
-                    "enum": ["host", "vm", "datastore"],
-                    "description": "Varlık tipi (varsayılan host)",
+                    "enum": ["host", "vm", "datastore", "cluster"],
+                    "description": (
+                        "Varlık tipi (varsayılan host). cluster = host satırları "
+                        "cluster başına indirgenir; 'bu cluster'da 3 ay sonra yer "
+                        "kalır mı' gibi TOPLAM kapasite sorularında bunu kullan."
+                    ),
                 },
                 "metric": {
                     "type": "string",
                     "description": (
-                        "host: cpu_pct|mem_pct|ds_pct|vms_running · "
+                        "host: cpu_pct|mem_pct|ds_pct|vms_running|cpu_ready_pct|"
+                        "disk_latency_ms|disk_device_latency_ms|disk_read_iops|"
+                        "disk_write_iops|mem_balloon_mb|mem_swap_used_mb|"
+                        "net_rx_kbps|net_tx_kbps|net_dropped_rx|net_dropped_tx · "
                         "vm: cpu_pct|mem_pct|cpu_ready_pct|disk_latency_ms|balloon_mb|"
-                        "swapped_mb|net_dropped_rx|guest_disk_pct|snapshot_count · "
-                        "datastore: usage_pct|free_gb|used_gb|uncommitted_gb"
+                        "swapped_mb|net_rx_kbps|net_tx_kbps|net_dropped_rx|"
+                        "guest_disk_pct|snapshot_count · "
+                        "datastore: usage_pct|free_gb|used_gb|uncommitted_gb|read_iops|"
+                        "write_iops|read_latency_ms|write_latency_ms · "
+                        "cluster: cpu_pct|mem_pct|ds_pct|ds_total_gb|ds_used_gb|"
+                        "cpu_total_mhz|mem_total_mb|vms_running|vms_total"
                     ),
                 },
                 "days": {"type": "number", "description": "Geriye dönük pencere (gün, varsayılan 7)"},
@@ -2136,6 +2186,31 @@ TOOLS: Dict[str, Tool] = {
                     "type": "number",
                     "description": "Tükenme eşiği (varsayılan doluluk %90 / free_gb 0)",
                 },
+                "min_value": {
+                    "type": "number",
+                    "description": (
+                        "DEĞER FİLTRESİ alt sınır — 'CPU'su %80 ÜZERİNDE olan VM'ler' "
+                        "gibi eşikli sorularda kullan. Eşiği aşanların TÜMÜ döner "
+                        "(order=highest yalnız top-N verir, 'kaç tane var' sorusunu "
+                        "cevaplamaz). count=eşleşen sayısı."
+                    ),
+                },
+                "max_value": {
+                    "type": "number",
+                    "description": (
+                        "DEĞER FİLTRESİ üst sınır — 'CPU'su %5 ALTINDA kalan atıl VM'ler' "
+                        "(right-sizing) gibi sorularda kullan."
+                    ),
+                },
+                "value_basis": {
+                    "type": "string",
+                    "enum": ["last", "avg", "p95", "max", "min"],
+                    "description": (
+                        "min_value/max_value hangi istatistiğe uygulanacak "
+                        "(varsayılan last = son ölçüm). 'sürekli/kalıcı olarak yüksek' "
+                        "denirse p95 veya avg, 'hiç %90'ı gördü mü' denirse max kullan."
+                    ),
+                },
             },
             "required": [],
         },
@@ -2143,6 +2218,40 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_db_metric_trend_handler,
         direct_label="Trend / kapasite tahmini",
+    ),
+    "virt_bottleneck_diagnose": Tool(
+        name="virt_bottleneck_diagnose",
+        description=(
+            "DARBOĞAZ TEŞHİSİ — 'VM mi yavaş, HOST mu yavaş?' (READ-ONLY, DB zaman serisi). "
+            "VM'in p95 değerlerini (cpu_ready, co-stop, balloon/swap, disk gecikmesi, paket "
+            "kaybı) AYNI penceredeki host p95'leriyle karşılaştırıp darboğazın katmanını "
+            "(host / vm / guest / datastore / network) kanıt sayılarıyla döndürür. "
+            "'X VM'i yavaş neden', 'sorun VM'de mi host'ta mı', 'bu VM'e vCPU ekleyelim mi', "
+            "'CPU ready yüksek mi', 'kaynak çekişmesi var mı', 'hangi VM'ler kaynak bekliyor' "
+            "sorularında BUNU ÇAĞIR ve kararı KENDİN türetme — dönen verdict/action "
+            "alanlarını Türkçe özetle. Zaman içindeki değişim gerekiyorsa db_metric_trend "
+            "ile birleştir. layer='none' dönerse 'darboğaz kanıtı yok' de, sebep uydurma."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "vm_name": {
+                    "type": "string",
+                    "description": "VM adı (substring). Boş bırakılırsa en çok kaynak bekleyen VM'ler taranır.",
+                },
+                "host_name": {
+                    "type": "string",
+                    "description": "ESXi host adı (substring) — o host üzerindeki VM'lere daralt.",
+                },
+                "hours": {"type": "number", "description": "Geriye dönük pencere (saat, varsayılan 24)"},
+                "limit": {"type": "integer", "description": "Kaç VM incelenecek (varsayılan 10)"},
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_virt_bottleneck_handler,
+        direct_label="Darboğaz teşhisi (VM/host)",
     ),
     "virt_health_overview": Tool(
         name="virt_health_overview",
@@ -2352,15 +2461,39 @@ TOOLS: Dict[str, Tool] = {
             "READ-ONLY çapraz eşleştirme: ESXi host ⋈ VM ⋈ datastore ⋈ alarm SoT'larını "
             "ortak anahtarla tek satırda birleştirir. "
             "Örn. 'hangi host'ta alarm var ve disk dolu', 'datastore X'teki VM'ler + host IP'. "
-            "join_on=host|datastore|entity. fields ile çıktı kolonları seç. "
-            "Write/power/destroy YOK — yalnızca DB join."
+            "join_on=host|vm|datastore|entity. "
+            "VM merkezli sorularda ('bu VM'ler hangi hostta çalışıyor', 'CPU'su yüksek "
+            "VM'lerin host'larının RAM durumu', 'VM + host + datastore birlikte') "
+            "join_on=vm kullan: her satır bir VM olur ve VM'in kendi yükü "
+            "(vm_cpu_pct/vm_mem_pct) ile host'unun yükü (host_cpu_pct/host_mem_pct) "
+            "yan yana gelir — iki ayrı tool çağırıp elle eşleştirme. "
+            "fields ile çıktı kolonları seç. Write/power/destroy YOK — yalnızca DB join."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "join_on": {
                     "type": "string",
-                    "description": "Eşleştirme ekseni: host (varsayılan) | datastore | entity",
+                    "enum": ["host", "vm", "datastore", "entity"],
+                    "description": (
+                        "Eşleştirme ekseni: host (varsayılan) | vm | datastore | entity. "
+                        "Satır = eksen varlığı."
+                    ),
+                },
+                "vm_name": {
+                    "type": "string",
+                    "description": "VM adı filtresi (substring) — join_on=vm ile tek VM'e daralt",
+                },
+                "min_cpu_pct": {
+                    "type": "number",
+                    "description": (
+                        "Eksen varlığının CPU kullanımı alt sınırı (vm ekseninde VM'in, "
+                        "host ekseninde host'un). Örn. 'CPU'su %80 üstü VM'ler hangi hostta'."
+                    ),
+                },
+                "min_mem_pct": {
+                    "type": "number",
+                    "description": "Eksen varlığının bellek kullanımı alt sınırı",
                 },
                 "include": {
                     "type": "array",
@@ -2376,7 +2509,9 @@ TOOLS: Dict[str, Tool] = {
                     "items": {"type": "string"},
                     "description": (
                         "Çıktı alanları. Örn: match_key, host, host_ip, vm_count, vms, "
-                        "datastore, ds_usage_pct, alarm_count, alarms, hypervisor"
+                        "datastore, ds_usage_pct, alarm_count, alarms, hypervisor. "
+                        "vm ekseninde ayrıca: vm, power_state, vcpu, memory_mb, disk_gb, "
+                        "vm_cpu_pct, vm_mem_pct, vm_ready_pct, host_cpu_pct, host_mem_pct, cluster"
                     ),
                 },
             },
@@ -2460,7 +2595,10 @@ TOOLS: Dict[str, Tool] = {
             "Memory pressure için metrics=[mem_pressure] (balloon/swap), CPU contention için [contention]. "
             "Host Disk Rate/Requests Top-N (naa.*/NVMe) için entity=host, "
             "metrics=[disk_rate] veya [disk_requests], target=ESXi adı, top_n=10. "
-            "VM için entity=vm + target=VM adı. Envanter ile join (IP, version…). "
+            "VM için entity=vm + target=VM adı — TEK bir VM/host için canlı sorgu, target ZORUNLU. "
+            "'Tüm VM'ler arasında X'i bul/listele' gibi FLEET taramalarında bunu KULLANMA, "
+            "onun için db_metric_trend (entity_type=vm/host) kullan. "
+            "Envanter ile join (IP, version…). "
             "Power/destroy/reconfig/mutate YOK. Kataloğu görmek için list_catalog=true."
         ),
         parameters={
@@ -3346,6 +3484,7 @@ _TOOL_DOMAIN_OVERRIDE = {
     "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
     "db_list_clusters": frozenset({"vcenter", "infra"}),
     "virt_health_overview": frozenset({"vcenter", "infra"}),
+    "virt_bottleneck_diagnose": frozenset({"vcenter", "infra"}),
     "db_metric_trend": frozenset({"vcenter", "infra"}),
     "vcenter_property_read": frozenset({"vcenter"}),
     "db_virt_alarms": frozenset({"vcenter", "infra"}),

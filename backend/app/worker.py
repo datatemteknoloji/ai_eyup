@@ -48,6 +48,8 @@ _FLEET_TASKS = {
     "fleet.anomaly_scan": "run_anomaly_scan",
     "fleet.windows_log_collection": "run_windows_log_collection",
     "fleet.windows_live_metrics": "run_windows_live_metrics",
+    "fleet.rag_reindex": "run_rag_reindex",
+    "fleet.rag_maintenance": "run_rag_maintenance",
 }
 
 

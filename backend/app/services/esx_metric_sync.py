@@ -91,6 +91,18 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                     ds_usage_pct     = stat.get("ds_usage_pct"),
                     net_rx_kbps      = stat.get("net_rx_kbps"),
                     net_tx_kbps      = stat.get("net_tx_kbps"),
+                    net_dropped_rx   = stat.get("net_dropped_rx"),
+                    net_dropped_tx   = stat.get("net_dropped_tx"),
+                    # Host performans sayaclari (QueryPerf ile gelir; sayac
+                    # alinamazsa None kalir, envanter yine yazilir)
+                    cpu_ready_ms     = stat.get("cpu_ready_ms"),
+                    cpu_ready_pct    = stat.get("cpu_ready_pct"),
+                    mem_balloon_mb   = stat.get("mem_balloon_mb"),
+                    mem_swap_used_mb = stat.get("mem_swap_used_mb"),
+                    disk_read_iops   = stat.get("disk_read_iops"),
+                    disk_write_iops  = stat.get("disk_write_iops"),
+                    disk_latency_ms  = stat.get("disk_latency_ms"),
+                    disk_device_latency_ms = stat.get("disk_device_latency_ms"),
                     vms_running      = stat.get("vms_running"),
                     vms_total        = stat.get("vms_total"),
                     connection_state = stat.get("connection_state"),
@@ -136,6 +148,7 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                     row.free_gb = d.get("free_gb")
                     row.used_gb = d.get("used_gb")
                     row.usage_pct = d.get("usage_pct")
+                    row.uncommitted_gb = d.get("uncommitted_gb")
                     row.accessible = bool(d.get("accessible", True))
                     row.host_count = d.get("host_count")
                     row.as_of = now
@@ -158,6 +171,10 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
                         "used_gb": d.get("used_gb"),
                         "usage_pct": d.get("usage_pct"),
                         "uncommitted_gb": d.get("uncommitted_gb"),
+                        "read_iops": d.get("read_iops"),
+                        "write_iops": d.get("write_iops"),
+                        "read_latency_ms": d.get("read_latency_ms"),
+                        "write_latency_ms": d.get("write_latency_ms"),
                         "accessible": 1 if d.get("accessible", True) else 0,
                         "host_count": d.get("host_count"),
                     }

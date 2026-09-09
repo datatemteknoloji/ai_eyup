@@ -12,11 +12,15 @@ from app.services.chat_output_directives import OutputDirective
 
 # ── detect_requested_vm_fields ───────────────────────────────────────────────
 
-def test_membership_question_returns_name_only():
-    # Kullanıcının tam şikayeti: "hangi vmlere ait bilgiler bulunuyor" — disk
-    # kelimesi YOK, yalnız isim listesi beklenir.
+def test_membership_question_returns_name_and_scope_column():
+    # "hangi vmlere ait bilgiler bulunuyor" — disk kelimesi YOK, disk grubu
+    # eklenmemeli. `datastore` kelimesi geçtiği için kolon İSTENİR; ancak
+    # kapsam datastore olduğunda tüm satırlarda aynı değere düşeceği için
+    # render katmanı onu daraltır (bkz. test_virt_scope_contract:
+    # test_constant_scope_column_collapses_into_filter_note).
     fields = vic.detect_requested_vm_fields("NVME_DS datastore'unda hangi vmlere ait bilgiler bulunuyor")
-    assert fields == ["name"]
+    assert fields == ["name", "datastore"]
+    assert "disk_gb" not in fields
 
 
 def test_disk_question_adds_disk_group():
@@ -29,11 +33,23 @@ def test_disk_question_adds_disk_group():
     assert "datastore" not in fields
 
 
-def test_datastore_keyword_is_scope_not_a_column():
-    # "datastore" kelimesi kapsam belirtir (extract_entity_filters ile tüketilir),
-    # kolon olarak tekrar İSTENMEZ.
+def test_datastore_keyword_is_requested_and_collapsed_by_data_not_by_ban():
+    # ESKİ davranış: "datastore" kelimesi kolon listesine HİÇ girmiyordu
+    # (koşulsuz yasak). Bu, "vm'ler hangi datastore'da" ve "web01'in diskleri
+    # hangi datastore'da" gibi meşru sorularda kolonu da sessizce düşürüyordu.
+    # YENİ davranış: kelime geçtiyse kolon istenir, bastırma kararı veriye
+    # bakan render katmanına bırakılır.
     fields = vic.detect_requested_vm_fields("bu datastorede hangi vmlere ait bilgiler bulunuyor")
-    assert fields == ["name"]
+    assert fields == ["name", "datastore"]
+
+    # Tek datastore kapsamında kolon daraltılır (değer filtre notunda görünür)
+    rows = [{"name": "web01", "datastore": "NVME_DS"}, {"name": "db01", "datastore": "NVME_DS"}]
+    from app.services import virt_scope as vs
+
+    scope = vs.Scope(filters={"datastore": "NVME_DS"})
+    text = vic.format_vm_table(rows, fields, filter_note=vs.scope_note(scope), scope=scope)
+    assert "_Filtre: datastore=NVME_DS_" in text
+    assert "| VM Adı |" in text and "Datastore" not in text.splitlines()[3]
 
 
 def test_ip_question():

@@ -18,6 +18,8 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services import chat_cancel
+
 logger = logging.getLogger(__name__)
 
 
@@ -357,9 +359,21 @@ def run_read_only_tool_loop(
     if context_str:
         sys_content += "\n\nBAĞLAM (bu turda zaten toplanmış canlı veri — varsa önce buna bak):\n" + _budgeted_context(context_str)
 
+    # Kapsam BİR KEZ çözülür ve bu istek boyunca taşınır (prefetch, render,
+    # snapshot ipucu hepsi aynı nesneyi kullanır). Eskiden extract_entity_filters
+    # bu dosyada üç ayrı yerden çağrılıyor ve her çağıran kendi yorumunu
+    # uyguluyordu — kapsam sızıntılarının kaynağı buydu.
+    virt_scope = None
+    try:
+        from app.services.virt_scope import resolve_scope as _resolve_scope
+
+        virt_scope = _resolve_scope(db, user_message or "")
+    except Exception as e:
+        logger.debug("virt scope çözümlenemedi: %s", e)
+
     # Virt envanter sınıfı (VM disk / datastore / ESX) — sözleşme + prefetch
     inv_kind = None
-    inv_filters: Dict[str, str] = {}
+    inv_filters: Dict[str, str] = dict(getattr(virt_scope, "filters", {}) or {})
     inv_fields: Optional[List[str]] = None
     materialize_from_tool_results = None
     prefetch_spec = None
@@ -376,18 +390,15 @@ def run_read_only_tool_loop(
         prefetch_spec = _prefetch_spec
         materialize_from_tool_results = _materialize
         if domains is None or (domains and "vcenter" in domains):
-            inv_kind = detect_virt_inventory_kind(user_message)
+            inv_kind = detect_virt_inventory_kind(user_message, scope=virt_scope)
             if inv_kind:
                 sys_content += inventory_system_addendum(inv_kind)
-                # GENEL kural (datastore'a özel değil): mesajda geçen bilinen
-                # VM/datastore/host/cluster adını gerçek DB kayıtlarıyla
-                # eşleştirip filtre olarak uygula + yalnız istenen kolonları
-                # göster ("bilgi kirliliği" önlemi).
                 try:
-                    from app.services.virt_entity_resolver import extract_entity_filters
-                    inv_filters = extract_entity_filters(db, user_message)
+                    from app.services.virt_scope import system_addendum as _scope_addendum
+
+                    sys_content += _scope_addendum(virt_scope)
                 except Exception:
-                    inv_filters = {}
+                    pass
                 if inv_kind in (KIND_VM_DISK, KIND_VM_LIST):
                     inv_fields = detect_requested_vm_fields(user_message, filters=inv_filters)
     except Exception as e:
@@ -439,11 +450,7 @@ def run_read_only_tool_loop(
         _snapshot_size_re and _snapshot_size_re.search(user_message or "")
         and (domains is None or "vcenter" in domains)
     ):
-        try:
-            from app.services.virt_entity_resolver import extract_entity_filters
-            _vm_hint = extract_entity_filters(db, user_message).get("vm_name")
-        except Exception:
-            _vm_hint = None
+        _vm_hint = (getattr(virt_scope, "filters", {}) or {}).get("vm_name")
         _snap_tool_name = "vcenter_list_vm_snapshots" if _vm_hint else "vcenter_snapshot_summary"
         _snap_tool = tool_mod.get_tool(_snap_tool_name)
         if _snap_tool:
@@ -483,7 +490,9 @@ def run_read_only_tool_loop(
     # Zorunlu prefetch: model çağırmadan SoT çek → deterministik tablo
     if inv_kind and prefetch_spec:
         try:
-            spec = prefetch_spec(inv_kind, filters=inv_filters, fields=inv_fields)
+            spec = prefetch_spec(
+                inv_kind, filters=inv_filters, fields=inv_fields, scope=virt_scope,
+            )
             if spec:
                 pref_name, pref_args = spec
                 pref_tool = tool_mod.get_tool(pref_name)
@@ -538,6 +547,7 @@ def run_read_only_tool_loop(
                         det = materialize_from_tool_results(
                             inv_kind, structured_results,
                             filters=inv_filters, fields=inv_fields, directive=_directive,
+                            scope=virt_scope,
                         )
                         if det and not _has_unaddressed_cross_domain_clause(user_message, domains):
                             out = {
@@ -638,6 +648,8 @@ def run_read_only_tool_loop(
         "- Anlık ölçüm / latency / canlı sayaç → vcenter_perf_query\n"
         "- Trend, 'son 7/30 gün', 'ne zaman dolar', 'kötüleşen/right-sizing' → "
         "db_metric_trend (eğim ve tahmini motor hesaplar)\n"
+        "- 'VM neden yavaş', 'sorun VM'de mi host'ta mı', kaynak çekişmesi / CPU ready → "
+        "virt_bottleneck_diagnose (katman kararını motor verir)\n"
         "- Kapasite tahmini / risk / right-sizing / yönetici raporu → infra_report\n"
         "- Yukarıdakilerin kapsamadığı bir vSphere özelliği → vcenter_property_read\n"
         "- Prosedür, runbook, geçmiş benzer arıza → knowledge_search\n"
@@ -718,11 +730,24 @@ def run_read_only_tool_loop(
                         if _kind:
                             render_kind = _kind
                             if not render_filters:
+                                render_filters = dict(
+                                    getattr(virt_scope, "filters", {}) or {}
+                                )
+                            if render_fields is None:
+                                # Regex niyet tespiti kaçırdıysa kolon seti de
+                                # hesaplanmamış olur; eski sabit şablona düşmek
+                                # yerine istenen alanları burada türet (aksi halde
+                                # ör. disk başına datastore kolonu kaybolur).
                                 try:
-                                    from app.services.virt_entity_resolver import extract_entity_filters
-                                    render_filters = extract_entity_filters(db, user_message)
+                                    from app.services.virt_inventory_contract import (
+                                        detect_requested_vm_fields as _det_fields,
+                                    )
+
+                                    render_fields = _det_fields(
+                                        user_message, filters=render_filters,
+                                    )
                                 except Exception:
-                                    render_filters = {}
+                                    pass
                             logger.info(
                                 "[UnifiedToolChat] decouple: regex inv_kind boş ama "
                                 "tool=%s çağrısından kind=%s türetildi (fallback render)",
@@ -737,6 +762,7 @@ def run_read_only_tool_loop(
                 det = materialize_from_tool_results(
                     render_kind, structured_results,
                     filters=render_filters, fields=render_fields, directive=_directive,
+                    scope=virt_scope,
                 )
             except Exception:
                 det = None
@@ -761,6 +787,21 @@ def run_read_only_tool_loop(
         return out
 
     for _step in range(max(1, max_steps)):
+        # Kullanıcı iptali: araç turları arasında kontrol. Tek bir tur 30-90 sn
+        # sürebildiği için orkestratör döngüsünün token bazlı kontrolü tek
+        # başına yetmez — "durdur"a basıldığında sıradaki aracı hiç çalıştırma.
+        if chat_cancel.is_cancelled():
+            logger.info(
+                "[UnifiedToolChat] araç döngüsü kullanıcı iptaliyle durduruldu (adım %s)",
+                _step,
+            )
+            # `final` olayı ile çık: çağıranlar bu sözleşmeye göre yazıldı,
+            # yarı yolda generator'ı bitirmek onları hatalı duruma düşürürdü.
+            # O ana kadar toplanan araç çıktısı korunur.
+            _out = _finalize(early_stop=True)
+            _out["cancelled"] = True
+            yield _out
+            return
         if db_first and not escalate_live and _step >= tool_policy.DB_FIRST_MAX_STEPS:
             _unlock_live(f"faz adımı doldu ({tool_policy.DB_FIRST_MAX_STEPS})")
 

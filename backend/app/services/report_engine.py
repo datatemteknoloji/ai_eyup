@@ -517,6 +517,8 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         days_to_mem_80 = ra.days_to_threshold(
             h["mem_pct"], mem_daily, confidence=mem_trend.confidence,
         )
+        mem_range = ra.days_to_threshold_range(h["mem_pct"], mem_trend)
+        ds_range = ra.days_to_threshold_range(h["ds_pct"], ds_trend)
 
         status = "Kritik" if h["mem_pct"] > 85 or h["ds_pct"] > 85 else (
             "Uyarı" if h["mem_pct"] > 70 or h["ds_pct"] > 70 else "Normal"
@@ -538,7 +540,10 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
                 "free_gb": h["mem_free_gb"],
                 "avg_30d": round(trend.avg_mem or 0, 1) if trend else None,
                 "daily_growth_pct": round(mem_daily, 4),
+                "daily_growth_gb": ra.pct_per_day_to_gb(mem_daily, h["mem_total_gb"]),
                 "days_to_80pct": days_to_mem_80,
+                "days_to_80pct_range": mem_range,
+                "trend_confidence": mem_trend.confidence,
             },
             "storage": {
                 "used_pct": h["ds_pct"],
@@ -547,12 +552,26 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
                 "free_gb": h["ds_free_gb"],
                 "avg_30d": round(trend.avg_ds or 0, 1) if trend else None,
                 "daily_growth_pct": round(ds_daily, 4),
+                "daily_growth_gb": ra.pct_per_day_to_gb(ds_daily, h["ds_total_gb"]),
                 "days_to_80pct": days_to_ds_80,
+                "days_to_80pct_range": ds_range,
+                "trend_confidence": ds_trend.confidence,
             },
             "status": status,
             "vms_running": h["vms_running"],
             "vms_total": h["vms_total"],
         })
+
+    def _days_text(days: Optional[int], rng: Optional[Dict[str, Any]]) -> str:
+        """Tek sayı yerine belirsizlik aralığı ('35–60 gün') — daha dürüst ifade."""
+        if not rng:
+            return f"{days} gün"
+        fastest, slowest = rng.get("fastest"), rng.get("slowest")
+        if slowest is None:
+            return f"en iyimser {fastest} gün (yavaş senaryoda eşiğe ulaşmıyor)"
+        if fastest is not None and slowest > fastest:
+            return f"{fastest}–{slowest} gün"
+        return f"{days} gün"
 
     warnings = []
     for item in capacity_items:
@@ -561,11 +580,13 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         if mem_days == 0:
             warnings.append(f"{item['host']} belleği zaten %80'in üzerinde (mevcut %{item['memory']['used_pct']})")
         elif mem_days is not None and mem_days < 30:
-            warnings.append(f"{item['host']} belleği {mem_days} gün içinde %80'e ulaşacak")
+            txt = _days_text(mem_days, item["memory"].get("days_to_80pct_range"))
+            warnings.append(f"{item['host']} belleği {txt} içinde %80'e ulaşacak")
         if ds_days == 0:
             warnings.append(f"{item['host']} diski zaten %80'in üzerinde (mevcut %{item['storage']['used_pct']})")
         elif ds_days is not None and ds_days < 30:
-            warnings.append(f"{item['host']} diski {ds_days} gün içinde %80'e ulaşacak")
+            txt = _days_text(ds_days, item["storage"].get("days_to_80pct_range"))
+            warnings.append(f"{item['host']} diski {txt} içinde %80'e ulaşacak")
 
     # VM bazında disk tahsisatı — datastore varsa datastore, yoksa hypervisor adına göre grupla
     vms = _get_vms(db)
@@ -1032,8 +1053,10 @@ def generate_forecast_report(db: Session) -> Dict[str, Any]:
         "generated_at": datetime.utcnow().isoformat(),
         "forecasts": forecasts,
         "methodology": (
-            "Disk/Memory: günlük trend; düşüşte %0 extrapolasyonu yok. "
-            "CPU: p95/mevcut taban; negatif trend %0'a inmez."
+            "Eğim: Theil–Sen (aykırı değere dayanıklı); eşiğe kalan süre "
+            "ikili eğim %25–%75 aralığıyla verilir. Disk/Memory: günlük trend; "
+            "düşüşte %0 extrapolasyonu yok. CPU: p95/mevcut taban; negatif "
+            "trend %0'a inmez."
         ),
         "investment_needed": any(
             f["forecast_6m"]["mem_pct"] > 90 or f["forecast_6m"]["ds_pct"] > 90

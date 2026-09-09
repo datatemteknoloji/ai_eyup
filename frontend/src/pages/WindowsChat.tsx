@@ -314,7 +314,7 @@ const WindowsChat: React.FC<{
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['windows-chat-sessions'] })
-      abortChatStream(streamChannel)
+      abortChatStream(streamChannel, { keepPartial: false })
       setSelectedSessionId(data.id)
       setInput('')
     }
@@ -447,7 +447,7 @@ const WindowsChat: React.FC<{
           selectedId={selectedSessionId}
           onSelect={id => {
             if (id !== selectedSessionId) {
-              abortChatStream(streamChannel)
+              abortChatStream(streamChannel, { keepPartial: false })
             }
             setSelectedSessionId(id)
             setInput('')

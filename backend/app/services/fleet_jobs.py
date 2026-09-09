@@ -282,6 +282,97 @@ def run_windows_log_collection() -> Dict[str, Any]:
         db.close()
 
 
+def run_rag_reindex() -> Dict[str, Any]:
+    """RAG reindex (incident + event + Bilgi Bankası) — API process'inden ayrı.
+
+    Embedding CPU'yu doyurabildiği için bu iş API event loop'unda değil, Celery
+    worker'ında çalışır. Embedding sağlıksızsa tur atlanır (boş/sıfır vektör
+    yazmak yerine bir sonraki turu bekler).
+    """
+    from app.services.fleet_mutex import fleet_lock
+    from app.services.embedding import probe_embedding
+    from app.services.rag_service import (
+        ingest_events_from_db,
+        ingest_incidents_from_db,
+        ingest_knowledge_from_db,
+    )
+
+    db = _db()
+    try:
+        with fleet_lock("rag_reindex", ttl_sec=3600) as ok:
+            if not ok:
+                return {"skipped": True}
+
+            probe = asyncio.run(probe_embedding())
+            if not probe.get("ok"):
+                logger.warning(
+                    "RAG reindex atlandı — embedding sağlıksız (%s): %s",
+                    probe.get("base_url"), probe.get("error"),
+                )
+                return {"skipped": True, "reason": "embedding_unhealthy", "error": probe.get("error")}
+
+            async def _cycle():
+                inc = await ingest_incidents_from_db(db)
+                evt = await ingest_events_from_db(db)
+                kb = await ingest_knowledge_from_db(db)
+                return inc, evt, kb
+
+            n_inc, n_evt, n_kb = asyncio.run(_cycle())
+            logger.info(
+                "Celery fleet: RAG reindex — %s incident, %s event, %s knowledge chunk",
+                n_inc, n_evt, n_kb,
+            )
+            return {"incidents": n_inc, "events": n_evt, "knowledge": n_kb}
+    except Exception as exc:
+        logger.exception("Celery RAG reindex hata")
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
+def run_rag_maintenance() -> Dict[str, Any]:
+    """RAG bakımı — kaynağı silinmiş event/incident chunk'larını temizler.
+
+    Event retention (`event_retention_days`) DB'den kayıtları silince gömme
+    satırları arkada kalır; bu iş onları SQL tarafında bulup kontrollü
+    partiler hâlinde siler. Embedding çağrısı YAPMAZ, bu yüzden ucuzdur;
+    reindex'ten bağımsız (daha seyrek) çalışır.
+    """
+    from app.services.fleet_mutex import fleet_lock
+    from app.services.rag_store import COLLECTION_INCIDENTS, prune_orphan_source_chunks
+
+    max_delete = 50000
+    try:
+        from app.services.runtime_settings import get_setting
+        max_delete = int(get_setting("rag_maintenance_max_delete") or max_delete)
+    except Exception:
+        pass
+
+    try:
+        with fleet_lock("rag_maintenance", ttl_sec=1800) as ok:
+            if not ok:
+                return {"skipped": True}
+            out: Dict[str, Any] = {}
+            for prefix in ("event_", "incident_"):
+                try:
+                    res = prune_orphan_source_chunks(
+                        COLLECTION_INCIDENTS,
+                        id_prefix=prefix,
+                        max_delete=max(0, max_delete),
+                    )
+                    out[prefix] = res.get("deleted", 0)
+                    if res.get("capped"):
+                        out[f"{prefix}capped"] = True
+                except Exception as exc:
+                    logger.warning("RAG bakım (%s) hata: %s", prefix, exc)
+                    out[f"{prefix}error"] = str(exc)
+            logger.info("Celery fleet: RAG bakımı — %s", out)
+            return out
+    except Exception as exc:
+        logger.exception("Celery RAG bakım hata")
+        return {"error": str(exc)}
+
+
 def run_windows_live_metrics() -> Dict[str, Any]:
     from app.services.fleet_mutex import fleet_lock
     from app.services.windows_live_metrics import collect_and_store

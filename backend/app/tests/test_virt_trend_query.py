@@ -44,7 +44,14 @@ def test_unknown_metric_falls_back_to_default_not_raw_sql():
 
 
 def test_every_metric_maps_to_declared_column():
+    # Metrik tanımı 3'lü (kolon, birim, eşik) veya 4'lü (+ indirgeme
+    # fonksiyonu — türetilmiş cluster ekseni) olabilir. Kolon adı SQL'e
+    # string olarak girdiği için alfanümerik olma şartı KRİTİK.
     for entity, spec in _ENTITIES.items():
-        for key, (column, unit, threshold) in spec["metrics"].items():
+        for key, mdef in spec["metrics"].items():
+            assert len(mdef) in (3, 4), (entity, key)
+            column, unit = mdef[0], mdef[1]
             assert column.replace("_", "").isalnum(), (entity, key)
             assert unit
+            if len(mdef) == 4:
+                assert mdef[3] in ("avg", "sum", "max", "min"), (entity, key)

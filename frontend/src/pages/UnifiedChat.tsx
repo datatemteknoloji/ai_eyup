@@ -25,6 +25,25 @@ import {
 } from '../lib/chatStreamStore'
 import { useChatStickToBottom } from '../lib/chatScroll'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { useAuth } from '../auth/AuthContext'
+import type { ChatUsage } from '../lib/chatStreamStore'
+
+/** Token tüketimi — yalnız admin görür; sağlayıcı usage bildirmezse gizli. */
+function TokenUsageNote({ usage, show }: { usage?: ChatUsage | null; show: boolean }) {
+  const t = useT()
+  if (!show || !usage || !usage.total_tokens) return null
+  const key = (usage.calls ?? 0) > 1 ? 'chat_token_usage_calls' : 'chat_token_usage'
+  return (
+    <div className="text-[10px] text-slate-600 mt-1">
+      {t(key, {
+        total: usage.total_tokens.toLocaleString(),
+        input: usage.prompt_tokens.toLocaleString(),
+        output: usage.completion_tokens.toLocaleString(),
+        calls: usage.calls ?? 1,
+      })}
+    </div>
+  )
+}
 
 function _cleanCell(raw: string): string {
   return raw
@@ -94,7 +113,7 @@ function getFirstMarkdownTable(content: string): string | null {
   return out.length > 0 ? out.join('\n') : null
 }
 
-interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; usage?: ChatUsage | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
@@ -164,6 +183,8 @@ const UnifiedChat: React.FC<{
   const clarifyOptions = stream.clarifyOptions
   const suggestions = stream.suggestions
   const queueMessage = stream.queueMessage
+  const { user } = useAuth()
+  const showTokenUsage = Boolean(user?.is_admin || user?.role === 'admin')
 
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(() =>
     loadPersistedSessionId(streamChannel),
@@ -276,7 +297,7 @@ const UnifiedChat: React.FC<{
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['unified-chat-sessions'] })
-      abortChatStream(streamChannel)
+      abortChatStream(streamChannel, { keepPartial: false })
       setSelectedSessionId(data.id)
       setInput('')
     }
@@ -401,7 +422,7 @@ const UnifiedChat: React.FC<{
           selectedId={selectedSessionId}
           onSelect={id => {
             if (id !== selectedSessionId) {
-              abortChatStream(streamChannel)
+              abortChatStream(streamChannel, { keepPartial: false })
             }
             setSelectedSessionId(id)
             setInput('')
@@ -522,6 +543,9 @@ const UnifiedChat: React.FC<{
                       <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
                         {formatDate(msg.created_at)}
                       </div>
+                      {msg.role === 'assistant' && (
+                        <TokenUsageNote usage={msg.usage} show={showTokenUsage} />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -578,6 +602,7 @@ const UnifiedChat: React.FC<{
                       <div className={chatResponseBody}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
                       </div>
+                      <TokenUsageNote usage={stream.lastUsage} show={showTokenUsage} />
                     </div>
                   </div>
                 )}

@@ -24,8 +24,19 @@ _VM_RE = re.compile(
 )
 
 
-def detect_virt_inventory_kind(message: str) -> Optional[str]:
-    """Soru virt DB envanter sınıfına giriyor mu? (perf/QueryPerf hariç)."""
+def detect_virt_inventory_kind(
+    message: str,
+    *,
+    scope: Optional["object"] = None,
+) -> Optional[str]:
+    """Soru virt DB envanter sınıfına giriyor mu? (perf/QueryPerf hariç)
+
+    `scope` verilirse kapsam, kelime kalıplarından ÖNCE gelir: mesajda gerçek
+    bir VM adı çözülmüşse ve soru disk/datastore'a değiniyorsa sınıf
+    KIND_VM_DISK olur. Aksi hâlde "web01'in diskleri hangi datastore'da"
+    sorusu — içinde "vm" kelimesi geçmediği için — saf datastore listesine
+    düşüyor ve tüm datastore'lar basılıyordu.
+    """
     from app.services.chat_intent import (
         ChatIntentKind,
         classify_chat_intent,
@@ -43,6 +54,15 @@ def detect_virt_inventory_kind(message: str) -> Optional[str]:
     m = (message or "").lower()
     if not m.strip():
         return None
+
+    # Kapsam, kelime kalıplarından ÖNCE gelir: gerçek bir VM adı çözülmüşse
+    # disk/datastore sorusu VM disk envanteridir, saf datastore listesi değil.
+    scope_filters: Dict[str, str] = dict(getattr(scope, "filters", {}) or {})
+    if scope_filters.get("vm_name"):
+        if getattr(scope, "is_child", None) and scope.is_child():
+            return KIND_VM_DISK
+        if any(k in m for k in ("disk", "vmdk", "datastore", "depolama", "storage")):
+            return KIND_VM_DISK
 
     # Snapshot/olay/alarm soruları VM_LIST/VM_DISK genel eşleşmesine (aşağıdaki
     # "vm" + "kaç/liste" bloğu) ASLA düşmemeli — bu sınıfların kendi özel
@@ -177,16 +197,19 @@ def detect_requested_vm_fields(
     listesi; "diskleri neler" → isim + disk kırılımı; "IP'leri nedir" →
     isim + IP).
 
-    KAPSAM (scope) kelimeleri ile ALAN (field/kolon) kelimeleri birbirinden
-    ayrılır — aynı kelime ("datastore"/"host"/"cluster") hem varlık adını
-    filtrelemek hem de bir kolon istemek için kullanılabildiğinden:
-      - filters[...] o boyut için GERÇEK bir isim ile ZATEN eşleşmişse
-        (extract_entity_filters), aynı kelime kapsam belirlemek için
-        kullanılmış demektir → kolon olarak TEKRAR eklenmez.
-      - Eşleşme yoksa (yalnızca genel kelime var, isim yok) → o zaman
-        kullanıcı gerçekten o alanı SORUYOR demektir → kolon eklenir.
-    "datastore" kelimesi bu yüzden kolon listesine hiç girmez (VM tablosunda
-    zaten filtre olarak üstte gösterilir, tekrar istenmez).
+    KAPSAM (scope) ile ALAN (kolon) ayrımı BURADA YAPILMAZ — aynı kelime
+    ("datastore"/"host"/"cluster") hem varlığı filtrelemek hem de kolon
+    istemek için kullanılabildiğinden, kolonu bastırma kararı veriye bakarak
+    render katmanında verilir (`virt_scope.collapse_constant_columns`): kolon,
+    o boyut kapsamsa VE tüm satırlarda tek değere düşüyorsa gizlenir, değeri
+    filtre notunda gösterilir.
+
+    Neden değişti: eski sürümde `host`/`cluster` için "isim eşleşmediyse kolon
+    ekle" koşulu vardı ama `datastore` için karşılığı hiç yoktu — koşullu
+    olması gereken kural datastore'da KOŞULSUZ yasağa dönüşmüştü. Bu yüzden
+    "VM'ler hangi datastore'da" veya "web01'in diskleri hangi datastore'da"
+    gibi meşru sorularda kolon sessizce düşüyordu.
+
     Ayrıca "sadece/yalnız isim" gibi AÇIK bir minimal istek varsa, diğer
     tüm sinyalleri geçersiz kılıp yalnız ``name`` döner.
     Bu fonksiyon datastore'a özel değildir; herhangi bir VM/disk/ait
@@ -220,51 +243,59 @@ def detect_requested_vm_fields(
         fields.append("vcpu")
     if has("ram", "memory", "bellek"):
         fields.append("memory_mb")
-    if has("esxi", "esx") and not filters.get("host_name"):
+    if has("esxi", "esx", "host"):
         fields.append("host")
-    if has("cluster", "küme", "kume") and not filters.get("cluster"):
+    if has("cluster", "küme", "kume"):
         fields.append("cluster")
+    if has("datastore", "depolama alanı", "depolama alani") or has_token("ds"):
+        fields.append("datastore")
     if has("işletim sistemi", "isletim sistemi", "guest os"):
         fields.append("guest_os")
     return list(dict.fromkeys(fields))
 
 
-def _row_matches_filters(row: Dict[str, Any], filters: Dict[str, str]) -> bool:
-    """Savunmacı 2. kontrol: DB seviyesi filtre parametresi bir sebeple
-    uygulanmamış/atlanmışsa bile yanlış satırların render edilmesini engeller.
+def _as_scope(
+    filters: Optional[Dict[str, str]] = None,
+    scope: Optional["object"] = None,
+):
+    """`filters` dict'i veya hazır `Scope` → tek tip Scope nesnesi.
+
+    Geriye dönük uyumluluk: bu modülün fonksiyonları uzun süre `filters`
+    dict'i aldı; çağıranlar kademeli olarak Scope'a geçiyor.
     """
-    if not isinstance(row, dict) or not filters:
-        return True
+    from app.services.virt_scope import Scope
 
-    def _contains(val: Any, needle: str) -> bool:
-        return needle.lower() in str(val or "").lower()
-
-    if filters.get("datastore") and not _contains(row.get("datastore"), filters["datastore"]):
-        return False
-    if filters.get("vm_name") and not _contains(row.get("name"), filters["vm_name"]):
-        return False
-    if filters.get("host_name") and not _contains(
-        row.get("host") or row.get("esxi_host"), filters["host_name"]
-    ):
-        return False
-    if filters.get("cluster") and not _contains(row.get("cluster"), filters["cluster"]):
-        return False
-    return True
+    if scope is not None:
+        return scope
+    return Scope(filters={k: v for k, v in (filters or {}).items() if v})
 
 
-def _filter_note(filters: Optional[Dict[str, str]]) -> Optional[str]:
-    if not filters:
-        return None
-    parts = []
-    if filters.get("datastore"):
-        parts.append(f"datastore={filters['datastore']}")
-    if filters.get("vm_name"):
-        parts.append(f"vm={filters['vm_name']}")
-    if filters.get("host_name"):
-        parts.append(f"host={filters['host_name']}")
-    if filters.get("cluster"):
-        parts.append(f"cluster={filters['cluster']}")
-    return ", ".join(parts) or None
+def _row_matches_filters(
+    row: Dict[str, Any],
+    filters: Dict[str, str],
+    *,
+    entity_type: str = "vm",
+    scope: Optional["object"] = None,
+) -> bool:
+    """Savunmacı 2. kontrol — jenerik kapsam filtresine devreder.
+
+    Eski sürüm dört boyutu elle yazılmış `if` bloklarıyla kontrol ediyordu;
+    beşinci bir boyut eklendiğinde sessizce geçiyordu. Artık boyutlar
+    `virt_scope.SCOPE_DIMENSIONS` kayıt defterinden okunur ve alt koleksiyon
+    (ör. bir VM'in diskleri) da kapsama dahil edilir.
+    """
+    from app.services.virt_scope import row_in_scope
+
+    return row_in_scope(entity_type, row, _as_scope(filters, scope))
+
+
+def _filter_note(
+    filters: Optional[Dict[str, str]] = None,
+    scope: Optional["object"] = None,
+) -> Optional[str]:
+    from app.services.virt_scope import scope_note
+
+    return scope_note(_as_scope(filters, scope))
 
 
 _VM_FIELD_LABELS: Dict[str, str] = {
@@ -308,14 +339,34 @@ def format_vm_table(
     *,
     as_of: Optional[str] = None,
     filter_note: Optional[str] = None,
+    scope: Optional["object"] = None,
 ) -> str:
     """GENEL VM tablosu — YALNIZ `fields` içinde istenen kolonları render eder.
 
     Sabit şablon yok: kullanıcı ne istediyse (detect_requested_vm_fields) o
     gösterilir. Bu fonksiyon herhangi bir senaryo (datastore/host/cluster/VM
     adı filtreli veya filtresiz) için aynı şekilde çalışır — genel kuraldır.
+
+    `scope` verilirse iki ek kural işler:
+      * Granülerlik `child` ise satır = ALT VARLIK (ör. disk) — bir VM'in
+        diskleri farklı datastore'lara yayılabildiği için VM başına tek satır
+        yanlış cevap verirdi.
+      * Kapsam boyutu olan ve tüm satırlarda tek değere düşen kolon gizlenir;
+        değeri filtre notunda görünür (`collapse_constant_columns`).
     """
+    from app.services.virt_scope import collapse_constant_columns
+
+    sc = _as_scope(None, scope) if scope is not None else None
+    if sc is not None and sc.is_child():
+        return _format_vm_child_table(
+            vms, sc, as_of=as_of, filter_note=filter_note,
+        )
+
     cols = [f for f in dict.fromkeys(fields) if f in _VM_FIELD_LABELS] or ["name"]
+    if sc is not None:
+        kept = collapse_constant_columns("vm", list(vms), cols, sc)
+        # `name` her zaman kalır (kapsam tek VM olsa bile satırı tanımlar).
+        cols = ["name"] + [c for c in kept if c != "name"]
     header = "| " + " | ".join(_VM_FIELD_LABELS[c] for c in cols) + " |"
     sep = "|" + "|".join(("---:" if c in _VM_NUMERIC_FIELDS else "---") for c in cols) + "|"
     lines = ["## VM Listesi (kaynak: db_list_vms)", ""]
@@ -334,6 +385,79 @@ def format_vm_table(
         lines.append(
             "_Not: Adet/boyut vCenter provisioned disk envanteridir (guest `df` değil)._"
         )
+    return "\n".join(lines)
+
+
+def _format_vm_child_table(
+    vms: Sequence[Dict[str, Any]],
+    scope: Any,
+    *,
+    as_of: Optional[str] = None,
+    filter_note: Optional[str] = None,
+) -> str:
+    """Alt-varlık granülerliği: satır = disk (VM değil).
+
+    "web01'in disklerini ve bulundukları datastore'ları göster" sorusunun
+    doğru şekli budur; VM başına tek satırda datastore gösterilirse diskleri
+    farklı datastore'lara yayılmış VM'lerde cevap eksik kalır.
+    """
+    from app.services.entity_projection import VM_CHILD_COLLECTIONS
+
+    spec = VM_CHILD_COLLECTIONS.get(scope.child or "", {})
+    row_key = spec.get("row_key") or scope.child or "disks"
+    labels: Dict[str, str] = dict(spec.get("labels") or {})
+    numeric = set(spec.get("numeric") or ())
+    child_cols = [c for c in (scope.child_fields or spec.get("base_fields") or ()) if c in labels]
+    if not child_cols:
+        child_cols = list(spec.get("base_fields") or ("label",))
+
+    parent_col_needed = len([v for v in vms if isinstance(v, dict)]) != 1
+    header_cells = (["VM Adı"] if parent_col_needed else []) + [labels.get(c, c) for c in child_cols]
+    sep_cells = (["---"] if parent_col_needed else []) + [
+        "---:" if c in numeric else "---" for c in child_cols
+    ]
+
+    lines = ["## VM Disk Kırılımı (kaynak: db_list_vms)", ""]
+    if filter_note:
+        lines += [f"_Filtre: {filter_note}_", ""]
+    lines += ["| " + " | ".join(header_cells) + " |", "|" + "|".join(sep_cells) + "|"]
+
+    rows = 0
+    missing_child = 0
+    for raw in vms:
+        if not isinstance(raw, dict):
+            continue
+        items = raw.get(row_key)
+        if not isinstance(items, list) or not items:
+            missing_child += 1
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            cells = [str(raw.get("name") or "—")] if parent_col_needed else []
+            for col in child_cols:
+                val = item.get(col)
+                if col == "thin" and isinstance(val, bool):
+                    cells.append("thin" if val else "thick")
+                elif val is None or val == "":
+                    cells.append("DB null (sync gerekir)" if col == "datastore" else "—")
+                else:
+                    cells.append(str(val))
+            lines.append("| " + " | ".join(cells) + " |")
+            rows += 1
+
+    lines.append("")
+    lines.append(f"**Toplam:** {rows} disk / {len([v for v in vms if isinstance(v, dict)])} VM")
+    if missing_child:
+        lines.append(
+            f"_{missing_child} VM için disk kırılımı DB'de boş — hypervisor envanter sync gerekir._"
+        )
+    if as_of:
+        lines.append(f"as_of: `{as_of}`")
+    lines.append(
+        "_Not: Kapasite vCenter provisioned disk envanteridir (guest `df` değil); "
+        "datastore her diskin VMDK backing bilgisinden okunur._"
+    )
     return "\n".join(lines)
 
 
@@ -502,6 +626,7 @@ def materialize_from_tool_results(
     filters: Optional[Dict[str, str]] = None,
     fields: Optional[List[str]] = None,
     directive: Optional["OutputDirective"] = None,
+    scope: Optional["object"] = None,
 ) -> Optional[str]:
     """Prefetch/tool sonuçlarından deterministik cevap. Yoksa None.
 
@@ -521,7 +646,8 @@ def materialize_from_tool_results(
         render_rows_as_json,
     )
 
-    filters = filters or {}
+    sc = _as_scope(filters, scope)
+    filters = dict(sc.filters)
     by_name: Dict[str, Any] = {}
     for tr in tool_results:
         if not isinstance(tr, dict):
@@ -538,27 +664,33 @@ def materialize_from_tool_results(
         vms = payload.get("vms") or []
         if not isinstance(vms, list):
             return None
-        vms = [v for v in vms if _row_matches_filters(v, filters)]
+        vms = [v for v in vms if _row_matches_filters(v, filters, entity_type="vm", scope=sc)]
         as_of = payload.get("as_of")
 
         if directive == OutputDirective.JSON:
             return render_rows_as_json(vms, meta={
-                "kaynak": "db_list_vms", "as_of": as_of, "filtre": _filter_note(filters),
+                "kaynak": "db_list_vms", "as_of": as_of, "filtre": _filter_note(scope=sc),
             })
         if directive == OutputDirective.BRIEF:
             extra = None
             if vms and any(v.get("disk_gb") is not None for v in vms if isinstance(v, dict)):
                 total_gb = sum((v.get("disk_gb") or 0) for v in vms if isinstance(v, dict))
                 extra = f"Toplam disk: {total_gb} GB."
-            subject = "VM listesi" + (f" ({_filter_note(filters)})" if filters else "")
+            subject = "VM listesi" + (f" ({_filter_note(scope=sc)})" if filters else "")
             return render_rows_as_brief(vms, subject=subject, extra=extra)
 
-        if fields is None:
+        if fields is None and not sc.is_child():
             # Geriye dönük uyumluluk: fields hesaplanmadıysa eski sabit şablon.
             if kind == KIND_VM_DISK:
                 return format_vm_disk_table(vms, as_of=as_of)
             return format_vm_list_table(vms, as_of=as_of)
-        return format_vm_table(vms, fields, as_of=as_of, filter_note=_filter_note(filters))
+        return format_vm_table(
+            vms,
+            fields or ["name"],
+            as_of=as_of,
+            filter_note=_filter_note(scope=sc),
+            scope=sc,
+        )
 
     if kind == KIND_DATASTORE:
         payload = by_name.get("db_list_datastores")
@@ -567,12 +699,10 @@ def materialize_from_tool_results(
         rows = payload.get("datastores") or payload.get("items") or []
         if not isinstance(rows, list):
             return None
-        if filters.get("datastore"):
-            needle = filters["datastore"].lower()
-            rows = [
-                r for r in rows
-                if isinstance(r, dict) and needle in str(r.get("name") or "").lower()
-            ]
+        rows = [
+            r for r in rows
+            if _row_matches_filters(r, filters, entity_type="datastore", scope=sc)
+        ]
         if directive == OutputDirective.JSON:
             return render_rows_as_json(rows, meta={"kaynak": "db_list_datastores", "as_of": payload.get("as_of")})
         if directive == OutputDirective.BRIEF:
@@ -586,12 +716,10 @@ def materialize_from_tool_results(
         rows = payload.get("hosts") or payload.get("items") or []
         if not isinstance(rows, list):
             return None
-        if filters.get("host_name"):
-            needle = filters["host_name"].lower()
-            rows = [
-                r for r in rows
-                if isinstance(r, dict) and needle in str(r.get("name") or "").lower()
-            ]
+        rows = [
+            r for r in rows
+            if _row_matches_filters(r, filters, entity_type="host", scope=sc)
+        ]
         if directive == OutputDirective.JSON:
             return render_rows_as_json(rows, meta={"kaynak": "db_list_esx_hosts", "as_of": payload.get("as_of")})
         if directive == OutputDirective.BRIEF:
@@ -634,6 +762,7 @@ def prefetch_spec(
     *,
     filters: Optional[Dict[str, str]] = None,
     fields: Optional[List[str]] = None,
+    scope: Optional["object"] = None,
 ) -> Optional[Tuple[str, Dict[str, Any]]]:
     """(tool_name, args) — loop başında zorunlu çekim.
 
@@ -645,7 +774,10 @@ def prefetch_spec(
         kolonlar tool'dan çekilir. None ise (çağıran taraf hesaplamadıysa)
         geriye dönük uyumluluk için eski tam alan seti istenir.
     """
-    filters = filters or {}
+    from app.services.virt_scope import tool_args as scope_tool_args
+
+    sc = _as_scope(filters, scope)
+    filters = dict(sc.filters)
     if kind in (KIND_VM_DISK, KIND_VM_LIST):
         display_fields = list(fields) if fields else [
             "name", "ip", "power_state", "host", "cluster", "datastore",
@@ -656,30 +788,22 @@ def prefetch_spec(
             tool_fields.add("disks" if f == "disk_breakdown" else f)
         # Savunmacı filtreleme için, kolon olarak gösterilmese bile filtre
         # boyutlarını tool'dan çek (materialize_from_tool_results 2. kontrolü yapabilsin).
-        if filters.get("datastore"):
-            tool_fields.add("datastore")
-        if filters.get("host_name"):
-            tool_fields.add("host")
-        if filters.get("cluster"):
-            tool_fields.add("cluster")
+        for dim, key in (("datastore", "datastore"), ("host_name", "host"), ("cluster", "cluster")):
+            if filters.get(dim):
+                tool_fields.add(key)
+        # Alt-varlık granülerliği disk kayıtlarını ZORUNLU kılar (satır = disk).
+        if sc.is_child():
+            tool_fields.add(sc.child or "disks")
         args: Dict[str, Any] = {
             "limit": 500,
             "include_disks": "disks" in tool_fields,
             "fields": sorted(tool_fields),
         }
-        if filters.get("datastore"):
-            args["datastore"] = filters["datastore"]
-        if filters.get("vm_name"):
-            args["name_filter"] = filters["vm_name"]
-        if filters.get("host_name"):
-            args["host_name"] = filters["host_name"]
-        if filters.get("cluster"):
-            args["cluster"] = filters["cluster"]
+        args.update(scope_tool_args("vm", sc))
         return ("db_list_vms", args)
     if kind == KIND_DATASTORE:
         args = {"limit": 200}
-        if filters.get("datastore"):
-            args["name_filter"] = filters["datastore"]
+        args.update(scope_tool_args("datastore", sc))
         return ("db_list_datastores", args)
     if kind == KIND_ESX_HOST:
         args = {
@@ -688,8 +812,7 @@ def prefetch_spec(
                 "connection_state", "hypervisor",
             ],
         }
-        if filters.get("host_name"):
-            args["name_filter"] = filters["host_name"]
+        args.update(scope_tool_args("host", sc))
         return ("db_list_esx_hosts", args)
     return None
 

@@ -98,9 +98,20 @@ class VirtDatastoreMetric(Base):
     free_gb = Column(Float)
     used_gb = Column(Float)
     usage_pct = Column(Float)
-    uncommitted_gb = Column(Float)   # thin provisioning taahhüdü
+    # summary.uncommitted: thin disk + snapshot büyümesiyle TAAHHÜT EDİLMİŞ ama
+    # henüz ayrılmamış alan. free_gb tek başına aşırı tahsis (overcommit)
+    # riskini göstermez; bu yüzden kapasite tahmininde ayrı eksen olarak durur.
+    uncommitted_gb = Column(Float)
     accessible = Column(Integer)     # 1/0 — erişilebilirlik geçmişi
     host_count = Column(Integer)
+
+    # ── Datastore performansı (QueryPerf, 5 dk historical interval) ──────────
+    # Eskiden yalnız anlık/on-demand sorgulanabiliyordu; zaman serisi olmadan
+    # "gecikmesi son 7 günde artan datastore" sorusu cevaplanamıyordu.
+    read_iops = Column(Float)
+    write_iops = Column(Float)
+    read_latency_ms = Column(Float)
+    write_latency_ms = Column(Float)
 
     __table_args__ = (
         Index("idx_vdm_hv_name_ts", "hypervisor_id", "name", "timestamp"),

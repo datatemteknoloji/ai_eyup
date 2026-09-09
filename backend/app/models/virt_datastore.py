@@ -29,6 +29,8 @@ class VirtDatastore(Base):
     free_gb = Column(Float, nullable=True)
     used_gb = Column(Float, nullable=True)
     usage_pct = Column(Float, nullable=True)
+    # Thin/snapshot taahhüdü — aşırı tahsis riskini free_gb tek başına göstermez
+    uncommitted_gb = Column(Float, nullable=True)
     accessible = Column(Boolean, default=True)
     host_count = Column(Integer, nullable=True)
     as_of = Column(DateTime(timezone=True), nullable=False, index=True)

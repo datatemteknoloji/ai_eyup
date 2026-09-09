@@ -147,6 +147,7 @@ def fetch_live_vm_stats(db: Session) -> Dict[str, Any]:
                 "memory_reservation_mb": r.get("memory_reservation_mb") or 0,
                 "memory_limit_mb": r.get("memory_limit_mb"),
                 "tools_version_status": r.get("tools_version_status"),
+                "tools_running_status": r.get("tools_running_status"),
                 "disk_read_iops": io.get("disk_read_iops"),
                 "disk_write_iops": io.get("disk_write_iops"),
                 "net_rx_kbps": io.get("net_rx_kbps"),

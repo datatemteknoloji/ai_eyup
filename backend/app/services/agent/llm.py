@@ -49,6 +49,41 @@ def _ollama_chat(payload: Dict[str, Any], timeout: int):
     )
 
 
+def _force_final_answer(model: str, messages: List[Dict[str, Any]], timeout: int) -> str:
+    """gpt-oss/harmony gibi kanal-tabanlı modeller bazen "final" kanalına hiç
+    geçmeden düşünce metniyle (thinking) durur — `message.content` boş kalır,
+    `message.thinking` doludur ama İngilizce iç-monolog içerir, doğrudan
+    kullanıcıya gösterilemez.
+
+    Bu, tool'lar KALDIRILDIKTAN sonra bile olabiliyor (bkz. chat_with_tools'taki
+    500 "tool call parse" retry'ı — o retry de content boş dönebilir). Son çare:
+    konuşmaya "artık tool çağırma, mevcut sonuçlarla düz metin nihai cevap yaz"
+    talimatını AÇIK bir kullanıcı mesajı olarak ekleyip tools OLMADAN tekrar sor.
+    Bu da boşsa boş string döner — çağıran taraf placeholder'a düşer.
+    """
+    nudge = messages + [{
+        "role": "user",
+        "content": (
+            "Yukarıdaki tool sonuçlarına bakarak sorunun NİHAİ cevabını ŞİMDİ "
+            "düz metin (markdown) olarak Türkçe yaz. Başka tool ÇAĞIRMA, sadece "
+            "elindeki bilgiyle özetle. Sonuç boşsa (örn. eşleşen VM/host yok) "
+            "bunu net bir cümleyle bildir."
+        ),
+    }]
+    try:
+        resp = _ollama_chat(
+            {"model": model, "messages": nudge, "stream": False,
+             "options": {"temperature": 0.1}},
+            timeout,
+        )
+        if resp.status_code == 200:
+            msg = (resp.json().get("message", {}) or {})
+            return _strip_thinking(msg.get("content", "") or "")
+    except Exception as e:
+        logger.error(f"[AgentLLM] final-answer nudge başarısız: {e}")
+    return ""
+
+
 def _parse_tool_calls(msg: Dict[str, Any]) -> List[Dict[str, Any]]:
     tool_calls: List[Dict[str, Any]] = []
     for idx, tc in enumerate(msg.get("tool_calls", []) or []):
@@ -74,6 +109,7 @@ def chat_with_tools(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
     timeout: int = 120,
+    _retry: bool = True,
 ) -> Dict[str, Any]:
     """
     Tek tur LLM çağrısı. Dönüş:
@@ -84,7 +120,37 @@ def chat_with_tools(
         ],
         "error": Optional[str],
       }
+
+    Geçici bağlantı/timeout hataları (Ollama anlık yoğunluk, model yükleme vb.)
+    kullanıcıya hemen hata olarak yansıtılmadan önce BİR kez otomatik tekrar
+    denenir (_retry=True, iç kullanım — dışarıdan çağrılırken varsayılan davranış
+    korunur).
     """
+    result = _chat_with_tools_once(model, messages, tools, timeout)
+    if result.get("error") and _retry:
+        transient = (
+            "bağlanılamadı" in result["error"] or "zaman aşımı" in result["error"]
+            or "HTTP 500" in result["error"] or "HTTP 502" in result["error"]
+            or "HTTP 503" in result["error"]
+        )
+        if transient:
+            logger.warning(
+                f"[AgentLLM] Geçici LLM hatası, 1 kez tekrar deneniyor: {result['error'][:150]}"
+            )
+            retry_result = _chat_with_tools_once(model, messages, tools, timeout)
+            if not retry_result.get("error"):
+                return retry_result
+            # Retry de başarısız oldu — orijinal hatayı döndür.
+            return retry_result
+    return result
+
+
+def _chat_with_tools_once(
+    model: str,
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    timeout: int = 120,
+) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -136,6 +202,10 @@ def chat_with_tools(
                     if resp2.status_code == 200:
                         msg2 = (resp2.json().get("message", {}) or {})
                         content2 = _strip_thinking(msg2.get("content", "") or "")
+                        if not content2:
+                            # Retry de boş döndü (harmony "final" kanalına hiç
+                            # geçmemiş olabilir) — açık talimatla bir kez daha dene.
+                            content2 = _force_final_answer(model, messages, timeout)
                         # Tool çağrısı yok → ajan bunu final yanıt olarak değerlendirir.
                         return {"content": content2, "tool_calls": [], "error": None}
                 except Exception as re2:
@@ -153,6 +223,13 @@ def chat_with_tools(
         msg = data.get("message", {}) or {}
         content = _strip_thinking(msg.get("content", "") or "")
         tool_calls = _parse_tool_calls(msg)
+
+        if not content and not tool_calls:
+            # Model tool çağırmıyor (bitirdi) ama content de boş — "final"
+            # kanalına geçmeden durmuş (gpt-oss/harmony'de gözlenen bir kaçak
+            # senaryo). Boş yanıt kullanıcıya "(boş yanıt)" gibi anlamsız bir
+            # placeholder olarak gitmesin; açık talimatla bir kez daha dene.
+            content = _force_final_answer(model, messages, timeout)
 
         return {"content": content, "tool_calls": tool_calls, "error": None}
 

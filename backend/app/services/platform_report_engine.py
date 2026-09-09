@@ -109,13 +109,66 @@ def generate_linux_executive_summary(db: Session) -> Dict[str, Any]:
     }
 
 
+_LINUX_CAPACITY_METRICS = (
+    "cpu_usage_percent",
+    "memory_usage_percent",
+    "disk_root_usage_percent",
+)
+
+
+def daily_metric_series(
+    db: Session,
+    server_ids: List[int],
+    metric_names: List[str],
+    *,
+    days: int = 30,
+) -> Dict[tuple, List[float]]:
+    """`{(server_id, metric_name): [günlük ortalama, en eski → en yeni]}`.
+
+    Trend hesabı için tek sorguda günlük özet çeker (sunucu × metrik başına
+    ayrı sorgu atmak 15k filoda kabul edilemez).
+    """
+    if not server_ids or not metric_names:
+        return {}
+    from sqlalchemy import text as sa_text
+
+    out: Dict[tuple, List[float]] = {}
+    try:
+        rows = db.execute(
+            sa_text(
+                """
+                SELECT server_id, metric_name,
+                       date_trunc('day', timestamp) AS day,
+                       AVG(value) AS avg_val
+                FROM metric_data
+                WHERE server_id = ANY(:ids)
+                  AND metric_name = ANY(:names)
+                  AND timestamp >= NOW() - make_interval(days => :days)
+                GROUP BY server_id, metric_name, day
+                ORDER BY day ASC
+                """
+            ),
+            {"ids": list(server_ids), "names": list(metric_names), "days": int(days)},
+        ).all()
+    except Exception as exc:  # metric_data yok / TimescaleDB kapalı
+        logger.warning("Linux kapasite trend serisi okunamadı: %s", exc)
+        return {}
+
+    for r in rows:
+        key = (int(r.server_id), str(r.metric_name))
+        out.setdefault(key, []).append(float(r.avg_val or 0.0))
+    return out
+
+
 def generate_linux_capacity(db: Session) -> Dict[str, Any]:
-    servers = _servers_for_platform(db, "linux")
+    from app.services import report_analytics as ra
+
+    servers = _servers_for_platform(db, "linux")[:50]
     since = datetime.utcnow() - timedelta(hours=1)
     rows = []
-    for srv in servers[:50]:
+    for srv in servers:
         metrics: Dict[str, float] = {}
-        for name in ("cpu_usage_percent", "memory_usage_percent", "disk_root_usage_percent"):
+        for name in _LINUX_CAPACITY_METRICS:
             val = (
                 db.query(MetricData.value)
                 .filter(
@@ -129,7 +182,40 @@ def generate_linux_capacity(db: Session) -> Dict[str, Any]:
             if val:
                 metrics[name] = round(float(val[0]), 1)
         if metrics:
-            rows.append({"server": srv.name, "ip": srv.ip_address or "", **metrics})
+            rows.append({"server": srv.name, "ip": srv.ip_address or "", "server_id": srv.id, **metrics})
+
+    # 30 günlük günlük-ortalama seriden trend + eşiğe kalan gün (aralıklı)
+    series = daily_metric_series(
+        db,
+        [r["server_id"] for r in rows],
+        ["memory_usage_percent", "disk_root_usage_percent"],
+        days=30,
+    )
+    forecasts = []
+    for r in rows:
+        sid = r["server_id"]
+        mem_fc = ra.build_threshold_forecast(
+            r.get("memory_usage_percent"), series.get((sid, "memory_usage_percent"), []),
+        )
+        disk_fc = ra.build_threshold_forecast(
+            r.get("disk_root_usage_percent"), series.get((sid, "disk_root_usage_percent"), []),
+        )
+        r["memory_forecast"] = mem_fc
+        r["disk_forecast"] = disk_fc
+        for label, fc in (("Bellek", mem_fc), ("Disk (/)", disk_fc)):
+            days = fc.get("days_to_threshold")
+            if days is not None and days <= 90:
+                forecasts.append({
+                    "server": r["server"],
+                    "resource": label,
+                    "current_pct": fc.get("current_pct"),
+                    "days_to_80pct": days,
+                    "days_to_80pct_range": fc.get("days_to_threshold_range"),
+                    "daily_growth_pct": fc.get("daily_growth_pct"),
+                    "confidence": fc.get("trend_confidence"),
+                })
+
+    forecasts.sort(key=lambda f: f["days_to_80pct"])
 
     high_cpu = [r for r in rows if r.get("cpu_usage_percent", 0) >= 85]
     high_mem = [r for r in rows if r.get("memory_usage_percent", 0) >= 85]
@@ -143,6 +229,11 @@ def generate_linux_capacity(db: Session) -> Dict[str, Any]:
         "high_memory_count": len(high_mem),
         "high_disk_count": len(high_disk),
         "top_servers": sorted(rows, key=lambda r: r.get("cpu_usage_percent", 0), reverse=True)[:15],
+        "forecast": forecasts[:20],
+        "forecast_methodology": (
+            "30 günlük günlük-ortalama seri; eğim Theil–Sen (dayanıklı), "
+            "aralık ikili eğim %25–%75. Yetersiz veri varsa tahmin üretilmez."
+        ),
     }
 
 

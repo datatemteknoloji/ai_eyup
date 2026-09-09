@@ -91,6 +91,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
+        self.tasks.append(asyncio.create_task(self._periodic_rag_maintenance()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
         self.tasks.append(asyncio.create_task(self._periodic_event_cleanup()))
         self.tasks.append(asyncio.create_task(self._periodic_node_exporter_sync()))
@@ -333,31 +334,19 @@ class BackgroundTaskManager:
                 await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
 
     async def _periodic_rag_reindex(self):
-        """Her 30 dakikada incident + event + Bilgi Bankası kayıtlarını RAG hafızasına indeksler.
-        Böylece AI Chat geçmiş olaylardan ve öğrenilmiş sunucu bilgilerinden haberdar olur."""
-        logger.info("RAG reindex task started (1800s interval, first run in 300s)")
+        """RAG reindex tetikleyici — asıl embedding işi Celery worker'ında çalışır.
+
+        API process'i yalnızca zamanlayıcı tick'i atar; incident/event/knowledge
+        embedding'i `fleet.rag_reindex` ile ayrı process'e gider (Level 1 dahil
+        hiçbir backend bileşeni bu yüzden yavaşlamaz). Kayıt imzası değişmemişse
+        embed hiç yapılmaz (bkz. rag_service.select_changed_chunks)."""
+        logger.info("RAG reindex scheduler started (Celery, first run in 300s)")
         await asyncio.sleep(300)
 
         while self.running:
             try:
-                db = SessionLocal()
-                try:
-                    from app.services.rag_service import (
-                        ingest_incidents_from_db,
-                        ingest_events_from_db,
-                        ingest_knowledge_from_db,
-                    )
-                    n_inc = await ingest_incidents_from_db(db)
-                    n_evt = await ingest_events_from_db(db)
-                    n_kb = await ingest_knowledge_from_db(db)
-                    logger.info(
-                        f"RAG reindex: {n_inc} incident, {n_evt} event, {n_kb} knowledge chunk indekslendi"
-                    )
-                except Exception as e:
-                    logger.error(f"RAG reindex error: {e}")
-                finally:
-                    db.close()
-
+                from app.services.fleet_jobs import run_rag_reindex
+                await _enqueue_or_run("fleet.rag_reindex", run_rag_reindex, label="rag_reindex")
                 await asyncio.sleep(_rt_sec("rag_reindex_interval_sec", 1800))
 
             except asyncio.CancelledError:
@@ -367,6 +356,29 @@ class BackgroundTaskManager:
                 logger.error(f"RAG reindex task error: {e}")
                 await asyncio.sleep(_rt_sec("rag_reindex_interval_sec", 1800))
 
+
+    async def _periodic_rag_maintenance(self):
+        """Öksüz RAG chunk temizliği — event/incident retention sonrası bakım.
+
+        Embedding yapmaz (yalnızca DB silme), bu yüzden reindex'ten ayrı ve
+        çok daha seyrek çalışır. Asıl iş Celery worker'ında."""
+        logger.info("RAG maintenance scheduler started (first run in 900s)")
+        await asyncio.sleep(900)
+
+        while self.running:
+            try:
+                from app.services.fleet_jobs import run_rag_maintenance
+                await _enqueue_or_run(
+                    "fleet.rag_maintenance", run_rag_maintenance, label="rag_maintenance",
+                )
+                await asyncio.sleep(_rt_sec("rag_maintenance_interval_sec", 86400))
+
+            except asyncio.CancelledError:
+                logger.info("RAG maintenance task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"RAG maintenance task error: {e}")
+                await asyncio.sleep(_rt_sec("rag_maintenance_interval_sec", 86400))
 
     async def _periodic_snapshot_cleanup(self):
         """Süresi dolmuş VM snapshot kayıtlarını hypervisor'dan siler."""

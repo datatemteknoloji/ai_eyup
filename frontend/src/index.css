@@ -211,13 +211,18 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(15,2
 html[data-theme="light"] ::-webkit-scrollbar-track { background: var(--bg-base); }
 
 /* Light mode: remap hard-coded dark utilities (Settings, forms, panels, L1) */
+/* /95 eksikliği sağ-tık menü gövdesini white temada siyah bırakıyordu. */
 html[data-theme="light"] .bg-slate-950,
+html[data-theme="light"] .bg-slate-950\/95,
 html[data-theme="light"] .bg-slate-950\/90,
 html[data-theme="light"] .bg-slate-950\/80,
+html[data-theme="light"] .bg-slate-950\/70,
 html[data-theme="light"] .bg-slate-950\/60,
 html[data-theme="light"] .bg-slate-950\/50,
 html[data-theme="light"] .bg-slate-950\/40,
+html[data-theme="light"] .bg-slate-950\/30,
 html[data-theme="light"] .bg-slate-900,
+html[data-theme="light"] .bg-slate-900\/95,
 html[data-theme="light"] .bg-slate-900\/90,
 html[data-theme="light"] .bg-slate-900\/80,
 html[data-theme="light"] .bg-slate-900\/70,
@@ -228,6 +233,7 @@ html[data-theme="light"] .bg-slate-900\/30 {
   background-color: var(--bg-surface) !important;
 }
 html[data-theme="light"] .bg-slate-800,
+html[data-theme="light"] .bg-slate-800\/95,
 html[data-theme="light"] .bg-slate-800\/90,
 html[data-theme="light"] .bg-slate-800\/80,
 html[data-theme="light"] .bg-slate-800\/70,
@@ -237,10 +243,12 @@ html[data-theme="light"] .bg-slate-800\/40,
 html[data-theme="light"] .bg-slate-800\/30,
 html[data-theme="light"] .bg-slate-700,
 html[data-theme="light"] .bg-slate-700\/80,
+html[data-theme="light"] .bg-slate-700\/70,
 html[data-theme="light"] .bg-slate-700\/60,
 html[data-theme="light"] .bg-slate-700\/50,
 html[data-theme="light"] .bg-slate-700\/40,
 html[data-theme="light"] .bg-slate-700\/30,
+html[data-theme="light"] .bg-slate-700\/20,
 html[data-theme="light"] .hover\:bg-slate-700:hover,
 html[data-theme="light"] .hover\:bg-slate-700\/50:hover,
 html[data-theme="light"] .hover\:bg-slate-700\/40:hover,
@@ -248,6 +256,11 @@ html[data-theme="light"] .hover\:bg-slate-800:hover,
 html[data-theme="light"] .hover\:bg-slate-800\/80:hover,
 html[data-theme="light"] .hover\:bg-slate-800\/60:hover {
   background-color: var(--bg-elevated) !important;
+}
+/* Ansible / PlatformStatusTab gibi sabit hex koyu kartlar */
+html[data-theme="light"] .bg-\[\#0d1422\],
+html[data-theme="light"] .bg-\[\#080d16\] {
+  background-color: var(--bg-surface) !important;
 }
 html[data-theme="light"] .bg-black\/30,
 html[data-theme="light"] .bg-black\/40,
@@ -575,6 +588,7 @@ html[data-theme="light"] [style*="color: rgba(203,213,225"],
 html[data-theme="light"] [style*="color:rgba(203,213,225"],
 html[data-theme="light"] [style*="color: #e8edf5"],
 html[data-theme="light"] [style*="color:#e8edf5"],
+html[data-theme="light"] .text-\[\#e8edf5\],
 html[data-theme="light"] [style*="color: #e2e8f0"],
 html[data-theme="light"] [style*="color:#e2e8f0"],
 html[data-theme="light"] [style*="color: #f1f5f9"],

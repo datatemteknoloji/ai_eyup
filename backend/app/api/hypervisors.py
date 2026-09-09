@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
+from app.core.auth import get_current_user_optional
 from app.core.database import get_db
 from app.core.inventory_guard import require_integrations_inventory
 from app.models.hypervisor import Hypervisor, HypervisorType
@@ -1402,7 +1403,11 @@ def ask_hypervisor_question(
 
 
 @router.post("/ask/stream")
-async def ask_hypervisor_stream(req: HypervisorAskRequest, db: Session = Depends(get_db)):
+async def ask_hypervisor_stream(
+    req: HypervisorAskRequest,
+    db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_optional),
+):
     """Reconnectable SSE — mevcut senkron ask mantığını arka planda çalıştırır."""
     import json as _json
     payload = req.model_dump()
@@ -1440,6 +1445,7 @@ async def ask_hypervisor_stream(req: HypervisorAskRequest, db: Session = Depends
         message=req.question,
         session_id=req.session_id,
         pipeline=pipeline,
+        user_id=getattr(_auth_user, "id", None),
     )
 
 

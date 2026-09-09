@@ -179,7 +179,7 @@ export function ActionMenu({ items, label }: { items: MenuItem[]; label?: string
           {visible.map((it, i) => (
             <button key={i} onClick={() => { it.onClick(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors hover:bg-white/[0.05]"
-              style={{ color: it.accent || 'rgba(226,232,240,0.9)' }}>
+              style={{ color: it.accent || 'var(--text-primary)' }}>
               {it.icon && <span className="w-4 text-center">{it.icon}</span>}
               {it.label}
             </button>

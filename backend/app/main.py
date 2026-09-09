@@ -232,6 +232,30 @@ async def startup_tasks():
                     ))
             except Exception as _enum_e:
                 logger.debug(f"hypervisortype enum migration skip ({_enum_value}): {_enum_e}")
+        # metric_data birincil anahtarı: yalnızca (timestamp) olan eski şema, bir
+        # sync turunun TÜM satırları aynı zaman damgasını paylaştığı için her
+        # yazmayı "duplicate key" ile düşürüyordu → tablo sürekli boş kalıyordu.
+        # Satırı tekilleştiren kolonlar eklenir (TimescaleDB bölümleme kolonunun
+        # anahtarda kalmasını şart koşar). Zaten composite ise idempotent atlanır.
+        _ddl(
+            """DO $$
+            DECLARE cols text;
+            BEGIN
+                SELECT string_agg(a.attname, ',' ORDER BY k.ord) INTO cols
+                FROM pg_constraint c
+                JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                WHERE c.conrelid = 'metric_data'::regclass AND c.contype = 'p';
+
+                IF cols = 'timestamp' THEN
+                    ALTER TABLE metric_data DROP CONSTRAINT metric_data_pkey;
+                    ALTER TABLE metric_data
+                        ADD CONSTRAINT metric_data_pkey
+                        PRIMARY KEY (timestamp, server_id, metric_name);
+                    RAISE NOTICE 'metric_data_pkey composite yapildi';
+                END IF;
+            END $$;"""
+        )
         _ddl("ALTER TABLE agent_actions ADD COLUMN IF NOT EXISTS requires_root BOOLEAN DEFAULT FALSE")
         _ddl("ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(10) DEFAULT 'skip'")
         _ddl("ALTER TABLE system_update_plans ADD COLUMN IF NOT EXISTS snapshot_retention VARCHAR(20) DEFAULT '1w'")
@@ -245,6 +269,7 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_disk_gb INTEGER",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_power_state VARCHAR(30)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_tools_status VARCHAR(50)",
+                "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_tools_version_status VARCHAR(50)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_network_info JSONB",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_cluster VARCHAR(255)",
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS vm_datastore VARCHAR(255)",
@@ -295,6 +320,25 @@ async def startup_tasks():
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cluster_ref VARCHAR(64)",
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS overall_status VARCHAR(32)",
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS sensor_bad_count INTEGER",
+                # Host performans sayaçları (QueryPerf ile doldurulur) —
+                # bkz. vcenter_client.get_all_host_perf / virt_diagnostics
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS net_dropped_rx DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS net_dropped_tx DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cpu_ready_ms DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cpu_ready_pct DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS mem_balloon_mb DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS mem_swap_used_mb DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS disk_read_iops DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS disk_write_iops DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS disk_latency_ms DOUBLE PRECISION",
+                "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS disk_device_latency_ms DOUBLE PRECISION",
+                # Datastore taahhüt edilmemiş (thin/snapshot) alan
+                "ALTER TABLE virt_datastore_metrics ADD COLUMN IF NOT EXISTS uncommitted_gb DOUBLE PRECISION",
+                "ALTER TABLE virt_datastore_metrics ADD COLUMN IF NOT EXISTS read_iops DOUBLE PRECISION",
+                "ALTER TABLE virt_datastore_metrics ADD COLUMN IF NOT EXISTS write_iops DOUBLE PRECISION",
+                "ALTER TABLE virt_datastore_metrics ADD COLUMN IF NOT EXISTS read_latency_ms DOUBLE PRECISION",
+                "ALTER TABLE virt_datastore_metrics ADD COLUMN IF NOT EXISTS write_latency_ms DOUBLE PRECISION",
+                "ALTER TABLE virt_datastores ADD COLUMN IF NOT EXISTS uncommitted_gb DOUBLE PRECISION",
                 "CREATE INDEX IF NOT EXISTS ix_hvm_cluster_name ON hypervisor_host_metrics (cluster_name)",
             ]:
                 _ddl(_col_sql)
@@ -578,9 +622,11 @@ async def startup_tasks():
     # backend'den sonra ayağa kalkabilir — birkaç dakika dene, sonra vazgeç
     # (sonraki restart yine dener).
     async def _rag_seed_docs():
+        import random
         from app.services.rag_seed import seed_rag_from_directory, resolve_rag_seed_dir
         last = None
-        for attempt in range(1, 37):
+        delay = 10.0
+        for attempt in range(1, 13):
             try:
                 root = resolve_rag_seed_dir()
                 if root is None:
@@ -609,7 +655,10 @@ async def startup_tasks():
             except Exception as e:
                 last = e
                 logger.warning("RAG docs seed attempt=%s: %s", attempt, e)
-            await asyncio.sleep(10)
+            # Embedding hazır değilse sabit 10 sn ile 36 kez zorlamak yerine
+            # artan bekleme + jitter (Ollama'yı gereksiz meşgul etmez).
+            await asyncio.sleep(delay + random.uniform(0, 3))
+            delay = min(delay * 1.7, 300.0)
         logger.warning("RAG docs seed vazgeçildi (embedding hazır değil?): %s", last)
     if _role in ("all", "chat", "") and _do_rag_seed:
         asyncio.create_task(_rag_seed_docs())
