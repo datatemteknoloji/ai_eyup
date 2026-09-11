@@ -83,6 +83,16 @@ interface RagStatus {
     error?: string | null
     hint?: string
     remote_llm_fallback?: boolean
+    probe_mode?: string
+  }
+  vector_store?: {
+    ok?: boolean
+    disabled?: boolean
+    schema_ready?: boolean
+    reason?: string | null
+    marker_path?: string
+    marker_present?: boolean
+    host_has_avx?: boolean
   }
 }
 
@@ -152,6 +162,8 @@ const RagTab: React.FC = () => {
       return body
     },
     retry: 1,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
   })
   const uploadPdf = useMutation({
     mutationFn: async () => {
@@ -238,7 +250,9 @@ const RagTab: React.FC = () => {
         throw new Error(r.detail || `HTTP ${res.status}`)
       }
       return res.json()
-    }
+    },
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
   })
   const searchRunbook = useMutation({
     mutationFn: async (query: string) => {
@@ -281,6 +295,8 @@ const RagTab: React.FC = () => {
       return res.json()
     },
     refetchInterval: 60000,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
   })
   const approveCandidate = useMutation({
     mutationFn: async (id: number) => {
@@ -502,6 +518,20 @@ const RagTab: React.FC = () => {
           {src && <p className="text-[10px] text-slate-500 mt-1">facts {src.learned_facts_db ?? 0} · inv {src.linux_inventory_db ?? 0}</p>}
         </div>
       </div>
+      {status?.vector_store && status.vector_store.ok === false && (
+        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-200">{t('set_vector_down')}</p>
+          <p className="text-xs text-amber-100/80 mt-1 break-words">
+            {status.vector_store.reason || t('set_vector_down_hint')}
+          </p>
+          {status.vector_store.marker_path && (
+            <p className="text-[11px] text-amber-100/50 mt-2 font-mono break-all">
+              {status.vector_store.marker_path}
+              {status.vector_store.host_has_avx ? t('set_vector_avx_ok') : ''}
+            </p>
+          )}
+        </div>
+      )}
       {status?.embedding && !status.embedding.ok && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100/90">
           <p className="font-medium text-rose-200">{t('set_embed_down')}</p>
@@ -523,6 +553,7 @@ const RagTab: React.FC = () => {
           <p className="text-xs text-sky-200/70 mt-1">
             {status.embedding.base_url} · {status.embedding.model}
             {status.embedding.dim ? ` · ${status.embedding.dim} dim` : ''}
+            {status.embedding.probe_mode === 'light' ? t('set_embed_light') : ''}
             {status.embedding.model_present === false ? t('set_model_missing') : ''}
           </p>
         </div>
@@ -1536,6 +1567,26 @@ const Settings: React.FC = () => {
   const [guideErr, setGuideErr] = useState('')
   const [guideLang, setGuideLang] = useState<'tr' | 'en'>(locale === 'en' ? 'en' : 'tr')
   const [activeTab, setActiveTab] = useState('credentials')
+  const { data: coverageMisses } = useQuery<{
+    ok: boolean
+    count: number
+    misses: Array<{
+      question?: string
+      hits?: number
+      platform?: string
+      reason?: string
+      last_seen?: string
+    }>
+  }>({
+    queryKey: ['chat-coverage-misses'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/chat-coverage-misses?limit=20`)
+      if (!r.ok) return { ok: false, count: 0, misses: [] }
+      return r.json()
+    },
+    enabled: isAdmin && activeTab === 'about',
+    staleTime: 30000,
+  })
   const [showForm, setShowForm] = useState(false)
   const [editingCred, setEditingCred] = useState<Credential | null>(null)
   const [form, setForm] = useState({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 })
@@ -3119,6 +3170,7 @@ const Settings: React.FC = () => {
                         ['virtualization', 'set_guide_virt'],
                         ['windows', 'set_guide_windows'],
                         ['openshift', 'set_guide_openshift'],
+                        ['ai-architecture', 'set_guide_ai_arch'],
                       ] as const).map(([pack, label]) => (
                         <button
                           key={pack}
@@ -3152,7 +3204,7 @@ const Settings: React.FC = () => {
                             }
                           }}
                           className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-50 ${
-                            pack === 'full'
+                            pack === 'full' || pack === 'ai-architecture'
                               ? 'bg-blue-600/30 text-blue-200 border-blue-500/50 hover:bg-blue-600/40'
                               : 'bg-blue-600/10 text-blue-300 border-blue-500/30 hover:bg-blue-600/25'
                           }`}
@@ -3163,6 +3215,36 @@ const Settings: React.FC = () => {
                       ))}
                     </div>
                     {guideErr && <p className="text-xs text-red-400 mt-2">{guideErr}</p>}
+                    <div className="mt-6 pt-5 border-t border-white/[0.06]">
+                      <p className="text-sm font-medium text-slate-200">{t('set_coverage_title')}</p>
+                      <p className="text-xs text-slate-400 mt-1 mb-3">{t('set_coverage_desc')}</p>
+                      {(coverageMisses?.count || 0) === 0 ? (
+                        <p className="text-xs text-slate-500">{t('set_coverage_empty')}</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left">
+                            <thead>
+                              <tr className="text-slate-400 border-b border-white/10">
+                                <th className="py-1.5 pr-3 font-medium">{t('set_coverage_q')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_coverage_hits')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_coverage_plat')}</th>
+                                <th className="py-1.5 font-medium">{t('set_coverage_reason')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(coverageMisses?.misses || []).map((row, i) => (
+                                <tr key={`${row.question || i}-${i}`} className="border-b border-white/[0.04] text-slate-300">
+                                  <td className="py-1.5 pr-3 max-w-md truncate" title={row.question || ''}>{row.question || '—'}</td>
+                                  <td className="py-1.5 pr-3">{row.hits ?? 0}</td>
+                                  <td className="py-1.5 pr-3">{row.platform || '—'}</td>
+                                  <td className="py-1.5">{row.reason || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

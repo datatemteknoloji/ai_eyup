@@ -261,6 +261,7 @@ services:
     environment:
       - TZ=${TZ:-Europe/Istanbul}
       - OLLAMA_HOST=http://192.168.1.222:11434
+      - OLLAMA_KEEP_ALIVE=-1
     ports:
       - "11434:11434"
     volumes:

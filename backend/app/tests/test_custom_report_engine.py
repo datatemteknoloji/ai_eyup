@@ -32,6 +32,7 @@ def test_coerce_directive_valid_and_invalid():
     assert engine.coerce_directive(None) == OutputDirective.NONE
     assert engine.coerce_directive("bogus") == OutputDirective.NONE
     assert engine.coerce_directive(OutputDirective.BRIEF) == OutputDirective.BRIEF
+    assert engine.coerce_directive("diagram") == OutputDirective.DIAGRAM
 
 
 # ── render_tool_result ───────────────────────────────────────────────────────

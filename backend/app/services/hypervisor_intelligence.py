@@ -3266,23 +3266,9 @@ def _has_tool_evidence(question: str, min_chars: int = 80) -> bool:
     return len(_tool_evidence_block(question)) >= min_chars
 
 
-_ANCHOR_RE = re.compile(r"\d+[\.,]?\d*|\b(?:\d{1,3}\.){3}\d{1,3}\b")
-
-
 def _answer_ignores_evidence(answer: str, evidence: str, max_len: int = 400) -> bool:
-    """Kısa cevap, kanıttaki hiçbir somut değeri içermiyor mu?
-
-    "Veri yok" cümlesini kalıp listesiyle kovalamak yetmiyor — model her turda
-    yeni bir ifade uyduruyor ("bağlantı sağlanamadı", "rapor gelmedi"...).
-    Bunun yerine içerik ölçülür: kanıtta sayı/IP varken cevapta hiçbiri
-    geçmiyorsa ve cevap kısaysa, kanıt kullanılmamış demektir.
-    """
-    if not answer or not evidence or len(answer) > max_len:
-        return False
-    anchors = {a for a in _ANCHOR_RE.findall(evidence) if len(a) >= 2}
-    if len(anchors) < 3:
-        return False
-    return not any(a in answer for a in anchors)
+    from app.services.chat_evidence import answer_ignores_evidence
+    return answer_ignores_evidence(answer, evidence, max_len=max_len)
 
 
 def _render_tool_evidence_fallback(

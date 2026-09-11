@@ -277,6 +277,7 @@ services:
     environment:
       - TZ=${TZ:-Europe/Istanbul}
       - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_KEEP_ALIVE=-1
     ports:
       - "11434:11434"
     volumes:

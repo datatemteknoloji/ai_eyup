@@ -72,6 +72,12 @@ SYSTEM_PROMPT = (
     "Tool ortak anahtarla JOIN eder — ayrı çağırıp isimleri tahminle birleştirme. "
     "Yalnız istenen kolonları yanıtta göster; missing_fields doluysa "
     "'envanterde yok / sync gerekir' de, uydurma.\n"
+    "- LİNUX×VIRT I/O: Guest iowait ile VM disk latency aynı pencerede mi? "
+    "linux_virt_io_correlate(name=hostname|vm_name|IP). Join yoksa veya bir taraf "
+    "metrik yoksa korelasyon uydurma; tool data_status söyler.\n"
+    "- EXADATA: rack/cell/compute → exadata_health_overview / db_list_exadata_racks / "
+    "db_list_exadata_nodes. Canlı cellcli/ASMCMD/AWR yok. linked_server_id varsa "
+    "Linux get_*; cell CPU uydurma.\n"
     "- CANLI PERF (Monitor): Disk Rate, Disk Requests, anlık CPU/mem/net → "
     "vcenter_perf_query. metrics paket/key listesi ver (disk_rate, disk_requests, "
     "cpu, overview…). Kullanıcının istemediği metrikleri çekme. "
@@ -213,6 +219,11 @@ _PLATFORM_HINTS = {
     "exadata": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Exadata. "
         "Genel Linux filo, Windows veya vCenter karıştırma.\n"
+        "Rack/kabinet sayısı, model, sağlık → exadata_health_overview / db_list_exadata_racks. "
+        "Compute node / storage cell listesi → db_list_exadata_nodes (role=compute_node|storage_cell). "
+        "Bunlar DB envanterdir. Canlı cellcli, ASMCMD, AWR, cell CPU YOK — uydurma. "
+        "linked_server_id varsa o host için Linux get_* (OS CPU/disk) kullanılabilir; "
+        "bunu cell/ASM metriği diye yazma.\n"
         "infra_overview yalnızca Exadata özeti döner."
     ),
 }
@@ -257,6 +268,8 @@ def _has_unaddressed_cross_domain_clause(message: str, domains: Optional[frozens
 
 def _tool_result_to_text(result: Any) -> str:
     try:
+        from app.services.chat_data_status import annotate_payload
+        result = annotate_payload(result)
         return json.dumps(result, ensure_ascii=False, default=str)[:48000]
     except Exception:
         return str(result)[:48000]
@@ -323,6 +336,8 @@ def run_read_only_tool_loop(
         sys_content += _PLATFORM_HINTS.get("virt", "")
     elif plat == "unified" and domains and "openshift" in domains and "linux" not in domains and "vcenter" not in domains:
         sys_content += _PLATFORM_HINTS.get("openshift", "")
+    elif plat == "unified" and domains and "exadata" in domains and "vcenter" not in domains and "openshift" not in domains:
+        sys_content += _PLATFORM_HINTS.get("exadata", "")
     elif plat == "unified" and domains and "linux" in domains and "vcenter" not in domains and "openshift" not in domains:
         sys_content += _PLATFORM_HINTS.get("linux", "")
 
@@ -650,6 +665,8 @@ def run_read_only_tool_loop(
         "db_metric_trend (eğim ve tahmini motor hesaplar)\n"
         "- 'VM neden yavaş', 'sorun VM'de mi host'ta mı', kaynak çekişmesi / CPU ready → "
         "virt_bottleneck_diagnose (katman kararını motor verir)\n"
+        "- Guest Linux iowait ile VM disk latency aynı pencerede mi → "
+        "linux_virt_io_correlate (join + iki metrik şart; yoksa uydurma)\n"
         "- Kapasite tahmini / risk / right-sizing / yönetici raporu → infra_report\n"
         "- Yukarıdakilerin kapsamadığı bir vSphere özelliği → vcenter_property_read\n"
         "- Prosedür, runbook, geçmiş benzer arıza → knowledge_search\n"
@@ -658,6 +675,7 @@ def run_read_only_tool_loop(
     )
 
     _nudged = False
+    _clause_nudged = False
     _intent_cache: Dict[str, Any] = {}
 
     def _intent_kind_name() -> Optional[str]:
@@ -850,6 +868,23 @@ def run_read_only_tool_loop(
                     plat, (user_message or "")[:100],
                 )
                 continue
+            if used_tools and not _clause_nudged:
+                try:
+                    from app.services.chat_clause_check import (
+                        sufficiency_nudge,
+                        uncovered_clause_labels,
+                    )
+                    _missing = uncovered_clause_labels(user_message, tools_used)
+                except Exception:
+                    _missing = []
+                if _missing:
+                    _clause_nudged = True
+                    messages.append({"role": "system", "content": sufficiency_nudge(_missing)})
+                    logger.info(
+                        "[UnifiedToolChat] eksik cümle nudge missing=%s tools=%s",
+                        _missing, tools_used,
+                    )
+                    continue
             if not used_tools and _needs_tool_evidence():
                 try:
                     from app.services.chat_coverage import record_coverage_miss
@@ -902,6 +937,7 @@ def run_read_only_tool_loop(
             if _prior_calls >= _MAX_SAME_CALL:
                 messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                     "ok": False,
+                    "data_status": "NOT_QUERIED",
                     "error": (
                         f"'{name}' bu argümanlarla bu turda zaten {_prior_calls} kez "
                         "çağrıldı — tekrar ÇALIŞTIRILMADI. Yukarıdaki önceki sonucu "
@@ -926,6 +962,7 @@ def run_read_only_tool_loop(
                     messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                         "error": block_msg,
                         "ok": False,
+                        "data_status": "NOT_QUERIED",
                     }, ensure_ascii=False)})
                     continue
 

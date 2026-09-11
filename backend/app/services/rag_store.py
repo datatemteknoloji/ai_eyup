@@ -7,7 +7,14 @@ bir kez `rag_chroma_migrate` ile taşınır; chroma volume silinmez.
 
 Not: Bazı eski CPU'larda (AVX'siz Xeon X56xx vb.) pgvector .so yüklenirken
 SIGILL ile Postgres process'i düşer ve küme recovery'ye girer. Bu durumda
-CREATE EXTENSION ASLA denenmez; marker dosyası ile kalıcı olarak atlanır.
+CREATE EXTENSION ASLA denenmez.
+
+Marker (``.pgvector_unsupported``) yapışkan false-positive olmamalı:
+- AVX yok → disable, CREATE yok.
+- AVX var + eski AVX marker → yok say / sil, devam.
+- Önceki CREATE hatası + extension yok → CREATE tekrarlanmaz (SIGILL riski);
+  extension zaten yüklüyse marker temizlenir.
+- ``RAG_PGVECTOR_FORCE=1`` → CREATE-failed kilidini de zorla yeniden dene.
 """
 from __future__ import annotations
 
@@ -16,7 +23,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 
@@ -31,9 +38,13 @@ COLLECTION_KNOWLEDGE = "knowledge_facts"
 
 EMBEDDING_DIM = 768
 
+_MARKER_AVX_TEXT = "pgvector skipped: host CPU lacks AVX (or previous SIGILL).\n"
+_MARKER_CREATE_PREFIX = "pgvector CREATE EXTENSION failed:"
+
 _schema_lock = threading.Lock()
 _schema_ready = False
 _vector_disabled = False
+_vector_disable_reason: Optional[str] = None
 
 
 def _unsupported_marker() -> Path:
@@ -57,8 +68,41 @@ def _host_has_avx() -> bool:
     return True  # okunamazsa engelleme (modern host varsayımı)
 
 
+def _pgvector_force() -> bool:
+    return (os.getenv("RAG_PGVECTOR_FORCE") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def is_vector_disabled() -> bool:
     return _vector_disabled
+
+
+def vector_disable_reason() -> Optional[str]:
+    return _vector_disable_reason
+
+
+def get_vector_store_status() -> Dict[str, Any]:
+    """UI /rag/status için vektör deposu sağlığı (ensure_schema tetikler)."""
+    ensure_schema()
+    marker = _unsupported_marker()
+    marker_present = False
+    marker_preview = None
+    try:
+        marker_present = marker.is_file()
+        if marker_present:
+            marker_preview = (marker.read_text(encoding="utf-8", errors="replace") or "")[:240]
+    except OSError:
+        pass
+    return {
+        "ok": (not _vector_disabled) and _schema_ready,
+        "disabled": bool(_vector_disabled),
+        "schema_ready": bool(_schema_ready),
+        "reason": _vector_disable_reason,
+        "marker_path": str(marker),
+        "marker_present": marker_present,
+        "marker_preview": marker_preview,
+        "host_has_avx": _host_has_avx(),
+        "force_env": _pgvector_force(),
+    }
 
 
 def _vec_literal(embedding: List[float]) -> str:
@@ -73,57 +117,118 @@ def _vec_literal(embedding: List[float]) -> str:
     return "[" + ",".join(str(float(x)) for x in embedding) + "]"
 
 
+def _read_marker_text(marker: Path) -> str:
+    try:
+        if marker.is_file():
+            return marker.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    return ""
+
+
+def _write_marker(marker: Path, content: str) -> None:
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(content, encoding="utf-8")
+    except OSError as e:
+        logger.warning("RAG pgvector marker yazılamadı (%s): %s", marker, e)
+
+
+def _clear_marker(marker: Path) -> None:
+    try:
+        if marker.is_file():
+            marker.unlink()
+            logger.info("RAG pgvector unsupported marker silindi: %s", marker)
+    except OSError as e:
+        logger.warning("RAG pgvector marker silinemedi (%s): %s", marker, e)
+
+
+def _probe_vector_extension() -> Optional[bool]:
+    """True=yüklü, False=yok, None=sorgu hatası."""
+    try:
+        with engine.connect() as conn:
+            installed = conn.execute(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            ).scalar()
+        return bool(installed)
+    except Exception as e:
+        logger.warning("RAG pgvector extension kontrolü başarısız: %s", e)
+        return None
+
+
+def _set_disabled(reason: str) -> None:
+    global _vector_disabled, _vector_disable_reason
+    _vector_disabled = True
+    _vector_disable_reason = (reason or "")[:500]
+
+
 def ensure_schema() -> None:
     """Idempotent DDL — init_timescale da çağırır; store ilk kullanımda da güvence."""
-    global _schema_ready, _vector_disabled
-    if _schema_ready or _vector_disabled:
+    global _schema_ready, _vector_disabled, _vector_disable_reason
+    if _schema_ready:
         return
     with _schema_lock:
-        if _schema_ready or _vector_disabled:
+        if _schema_ready:
+            return
+        # Process içi hard-fail: CREATE/SIGILL sonrası tekrar deneme.
+        if _vector_disabled:
             return
 
         marker = _unsupported_marker()
-        if marker.is_file() or not _host_has_avx():
-            _vector_disabled = True
-            try:
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.write_text(
-                    "pgvector skipped: host CPU lacks AVX (or previous SIGILL).\n",
-                    encoding="utf-8",
-                )
-            except OSError:
-                pass
+        has_avx = _host_has_avx()
+        force = _pgvector_force()
+        marker_text = _read_marker_text(marker)
+        create_failed_marker = _MARKER_CREATE_PREFIX in marker_text
+
+        # AVX yok → CREATE asla; SIGILL riski.
+        if not has_avx and not force:
+            _set_disabled("CPU AVX yok; pgvector güvenli değil (SIGILL riski)")
+            _write_marker(marker, _MARKER_AVX_TEXT)
             logger.warning(
-                "RAG pgvector atlandı (CPU AVX yok veya önceki SIGILL marker). "
+                "RAG pgvector atlandı (CPU AVX yok). "
                 "Semantik RAG bu hostta kapalı; diğer özellikler etkilenmez."
             )
             return
 
-        # Extension zaten yüklü mü? (yoksa CREATE denemeden önce kontrol)
-        try:
-            with engine.connect() as conn:
-                installed = conn.execute(
-                    text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-                ).scalar()
-        except Exception as e:
-            logger.warning("RAG pgvector extension kontrolü başarısız: %s", e)
-            installed = None
+        installed = _probe_vector_extension()
 
-        if not installed:
+        # Önceki CREATE hatası: AVX olsa bile CREATE'i tekrarlama (Postgres düşürebilir),
+        # ta ki extension zaten yüklü olsun veya FORCE.
+        if create_failed_marker and not force and installed is not True:
+            reason = (marker_text.strip() or "CREATE EXTENSION previously failed")[:500]
+            _set_disabled(reason)
+            logger.warning(
+                "RAG pgvector atlandı (önceki CREATE EXTENSION hatası; tekrar denenmiyor). "
+                "Kurtarmak için extension'ı elle yükleyin veya RAG_PGVECTOR_FORCE=1. Marker: %s",
+                marker,
+            )
+            return
+
+        if marker.is_file() and has_avx and not create_failed_marker:
+            # Stale AVX / generic marker on capable host (datatemkonsol vakası).
+            logger.info(
+                "RAG pgvector: AVX mevcut; eski unsupported marker yok sayılıyor (%s)",
+                marker,
+            )
+            _clear_marker(marker)
+        elif create_failed_marker and installed is True:
+            logger.info(
+                "RAG pgvector: vector extension yüklü; eski CREATE-failed marker temizleniyor (%s)",
+                marker,
+            )
+            _clear_marker(marker)
+
+        if installed is not True:
             try:
                 with engine.begin() as conn:
                     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             except Exception as e:
-                # SIGILL sonrası bağlantı kopması / recovery — bir daha deneme.
-                _vector_disabled = True
-                try:
-                    marker.parent.mkdir(parents=True, exist_ok=True)
-                    marker.write_text(f"pgvector CREATE EXTENSION failed: {e}\n", encoding="utf-8")
-                except OSError:
-                    pass
+                # SIGILL sonrası bağlantı kopması / recovery — process içinde bir daha deneme.
+                _set_disabled(f"CREATE EXTENSION failed: {e}")
+                _write_marker(marker, f"{_MARKER_CREATE_PREFIX} {e}\n")
                 logger.error(
                     "RAG pgvector CREATE EXTENSION başarısız (muhtemel CPU SIGILL): %s. "
-                    "Marker yazıldı; sonraki başlangıçlarda atlanacak.",
+                    "Marker yazıldı; AVX yoksa veya FORCE yoksa sonraki başlangıçlarda CREATE tekrarlanmaz.",
                     e,
                 )
                 return
@@ -164,14 +269,31 @@ def ensure_schema() -> None:
             except Exception as e:
                 logger.warning("RAG HNSW index atlandı: %s", e)
         _schema_ready = True
+        _vector_disabled = False
+        _vector_disable_reason = None
+        if marker.is_file():
+            _clear_marker(marker)
         logger.info("RAG pgvector schema hazır")
-
 
 
 def _ensure_vector_ready() -> bool:
     """Schema hazır ve pgvector kullanılabilir mi?"""
     ensure_schema()
     return (not is_vector_disabled()) and _schema_ready
+
+
+def _require_vector_ready() -> None:
+    """Yazma yolları: kapalıysa sessizce yutma — net RuntimeError."""
+    if _ensure_vector_ready():
+        return
+    reason = _vector_disable_reason or "pgvector kapalı"
+    marker = _unsupported_marker()
+    raise RuntimeError(
+        f"RAG vektör deposu kullanılamıyor: {reason}. "
+        f"Marker: {marker}. "
+        "AVX'li hostta eski marker ise dosyayı silin veya backend'i yeniden başlatın; "
+        "CREATE kilidi için RAG_PGVECTOR_FORCE=1 (dikkat: SIGILL riski)."
+    )
 
 def _meta_json(metadatas: Optional[List[dict]], n: int) -> List[str]:
     if not metadatas:
@@ -198,8 +320,7 @@ def add_chunks(
         return
     if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    if not _ensure_vector_ready():
-        return
+    _require_vector_ready()
     metas = _meta_json(metadatas, len(ids))
     with engine.begin() as conn:
         for i, cid in enumerate(ids):
@@ -233,8 +354,7 @@ def upsert_chunks(
         return
     if embeddings is None or len(embeddings) != len(documents):
         raise ValueError("embeddings length must match documents")
-    if not _ensure_vector_ready():
-        return
+    _require_vector_ready()
     metas = _meta_json(metadatas, len(ids))
     with engine.begin() as conn:
         for i, cid in enumerate(ids):

@@ -146,6 +146,15 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(len(text) / chars_per_token()))
 
 
+def truncation_notice(section: str, orig_tokens: int, kept_tokens: int) -> str:
+    """Modele görünen kesme notu — sessiz kayıp yerine fail-explicit."""
+    return (
+        f"\n\n[CONTEXT KESİLDİ: {section} orijinal ~{orig_tokens} token, "
+        f"modele ~{kept_tokens} token gitti. Kesilen satırlar için "
+        f"'canlı veri yok' DEME — veri kısaltıldı, sorgulanmadı değil.]"
+    )
+
+
 def truncate_text_to_token_budget(text: str, max_tokens: int, *, suffix: str = "\n\n…(context kısaltıldı)") -> Tuple[str, bool]:
     """Metni tahmini token bütçesine kırpar. (text, truncated?)"""
     if not text or max_tokens <= 0:
@@ -180,7 +189,10 @@ def apply_prompt_budget(prompt: str, *, reserve: Optional[int] = None) -> Tuple[
 def apply_context_char_budget(text: str, max_tokens: Optional[int] = None) -> str:
     """unified_tool_chat context_str için."""
     budget = max_tokens or get_input_token_budget()
-    out, _ = truncate_text_to_token_budget(text, budget)
+    orig = estimate_tokens(text or "")
+    out, cut = truncate_text_to_token_budget(text, budget)
+    if cut:
+        out = out + truncation_notice("context", orig, estimate_tokens(out))
     return out
 
 
@@ -268,6 +280,16 @@ def budget_sections(
                 "da yetmez; kesme YAPILMADI (soru/tool sonucu korunuyor, gateway "
                 "kendi limit hatasını verebilir).",
                 log_label or "-", t_system, t_tail, limit,
+            )
+
+    if truncated:
+        if truncated_section and "context" in truncated_section:
+            out_context = (out_context or "") + truncation_notice(
+                "context", t_context, estimate_tokens(out_context),
+            )
+        if truncated_section and "history" in (truncated_section or ""):
+            out_history = (out_history or "") + truncation_notice(
+                "history", t_history, estimate_tokens(out_history),
             )
 
     meta = {

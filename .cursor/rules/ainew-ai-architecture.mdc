@@ -1,0 +1,35 @@
+---
+description: ainew AI sohbet/tool/RAG mevcut mimari haritası; GUIDE güncelleme zorunluluğu
+globs: backend/app/api/*chat*.py,backend/app/api/hypervisors.py,backend/app/api/agent.py,backend/app/api/nlq.py,backend/app/api/rag.py,backend/app/services/unified_*.py,backend/app/services/module_orchestrator.py,backend/app/services/chat_*.py,backend/app/services/agent/**/*.py,backend/app/services/rag_*.py,backend/app/services/llm_*.py,backend/app/services/hypervisor_intelligence.py,backend/app/services/virt_diagnostics.py,backend/app/services/data_fetch_ladder.py,backend/app/services/nlq/**/*.py,docs/guides/**/ai-architecture.md
+alwaysApply: false
+---
+
+# ainew — AI mimari (mevcut sistem)
+
+Detay (tam rapor, kısaltılmaz): `docs/guides/tr/modules/ai-architecture.md` (EN eşi `en/modules/`). Ayarlar → Hakkında → **AI Mimari** PDF bu dosyanın tamamıdır. Bu kural kısa haritadır.
+
+## GÜNCELLEME ZORUNLU
+
+Bu glob’lardaki routing, tool, prompt, RAG, domain veya sohbet lifecycle değişince **aynı turda**:
+
+1. `docs/guides/tr/modules/ai-architecture.md`
+2. `docs/guides/en/modules/ai-architecture.md`
+3. Bu kural (harita eskirse)
+
+Atlama. Kural/GUIDE koddan saparsa sonraki ajan yanlış varsayar.
+
+## Gerçek akış (tahmin etme)
+
+- Intent/domain önce keyword: `route_unified` + `plan_modules`. Conf≤0.70 ise isteğe bağlı `route_llm_hint` (birleşim; `auto_explore` daralmaz; circuit açıksa atlanır). Tam classifier yok.
+- Unified: full-scan → chitchat → cache → router → collect XOR agentic → `_build_prompt`.
+- Erken çıkış (inventory, QA_RULES, virt deterministic tablo) LLM’i atlar.
+- Chat tool loop **READ_ONLY** (`run_read_only_tool_loop`, ~6 adım). Mutate yalnız `/agent` + onay.
+- Groq/OpenAI/OpenRouter: final stream doğrudan; tool loop `chat_sync` ile aynı sağlayıcıya (anahtar varsa). Anthropic tool yok. Circuit/REMOTE_LLM sessiz Ollama düşmez.
+- Exadata: `db_list_exadata_*` / `exadata_health_overview` (DB). Canlı cellcli/ASM yok. Linked compute → Linux `get_*`.
+- OpenShift ayrı `/ask` yok → `/chat/stream` + `platform=openshift`.
+- Virt: `QA_RULES` regex şablon; DB-first; snapshot boyutu SOAP prefetch (`db_list_vms` yetmez).
+- Çapraz domain: multi plan + `cross_entity_match` + LLM sentez. Metrik RCA: `virt_diagnostics` (VM↔host) ve join şartlı `linux_virt_io_correlate` (guest iowait × VM disk latency). Join yoksa korelasyon yok.
+- Kanıt: araçsız “veri yok” yasak. Virt **ve Unified final** retry (`chat_evidence`). Tool/collect `data_status`. Kesilince `[CONTEXT KESİLDİ]`. Çok-parça: `chat_clause_check`. Coverage-miss: Ayarlar → Hakkında. Unified kanıt rozeti (`chat_evidence_badge`, model güveni değil).
+- Çıktı: `/table` `/json` `/brief` `/diagram` (`chat_output_directives`). `/diagram` aynı final LLM + ` ```mermaid ` + kısa yorum; frontend `ChatMermaid` (açık kart, SVG harden, path etiketi `["/boot"]` sanitize). `/chart` alias değil (Recharts). Yeni SSE/tool yok.
+- RAG: pgvector; bu GUIDE ingest edilmez.
+- Uzak LLM circuit açık → yerel Ollama’ya sessiz düşme yok.

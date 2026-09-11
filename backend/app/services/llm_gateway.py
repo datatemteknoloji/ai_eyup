@@ -2,10 +2,10 @@
 LLM Gateway — yerel Ollama ile uzak, OpenAI-uyumlu bir sağlayıcı (örn. Bifrost) arasında
 tek bir arayüz üzerinden yönlendirme yapar.
 
-settings.REMOTE_LLM_ENABLED=true ve URL ayarlıysa, TÜM chat/agent/analiz
-çağrıları REMOTE_LLM_URL'deki OpenAI-uyumlu `/v1/chat/completions` endpoint'ine gider;
-aksi halde davranış değişmeden yerel Ollama'ya (OLLAMA_URL) gider. API Key / Virtual Key
-isteğe bağlıdır.
+settings.REMOTE_LLM_ENABLED=true ve URL ayarlıysa, chat/agent/analiz çağrıları
+REMOTE_LLM_URL'deki OpenAI-uyumlu `/v1/chat/completions` endpoint'ine gider.
+Model Groq/OpenAI/OpenRouter ise ve anahtar varsa `chat_sync` o API'ye gider
+(final stream ile aynı öncelik; REMOTE_LLM'ten önce). Aksi halde yerel Ollama.
 
 Bu modül, çağıran kodun mevcut Ollama şekilli beklentilerini (generate: {"response","done"},
 chat: {"message": {"content","tool_calls"}}) korur — böylece tüm call-site'lar minimal
@@ -280,6 +280,55 @@ class _SyncChatResult:
         return json.loads(self.text)
 
 
+def _openai_compatible_chat_sync(
+    *,
+    url: str,
+    headers: Dict[str, str],
+    model: str,
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]],
+    options: Optional[Dict[str, Any]],
+    timeout: int,
+    verify: bool,
+    record_circuit: bool,
+) -> _SyncChatResult:
+    """OpenAI /v1/chat/completions → Ollama chat şekli ({message, done})."""
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": _normalize_messages_openai(messages),
+    }
+    if tools:
+        payload["tools"] = tools
+    temp = (options or {}).get("temperature")
+    if temp is not None:
+        payload["temperature"] = temp
+    try:
+        resp = requests.post(
+            url, headers=headers, json=payload,
+            timeout=_requests_timeout(timeout),
+            verify=verify,
+        )
+    except Exception as e:
+        logger.error("[LLMGateway] OpenAI-uyumlu sohbet hatası: %s", e)
+        if record_circuit:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return _SyncChatResult(599, llm_availability.friendly_error(str(e)))
+        return _SyncChatResult(599, str(e))
+    if record_circuit:
+        _note_remote_status(resp.status_code, resp.text)
+    if resp.status_code != 200:
+        return _SyncChatResult(resp.status_code, resp.text)
+    try:
+        data = resp.json()
+    except Exception:
+        return _SyncChatResult(resp.status_code, resp.text)
+    llm_usage.record(data)
+    _note_prompt_tokens(_payload_chars(payload.get("messages") or []), data)
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message", {}) or {}
+    return _SyncChatResult(200, resp.text, {"message": msg, "done": True})
+
+
 def chat_sync(
     model: str,
     messages: List[Dict[str, Any]],
@@ -291,43 +340,39 @@ def chat_sync(
     """
     Ollama /api/chat ile aynı sözleşmeye sahip senkron sohbet çağrısı.
     Dönüş: .status_code, .json() -> {"message": {"content", "tool_calls"?}}
+
+    Sıra (final stream ile aynı): anahtarlı Groq/OpenAI/OpenRouter → REMOTE_LLM → Ollama.
     """
     messages, _ = budget.enforce_messages_budget(messages, label="chat_sync")
+    from app.services.llm_external import resolve_external_chat_target
+    target = resolve_external_chat_target(model)
+    if target:
+        return _openai_compatible_chat_sync(
+            url=target.url,
+            headers=target.headers(),
+            model=target.model,
+            messages=messages,
+            tools=tools,
+            options=options,
+            timeout=timeout,
+            verify=True,
+            record_circuit=False,
+        )
     if remote_llm_enabled():
         if llm_availability.is_open():
             # Yerel modele sessizce düşmüyoruz — istek hızlıca reddedilir.
             return _SyncChatResult(503, llm_availability.friendly_error())
-        payload: Dict[str, Any] = {
-            "model": _resolve_model(model),
-            "messages": _normalize_messages_openai(messages),
-        }
-        if tools:
-            payload["tools"] = tools
-        temp = (options or {}).get("temperature")
-        if temp is not None:
-            payload["temperature"] = temp
-        try:
-            resp = requests.post(
-                _remote_chat_url(), headers=_remote_headers(), json=payload,
-                timeout=_requests_timeout(timeout),
-                verify=remote_llm_ssl_verify(),
-            )
-        except Exception as e:
-            logger.error(f"[LLMGateway] uzak sohbet hatası: {e}")
-            llm_availability.record_failure(f"{type(e).__name__}: {e}")
-            return _SyncChatResult(599, llm_availability.friendly_error(str(e)))
-        _note_remote_status(resp.status_code, resp.text)
-        if resp.status_code != 200:
-            return _SyncChatResult(resp.status_code, resp.text)
-        try:
-            data = resp.json()
-        except Exception:
-            return _SyncChatResult(resp.status_code, resp.text)
-        llm_usage.record(data)
-        _note_prompt_tokens(_payload_chars(payload.get("messages") or []), data)
-        choice = (data.get("choices") or [{}])[0]
-        msg = choice.get("message", {}) or {}
-        return _SyncChatResult(200, resp.text, {"message": msg, "done": True})
+        return _openai_compatible_chat_sync(
+            url=_remote_chat_url(),
+            headers=_remote_headers(),
+            model=_resolve_model(model),
+            messages=messages,
+            tools=tools,
+            options=options,
+            timeout=timeout,
+            verify=remote_llm_ssl_verify(),
+            record_circuit=True,
+        )
 
     payload = {
         "model": model,

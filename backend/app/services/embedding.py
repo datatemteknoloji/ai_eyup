@@ -21,9 +21,37 @@ from app.core.config import remote_llm_enabled, remote_llm_ssl_verify, settings
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_EMBED_TIMEOUT = float(os.getenv("OLLAMA_EMBED_TIMEOUT", "60"))
-# Büyük PDF'lerde sıralı embed dakikalar sürer; paralel sınırla hızlandır
-EMBED_CONCURRENCY = max(1, min(int(os.getenv("OLLAMA_EMBED_CONCURRENCY", "8")), 32))
+OLLAMA_EMBED_TIMEOUT = float(os.getenv("OLLAMA_EMBED_TIMEOUT", "180"))
+# Büyük PDF'lerde sıralı embed dakikalar sürer; paralel sınırla hızlandır.
+# Varsayılan 4: GPU'da yeterli, CPU-only (uzak chat + yerel nomic) için 8 thrashing yapar.
+EMBED_CONCURRENCY = max(1, min(int(os.getenv("OLLAMA_EMBED_CONCURRENCY", "4")), 32))
+
+
+def embed_keep_alive() -> Any:
+    """Ollama'ya gönderilecek keep_alive.
+
+    Varsayılan ``-1``: nomic modelini unload etme (Stopping… / soğuk yük döngüsünü keser).
+    ``default`` / boş: alanı gönderme (Ollama süreci varsayılanı, genelde ~5m).
+    Süre string: ``30m``, ``24h`` vb.
+    """
+    raw = (os.getenv("OLLAMA_EMBED_KEEP_ALIVE") or "-1").strip()
+    if not raw or raw.lower() in ("default", "omit", "none"):
+        return None
+    if raw.lstrip("-").isdigit() and raw.count("-") <= 1:
+        try:
+            return int(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _with_keep_alive(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ka = embed_keep_alive()
+    if ka is None:
+        return payload
+    out = dict(payload)
+    out["keep_alive"] = ka
+    return out
 
 
 def embed_concurrency() -> int:
@@ -114,7 +142,7 @@ async def _post_ollama_native(
     try:
         r = await client.post(
             f"{base}/api/embeddings",
-            json={"model": model, "prompt": prompt},
+            json=_with_keep_alive({"model": model, "prompt": prompt}),
         )
         if r.status_code == 200:
             vec = _parse_embedding_payload(r.json())
@@ -125,7 +153,7 @@ async def _post_ollama_native(
         if r.status_code in (404, 405) or "not found" in err_body.lower():
             r2 = await client.post(
                 f"{base}/api/embed",
-                json={"model": model, "input": prompt},
+                json=_with_keep_alive({"model": model, "input": prompt}),
             )
             if r2.status_code == 200:
                 vec = _parse_embedding_payload(r2.json())
@@ -150,7 +178,7 @@ async def _post_openai_embeddings(
     try:
         r = await client.post(
             url,
-            json={"model": model, "input": prompt},
+            json=_with_keep_alive({"model": model, "input": prompt}),
             headers=headers or {},
         )
         if r.status_code == 200:
@@ -221,10 +249,20 @@ async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[Li
     return None, detail
 
 
-async def probe_embedding() -> Dict[str, Any]:
-    """UI /rag/status için embedding sağlık kontrolü (tek kısa istek)."""
+async def probe_embedding(*, mode: str = "light") -> Dict[str, Any]:
+    """Embedding sağlık kontrolü.
+
+    mode=light (varsayılan): yalnızca ``/api/tags`` + model listesi.
+      UI /rag/status ve fleet kapı kontrolü için — Ollama meşgulken
+      gerçek embed'in 15s ReadTimeout'una düşmez.
+    mode=full: tags + gerçek kısa embed (dim doğrulama).
+    """
     base = embed_base_url()
     model = embed_model_name()
+    probe_mode = (mode or "light").strip().lower()
+    if probe_mode not in ("light", "full"):
+        probe_mode = "light"
+
     out: Dict[str, Any] = {
         "ok": False,
         "base_url": base,
@@ -232,10 +270,17 @@ async def probe_embedding() -> Dict[str, Any]:
         "remote_llm_fallback": remote_llm_enabled(),
         "error": None,
         "hint": _remediation_hint(base, model),
+        "probe_mode": probe_mode,
     }
+
+    # Light: tags hızlı olmalı. Full: embed için daha uzun timeout.
+    tags_timeout = 5.0
+    full_timeout = min(15.0, OLLAMA_EMBED_TIMEOUT)
+    client_timeout = full_timeout if probe_mode == "full" else tags_timeout
+
     try:
-        async with httpx.AsyncClient(timeout=min(15.0, OLLAMA_EMBED_TIMEOUT)) as client:
-            # Önce tags — hızlı bağlantı testi
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            tags_ok = False
             try:
                 tags = await client.get(f"{base}/api/tags")
                 if tags.status_code == 200:
@@ -246,18 +291,39 @@ async def probe_embedding() -> Dict[str, Any]:
                     ]
                     out["models"] = names[:40]
                     out["model_present"] = any(
-                        model == n or n.startswith(model + ":") or model.startswith(n.split(":")[0])
+                        model == n
+                        or n.startswith(model + ":")
+                        or model.startswith(n.split(":")[0])
                         for n in names
                     )
+                    tags_ok = True
                 else:
                     out["tags_status"] = tags.status_code
+                    out["error"] = f"HTTP {tags.status_code} {base}/api/tags"
             except Exception as e:
                 out["tags_error"] = f"{type(e).__name__}: {e}"
+                out["error"] = f"{base} erişilemedi ({type(e).__name__}: {e})"
 
+            if probe_mode == "light":
+                if tags_ok and out.get("model_present"):
+                    out["ok"] = True
+                    out["error"] = None
+                elif tags_ok and out.get("model_present") is False:
+                    out["error"] = (
+                        f"Model listede yok: {model}. "
+                        f"`ollama pull {model}` çalıştırın."
+                    )
+                # tags başarısızsa error zaten set
+                return out
+
+            # full: gerçek embed
+            if not tags_ok:
+                return out
             vec, err = await _post_embed(client, "rag health probe")
             if vec and not all(abs(float(x)) < 1e-12 for x in vec):
                 out["ok"] = True
                 out["dim"] = len(vec)
+                out["error"] = None
             else:
                 out["error"] = err or get_last_embed_error() or "sıfır vektör"
     except Exception as e:

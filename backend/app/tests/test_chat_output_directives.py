@@ -1,4 +1,4 @@
-"""chat_output_directives — /table, /json, /brief komut ayıklama testleri."""
+"""chat_output_directives — /table, /json, /brief, /diagram komut ayıklama testleri."""
 from app.services.chat_output_directives import (
     OutputDirective,
     directive_system_addendum,
@@ -66,6 +66,56 @@ def test_directive_system_addendum_mentions_command():
     assert "/table" in directive_system_addendum(OutputDirective.TABLE)
     assert "/json" in directive_system_addendum(OutputDirective.JSON)
     assert "brief" in directive_system_addendum(OutputDirective.BRIEF).lower() or "2-3" in directive_system_addendum(OutputDirective.BRIEF)
+    add = directive_system_addendum(OutputDirective.DIAGRAM)
+    assert "/diagram" in add
+    assert "```mermaid" in add
+    assert "xychart" in add
+    assert "SVG" in add
+    assert "**" in add or "kalın" in add or "markdown" in add.lower()
+    assert "yorum" in add.lower()
+    assert "/boot" in add or "tırnak" in add or '["/' in add or "path" in add.lower()
+
+
+def test_diagram_directive_aliases():
+    for raw in (
+        "/diagram request lifecycle",
+        "VM disk yapısı /draw",
+        "/görselleştir sunucu topolojisi",
+        "/gorsellestir akış",
+        "/şema vm lifecycle",
+        "/SEMA pod durumları",
+    ):
+        msg, d = extract_output_directive(raw)
+        assert d == OutputDirective.DIAGRAM, raw
+        assert "/diagram" not in msg.lower()
+        assert "/draw" not in msg.lower()
+
+
+def test_diagram_no_false_positive():
+    msg, d = extract_output_directive("bu diagramı tablo olarak ver")
+    assert d == OutputDirective.NONE
+    msg2, d2 = extract_output_directive("/diagrams lütfen")
+    assert d2 == OutputDirective.NONE
+    assert "/diagrams" in msg2
+    # /chart Timescale+Recharts yoluna ait; diyagram alias değil
+    msg3, d3 = extract_output_directive("/chart son 2 saat cpu")
+    assert d3 == OutputDirective.NONE
+
+
+def test_json_wins_over_diagram():
+    msg, d = extract_output_directive("/diagram /json ver")
+    assert d == OutputDirective.JSON
+    assert "/diagram" not in msg and "/json" not in msg
+
+
+def test_table_wins_over_diagram():
+    _, d = extract_output_directive("/draw /table vmler")
+    assert d == OutputDirective.TABLE
+
+
+def test_diagram_wins_over_brief():
+    _, d = extract_output_directive("/brief /görselleştir akış")
+    assert d == OutputDirective.DIAGRAM
 
 
 def test_render_rows_as_json_valid_json_block():

@@ -15,9 +15,29 @@ def test_guide_root_has_tr_en():
     assert (root / "en" / "modules" / "level1.md").is_file()
 
 
-def test_catalog_five_packs_only():
+def test_catalog_packs_order():
     ids = [p["id"] for p in list_packs("tr")]
-    assert ids == ["full", "linux", "virtualization", "windows", "openshift"]
+    assert ids == [
+        "full", "linux", "virtualization", "windows", "openshift", "ai-architecture",
+    ]
+
+
+def test_ai_architecture_pack_has_update_mandate():
+    _, md = assemble_markdown("ai-architecture", "tr")
+    assert "GÜNCELLEME ZORUNLU" in md
+    assert "route_unified" in md
+    assert "module_orchestrator" in md
+    assert "# 1. AI System Inventory" in md
+    assert "# 21. Architecture Diagrams" in md
+    assert "```mermaid" in md
+    assert "```diagram" in md
+    assert len(md) > 20000
+    _, md_en = assemble_markdown("ai-architecture", "en")
+    assert "MUST UPDATE" in md_en
+    assert "route_unified" in md_en
+    assert "# 1. AI System Inventory" in md_en
+    assert "# 21. Architecture Diagrams" in md_en
+    assert len(md_en) > 20000
 
 
 def test_full_tr_contains_level1_and_menus():

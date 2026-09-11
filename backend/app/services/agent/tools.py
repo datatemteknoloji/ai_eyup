@@ -293,6 +293,56 @@ def _cross_entity_match_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
         return {"ok": False, "error": str(e)}
 
 
+def _linux_virt_io_correlate_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.cross_domain_diagnostics import correlate_linux_virt_io
+        name = args.get("name") or args.get("vm_name") or args.get("server") or args.get("hostname")
+        if not name and ctx:
+            name = ctx.get("server_name") or ctx.get("vm_name")
+        hours = args.get("hours") if args.get("hours") is not None else 24
+        return correlate_linux_virt_io(db, name=str(name or ""), hours=float(hours or 24))
+    except Exception as e:
+        logger.error("[Tool] linux_virt_io_correlate hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_exadata_racks_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.exadata_inventory import list_exadata_racks
+        return list_exadata_racks(
+            db,
+            name_filter=args.get("name_filter") or args.get("rack"),
+            limit=int(args.get("limit") or 50),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_exadata_racks hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _db_list_exadata_nodes_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.exadata_inventory import list_exadata_nodes
+        return list_exadata_nodes(
+            db,
+            role=args.get("role"),
+            rack=args.get("rack"),
+            name_filter=args.get("name_filter") or args.get("name"),
+            limit=int(args.get("limit") or 200),
+        )
+    except Exception as e:
+        logger.error("[Tool] db_list_exadata_nodes hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _exadata_health_overview_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.exadata_inventory import exadata_health_overview
+        return exadata_health_overview(db)
+    except Exception as e:
+        logger.error("[Tool] exadata_health_overview hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _vcenter_snapshot_summary_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     """Fleet-wide snapshot özeti — vCenter SOAP canlı (snapshot_count / en eski)."""
     try:
@@ -1939,6 +1989,88 @@ TOOLS: Dict[str, Tool] = {
         direct_handler=_cross_entity_match_handler,
         direct_label="Modüller arası envanter join",
     ),
+    "linux_virt_io_correlate": Tool(
+        name="linux_virt_io_correlate",
+        description=(
+            "JOIN şartlı Linux guest iowait × vCenter VM disk latency (aynı saat penceresi). "
+            "name = hostname / vm_name / IP. Eşleşme yoksa veya bir taraf metrik yoksa "
+            "korelasyon uydurma; data_status PARTIAL/SUCCESS_EMPTY döner. "
+            "'Guest iowait yüksek mi, VM latency ile aynı pencerede mi' sorularında kullan. "
+            "Yalnız virt bottleneck veya yalnız Linux iowait yetmez — iki katmanı birleştirir."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Linux hostname, VM adı veya IP",
+                },
+                "hours": {
+                    "type": "number",
+                    "description": "Pencere (saat), varsayılan 24, en fazla 168",
+                },
+            },
+            "required": ["name"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_linux_virt_io_correlate_handler,
+        direct_label="Linux×virt I/O korelasyonu",
+    ),
+    "db_list_exadata_racks": Tool(
+        name="db_list_exadata_racks",
+        description=(
+            "Exadata rack/DB Machine envanterini DATABASE'den listeler (READ-ONLY). "
+            "Kaç rack, model, datacenter, compute/cell sayısı, envanter sağlığı. "
+            "Canlı cellcli/ILOM yok. 'Kaç rack', 'hangi kabinet' sorularında bunu kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name_filter": {"type": "string", "description": "Rack/model/datacenter adı"},
+                "limit": {"type": "integer"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_exadata_racks_handler,
+        direct_label="Exadata rack envanteri",
+    ),
+    "db_list_exadata_nodes": Tool(
+        name="db_list_exadata_nodes",
+        description=(
+            "Exadata compute node / storage cell envanterini DATABASE'den listeler. "
+            "role=compute_node|storage_cell|ib_switch. cell_disk_info varsa envanter JSON'dur — "
+            "canlı ASM/cellcli değil. linked_server_id doluysa Linux get_* ile host OS bakılabilir. "
+            "Cell CPU/ASM IOPS uydurma."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "role": {"type": "string", "description": "compute_node | storage_cell | ib_switch"},
+                "rack": {"type": "string", "description": "Rack adı filtresi"},
+                "name_filter": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_db_list_exadata_nodes_handler,
+        direct_label="Exadata node/cell envanteri",
+    ),
+    "exadata_health_overview": Tool(
+        name="exadata_health_overview",
+        description=(
+            "Exadata rack/node sağlık özeti (DB status). "
+            "Genel 'Exadata durumu / problem var mı / cell sayısı' sorularında ÖNCE bunu kullan. "
+            "Canlı cellcli/ASM/AWR yok — yoksa 'toplanmadı' de, uydurma."
+        ),
+        parameters={"type": "object", "properties": {}},
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_exadata_health_overview_handler,
+        direct_label="Exadata sağlık özeti",
+    ),
     "db_list_vms": Tool(
         name="db_list_vms",
         description=(
@@ -3478,6 +3610,12 @@ _TOOL_DOMAIN_OVERRIDE = {
     "knowledge_search": frozenset({"infra"}),
     "prometheus_query": frozenset({"infra"}),
     "cross_entity_match": frozenset({"infra", "linux", "windows", "vcenter", "openshift"}),
+    # infra YOK: Windows/OCP sohbetine sızmasın. linux ∩ virt sohbetlerinde görünür.
+    "linux_virt_io_correlate": frozenset({"linux", "vcenter"}),
+    # infra YOK: Linux/Windows/virt sohbetine sızmasın. Exadata + Unified.
+    "db_list_exadata_racks": frozenset({"exadata"}),
+    "db_list_exadata_nodes": frozenset({"exadata"}),
+    "exadata_health_overview": frozenset({"exadata"}),
     "db_list_vms": frozenset({"vcenter", "infra"}),
     "db_vm_detail": frozenset({"vcenter", "infra"}),
     "db_list_datastores": frozenset({"vcenter", "infra"}),
@@ -3528,7 +3666,7 @@ PLATFORM_TOOL_DOMAINS = {
     "openshift": frozenset({"openshift", "infra"}),
     "windows": frozenset({"windows", "infra"}),
     "virt": frozenset({"vcenter", "infra"}),
-    "exadata": frozenset({"linux", "infra"}),
+    "exadata": frozenset({"exadata", "linux", "infra"}),
     "unified": None,
 }
 

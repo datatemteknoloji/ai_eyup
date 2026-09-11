@@ -1,8 +1,22 @@
 /**
  * Ortak markdown tablo/kod stilleri — geniş rapor tablolarını balon içinde
  * yatay kaydırma ile tutar (taşmayı engeller). Tema değişkenleriyle light/dark okunur.
+ * ```mermaid``` blokları ChatMermaid ile çizilir (yeni SSE yok).
  */
+import { Children, isValidElement, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
+import { ChatMermaid } from './ChatMermaid'
+
+function mermaidSourceFromPre(children: ReactNode): string | null {
+  for (const child of Children.toArray(children)) {
+    if (!isValidElement(child)) continue
+    const cls = String((child.props as { className?: string }).className || '')
+    if (!cls.includes('language-mermaid')) continue
+    const raw = (child.props as { children?: React.ReactNode }).children
+    return String(raw ?? '').replace(/\n$/, '')
+  }
+  return null
+}
 
 export const chatMarkdownComponents: Components = {
   table: ({ children }) => (
@@ -28,11 +42,15 @@ export const chatMarkdownComponents: Components = {
           {children}
         </code>
       ),
-  pre: ({ children }) => (
-    <pre className="chat-md-pre bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2 max-h-[min(50vh,28rem)] text-slate-200">
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => {
+    const mermaidSrc = mermaidSourceFromPre(children)
+    if (mermaidSrc != null) return <ChatMermaid source={mermaidSrc} />
+    return (
+      <pre className="chat-md-pre bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2 max-h-[min(50vh,28rem)] text-slate-200">
+        {children}
+      </pre>
+    )
+  },
 }
 
 /** Mesaj balonu: flex içinde daralabilsin, taşan içerik balonu şişirmesin */

@@ -10,6 +10,7 @@ import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
+import { ChatEvidenceBadge, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -115,7 +116,7 @@ function getFirstMarkdownTable(content: string): string | null {
   return out.length > 0 ? out.join('\n') : null
 }
 
-interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; usage?: ChatUsage | null }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; usage?: ChatUsage | null; evidence?: ChatEvidence | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
@@ -546,8 +547,9 @@ const UnifiedChat: React.FC<{
                           )}
                         </div>
                       )}
-                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
-                        {formatDate(msg.created_at)}
+                      <div className={`text-xs mt-2 flex items-center gap-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
+                        <span>{formatDate(msg.created_at)}</span>
+                        {msg.role === 'assistant' && <ChatEvidenceBadge evidence={msg.evidence} />}
                       </div>
                       {msg.role === 'assistant' && (
                         <TokenUsageNote usage={msg.usage} show={showTokenUsage} />
@@ -609,6 +611,9 @@ const UnifiedChat: React.FC<{
                     <div className={nlAssistantBubbleClass}>
                       <div className={chatResponseBody}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
+                      </div>
+                      <div className="text-xs mt-2 flex items-center gap-2 text-slate-500">
+                        <ChatEvidenceBadge evidence={stream.lastEvidence as ChatEvidence | null} />
                       </div>
                       <TokenUsageNote usage={stream.lastUsage} show={showTokenUsage} />
                     </div>

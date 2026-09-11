@@ -19,8 +19,11 @@ Uygulama içi sohbet (Unified / Linux / Virt / OpenShift) kuralları **backend p
 | Sanallaştırma chat personası | `backend/app/services/hypervisor_intelligence.py` → `_VIRTUALIZATION_PERSONA` |
 | Linux / Windows chat | `backend/app/api/chat.py`, `backend/app/api/windows_chat.py` |
 | Agent (LangGraph) | `backend/app/services/agent/orchestrator.py` |
+| AI mimari GUIDE (Hakkında PDF) | `docs/guides/tr/modules/ai-architecture.md` + `en/` eşi |
 
 Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend`.
+
+Routing / tool / RAG / sohbet lifecycle değişince `ai-architecture.md` (TR+EN) ve `.cursor/rules/ainew-ai-architecture.mdc` **aynı PR/turda** güncellenir.
 
 Canlı metrik **değerleri** prompt’ta değil; `prometheus_metrics.get_metrics_context_for_ai` (scrape’e dokunma). Tek JOIN tablosu; kısa ad=preset, `detay`=aile, `kapsamlı`=`node_*`.
 

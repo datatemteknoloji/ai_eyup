@@ -1,4 +1,4 @@
-"""Kullanıcı mesajındaki özel ÇIKTI FORMATI komutları — /table, /json, /brief.
+"""Kullanıcı mesajındaki özel ÇIKTI FORMATI komutları — /table, /json, /brief, /diagram.
 
 Genel kural (tek bir soruya özel değil): bu komutlar HERHANGİ bir sohbet
 platformunda (Linux/Windows/Unified/vCenter) ve HERHANGİ bir soru için aynı
@@ -13,6 +13,8 @@ platformunda (Linux/Windows/Unified/vCenter) ve HERHANGİ bir soru için aynı
        b) Deterministik (LLM'siz) tablo üretiminde — render_rows_as_json /
           render_rows_as_brief ile virt_inventory_contract gibi modüller
           kendi tablo şablonlarını JSON/özet formatına çevirebilir.
+  /diagram ekstra LLM veya SSE event açmaz; aynı final çağrıya addendum ekler.
+  /chart alias değildir — Timescale + Recharts yolu (metric_history) bozulmasın.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ class OutputDirective(str, Enum):
     TABLE = "table"
     JSON = "json"
     BRIEF = "brief"
+    DIAGRAM = "diagram"
 
 
 # Türkçe + İngilizce alias'lar — kelime sınırlı ("/tablomsu" gibi bir kelimeyi
@@ -34,17 +37,26 @@ class OutputDirective(str, Enum):
 _DIRECTIVE_PATTERNS: Tuple[Tuple[OutputDirective, "re.Pattern[str]"], ...] = (
     (OutputDirective.JSON, re.compile(r"(?<![\w/])/json(?![\w])", re.I)),
     (OutputDirective.TABLE, re.compile(r"(?<![\w/])/(?:table|tablo)(?![\w])", re.I)),
+    (OutputDirective.DIAGRAM, re.compile(
+        r"(?<![\w/])/(?:diagram|draw|gorsellestir|görselleştir|sema|şema)(?![\w])",
+        re.I,
+    )),
     (OutputDirective.BRIEF, re.compile(r"(?<![\w/])/(?:brief|kisa|kısa|ozet|özet)(?![\w])", re.I)),
 )
 
 # Kullanıcı birden fazla komut yazarsa (ör. "/table /brief") hepsi mesajdan
 # temizlenir ama yalnız EN KATI/en belirgin olan uygulanır: JSON (makine
-# formatı) > TABLE > BRIEF (serbest metin özeti).
-_PRIORITY: Tuple[OutputDirective, ...] = (OutputDirective.JSON, OutputDirective.TABLE, OutputDirective.BRIEF)
+# formatı) > TABLE > DIAGRAM (görsel) > BRIEF (serbest metin özeti).
+_PRIORITY: Tuple[OutputDirective, ...] = (
+    OutputDirective.JSON,
+    OutputDirective.TABLE,
+    OutputDirective.DIAGRAM,
+    OutputDirective.BRIEF,
+)
 
 
 def extract_output_directive(message: str) -> Tuple[str, OutputDirective]:
-    """Mesajdan /table, /json, /brief komutunu ayıklar.
+    """Mesajdan /table, /json, /brief, /diagram komutunu ayıklar.
 
     Döner: (komut(lar) temizlenmiş mesaj, en yüksek öncelikli komut).
     Hiçbir komut yoksa (orijinal mesaj (strip'lenmiş), OutputDirective.NONE).
@@ -83,6 +95,26 @@ _ADDENDUM: Dict[OutputDirective, str] = {
         "öz ve doğrudan bir cevap istedi. Madde işareti, tablo, uzun açıklama veya alt "
         "başlık KULLANMA — yalnız doğrudan sonucu 2-3 cümleyle söyle."
     ),
+    OutputDirective.DIAGRAM: (
+        "\n\nÇIKTI FORMATI KOMUTU (/diagram): Kullanıcı bu turda teknik bir diyagram istedi. "
+        "Aynı cevapta (ekstra adım yok) en uygun Mermaid tipini sen seç: flowchart, "
+        "sequenceDiagram, erDiagram, stateDiagram-v2 veya gantt. Ağ/topoloji için flowchart "
+        "kullan — SVG veya HTML üretme. Sayısal zaman serisi (son N saat CPU/RAM/disk) "
+        "isteniyorsa xychart-beta yazma; kısa metin/tablo yeterli (mevcut Recharts yolu "
+        "ayrı çalışır). En fazla bir ```mermaid kod bloğu üret; 15-20 düğüm/adımı geçme, "
+        "büyük listeleri özetle. Düğüm/aktör etiketleri düz metin: en fazla 4-5 kelime; "
+        "**kalın**, _italik_, `kod`, HTML veya markdown YASAK (Mermaid bunları çizmez, "
+        "yıldızları gösterir). Dosya yolu etiketlerinde tırnak ZORUNLU: "
+        "B[\"/boot\"] doğru; B[/boot] YASAK (Mermaid bunu şekil sanır, çizim kırılır). "
+        "Windows yolu: A[\"C:\\\\Windows\"] — ters eğik çizgiyi de tırnak içine al. "
+        "Gereksiz meta düğüm ekleme (ör. 'Sunucu Sorgusu'). "
+        "Emin değilsen flowchart kullan. TİP:/GEREKÇE: satırı yazma. "
+        "Cevap yapısı ZORUNLU: (1) isteğe bağlı tek satır başlık, (2) kapanmış ```mermaid "
+        "bloğu, (3) hemen altında kısa yorum — 2-4 madde veya 2-3 cümle: diyagram neyi "
+        "gösteriyor, ana adımlar/aktörler, okunan sonuç. Uzun makale, tekrarlayan özet "
+        "veya diyagramı kelime kelime okuma YOK. Markdown liste/ASCII tek başına YETERLİ "
+        "DEĞİL — mutlaka kapanmış ```mermaid bloğu + kısa yorum üret."
+    ),
 }
 
 
@@ -98,6 +130,7 @@ def directive_label(directive: Optional[OutputDirective]) -> str:
         OutputDirective.TABLE: "/table",
         OutputDirective.JSON: "/json",
         OutputDirective.BRIEF: "/brief",
+        OutputDirective.DIAGRAM: "/diagram",
     }.get(directive, "")
 
 

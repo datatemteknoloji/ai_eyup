@@ -48,6 +48,7 @@ export type ChatStreamSnapshot = {
   suggestions: ChatSuggestion[] | null
   queueMessage: string | null
   lastUsage: ChatUsage | null
+  lastEvidence: { level: string; reason?: string } | null
   /** Son akış kullanıcı isteğiyle durduruldu mu? */
   cancelled: boolean
 }
@@ -73,6 +74,7 @@ const emptySnap = (channel: string): ChatStreamSnapshot => ({
   suggestions: null,
   queueMessage: null,
   lastUsage: null,
+  lastEvidence: null,
   cancelled: false,
 })
 
@@ -228,6 +230,7 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     toolCalls: [],
     clarifyOptions: null,
     lastUsage: null,
+    lastEvidence: null,
     cancelled: false,
   })
 
@@ -294,6 +297,11 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
           if (chunk.phase === 'answering') patch(channel, { thinkingPhase: 'streaming' })
           if (chunk.from_cache) patch(channel, { thinkingPhase: 'streaming' })
 
+          if (chunk.replace_answer) {
+            accumulated = ''
+            patch(channel, { streamingText: '', thinkingPhase: 'streaming' })
+          }
+
           if (chunk.token) {
             accumulated += chunk.token
             patch(channel, { streamingText: accumulated, thinkingPhase: 'streaming' })
@@ -325,6 +333,15 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
 
           if (chunk.usage && typeof chunk.usage === 'object') {
             patch(channel, { lastUsage: chunk.usage as ChatUsage })
+          }
+
+          if (chunk.evidence && typeof chunk.evidence === 'object' && chunk.evidence.level) {
+            patch(channel, {
+              lastEvidence: {
+                level: String(chunk.evidence.level),
+                reason: chunk.evidence.reason ? String(chunk.evidence.reason) : undefined,
+              },
+            })
           }
 
           if (Array.isArray(chunk.suggestions) && chunk.suggestions.length) {

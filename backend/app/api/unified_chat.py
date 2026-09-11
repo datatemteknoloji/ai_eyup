@@ -34,17 +34,7 @@ router = APIRouter()
 
 
 # ── Sağlayıcı tespiti / streaming — chat.py ile aynı mantık ──────────────────
-def _detect_provider(model: str) -> str:
-    m = (model or "").lower()
-    if m.startswith("groq:") or any(x in m for x in ["llama3-70b", "llama3-8b", "mixtral-8x7b", "gemma2-9b", "llama-3.1-70b", "llama-3.3-70b"]):
-        return "groq"
-    if m.startswith("gpt-") or m.startswith("openai/") or m.startswith("o1") or m.startswith("o3"):
-        return "openai"
-    if m.startswith("claude") or m.startswith("anthropic/"):
-        return "anthropic"
-    if "/" in m and not m.startswith("http"):
-        return "openrouter"
-    return "ollama"
+from app.services.llm_external import detect_provider as _detect_provider
 
 
 async def _stream_external_openai(client, url: str, api_key: str, model: str, prompt: str, extra_headers: dict = None):
@@ -166,6 +156,7 @@ async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
             "content": m.content,
             "created_at": m.created_at.isoformat() if m.created_at else "",
             "usage": (m.meta or {}).get("usage") if isinstance(m.meta, dict) else None,
+            "evidence": (m.meta or {}).get("evidence") if isinstance(m.meta, dict) else None,
         }
         for m in messages
     ]
@@ -316,6 +307,9 @@ def _build_prompt(
         "   gerektiren bir konuysa somut kanıt, olası neden ve risk uyarısı ekleyerek genişlet.",
         "   HER cevaba aynı sabit şablonu (kök neden → tanı komutu → numaralı adım → risk)",
         "   zorla uygulama.",
+        "7. TOPLAMA DURUMU / tool JSON data_status: SUCCESS=alındı, SUCCESS_EMPTY=sorgu "
+        "   ok ama kayıt yok, FAILED=hata, TIMEOUT=zaman aşımı, NOT_QUERIED=sorulmadı, "
+        "   STALE=eski. NOT_QUERIED/TIMEOUT için 'ortamda canlı veri yok' DEME.",
     ])
 
     from app.services.chat_output_directives import directive_system_addendum
@@ -479,7 +473,7 @@ async def unified_chat_stream(
                 _is_followup = has_prior_messages(db, session_id)
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
-                # Takip sorularinda VE /table-/json-/brief komutlarinda cache'e bakilmiyor —
+                # Takip sorularinda VE /table-/json-/brief-/diagram komutlarinda cache'e bakilmiyor —
                 # aksi halde ayni soru farkli format komutlariyla sorulunca eski formattaki
                 # cache'lenmis cevap yanlislikla donmus olur (bkz. chat.py'deki ayni mantik).
                 from app.services.chat_output_directives import OutputDirective as _OD
@@ -495,13 +489,22 @@ async def unified_chat_stream(
                     _timing.note_ttft()
                     for i in range(0, len(answer), 8):
                         yield _sse({"token": answer[i:i+8]})
-                    db.add(ChatMessage(session_id=session_id, role="assistant", content=answer))
+                    from app.services.chat_evidence_badge import (
+                        evidence_sse_field,
+                        merge_evidence_meta,
+                        score_evidence_badge,
+                    )
+                    _ev = score_evidence_badge(kind="cache")
+                    db.add(ChatMessage(
+                        session_id=session_id, role="assistant", content=answer,
+                        meta=merge_evidence_meta({}, _ev),
+                    ))
                     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if s:
                         s.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     _timing.finish(cache_hit=True, extra={"from_cache": True})
-                    yield _sse({"done": True, "session_id": session_id, "from_cache": True})
+                    yield _sse({"done": True, "session_id": session_id, "from_cache": True, **evidence_sse_field(_ev)})
                     return
 
                 yield _sse({"phase": "collecting"})
@@ -717,14 +720,8 @@ async def unified_chat_stream(
                 # ── Collect XOR agentic (path policy) ─────────────────────────
                 from app.services import runtime_settings
                 from app.services.chat_path_policy import resolve_live_path, has_session_episode
-                _uses_external_api = (
-                    (provider == "groq" and bool(settings.GROQ_API_KEY)) or
-                    (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
-                    (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
-                )
                 _agentic_ok = (
-                    (not _uses_external_api)
-                    and (not skip_ctx)
+                    (not skip_ctx)
                     and runtime_settings.get_bool("unified_chat_agentic_mode")
                     and _route.need_live
                 )
@@ -991,30 +988,44 @@ async def unified_chat_stream(
                     pass
 
                 coll_lines = []
+                from app.services.chat_data_status import format_collect_line
                 if linux_ctx:
-                    coll_lines.append(f"LINUX: {len(linux_targets)} sunucudan canlı veri toplandı.")
+                    coll_lines.append(format_collect_line(
+                        "LINUX", "SUCCESS",
+                        f"n={len(linux_targets)} sunucudan canlı veri toplandı.",
+                    ))
                 elif wants_linux and linux_targets:
-                    coll_lines.append("LINUX: Bu sorgu için canlı veri toplanamadı (zaman aşımı/bağlantı).")
+                    coll_lines.append(format_collect_line(
+                        "LINUX", "TIMEOUT",
+                        "canlı veri toplanamadı (zaman aşımı/bağlantı).",
+                    ))
                 elif wants_linux and not linux_targets:
-                    coll_lines.append(
-                        "LINUX: Canlı SSH yok (hedef seçilmedi / filo kelimesi yok). "
-                        "DB envanter kullanıldı; sunucu adı veya 'filo/karşılaştır' deyin."
-                    )
+                    coll_lines.append(format_collect_line(
+                        "LINUX", "NOT_QUERIED",
+                        "hedef seçilmedi / filo kelimesi yok. DB envanter kullanıldı.",
+                    ))
                 if windows_ctx:
-                    coll_lines.append(f"WINDOWS: {len(windows_targets)} sunucudan canlı veri toplandı.")
+                    coll_lines.append(format_collect_line(
+                        "WINDOWS", "SUCCESS",
+                        f"n={len(windows_targets)} sunucudan canlı veri toplandı.",
+                    ))
                 elif wants_windows and windows_targets:
-                    coll_lines.append("WINDOWS: Bu sorgu için canlı veri toplanamadı (zaman aşımı/bağlantı).")
+                    coll_lines.append(format_collect_line(
+                        "WINDOWS", "TIMEOUT",
+                        "canlı veri toplanamadı (zaman aşımı/bağlantı).",
+                    ))
                 elif wants_windows and not windows_targets:
-                    coll_lines.append(
-                        "WINDOWS: Canlı WinRM yok (hedef seçilmedi / filo kelimesi yok). "
-                        "DB envanter kullanıldı; sunucu adı veya 'filo/karşılaştır' deyin."
-                    )
+                    coll_lines.append(format_collect_line(
+                        "WINDOWS", "NOT_QUERIED",
+                        "hedef seçilmedi / filo kelimesi yok. DB envanter kullanıldı.",
+                    ))
                 collection_summary = "\n".join(coll_lines)
+                tool_context_text = ""
+                tools_used_this_turn = []
 
                 # ── Agentic READ_ONLY tool-calling (Dalga 2 XOR) ──────────────
-                # Yalnızca yerel Ollama / uzak OpenAI-uyumlu gateway (llm_gateway) yolunda
-                # çalışır — groq/openai/openrouter doğrudan entegrasyonları bu döngüyü
-                # desteklemez. Collect ile birlikte yalnızca derin yol / force_both.
+                # Ollama, REMOTE_LLM ve anahtarlı Groq/OpenAI/OpenRouter
+                # (llm_gateway.chat_sync → OpenAI-uyumlu tools). Anthropic Messages yok.
                 if _live_path.run_agentic:
                     yield _sse({"phase": "tools"})
                     _timing.mark("agentic_start")
@@ -1128,6 +1139,7 @@ async def unified_chat_stream(
 
                         tool_context_text = ""
                         deterministic_answer = ""
+                        tools_used_this_turn = []
                         while True:
                             item = await loop.run_in_executor(None, _next_item, gen)
                             if item is None:
@@ -1140,6 +1152,7 @@ async def unified_chat_stream(
                             elif itype == "final":
                                 tool_context_text = item.get("tool_text") or ""
                                 deterministic_answer = item.get("deterministic_answer") or ""
+                                tools_used_this_turn = list(item.get("tools_used") or [])
                                 break
                             elif itype in ("skipped", "error"):
                                 if itype == "error":
@@ -1153,8 +1166,15 @@ async def unified_chat_stream(
                             answer_text = deterministic_answer
                             for i in range(0, len(answer_text), 24):
                                 yield _sse({"token": answer_text[i:i + 24]})
+                            from app.services.chat_evidence_badge import (
+                                evidence_sse_field,
+                                merge_evidence_meta,
+                                score_evidence_badge,
+                            )
+                            _ev = score_evidence_badge(kind="deterministic")
                             db.add(ChatMessage(
                                 session_id=session_id, role="assistant", content=answer_text,
+                                meta=merge_evidence_meta({}, _ev),
                             ))
                             s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                             if s:
@@ -1169,7 +1189,7 @@ async def unified_chat_stream(
                                     "modules": list(_route.modules or ()),
                                 },
                             )
-                            yield _sse({"done": True, "session_id": session_id})
+                            yield _sse({"done": True, "session_id": session_id, **evidence_sse_field(_ev)})
                             return
 
                         if tool_context_text:
@@ -1257,12 +1277,78 @@ async def unified_chat_stream(
                         if llm_err and not full_response:
                             full_response = f"(Hata: {llm_err})"
 
+                # Virt ile aynı kanıt guard: araç/collect doluyken "veri yok" kalmasın.
+                _ev_reason = ""
+                try:
+                    from app.services.chat_evidence import (
+                        collect_unified_live_evidence,
+                        maybe_fix_no_data_answer,
+                    )
+                    _linux_ev = linux_ctx if isinstance(linux_ctx, str) else ""
+                    _win_ev = windows_ctx if isinstance(windows_ctx, str) else ""
+                    _evidence = collect_unified_live_evidence(
+                        tool_text=tool_context_text,
+                        linux_ctx=_linux_ev,
+                        windows_ctx=_win_ev,
+                    )
+                    if _evidence and full_response and not (full_response or "").startswith("(Hata:"):
+                        _fixed, _ev_reason = maybe_fix_no_data_answer(
+                            answer=full_response,
+                            evidence=_evidence,
+                            prompt=prompt,
+                            model=model,
+                        )
+                        if _ev_reason and _fixed and _fixed != full_response:
+                            full_response = _fixed
+                            yield _sse({"replace_answer": True})
+                            for i in range(0, len(full_response), 24):
+                                yield _sse({"token": full_response[i:i + 24]})
+                            try:
+                                from app.services.chat_coverage import record_coverage_miss
+                                if _ev_reason == "fallback":
+                                    record_coverage_miss(
+                                        db,
+                                        question=message,
+                                        platform="unified",
+                                        reason="no_data_answer_despite_evidence",
+                                    )
+                            except Exception:
+                                pass
+                except Exception as _ev_e:
+                    logger.debug("unified evidence retry atlandı: %s", _ev_e)
+
                 _usage = llm_usage.snapshot()
+                _badge = {"level": "hidden", "reason": ""}
+                _meta = {"usage": _usage} if _usage else {}
+                try:
+                    from app.services.chat_evidence_badge import (
+                        collect_had_failure,
+                        merge_evidence_meta,
+                        score_evidence_badge,
+                    )
+                    from app.services.chat_coverage import looks_like_no_data_answer as _lnda
+                    from app.services.chat_evidence import collect_unified_live_evidence as _cue
+                    _linux_ev = linux_ctx if isinstance(linux_ctx, str) else ""
+                    _win_ev = windows_ctx if isinstance(windows_ctx, str) else ""
+                    _badge = score_evidence_badge(
+                        kind="live" if getattr(_route, "need_live", False) else (getattr(_route, "mode", "") or "live"),
+                        tools_used=tools_used_this_turn,
+                        has_tool_text=bool((tool_context_text or "").strip()),
+                        has_collect=bool(_linux_ev.strip() or _win_ev.strip()),
+                        collect_failed=collect_had_failure(collection_summary),
+                        has_evidence=bool(_cue(
+                            tool_text=tool_context_text, linux_ctx=_linux_ev, windows_ctx=_win_ev,
+                        )),
+                        answer_no_data=_lnda(full_response or ""),
+                    )
+                    _meta = merge_evidence_meta(_meta, _badge)
+                except Exception:
+                    pass
                 db.add(ChatMessage(
                     session_id=session_id,
                     role="assistant",
                     content=full_response or "(yanıt alınamadı)",
-                    meta={"usage": _usage} if _usage else {},
+                    meta=_meta,
                 ))
                 s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if s:
@@ -1270,7 +1356,13 @@ async def unified_chat_stream(
                 db.commit()
 
                 if full_response and not linux_ctx and not windows_ctx and not _is_followup and not _has_directive:
-                    save_to_cache(db, message, full_response, cache_key_ids, platform="unified")
+                    try:
+                        from app.services.chat_coverage import looks_like_no_data_answer
+                        _cache_ok = not looks_like_no_data_answer(full_response)
+                    except Exception:
+                        _cache_ok = True
+                    if _cache_ok:
+                        save_to_cache(db, message, full_response, cache_key_ids, platform="unified")
 
                 _timing.finish(
                     cache_hit=False,
@@ -1283,7 +1375,8 @@ async def unified_chat_stream(
                         "W": len(windows_targets),
                     },
                 )
-                yield _sse({"done": True, "session_id": session_id})
+                from app.services.chat_evidence_badge import evidence_sse_field
+                yield _sse({"done": True, "session_id": session_id, **evidence_sse_field(_badge)})
 
             except Exception as e:
                 logger.error(f"Unified chat stream error: {e}", exc_info=True)

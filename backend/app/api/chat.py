@@ -82,18 +82,7 @@ def _classify_db_only_sysinfo(msg_lower: str, ssh_only_keywords, ssh_sysinfo_key
     )
     return db_only_answer, matched_db_static_topic
 
-def _detect_provider(model: str) -> str:
-    """Model adından sağlayıcıyı tespit et."""
-    m = (model or "").lower()
-    if m.startswith("groq:") or any(x in m for x in ["llama3-70b", "llama3-8b", "mixtral-8x7b", "gemma2-9b", "llama-3.1-70b", "llama-3.3-70b"]):
-        return "groq"
-    if m.startswith("gpt-") or m.startswith("openai/") or m.startswith("o1") or m.startswith("o3"):
-        return "openai"
-    if m.startswith("claude") or m.startswith("anthropic/"):
-        return "anthropic"
-    if "/" in m and not m.startswith("http"):
-        return "openrouter"
-    return "ollama"
+from app.services.llm_external import detect_provider as _detect_provider
 
 
 async def _stream_external_openai(client, url: str, api_key: str, model: str, prompt: str, extra_headers: dict = None):
@@ -1155,9 +1144,10 @@ def _build_prompt(
     elif platform == "exadata":
         identity = NL.join([
             "Sen kıdemli bir Exadata / Oracle altyapı uzmanısın.",
-            "Bu sohbet Exadata compute/cell'e bağlı Linux sunucular üzerindendir.",
-            "Bağlamda Exadata kaydı yoksa uydurma; envanter eksikliğini açıkça söyle.",
-            "Genel Linux SSH araçlarıyla node sağlığını inceleyebilirsin; cell/ILOM özel API yoksa belirt.",
+            "Bu sohbet Exadata rack / compute node / storage cell üzerindendir.",
+            "Önce db_list_exadata_racks, db_list_exadata_nodes, exadata_health_overview kullan.",
+            "Bunlar DB envanterdir. Canlı cellcli/ASMCMD/AWR yok — uydurma, eksikse söyle.",
+            "linked_server_id varsa Linux get_* ile yalnız o host OS'u incele; cell metriği diye yazma.",
         ])
     else:
         identity = NL.join([
@@ -1986,14 +1976,8 @@ async def chat_stream(
                 from app.services.chat_path_policy import resolve_live_path, has_session_episode
                 model = request.model or get_active_model(db)
                 provider = _detect_provider(model)
-                _uses_external_api = (
-                    (provider == "groq" and bool(settings.GROQ_API_KEY)) or
-                    (provider == "openai" and bool(settings.OPENAI_API_KEY)) or
-                    (provider == "openrouter" and bool(settings.OPENROUTER_API_KEY))
-                )
                 _agentic_ok = (
-                    (not _uses_external_api)
-                    and (not ephemeral)
+                    (not ephemeral)
                     and (not request.skip_server_context)
                     and _rts.get_bool("linux_chat_agentic_mode")
                 )

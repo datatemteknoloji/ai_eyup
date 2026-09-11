@@ -212,6 +212,7 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
                     if title in titles and prev is None:
                         # Manuel yüklenmiş olabilir; version işaretle, yeniden embed etme
                         state[title] = version
+                        _save_state(state_file, state)
                         summary["skipped"].append(title)
                         continue
                 except Exception:
@@ -222,6 +223,8 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
 
             n = await ingest_runbook_append(title=title, content=text)
             state[title] = version
+            # Belge bitince kalıcı state — restart'ta tüm tur bitmeden kaybolmasın
+            _save_state(state_file, state)
             summary[action].append({"title": title, "chunks": n, "version": version})
             logger.info("RAG seed %s: title=%r chunks=%s version=%s", action, title, n, version)
         except Exception as e:

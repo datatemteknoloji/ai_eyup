@@ -17,6 +17,9 @@ export default defineConfig({
           if (id.includes('node_modules/recharts') || id.includes('node_modules/d3-')) {
             return 'recharts'
           }
+          if (id.includes('node_modules/mermaid') || id.includes('node_modules/@mermaid')) {
+            return 'mermaid'
+          }
           if (id.includes('node_modules/xlsx')) {
             return 'xlsx'
           }

@@ -26,7 +26,7 @@ MODULE_TO_DOMAINS: Dict[str, FrozenSet[str]] = {
     MOD_WINDOWS: frozenset({"windows", "infra"}),
     MOD_VIRT: frozenset({"vcenter", "infra"}),
     MOD_OPENSHIFT: frozenset({"openshift", "infra"}),
-    MOD_EXADATA: frozenset({"linux", "infra"}),  # Exadata SSH linux tools
+    MOD_EXADATA: frozenset({"exadata", "linux", "infra"}),
 }
 
 # Güçlü kimlik sinyalleri (yüksek skor)
@@ -246,7 +246,39 @@ def _multi_plan(
     )
 
 
-def _single_plan(ml: str, primary: str, *, strong: bool, reason: str) -> ModulePlan:
+def plan_with_modules(
+    message: str,
+    modules: Sequence[str],
+    *,
+    reason: str,
+    confidence: float,
+) -> ModulePlan:
+    """Bilinen modül listesinden plan — router LLM birleştirmesi için."""
+    ml = _norm(message)
+    mods = tuple(dict.fromkeys(m for m in modules if m in ALL_MODULES))
+    if not mods:
+        return ModulePlan(
+            mode="knowledge",
+            modules=(),
+            domains=frozenset({"infra"}),
+            confidence=confidence,
+            reason=reason,
+        )
+    if len(mods) == 1:
+        return _single_plan(
+            ml, mods[0], strong=True, reason=reason, confidence=confidence,
+        )
+    return _multi_plan(ml, mods, reason=reason, confidence=confidence)
+
+
+def _single_plan(
+    ml: str,
+    primary: str,
+    *,
+    strong: bool,
+    reason: str,
+    confidence: Optional[float] = None,
+) -> ModulePlan:
     domains = _domains_for_modules([primary])
     need_prom = primary in (MOD_LINUX, MOD_WINDOWS, MOD_EXADATA) and any(
         w in ml for w in ("cpu", "ram", "disk", "performans", "metrik", "iops", "latency")
@@ -257,7 +289,10 @@ def _single_plan(ml: str, primary: str, *, strong: bool, reason: str) -> ModuleP
         mode="single",
         modules=(primary,),
         domains=domains,
-        confidence=_CONF_SINGLE if strong else 0.65,
+        confidence=(
+            float(confidence) if confidence is not None
+            else (_CONF_SINGLE if strong else 0.65)
+        ),
         reason=reason,
         join_keys=(),
         need_prometheus=need_prom,
@@ -429,6 +464,8 @@ def persona_addendum(plan: ModulePlan) -> str:
         "(vcenter / ssh / ocp / prometheus / db).\n"
         f"- Plan: {plan.reason} | join_keys={keys}\n"
         "- cross_entity_match ile envanter anahtarlarını doğrulayabilirsin.\n"
+        "- Guest iowait × VM disk latency aynı pencerede: linux_virt_io_correlate "
+        "(join yoksa korelasyon uydurma).\n"
         "- Eksik alan varsa bir sonraki SoT basamağına geç; RAG ile metrik uydurma.\n"
         f"{extra}"
     )

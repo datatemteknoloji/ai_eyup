@@ -2133,6 +2133,17 @@ def architecture_guide_snapshot(
     return collect_architecture_snapshot(db)
 
 
+@router.get("/chat-coverage-misses")
+def chat_coverage_misses(
+    limit: int = 50,
+    _admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """Kanıtsız 'veri yok' / araçsız cevap kalıpları (admin)."""
+    from app.services.chat_coverage import coverage_miss_summary
+    return coverage_miss_summary(db, limit=max(1, min(limit, 200)))
+
+
 @router.get("/product-guide/catalog")
 def product_guide_catalog(
     locale: str = "tr",

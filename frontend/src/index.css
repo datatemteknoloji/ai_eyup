@@ -987,6 +987,51 @@ html[data-theme="light"] .chat-md-table-wrap {
   background-color: #ffffff;
 }
 
+/* Mermaid: açık kart + koyu yazı; SVG küçültülmez (yatay kaydır) */
+.chat-mermaid {
+  background: #ffffff;
+}
+.chat-mermaid svg {
+  max-width: none;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.chat-mermaid .nodeLabel,
+.chat-mermaid .edgeLabel,
+.chat-mermaid .label,
+.chat-mermaid .actor,
+.chat-mermaid .messageText,
+.chat-mermaid .loopText,
+.chat-mermaid .noteText,
+.chat-mermaid .cluster-label,
+.chat-mermaid foreignObject,
+.chat-mermaid foreignObject div,
+.chat-mermaid foreignObject span,
+.chat-mermaid foreignObject p,
+.chat-mermaid text,
+.chat-mermaid tspan {
+  fill: #0f172a !important;
+  color: #0f172a !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+.chat-mermaid .node rect,
+.chat-mermaid .node polygon,
+.chat-mermaid .node circle,
+.chat-mermaid .basic.label-container,
+.chat-mermaid .actor-box,
+.chat-mermaid .actor > rect {
+  fill: #f8fafc !important;
+  stroke: #2563eb !important;
+  stroke-width: 1.5px !important;
+}
+.chat-mermaid .flowchart-link,
+.chat-mermaid .edgePath path {
+  stroke: #475569 !important;
+  stroke-width: 1.75px !important;
+}
+
 /* ── Hex Grid Background (optional decorative) ───────────────────────────── */
 .hex-bg {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill='none' stroke='rgba(99%2C130%2C194%2C0.06)' stroke-width='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15z'/%3E%3Cpath d='M13.99.25l13 7.5v15l-13 7.5L1 22.75v-15zM27.99 16.75l13 7.5v15l-13 7.5L15 31.75v-15z'/%3E%3C/g%3E%3C/svg%3E");

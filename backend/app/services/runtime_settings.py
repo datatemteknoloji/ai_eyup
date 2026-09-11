@@ -370,6 +370,13 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "env": "NLQ_PREFER_METRIC_OVER_SSH",
     },
     # ── Unified Chat (agentic tool-calling) ──────────────────────────
+    "unified_route_llm_hint": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "unified_chat", "label": "Düşük güven routing LLM",
+        "help": "Keyword skor belirsizken (eşik/tie) ucuz bir LLM ikinci fikir sorar. "
+                "auto_explore (disk→virt+linux) daraltılamaz. Devre açıksa atlanır.",
+        "env": "UNIFIED_ROUTE_LLM_HINT",
+    },
     "unified_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
         "group": "unified_chat", "label": "Unified Chat agentic mod",
@@ -535,12 +542,11 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "rag_embed_concurrency": {
         "default": 4, "type": "int", "min": 1, "max": 32,
         "group": "rag_reranker", "label": "Embedding eşzamanlılığı",
-        "help": "RAG embedding sırasında Ollama'ya aynı anda gönderilecek istek sayısı. "
-                "Embedding CPU (GPU yoksa) tüketir; düşürmek sistemi rahatlatır, embed "
-                "süresini uzatır. Reindex ayrı worker'da çalıştığı için API etkilenmez.",
+        "help": "RAG embedding sırasında Ollama'ya aynı anda gönderilecek istek sayısı "
+                "(varsayılan 4). Embedding CPU'da çalışıyorsa 1–2'ye düşürün; 8+ thrashing "
+                "ve model unload (Stopping…) üretebilir. GPU'da 4–8 genelde güvenli.",
         "env": "OLLAMA_EMBED_CONCURRENCY",
-    },
-    "rag_reranker_candidates": {
+    },    "rag_reranker_candidates": {
         "default": 15, "type": "int", "min": 5, "max": 50,
         "group": "rag_reranker", "label": "Reranker aday sayısı",
         "help": "Reranking öncesi embedding aramasından çekilecek aday sayısı — bu "

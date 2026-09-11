@@ -11,6 +11,17 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.33] - 2026-09-11
+
+### AI / sohbet
+- Unified evidence-retry, `data_status`, context kesilme notu, coverage-miss UI, multi-clause check.
+- Düşük güven routing LLM hint; harici sağlayıcı tool-calling; Exadata DB envanter tool’ları.
+- Linux×virt I/O korelasyonu (`linux_virt_io_correlate`, join şartlı).
+- Unified kanıt rozeti (high/medium/low — model güveni değil).
+- `/diagram` `/draw` `/görselleştir` `/şema`: Mermaid çıktı + kısa yorum; frontend `ChatMermaid` (açık kart, kontrast harden).
+- Path etiketi düzeltmesi: `[/boot]` / Windows `\` Mermaid şekil sözdizimini kırıyordu → sanitize + prompt kuralı.
+- AI Mimari GUIDE (TR/EN) + Ayarlar → Hakkında PDF pack; Cursor mimari kuralı.
+
 ## [1.0.9.31] - 2026-09-09
 
 ### AI / LLM

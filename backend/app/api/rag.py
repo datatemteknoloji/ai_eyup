@@ -275,20 +275,46 @@ async def rag_metrics_seed(body: Optional[MetricDescriptionsSeedRequest] = None)
 
 
 @router.get("/status")
-async def rag_status(db: Session = Depends(get_db)):
-    """RAG collection sayıları + kaynak DB özeti + embedding sağlık kontrolü."""
+async def rag_status(
+    db: Session = Depends(get_db),
+    embed_probe: str = "light",
+):
+    """RAG collection sayıları + kaynak DB özeti + embedding sağlık kontrolü.
+
+    embed_probe=light (varsayılan): Ollama /api/tags — hızlı, status sayfasını bloklamaz.
+    embed_probe=full: gerçek embed isteği (yavaş; yalnızca teşhis).
+    Collection COUNT ile embed probe paralel yürür.
+    """
     try:
+        import asyncio
+
         from app.models.event import Incident, SystemEvent
         from app.models.learned_fact import LearnedFact
         from app.models.linux_inventory import LinuxInventory
         from app.data.default_metric_descriptions import DEFAULT_METRIC_DESCRIPTIONS
         from app.services.embedding import probe_embedding
+        from app.services.rag_store import get_vector_store_status
+
+        mode = (embed_probe or "light").strip().lower()
+        if mode not in ("light", "full"):
+            mode = "light"
+
+        def _collection_snapshot() -> dict:
+            return {
+                "runbook": count_collection(COLLECTION_RUNBOOK),
+                "incidents": count_collection(COLLECTION_INCIDENTS),
+                "metrics": count_collection(COLLECTION_METRICS),
+                "knowledge": count_collection(COLLECTION_KNOWLEDGE),
+                "vector_store": get_vector_store_status(),
+            }
+
+        collections, embedding = await asyncio.gather(
+            asyncio.to_thread(_collection_snapshot),
+            probe_embedding(mode=mode),
+        )
 
         status = {
-            "runbook": count_collection(COLLECTION_RUNBOOK),
-            "incidents": count_collection(COLLECTION_INCIDENTS),
-            "metrics": count_collection(COLLECTION_METRICS),
-            "knowledge": count_collection(COLLECTION_KNOWLEDGE),
+            **collections,
             "sources": {
                 "incidents_db": db.query(Incident).count(),
                 "events_db": db.query(SystemEvent).count(),
@@ -296,7 +322,7 @@ async def rag_status(db: Session = Depends(get_db)):
                 "linux_inventory_db": db.query(LinuxInventory).count(),
                 "default_metrics": len(DEFAULT_METRIC_DESCRIPTIONS),
             },
-            "embedding": await probe_embedding(),
+            "embedding": embedding,
         }
         return status
     except Exception as e:

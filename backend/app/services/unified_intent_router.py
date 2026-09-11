@@ -188,6 +188,11 @@ def route_unified(
 
     # 4) Module-first canlı rota (clarify yok)
     plan = plan_modules(msg, skip_ctx=skip_ctx)
+    try:
+        from app.services.route_llm_hint import apply_route_llm_hint
+        plan = apply_route_llm_hint(msg, plan)
+    except Exception:
+        pass
     route = _from_module_plan(msg, plan)
     logger.info(
         "[ModuleOrch] mode=%s modules=%s domains=%s conf=%.2f reason=%s prom=%s",

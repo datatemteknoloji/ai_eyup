@@ -9,6 +9,13 @@ def test_estimate_tokens():
     assert estimate_tokens("hello") >= 1
 
 
+def test_apply_context_char_budget_adds_visible_notice(monkeypatch):
+    import app.services.llm_context_budget as m
+    monkeypatch.setattr(m, "get_input_token_budget", lambda reserve=None: 200)
+    out = m.apply_context_char_budget("satır " * 20000)
+    assert "CONTEXT KESİLDİ" in out
+
+
 def test_truncate_when_over_budget():
     big = "x" * 100000
     out, truncated = truncate_text_to_token_budget(big, 1000)
@@ -68,6 +75,8 @@ def test_budget_sections_truncates_context_not_tail(monkeypatch):
     assert result["meta"]["truncated"] is True
     assert result["meta"]["truncated_section"] in ("context", "context+history")
     assert len(result["context"]) < len(huge_context)
+    assert "CONTEXT KESİLDİ" in result["context"]
+    assert "canlı veri yok" in result["context"]
     # Fonksiyon protected_tail'i hiç döndürmüyor/değiştirmiyor — çağıran onu
     # prompt'a olduğu gibi ekler; burada dolaylı kanıt: final_tokens tail'i
     # tam token sayısıyla içeriyor.
@@ -87,6 +96,7 @@ def test_budget_sections_truncates_history_when_context_alone_not_enough(monkeyp
     )
     assert result["meta"]["truncated"] is True
     assert len(result["history"]) < 200000
+    assert "CONTEXT KESİLDİ" in result["history"]
 
 
 def test_budget_sections_never_shrinks_tail_even_when_impossible(monkeypatch):
@@ -100,6 +110,6 @@ def test_budget_sections_never_shrinks_tail_even_when_impossible(monkeypatch):
     # bu alt sınırı da aşan bir tail ile gerçek "imkansız" senaryoyu test ediyoruz.
     huge_tail = "Kullanıcı Sorusu: " + ("x" * 10000)
     result = m.budget_sections(system="s", context="c" * 5000, history="", protected_tail=huge_tail)
-    assert result["context"] == ""
+    assert result["context"] == "" or "CONTEXT KESİLDİ" in result["context"]
     from app.services.llm_context_budget import estimate_tokens
     assert result["meta"]["tail_tokens"] == estimate_tokens(huge_tail)

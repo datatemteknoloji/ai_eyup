@@ -216,6 +216,24 @@ def _chat_with_tools_once(
                     "error": f"LLM HTTP 500: {err_msg[:300]}"}
 
         if resp.status_code != 200:
+            # Groq/OpenAI bazı modeller tools'u reddeder (400) — tools'suz bir kez dene.
+            if resp.status_code == 400 and tools:
+                logger.warning(
+                    "[AgentLLM] HTTP 400 (tools reddi olabilir), tools'suz retry: %s",
+                    (resp.text or "")[:160],
+                )
+                payload_no_tools = {k: v for k, v in payload.items() if k != "tools"}
+                try:
+                    resp2 = _ollama_chat(payload_no_tools, timeout)
+                    if resp2.status_code == 200:
+                        msg2 = (resp2.json().get("message", {}) or {})
+                        return {
+                            "content": _strip_thinking(msg2.get("content", "") or ""),
+                            "tool_calls": [],
+                            "error": None,
+                        }
+                except Exception as re2:
+                    logger.error("[AgentLLM] tools'suz 400 retry başarısız: %s", re2)
             return {"content": "", "tool_calls": [],
                     "error": f"LLM HTTP {resp.status_code}: {resp.text[:300]}"}
 
