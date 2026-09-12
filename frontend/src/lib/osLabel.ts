@@ -11,6 +11,7 @@ export type OsIconKey =
   | 'suse'
   | 'fedora'
   | 'windows'
+  | 'vmware'
   | 'linux'
   | 'unknown'
 
@@ -22,6 +23,9 @@ export type OsLabelInput = {
   os_pretty?: string | null
   /** vCenter / hypervisor guest id veya full name (örn. RHEL_9_64) */
   vm_guest_os_full?: string | null
+  /** Envanter / VM adı — vCenter, VCSA, Photon tanımak için */
+  name?: string | null
+  vm_name?: string | null
 }
 
 const CODENAME = /\s*\((?:Plow|Ootpa|Galápagos|Blue Onyx|Ascott|Turquoise|Constantine|Santiago|Tikanga|Maipo|Ootpa|Plow)[^)]*\)\s*/gi
@@ -160,13 +164,31 @@ function idHint(s: OsLabelInput, prettyLower: string): string {
     if (rawId.includes('centos')) return 'centos'
     if (rawId.includes('ubuntu')) return 'ubuntu'
     if (rawId.includes('debian')) return 'debian'
+    if (
+      rawId.includes('vcenter') ||
+      rawId.includes('vcsa') ||
+      rawId.includes('vsphere') ||
+      rawId.includes('vmware') ||
+      rawId.includes('photon')
+    ) {
+      return 'vmware'
+    }
     if (rawId.includes('suse') || rawId.includes('sles')) return 'sles'
     if (rawId.includes('fedora')) return 'fedora'
     if (rawId.includes('win')) return 'windows'
     return rawId
   }
 
-  const guest = `${s.vm_guest_os_full || ''} ${prettyLower}`.toLowerCase()
+  const guest = `${s.vm_guest_os_full || ''} ${prettyLower} ${s.name || ''} ${s.vm_name || ''}`.toLowerCase()
+  if (
+    guest.includes('vcenter') ||
+    guest.includes('vcsa') ||
+    guest.includes('vsphere') ||
+    guest.includes('vmware') ||
+    guest.includes('photon')
+  ) {
+    return 'vmware'
+  }
   if (guest.includes('oracle') || /\bol[_\s-]?\d/.test(guest) || guest.startsWith('ol_')) return 'ol'
   if (guest.includes('red hat') || guest.includes('rhel') || /rhel[_\s-]?\d/i.test(guest)) return 'rhel'
   if (guest.includes('rocky')) return 'rocky'
@@ -211,6 +233,11 @@ export function shortenOsLabel(s: OsLabelInput): string {
   if (id === 'almalinux' || id === 'alma' || prettyLower.includes('alma')) return withVer('AlmaLinux')
   if (id === 'ubuntu' || prettyLower.includes('ubuntu')) return withVer('Ubuntu')
   if (id === 'debian' || prettyLower.includes('debian')) return withVer('Debian')
+  if (id === 'vmware' || prettyLower.includes('photon')) {
+    if (/vcenter|vcsa/i.test(`${pretty} ${s.name || ''} ${s.vm_name || ''}`)) return 'vCenter'
+    if (/photon/i.test(pretty)) return withVer('Photon OS')
+    return 'VMware'
+  }
   if (id === 'sles' || id === 'opensuse' || prettyLower.includes('suse')) return withVer('SLES')
   if (id === 'fedora' || prettyLower.includes('fedora')) return withVer('Fedora')
 
@@ -250,8 +277,18 @@ export function osIconKey(s: OsLabelInput): OsIconKey {
   const pretty = bestPretty(s).toLowerCase()
   const id = idHint(s, pretty)
   const guest = (s.vm_guest_os_full || '').toLowerCase()
-  const blob = `${id} ${pretty} ${guest}`
+  const blob = `${id} ${pretty} ${guest} ${s.name || ''} ${s.vm_name || ''}`.toLowerCase()
   if (blob.includes('win')) return 'windows'
+  if (
+    id === 'vmware' ||
+    blob.includes('vcenter') ||
+    blob.includes('vcsa') ||
+    blob.includes('vsphere') ||
+    blob.includes('vmware') ||
+    blob.includes('photon')
+  ) {
+    return 'vmware'
+  }
   if (id === 'rhel' || id === 'redhat' || blob.includes('rhel') || blob.includes('red hat')) return 'rhel'
   if (id === 'ol' || id === 'oracle' || blob.includes('oracle')) return 'oracle'
   if (id === 'centos' || blob.includes('centos')) return 'centos'

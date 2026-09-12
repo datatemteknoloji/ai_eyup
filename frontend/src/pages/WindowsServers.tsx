@@ -1117,6 +1117,7 @@ const WindowsServers: React.FC = () => {
                   os_release_id: srv.os_release_id,
                   os_version_id: srv.os_version_id,
                   os_pretty: srv.os_version || srv.os_type,
+                  name: srv.name,
                 }
                 return (
                 <tr key={srv.id} className="hover:bg-slate-700/30 transition-colors cursor-pointer"

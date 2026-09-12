@@ -20,16 +20,16 @@ Atlama. Kural/GUIDE koddan saparsa sonraki ajan yanlış varsayar.
 
 ## Gerçek akış (tahmin etme)
 
-- Intent/domain önce keyword: `route_unified` + `plan_modules`. Conf≤0.70 ise isteğe bağlı `route_llm_hint` (birleşim; `auto_explore` daralmaz; circuit açıksa atlanır). Tam classifier yok.
+- Intent/domain önce keyword: `route_unified` + `plan_modules` + `intent_text.keyword_hit` (olumsuz pencere: demiyorum/sapmadan/düşme). Esnaf `cpu kullanım` virt+linux **ezmez** (Windows/filo virt korunur). Conf≤0.70 ise isteğe bağlı `route_llm_hint` (birleşim; `auto_explore` daralmaz; circuit açıksa atlanır). Tam classifier yok.
 - Unified: full-scan → chitchat → cache → router → collect XOR agentic → `_build_prompt`.
 - Erken çıkış (inventory, QA_RULES, virt deterministic tablo) LLM’i atlar.
-- Chat tool loop **READ_ONLY** (`run_read_only_tool_loop`, ~6 adım). Mutate yalnız `/agent` + onay.
+- Chat tool loop **READ_ONLY** (`run_read_only_tool_loop`, ~6 adım). Mutate yalnız `/agent` + onay. Virt DB tool (`db_list_vms`, `db_vm_detail`, `db_virt_alarms`, …) domain **yalnız `vcenter`** — `infra` yok (Linux-only sızıntı kapanır). Ortak kalan: `knowledge_search` / `infra_report` / `prometheus_query` / `db_list_critical_events`.
 - Groq/OpenAI/OpenRouter: final stream doğrudan; tool loop `chat_sync` ile aynı sağlayıcıya (anahtar varsa). Anthropic tool yok. Circuit/REMOTE_LLM sessiz Ollama düşmez.
 - Exadata: `db_list_exadata_*` / `exadata_health_overview` (DB). Canlı cellcli/ASM yok. Linked compute → Linux `get_*`.
 - OpenShift ayrı `/ask` yok → `/chat/stream` + `platform=openshift`.
-- Virt: `QA_RULES` regex şablon; DB-first; snapshot boyutu SOAP prefetch (`db_list_vms` yetmez).
+- Virt: `QA_RULES` regex şablon. Filo perf (CPU/ready/IOPS/…): Timescale `virt_vm_metrics` son satır; kullanıcı **canlı/anlık/şimdi** (olumsuz pencere hariç: `anlık demiyorum`) veya kolon NULL/boş → vCenter QueryPerf (`virt_fleet_perf`). `canlı SSH` virt live değil. Hot-add/rezervasyon/NIC/snapshot yaşı hâlâ canlı. Snapshot byte SOAP prefetch (`db_list_vms` yetmez). LLM yolunda virt RAG (`virt_chat_rag`: runbook/incident/metrik/bilgi — estate sayısı değil). Deterministik envanter RAG almaz.
 - Çapraz domain: multi plan + `cross_entity_match` + LLM sentez. Metrik RCA: `virt_diagnostics` (VM↔host) ve join şartlı `linux_virt_io_correlate` (guest iowait × VM disk latency). Join yoksa korelasyon yok.
 - Kanıt: araçsız “veri yok” yasak. Virt **ve Unified final** retry (`chat_evidence`). Tool/collect `data_status`. Kesilince `[CONTEXT KESİLDİ]`. Çok-parça: `chat_clause_check`. Coverage-miss: Ayarlar → Hakkında. Unified kanıt rozeti (`chat_evidence_badge`, model güveni değil).
-- Çıktı: `/table` `/json` `/brief` `/diagram` (`chat_output_directives`). `/diagram` aynı final LLM + ` ```mermaid ` + kısa yorum; frontend `ChatMermaid` (açık kart, SVG harden, path etiketi `["/boot"]` sanitize). `/chart` alias değil (Recharts). Yeni SSE/tool yok.
+- Çıktı: `/table` `/json` `/brief` `/diagram` `/graph` (`chat_output_directives`). `/diagram` aynı final LLM + tercih ` ```ainew-diagram ` JSON (React Flow) yedek ` ```mermaid `. `/graph` `/grafik` `/chart` = Recharts zaman serisi (`chat_charts` → `meta.charts`); mermaid xychart yasak. Linux/Windows: Timescale `metric_data` + boşsa Prom `query_range` (scrape yok). Virt: `query_series` (vCenter). Overlay aynı birim, en fazla 8 nesne; SSH/WinRM geçmiş eğri değil.
 - RAG: pgvector; bu GUIDE ingest edilmez.
 - Uzak LLM circuit açık → yerel Ollama’ya sessiz düşme yok.

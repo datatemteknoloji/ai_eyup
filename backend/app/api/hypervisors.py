@@ -257,6 +257,70 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
     ]
 
 
+@router.get("/monitoring/overview")
+def virt_monitoring_overview(db: Session = Depends(get_db)):
+    """vCenter/Timescale özet — grafik serisi yok, seçimsiz açılış için."""
+    from app.services.virt_monitoring import build_overview
+    try:
+        return build_overview(db)
+    except Exception as e:
+        logger.exception("virt monitoring overview")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitoring/objects")
+def virt_monitoring_objects(
+    kind: str = "host",
+    q: str = "",
+    cluster: str = "",
+    limit: int = 80,
+    db: Session = Depends(get_db),
+):
+    """VM / ESXi / datastore seçici (arama, max 200)."""
+    from app.services.virt_monitoring import list_objects
+    try:
+        return list_objects(db, kind=kind, q=q, cluster=cluster, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("virt monitoring objects")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitoring/metrics")
+def virt_monitoring_metrics(kind: str = "host"):
+    """Grafik preset listesi (whitelist)."""
+    from app.services.virt_monitoring import metric_catalog
+    if kind not in ("vm", "host", "datastore"):
+        raise HTTPException(status_code=400, detail="kind vm|host|datastore olmalı")
+    return {"ok": True, "kind": kind, "metrics": metric_catalog(kind)}
+
+
+@router.get("/monitoring/series")
+def virt_monitoring_series(
+    kind: str = "host",
+    names: str = "",
+    metric: str = "cpu_pct",
+    range: str = "8h",
+    db: Session = Depends(get_db),
+):
+    """Seçili nesnelerin Timescale serisi. names boşsa seri çekilmez."""
+    from app.services.virt_monitoring import parse_names, query_series
+    try:
+        return query_series(
+            db,
+            kind=kind,
+            names=parse_names(names),
+            metric=metric,
+            range_key=range,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("virt monitoring series")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/host-metrics")
 def get_all_host_metrics(db: Session = Depends(get_db)):
     """
@@ -1190,6 +1254,39 @@ def ask_hypervisor_question(
                 "session_id": session_id,
             }
 
+        from app.services.chat_charts import try_build_chat_charts
+        _chart = try_build_chat_charts(
+            db,
+            message=ask_user_q,
+            platform="virt",
+            explicit=output_directive == OutputDirective.GRAPH,
+        )
+        if _chart:
+            answer = _chart["summary_text"]
+            db.add(ChatMessage(
+                session_id=session_id, role="assistant", content=answer,
+                meta={
+                    "charts": _chart.get("charts") or [],
+                    "intents": _chart.get("intents") or ["chart"],
+                },
+            ))
+            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session:
+                from app.services.chat_history import maybe_set_session_title
+                maybe_set_session_title(session, question)
+                session.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            return {
+                "answer": answer,
+                "intents": _chart.get("intents") or ["chart"],
+                "context_lines": 0,
+                "model": None,
+                "latency_ms": 0,
+                "error": None,
+                "session_id": session_id,
+                "charts": _chart.get("charts") or [],
+            }
+
         if full_scan_this_turn:
             logger.info(
                 "[HypervisorAsk] full_scan CONFIRMED session=%s items≈%s",
@@ -1237,6 +1334,12 @@ def ask_hypervisor_question(
                 live_hint = True
                 agentic_extra = ""
                 inventory_done = False
+                rag_block = ""
+                try:
+                    from app.services.virt_chat_rag import collect_virt_rag_block
+                    rag_block = collect_virt_rag_block(ask_user_q)
+                except Exception:
+                    rag_block = ""
                 if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
                     try:
                         from app.services.agent.tools import domains_for_platform
@@ -1251,7 +1354,7 @@ def ask_hypervisor_question(
                             db,
                             model=model_name,
                             user_message=ask_user_q,
-                            context_str="",
+                            context_str=rag_block,
                             server_summary=hv_summary,
                             max_steps=_rts.get_int("virt_chat_max_tool_steps"),
                             domains=domains_for_platform("virt"),
@@ -1303,7 +1406,7 @@ def ask_hypervisor_question(
                                 for h in db.query(Hypervisor).all()
                             )
                             gen = run_read_only_tool_loop(
-                                db, model_name, ask_user_q, "", hv_summary,
+                                db, model_name, ask_user_q, rag_block, hv_summary,
                                 max_steps=_rts.get_int("virt_chat_max_tool_steps"),
                                 domains=domains_for_platform("virt"),
                                 platform="virt",
@@ -1344,6 +1447,12 @@ def ask_hypervisor_question(
                             ask_user_q
                             + "\n\n[CANLI ARAÇ SONUÇLARI — yanıtında bunları esas al]\n"
                             + agentic_extra[:tool_cap]
+                        )
+                    if rag_block:
+                        ask_question = (
+                            ask_question
+                            + "\n\n[RAG — prosedür/benzer olay; sayıları DB veya canlı araçtan al]\n"
+                            + rag_block[:12000]
                         )
 
                     result = answer_hypervisor_question(

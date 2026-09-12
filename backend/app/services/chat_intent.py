@@ -133,6 +133,18 @@ def classify_chat_intent(message: str) -> ChatIntent:
     educational = bool(_EDUCATIONAL_RE.search(m))
     inventory = bool(_INVENTORY_STRONG_RE.search(m))
     live = bool(_LIVE_RE.search(m))
+    if live:
+        try:
+            from app.services.intent_text import any_keyword_hit
+            live = any_keyword_hit(
+                m,
+                (
+                    "canlı", "canli", "live", "soap", "anlık", "anlik",
+                    "gerçek zaman", "gercek zaman", "vcenter api",
+                ),
+            )
+        except Exception:
+            pass
     has_entity = bool(_ENTITY_RE.search(m))
     measurable = bool(_MEASURABLE_ATTR_RE.search(m))
 

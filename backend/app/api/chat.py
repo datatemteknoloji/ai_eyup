@@ -1277,9 +1277,7 @@ def _build_prompt(
     tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:
         tail_parts.append(_dir_add.strip())
-        tail_parts.append("YANIT:")
-    else:
-        tail_parts.append("YANIT (Markdown, Turkce):")
+    tail_parts.append("YANIT (Markdown, Turkce):")
     tail_block = "\n\n".join(tail_parts)
 
     # system (persona/kurallar) + soru asla kesilmez; gerekirse BAGLAM, sonra
@@ -1848,30 +1846,28 @@ async def chat_stream(
                     # fleet_policy_note context_parts'a (_fleet_note_stream) eklenir — burada değil
 
 
-                # ── 2c. Grafik/zaman serisi rapor isteği (node_exporter → TimescaleDB) ──
-                # "son 2 saatlik disk ve network utilizasyonu ver" gibi hem bir süre HEM
-                # bir metrik türü içeren mesajları LLM'e gitmeden, deterministik olarak
-                # metric_data'dan çekip metin özeti + grafik verisi (meta.charts) olarak
-                # döndürür. Süre belirtilmezse (örn. "cpu kullanımını göster") normal
-                # metin/Prometheus akışına devam eder.
-                from app.services.metric_history import detect_chart_request, build_chart_response
-                chart_req = detect_chart_request(message)
-                if chart_req and selected_servers:
-                    target_server = selected_servers[0]
-                    chart_result = build_chart_response(db, target_server, chart_req["hours"], chart_req["groups"])
-                    if chart_result:
-                        answer_text = chart_result["summary_text"]
-                        if len(selected_servers) > 1:
-                            answer_text += f"\n\n_(Not: Birden fazla sunucu seçili, grafik sadece **{target_server.name}** için oluşturuldu.)_"
-                        for i in range(0, len(answer_text), 8):
-                            yield _sse({"token": answer_text[i:i+8]})
-                        _persist_chat_pair(
-                            db, session_id, ephemeral=ephemeral,
-                            user=None, assistant=answer_text,
-                            meta={"charts": chart_result["charts"]},
-                        )
-                        yield _sse({"done": True, "session_id": session_id})
-                        return
+                # ── 2c. Grafik/zaman serisi (/graph veya süre+metrik) ──
+                from app.services.chat_charts import try_build_chat_charts
+                _chart = try_build_chat_charts(
+                    db,
+                    message=message,
+                    platform=chat_platform,
+                    servers=selected_servers if has_explicit_selection else None,
+                    pool=inventory_servers if chat_platform != "openshift" else None,
+                    explicit=output_directive == _OD.GRAPH,
+                )
+                if _chart:
+                    answer_text = _chart["summary_text"]
+                    yield _sse({"phase": "answering"})
+                    for i in range(0, len(answer_text), 8):
+                        yield _sse({"token": answer_text[i:i + 8]})
+                    _persist_chat_pair(
+                        db, session_id, ephemeral=ephemeral,
+                        user=None, assistant=answer_text,
+                        meta={"charts": _chart.get("charts") or [], "intents": _chart.get("intents") or ["chart"]},
+                    )
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
 
                 # ── 3. Keyword analizi ────────────────────────────────────────
                 PROMETHEUS_KEYWORDS = [

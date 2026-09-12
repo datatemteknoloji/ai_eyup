@@ -1,5 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import { useT } from '../i18n/LocaleProvider'
+import { ChatArchitectureDiagram } from './ChatArchitectureDiagram'
+import type { ArchitectureDiagram } from '../utils/chatDiagramSchema'
 
 type Phase = 'pending' | 'ok' | 'error'
 type MermaidMod = typeof import('mermaid')
@@ -178,7 +180,13 @@ function safeDomId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40)
 }
 
-export function ChatMermaid({ source }: { source: string }) {
+export function ChatMermaid({
+  source,
+  fallback = null,
+}: {
+  source: string
+  fallback?: ArchitectureDiagram | null
+}) {
   const t = useT()
   const rid = safeDomId(useId())
   const [phase, setPhase] = useState<Phase>('pending')
@@ -216,6 +224,10 @@ export function ChatMermaid({ source }: { source: string }) {
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     )
+  }
+
+  if ((phase === 'error' || phase === 'pending') && fallback && fallback.nodes.length >= 2) {
+    return <ChatArchitectureDiagram diagram={fallback} />
   }
 
   return (

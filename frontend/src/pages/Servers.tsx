@@ -1863,6 +1863,8 @@ const Servers: React.FC = () => {
                   os_version_id: server.os_version_id,
                   os_pretty: server.os_version || server.vm_guest_os_full,
                   vm_guest_os_full: server.vm_guest_os_full,
+                  name: server.name,
+                  vm_name: server.vm_name,
                 }
                 const isSelected = selectedIds.has(server.id)
                 return (
@@ -2140,6 +2142,8 @@ const Servers: React.FC = () => {
                   os_version_id: contextMenu.server.os_version_id,
                   os_pretty: contextMenu.server.os_version || contextMenu.server.vm_guest_os_full,
                   vm_guest_os_full: contextMenu.server.vm_guest_os_full,
+                  name: contextMenu.server.name,
+                  vm_name: contextMenu.server.vm_name,
                 }}
                 size={22}
               />

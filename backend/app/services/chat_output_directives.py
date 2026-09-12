@@ -1,4 +1,4 @@
-"""Kullanıcı mesajındaki özel ÇIKTI FORMATI komutları — /table, /json, /brief, /diagram.
+"""Kullanıcı mesajındaki özel ÇIKTI FORMATI komutları — /table, /json, /brief, /diagram, /graph.
 
 Genel kural (tek bir soruya özel değil): bu komutlar HERHANGİ bir sohbet
 platformunda (Linux/Windows/Unified/vCenter) ve HERHANGİ bir soru için aynı
@@ -14,7 +14,8 @@ platformunda (Linux/Windows/Unified/vCenter) ve HERHANGİ bir soru için aynı
           render_rows_as_brief ile virt_inventory_contract gibi modüller
           kendi tablo şablonlarını JSON/özet formatına çevirebilir.
   /diagram ekstra LLM veya SSE event açmaz; aynı final çağrıya addendum ekler.
-  /chart alias değildir — Timescale + Recharts yolu (metric_history) bozulmasın.
+  /graph /grafik /chart sayısal zaman serisi (Recharts, chat_charts) — mermaid
+  xychart veya /diagram alias'ı değildir.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ class OutputDirective(str, Enum):
     JSON = "json"
     BRIEF = "brief"
     DIAGRAM = "diagram"
+    GRAPH = "graph"
 
 
 # Türkçe + İngilizce alias'lar — kelime sınırlı ("/tablomsu" gibi bir kelimeyi
@@ -41,22 +43,27 @@ _DIRECTIVE_PATTERNS: Tuple[Tuple[OutputDirective, "re.Pattern[str]"], ...] = (
         r"(?<![\w/])/(?:diagram|draw|gorsellestir|görselleştir|sema|şema)(?![\w])",
         re.I,
     )),
+    (OutputDirective.GRAPH, re.compile(
+        r"(?<![\w/])/(?:graph|grafik|graf|chart)(?![\w])",
+        re.I,
+    )),
     (OutputDirective.BRIEF, re.compile(r"(?<![\w/])/(?:brief|kisa|kısa|ozet|özet)(?![\w])", re.I)),
 )
 
 # Kullanıcı birden fazla komut yazarsa (ör. "/table /brief") hepsi mesajdan
 # temizlenir ama yalnız EN KATI/en belirgin olan uygulanır: JSON (makine
-# formatı) > TABLE > DIAGRAM (görsel) > BRIEF (serbest metin özeti).
+# formatı) > TABLE > GRAPH (Recharts seri) > DIAGRAM (topoloji) > BRIEF.
 _PRIORITY: Tuple[OutputDirective, ...] = (
     OutputDirective.JSON,
     OutputDirective.TABLE,
+    OutputDirective.GRAPH,
     OutputDirective.DIAGRAM,
     OutputDirective.BRIEF,
 )
 
 
 def extract_output_directive(message: str) -> Tuple[str, OutputDirective]:
-    """Mesajdan /table, /json, /brief, /diagram komutunu ayıklar.
+    """Mesajdan /table, /json, /brief, /diagram, /graph komutunu ayıklar.
 
     Döner: (komut(lar) temizlenmiş mesaj, en yüksek öncelikli komut).
     Hiçbir komut yoksa (orijinal mesaj (strip'lenmiş), OutputDirective.NONE).
@@ -96,24 +103,29 @@ _ADDENDUM: Dict[OutputDirective, str] = {
         "başlık KULLANMA — yalnız doğrudan sonucu 2-3 cümleyle söyle."
     ),
     OutputDirective.DIAGRAM: (
-        "\n\nÇIKTI FORMATI KOMUTU (/diagram): Kullanıcı bu turda teknik bir diyagram istedi. "
-        "Aynı cevapta (ekstra adım yok) en uygun Mermaid tipini sen seç: flowchart, "
-        "sequenceDiagram, erDiagram, stateDiagram-v2 veya gantt. Ağ/topoloji için flowchart "
-        "kullan — SVG veya HTML üretme. Sayısal zaman serisi (son N saat CPU/RAM/disk) "
-        "isteniyorsa xychart-beta yazma; kısa metin/tablo yeterli (mevcut Recharts yolu "
-        "ayrı çalışır). En fazla bir ```mermaid kod bloğu üret; 15-20 düğüm/adımı geçme, "
-        "büyük listeleri özetle. Düğüm/aktör etiketleri düz metin: en fazla 4-5 kelime; "
-        "**kalın**, _italik_, `kod`, HTML veya markdown YASAK (Mermaid bunları çizmez, "
-        "yıldızları gösterir). Dosya yolu etiketlerinde tırnak ZORUNLU: "
-        "B[\"/boot\"] doğru; B[/boot] YASAK (Mermaid bunu şekil sanır, çizim kırılır). "
-        "Windows yolu: A[\"C:\\\\Windows\"] — ters eğik çizgiyi de tırnak içine al. "
-        "Gereksiz meta düğüm ekleme (ör. 'Sunucu Sorgusu'). "
-        "Emin değilsen flowchart kullan. TİP:/GEREKÇE: satırı yazma. "
-        "Cevap yapısı ZORUNLU: (1) isteğe bağlı tek satır başlık, (2) kapanmış ```mermaid "
-        "bloğu, (3) hemen altında kısa yorum — 2-4 madde veya 2-3 cümle: diyagram neyi "
-        "gösteriyor, ana adımlar/aktörler, okunan sonuç. Uzun makale, tekrarlayan özet "
-        "veya diyagramı kelime kelime okuma YOK. Markdown liste/ASCII tek başına YETERLİ "
-        "DEĞİL — mutlaka kapanmış ```mermaid bloğu + kısa yorum üret."
+        "\n\nÇIKTI FORMATI KOMUTU (/diagram): Kullanıcı profesyonel mimari diyagram istedi. "
+        "ÖNCE tek bir ```ainew-diagram JSON bloğu üret (tercih). Şema:\n"
+        '{"title":"kısa başlık","layers":[{"id":"l1","label":"katman"}],'
+        '"nodes":[{"id":"n1","label":"vCenter","kind":"vcenter","layer":"l1"}],'
+        '"edges":[{"from":"n1","to":"n2","label":"SOAP"}]}\n'
+        "kind (zorunlu, küçük harf): vcenter, esxi, vm, datastore, cluster, ocp, kubevirt, "
+        "linux, windows, db, network, user, app, storage, unknown. "
+        "Katmanlı topoloji: 8–16 anlamlı düğüm; A/B/C ders kitabı kutusu YASAK. "
+        "Etiket gerçek varlık adı (kısa). SVG/HTML üretme. "
+        "JSON geçersiz olacaksa yedek olarak TEK ```mermaid bloğu (flowchart) yaz. "
+        "Sayısal zaman serisi için xychart YASAK — kullanıcı /graph istediyse "
+        "Recharts (chat_charts) ayrı bağlanır; mermaid eğri uydurma. "
+        "DİL: title, katman/düğüm/kenar etiketleri (ürün özel adları hariç) ve yorum "
+        "TÜRKÇE. İngilizce bölüm başlığı YASAK: What it shows, Key relationships, "
+        "Flow, Overview, Primary components. Yorum başlıkları: Ne gösteriyor / İlişkiler / Akış. "
+        "Cevap: (1) isteğe bağlı Türkçe başlık, (2) kapanmış kod bloğu, (3) 2–4 maddelik Türkçe yorum. "
+        "TİP:/GEREKÇE: yazma. Diyagramı kelime kelime okuma."
+    ),
+    OutputDirective.GRAPH: (
+        "\n\nÇIKTI FORMATI KOMUTU (/graph): Kullanıcı sayısal zaman serisi grafik "
+        "istedi. Mermaid xychart / ASCII eğri / uydurma nokta YASAK. "
+        "Grafik verisi yoksa kaynağın boş olduğunu söyle (Timescale/Prom veya "
+        "vCenter sync); geçmişi SSH/WinRM ile uydurma."
     ),
 }
 
@@ -131,6 +143,7 @@ def directive_label(directive: Optional[OutputDirective]) -> str:
         OutputDirective.JSON: "/json",
         OutputDirective.BRIEF: "/brief",
         OutputDirective.DIAGRAM: "/diagram",
+        OutputDirective.GRAPH: "/graph",
     }.get(directive, "")
 
 

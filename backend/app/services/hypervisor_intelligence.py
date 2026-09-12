@@ -37,6 +37,17 @@ from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
+
+def _fleet_vm_stats(db: Session, question: str, *required: str) -> Dict[str, Any]:
+    """Filo perf: Timescale son örnek; canlı/boş/NULL ise vCenter."""
+    from app.services.virt_fleet_perf import fetch_fleet_vm_stats
+    return fetch_fleet_vm_stats(db, question or "", required_any=required)
+
+
+def _fleet_note(pack: Dict[str, Any]) -> str:
+    from app.services.virt_fleet_perf import source_footnote
+    return source_footnote(pack)
+
 # ── Sanallaştırma AI kimliği ────────────────────────────────────────────────
 # Linux (chat.py) ve Windows (windows_chat.py) sohbetlerindeki kıdemli admin
 # personasıyla aynı derinlikte — bu modül de kendi alanının (sanallaştırma)
@@ -1322,30 +1333,37 @@ def h_never_rebooted(db: Session, question: str = "") -> str:
 # ── CPU ──────────────────────────────────────────────────────────────────────
 
 def h_cpu_usage_over_90(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "cpu_usage_pct")
     high = [v for v in r["vms"] if v.get("cpu_usage_pct") is not None and v["cpu_usage_pct"] >= 90]
     high.sort(key=lambda v: -v["cpu_usage_pct"])
-    note = ""
     if not r["vms"]:
-        return _na("Canlı VM CPU sorgusu sonuç döndürmedi.")
+        return _na("VM CPU verisi yok — son sync veya vCenter bağlantısını kontrol edin.")
     return (
-        "### CPU Kullanımı %90 Üzerinde Olan VM'ler (anlık)\n\n"
+        "### CPU Kullanımı %90 Üzerinde Olan VM'ler\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "CPU %", "vCPU", "Hypervisor"], [[v["name"], v["cpu_usage_pct"], v["num_cpu"], v["hypervisor"]] for v in high],
-                    "Şu anda CPU kullanımı %90'ın üzerinde VM yok.")
+                    "CPU kullanımı %90'ın üzerinde VM yok.")
     )
 
 
 def h_cpu_top20_now(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
-    vms = [v for v in r["vms"] if v.get("cpu_usage_mhz")]
-    vms.sort(key=lambda v: -v["cpu_usage_mhz"])
+    r = _fleet_vm_stats(db, question, "cpu_usage_mhz", "cpu_usage_pct")
+    vms = [v for v in r["vms"] if v.get("cpu_usage_mhz") or v.get("cpu_usage_pct") is not None]
+    vms.sort(key=lambda v: -(v.get("cpu_usage_mhz") or 0))
+    if not vms:
+        return _na("VM CPU serisi boş — sync veya vCenter canlı sorgusu sonuç vermedi.")
     return (
-        "### En Çok CPU Tüketen 20 VM (anlık ölçüm)\n\n"
-        "_Not: Sorulan '24 saat' penceresi için tarihsel VM performans serisi tutulmuyor; "
-        "aşağıdaki değerler şu anki canlı ölçümdür._\n\n"
-        + _md_table(["VM", "CPU (MHz)", "CPU %", "Hypervisor"], [[v["name"], round(v["cpu_usage_mhz"]), v.get("cpu_usage_pct"), v["hypervisor"]] for v in vms[:20]])
+        "### En Çok CPU Tüketen 20 VM\n\n"
+        + _fleet_note(r)
+        + _md_table(
+            ["VM", "CPU (MHz)", "CPU %", "Hypervisor"],
+            [[
+                v["name"],
+                round(v["cpu_usage_mhz"]) if v.get("cpu_usage_mhz") is not None else "—",
+                v.get("cpu_usage_pct"),
+                v["hypervisor"],
+            ] for v in vms[:20]],
+        )
     )
 
 
@@ -1390,18 +1408,17 @@ def h_cpu_not_available(db: Session, topic: str) -> str:
 
 
 def h_cpu_ready(db: Session, question: str = "") -> str:
-    """vCenter PerformanceManager cpu.ready (anlık % ve ms)."""
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    """CPU ready — önce Timescale; kolon boşsa canlı QueryPerf."""
+    r = _fleet_vm_stats(db, question, "cpu_ready_pct", "cpu_ready_ms")
     if r.get("errors") and not r["vms"]:
-        return _na(f"vCenter CPU Ready sorgusu başarısız: {'; '.join(r['errors'][:2])}")
+        return _na(f"CPU Ready sorgusu başarısız: {'; '.join(r['errors'][:2])}")
     with_data = [v for v in r["vms"] if v.get("cpu_ready_pct") is not None or v.get("cpu_ready_ms") is not None]
     if not with_data:
         if not r["vms"]:
-            return _na("Canlı VM listesi boş — vCenter bağlantısını kontrol edin.")
+            return _na("VM listesi boş — son sync / vCenter bağlantısını kontrol edin.")
         return _na(
-            "PerformanceManager'da cpu.ready sayacı bu vCenter'da dönmedi "
-            f"({len(r['vms'])} VM canlı okundu; ready sayacı boş)."
+            "cpu.ready sayacı ne Timescale'de ne canlı sorguda dolu "
+            f"({len(r['vms'])} VM görüldü; ready boş)."
         )
     with_data.sort(key=lambda v: -(v.get("cpu_ready_pct") or 0))
     rows = [[
@@ -1412,8 +1429,9 @@ def h_cpu_ready(db: Session, question: str = "") -> str:
         v.get("hypervisor"),
     ] for v in with_data[:25]]
     return (
-        "### VM CPU Ready (vCenter PerformanceManager, anlık 20s)\n\n"
-        "_Ready % = ready_ms / (20000 × vCPU) × 100. %5 üzeri contention belirtisi olabilir._\n\n"
+        "### VM CPU Ready\n\n"
+        + _fleet_note(r)
+        + "_Ready % yüksekse contention. %5 üzeri dikkat._\n\n"
         + _md_table(["VM", "Ready %", "Ready ms", "vCPU", "Hypervisor"], rows)
     )
 
@@ -1485,44 +1503,44 @@ def h_memory_reservation(db: Session, question: str = "") -> str:
 # ── RAM ──────────────────────────────────────────────────────────────────────
 
 def h_ram_usage_over_90(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "mem_usage_pct")
     high = [v for v in r["vms"] if v.get("mem_usage_pct") is not None and v["mem_usage_pct"] >= 90]
     high.sort(key=lambda v: -v["mem_usage_pct"])
     if not r["vms"]:
-        return _na("Canlı VM RAM sorgusu sonuç döndürmedi.")
+        return _na("VM RAM verisi yok — sync veya vCenter bağlantısını kontrol edin.")
     return (
-        "### Bellek Kullanımı %90 Üzerinde Olan VM'ler (anlık)\n\n"
+        "### Bellek Kullanımı %90 Üzerinde Olan VM'ler\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "RAM %", "Kullanılan (MB)", "Tahsis (MB)"], [[v["name"], v["mem_usage_pct"], round(v["mem_used_mb"] or 0), v["mem_total_mb"]] for v in high],
-                    "Şu anda RAM kullanımı %90'ın üzerinde VM yok.")
+                    "RAM kullanımı %90'ın üzerinde VM yok.")
     )
 
 
 def h_ballooning(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "ballooned_mb")
     ballooned = [v for v in r["vms"] if (v.get("ballooned_mb") or 0) > 0]
     ballooned.sort(key=lambda v: -v["ballooned_mb"])
     if not r["vms"]:
-        return _na("Canlı VM bellek sorgusu sonuç döndürmedi.")
+        return _na("VM bellek serisi boş — sync veya vCenter bağlantısını kontrol edin.")
     return (
         "### Memory Ballooning Oluşan VM'ler\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "Ballooned (MB)"], [[v["name"], round(v["ballooned_mb"])] for v in ballooned],
-                    "Şu anda hiçbir VM'de memory ballooning tespit edilmedi (host RAM baskısı yok).")
+                    "Memory ballooning tespit edilmedi.")
     )
 
 
 def h_swap(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "swapped_mb")
     swapped = [v for v in r["vms"] if (v.get("swapped_mb") or 0) > 0]
     swapped.sort(key=lambda v: -v["swapped_mb"])
     if not r["vms"]:
-        return _na("Canlı VM bellek sorgusu sonuç döndürmedi.")
+        return _na("VM bellek serisi boş — sync veya vCenter bağlantısını kontrol edin.")
     return (
         "### Swap Kullanan VM'ler\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "Swapped (MB)"], [[v["name"], round(v["swapped_mb"])] for v in swapped],
-                    "Şu anda swap kullanan VM tespit edilmedi.")
+                    "Swap kullanan VM tespit edilmedi.")
     )
 
 
@@ -1560,16 +1578,19 @@ def h_host_ram_insufficient(db: Session, question: str = "") -> str:
 # ── Disk / Snapshot ───────────────────────────────────────────────────────────
 
 def h_snapshot_vms(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "snapshot_count")
     with_snap = [v for v in r["vms"] if (v.get("snapshot_count") or 0) > 0]
     with_snap.sort(key=lambda v: -v["snapshot_count"])
     if not r["vms"]:
-        return _na("Canlı snapshot sorgusu sonuç döndürmedi.")
+        return _na("Snapshot verisi yok — sync veya vCenter bağlantısını kontrol edin.")
     return (
         "### Snapshot Bulunan VM'ler\n\n"
-        + _md_table(["VM", "Snapshot Sayısı", "En Eski Snapshot"], [[v["name"], v["snapshot_count"], _fmt_ts(v.get("snapshot_oldest"))] for v in with_snap],
-                    "Hiçbir VM'de snapshot bulunmuyor.")
+        + _fleet_note(r)
+        + _md_table(
+            ["VM", "Snapshot Sayısı", "En Eski Snapshot"],
+            [[v["name"], v["snapshot_count"], _fmt_ts(v.get("snapshot_oldest"))] for v in with_snap],
+            "Hiçbir VM'de snapshot bulunmuyor.",
+        )
     )
 
 
@@ -1602,8 +1623,11 @@ def h_disk_not_available(db: Session, topic: str) -> str:
 
 
 def h_disk_latency(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(
+        db, question,
+        "disk_latency_ms", "disk_read_latency_ms", "disk_write_latency_ms",
+        "ds_read_latency_ms", "ds_write_latency_ms",
+    )
     if r.get("errors") and not r["vms"]:
         return _na(f"vCenter disk latency sorgusu başarısız: {'; '.join(r['errors'][:2])}")
     with_data = [
@@ -1617,8 +1641,8 @@ def h_disk_latency(db: Session, question: str = "") -> str:
         if not r["vms"]:
             return _na("Canlı VM listesi boş — vCenter bağlantısını kontrol edin.")
         return _na(
-            f"PerformanceManager disk/datastore latency sayaçları boş döndü "
-            f"({len(r['vms'])} VM canlı okundu)."
+            f"Disk/datastore latency sayaçları boş "
+            f"({len(r['vms'])} VM görüldü)."
         )
 
     def _lat(v):
@@ -1639,7 +1663,8 @@ def h_disk_latency(db: Session, question: str = "") -> str:
         v.get("hypervisor"),
     ] for v in with_data[:25]]
     return (
-        "### Disk / Datastore Latency (vCenter PerformanceManager, anlık ms)\n\n"
+        "### Disk / Datastore Latency (ms)\n\n"
+        + _fleet_note(r)
         + _md_table(
             ["VM", "Disk total", "vDisk read", "vDisk write", "DS read", "DS write", "Hypervisor"],
             rows,
@@ -1648,9 +1673,8 @@ def h_disk_latency(db: Session, question: str = "") -> str:
 
 
 def h_largest_snapshot(db: Session, question: str = "") -> str:
-    """Snapshot alanı: summary.storage.uncommitted (yaklaşık) + snapshot sayısı."""
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    """Snapshot alanı + adet — Timescale varsa oradan; yaş kırılımı canlıda."""
+    r = _fleet_vm_stats(db, question, "snapshot_space_gb", "snapshot_count")
     if not r["vms"]:
         return _na("Canlı snapshot sorgusu sonuç döndürmedi — vCenter bağlantısını kontrol edin.")
     with_snap = [v for v in r["vms"] if (v.get("snapshot_count") or 0) > 0]
@@ -1667,16 +1691,15 @@ def h_largest_snapshot(db: Session, question: str = "") -> str:
     any_size = any(v.get("snapshot_space_gb") is not None for v in with_snap)
     note = (
         "_Sıralama: yaklaşık alan (desc), sonra snapshot adedi. "
-        "Alan `summary.storage.uncommitted` üzerinden canlı okunur — VM'in TOPLAM "
-        "snapshot zinciri alanıdır (tekil snapshot'a bölünemez, vSphere API'de "
-        "per-snapshot byte alanı yoktur)._\n\n"
+        "Alan VM toplam snapshot zinciri (yaklaşık); tekil snapshot'a bölünemez._\n\n"
         if any_size else
         "_Sıralama: snapshot adedi (desc), sonra en eski tarih. Bu vCenter/ESXi "
         "sürümü `summary.storage` alanını desteklemiyor (InvalidProperty) — "
         "alan verisi bu ortamda mevcut değil, adet + yaş üzerinden listelenir._\n\n"
     )
     return (
-        "### En Büyük / En Çok Snapshot (vCenter canlı)\n\n"
+        "### En Büyük / En Çok Snapshot\n\n"
+        + _fleet_note(r)
         + note
         + _md_table(
             ["VM", "Snapshot adedi", "Alan (GB ≈, VM toplamı)", "En eski", "Hypervisor"],
@@ -1746,11 +1769,10 @@ def _extract_vm_name_filter(db: Session, question: str) -> Optional[str]:
 
 
 def h_idle_disks(db: Session, question: str = "") -> str:
-    """Çalışan VM'lerde anlık IOPS≈0 olanlar (boşta disk IO)."""
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    """Çalışan VM'lerde IOPS≈0 (boşta disk IO)."""
+    r = _fleet_vm_stats(db, question, "disk_read_iops", "disk_write_iops")
     if not r["vms"]:
-        return _na("Canlı disk IOPS sorgusu sonuç döndürmedi — vCenter bağlantısını kontrol edin.")
+        return _na("Disk IOPS verisi yok — sync veya vCenter bağlantısını kontrol edin.")
     powered = [
         v for v in r["vms"]
         if str(v.get("power_state") or "").lower() in ("poweredon", "powered_on", "on")
@@ -1766,16 +1788,15 @@ def h_idle_disks(db: Session, question: str = "") -> str:
     idle.sort(key=lambda v: v["name"])
     rows = [[v["name"], v.get("disk_read_iops"), v.get("disk_write_iops"), v.get("hypervisor")] for v in idle[:40]]
     return (
-        "### Anlık Disk IO≈0 Olan Çalışan VM'ler (PerformanceManager)\n\n"
-        "_Not: Bu anlık örneklemedir; guest içinde mount edilmemiş VMDK tespiti guest OS "
-        "komutu gerektirir. IOPS sayacı boş VM'ler listelenmez._\n\n"
+        "### Disk IO≈0 Olan Çalışan VM'ler\n\n"
+        + _fleet_note(r)
+        + "_IOPS sayacı boş VM'ler listelenmez. Guest mount edilmemiş VMDK için SSH gerekir._\n\n"
         + _md_table(["VM", "Read IOPS", "Write IOPS", "Hypervisor"], rows, "IOPS≈0 çalışan VM yok (veya sayaç boş).")
     )
 
 
 def h_guest_disk_usage_over_90(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "guest_disk_pct")
     with_data = [v for v in r["vms"] if v.get("guest_disk_pct") is not None]
     if not with_data:
         return _na(
@@ -1784,8 +1805,9 @@ def h_guest_disk_usage_over_90(db: Session, question: str = "") -> str:
         )
     high = sorted([v for v in with_data if v["guest_disk_pct"] >= 90], key=lambda v: -v["guest_disk_pct"])
     return (
-        f"### Guest İçi Disk Doluluğu %90 Üzerinde Olan VM'ler (anlık, VMware Tools üzerinden)\n\n"
-        f"_Not: {len(with_data)}/{len(r['vms'])} VM'de Tools çalışıyor ve veri döndü; diğerlerinde Tools kapalı/kurulu değil._\n\n"
+        f"### Guest İçi Disk Doluluğu %90 Üzerinde Olan VM'ler (VMware Tools)\n\n"
+        + _fleet_note(r)
+        + f"_Not: {len(with_data)}/{len(r['vms'])} VM'de guest disk % mevcut._\n\n"
         + _md_table(["VM", "Disk %", "Toplam (GB)", "Boş (GB)", "Hypervisor"],
                     [[v["name"], v["guest_disk_pct"], v["guest_disk_total_gb"], v["guest_disk_avail_gb"], v["hypervisor"]] for v in high],
                     "Guest içi disk doluluğu %90'ın üzerinde VM yok.")
@@ -1807,15 +1829,15 @@ def h_disk_provisioning(db: Session, question: str = "") -> str:
 
 
 def h_disk_iops_top(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "disk_read_iops", "disk_write_iops")
     with_data = [v for v in r["vms"] if v.get("disk_read_iops") is not None or v.get("disk_write_iops") is not None]
     if not with_data:
         return _na("Canlı disk IOPS sorgusu sonuç döndürmedi (PerformanceManager sayaçları bu vCenter'da bulunamadı olabilir).")
     with_data.sort(key=lambda v: -((v.get("disk_read_iops") or 0) + (v.get("disk_write_iops") or 0)))
     rows = [[v["name"], v.get("disk_read_iops"), v.get("disk_write_iops"), v["hypervisor"]] for v in with_data[:20]]
     return (
-        "### En Fazla Disk IO/IOPS Kullanan VM'ler (anlık, PerformanceManager)\n\n"
+        "### En Fazla Disk IO/IOPS Kullanan VM'ler\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "Read IOPS", "Write IOPS", "Hypervisor"], rows)
     )
 
@@ -1879,15 +1901,15 @@ def h_network_errors(db: Session, question: str = "") -> str:
 
 
 def h_network_traffic_top(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_live_vm_stats(db)
+    r = _fleet_vm_stats(db, question, "net_rx_kbps", "net_tx_kbps")
     with_data = [v for v in r["vms"] if v.get("net_rx_kbps") is not None or v.get("net_tx_kbps") is not None]
     if not with_data:
         return _na("Canlı network trafiği sorgusu sonuç döndürmedi (PerformanceManager sayaçları bu vCenter'da bulunamadı olabilir).")
     with_data.sort(key=lambda v: -((v.get("net_rx_kbps") or 0) + (v.get("net_tx_kbps") or 0)))
     rows = [[v["name"], v.get("net_rx_kbps"), v.get("net_tx_kbps"), v["hypervisor"]] for v in with_data[:20]]
     return (
-        "### En Fazla Network Trafiğine Sahip VM'ler (anlık, KB/s)\n\n"
+        "### En Fazla Network Trafiğine Sahip VM'ler (KB/s)\n\n"
+        + _fleet_note(r)
         + _md_table(["VM", "Inbound (KB/s)", "Outbound (KB/s)", "Hypervisor"], rows)
     )
 
@@ -3537,7 +3559,7 @@ def _compute_hypervisor_answer(
         )
         # KULLANICI SORUSU her koşulda korunur (asla kesilmez) — yalnızca `hist`
         # (konuşma geçmişi) gerekirse kısaltılır (bkz. llm_context_budget.budget_sections).
-        protected_tail = f"\n\nKullanıcı: {intent_q}{_dir_addendum}\n\nYanıt:"
+        protected_tail = f"\n\nKullanıcı: {intent_q}{_dir_addendum}\n\nYanıt (Türkçe):"
         from app.services.llm_context_budget import budget_sections
         _sections = budget_sections(
             system=conceptual_system, context="", history=hist,
@@ -3636,7 +3658,7 @@ def _compute_hypervisor_answer(
     )
     protected_tail = (
         f"{evidence_section}Kullanıcı Sorusu: {clean_question}\n{_dir_addendum}\n\n"
-        "Lütfen yanıtını ver:"
+        "Lütfen yanıtını Türkçe ver:"
     )
     _sections = budget_sections(
         system=system_prompt, context=context, history=messages_block,

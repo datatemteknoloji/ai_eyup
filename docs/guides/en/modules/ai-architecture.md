@@ -56,12 +56,14 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 | Admin Intent Router | `admin_intent_router.py` | `route_admin_question` | Linux inventory/cmd vs Virt QA_RULES | mesaj, platform | `RouteResult` | Keyword/regex |
 | Linux Chat Intent | `linux_chat_intent.py` | inventory/direct_cmd | Filo özeti, komut çıkarma | mesaj | bool / cmd list | Keyword |
 | Planning Intent | `chat_planning_intent.py` | MTV/taşıma netleştirme | migrasyon kapsamı | mesaj | scope / clarify | Keyword |
-| Data Fetch Ladder | `data_fetch_ladder.py` | `is_live_resource_query` | Anlık kaynak merdiveni | mesaj | bool + prompt addendum | Keyword |
+| Data Fetch Ladder | `data_fetch_ladder.py` | `is_live_resource_query` | Anlık kaynak merdiveni | mesaj | bool + prompt addendum | Keyword + `intent_text` negation |
+| Intent text | `intent_text.py` | `keyword_hit` / `regex_hit` | Negation window (`demiyorum`, `sapmadan`, `düşme`, `kaydırma`) | mesaj | bool | Shared helper |
 | Virt Inventory Contract | `virt_inventory_contract.py` | `detect_virt_inventory_kind` | VM/datastore/ESX prefetch | mesaj | kind + fields | Regex |
 | Virt Scope | `virt_scope.py` | `resolve_scope` | Entity filtre (vm/host/ds) | mesaj + DB | scope object | DB lookup + substring |
 | Full Scan Policy | `chat_full_scan_policy.py` | `resolve_full_scan_turn` | Tam filo onayı | session+mesaj | clarify/decline/confirm | Keyword + session state |
 | Chitchat Policy | `chat_chitchat_policy.py` | `canned_chitchat_answer` | Selamlaşma, LLM yok | mesaj | sabit metin | Keyword |
-| Output Directives | `chat_output_directives.py` | `extract_output_directive` | `/table` `/json` `/brief` `/diagram` | mesaj | directive | Regex (anywhere); `/chart` is not an alias |
+| Output Directives | `chat_output_directives.py` | `extract_output_directive` | `/table` `/json` `/brief` `/diagram` `/graph` | message | directive | Regex (anywhere); `/graph` `/grafik` `/chart` = Recharts (`chat_charts`) |
+| Chat Charts | `chat_charts.py` | `try_build_chat_charts` | Chat timeseries + overlay | message, platform, targets | `meta.charts` + summary | Timescale / Prom query_range / virt `query_series`; max 8; split by unit |
 | Tool Policy | `chat_tool_policy.py` | `should_use_db_first` | İlk 2 adımda canlı vCenter gizle | platform/domains | bool | Hardcoded |
 
 ## 1.3 Tool / LLM / response
@@ -69,7 +71,7 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 | Component | Dosya | Function | Görev |
 |---|---|---|---|
 | Unified Tool Loop | `unified_tool_chat.py` | `run_read_only_tool_loop` | READ_ONLY function calling (varsayılan 6 adım) |
-| Tool Registry | `agent/tools.py` | `TOOLS`, `tool_specs_read_only` | Tüm tool tanımları + domain filtresi |
+| Tool Registry | `agent/tools.py` | `TOOLS`, `tool_specs_read_only` | Domain filter (intersection). Virt DB = `vcenter`; shared = `infra` |
 | Windows Tools | `agent/tools_windows.py` | `WINDOWS_TOOLS` | WinRM tool’ları |
 | Agent Orchestrator | `agent/orchestrator.py` | `start_agent` | Mutating + onay; LangGraph `MAX_STEPS=8` |
 | Agent Graph | `agent/graph.py` | LangGraph `llm_node`/`tools_node` | Agent akışının graph hali |
@@ -84,6 +86,8 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 | Answer Sanitize | `answer_sanitize.py` | `sanitize_llm_answer` | “bilinmiyor” cümlelerini siler |
 | Chat Coverage | `chat_coverage.py` | `record_coverage_miss` | Kanıtsız “veri yok” telemetrisi |
 | Virt Intelligence | `hypervisor_intelligence.py` | `answer_hypervisor_question`, `QA_RULES` | Deterministik virt cevap + persona LLM |
+| Virt fleet perf | `virt_fleet_perf.py` | `fetch_fleet_vm_stats` | Fleet: Timescale then live (no refuse) |
+| Virt chat RAG | `virt_chat_rag.py` | `collect_virt_rag_block` | Runbook/incidents on virt LLM path |
 | Virt Diagnostics | `virt_diagnostics.py` | bottleneck kuralları | VM vs host kök neden (kural motoru) |
 | Linux Collector | `linux_info_collector.py` | `detect_needed_groups`, `collect_server_info` | Keyword → SSH grupları |
 | Infra Summary | `infra_summary.py` | `build_infra_overview_text` | Ucuz DB özeti |
@@ -174,7 +178,7 @@ User (UnifiedChat.tsx)
 
 **Önemli gerçek:** “Router → Context → Tool → LLM → Response” tahmini eksik. Sistemde **erken çıkışlar** (chitchat, cache, inventory, planning clarify, virt deterministic tablo) LLM’i tamamen atlar. Tool loop **bazen** final cevabı da kendisi üretir (`deterministic_answer`).
 
-Virt chat farklıdır: QA_RULES regex → handler (LLM yok) → yoksa report → yoksa `build_context` + LLM; yanında agentic tool loop kanıt ekler.
+Virt chat is different: QA_RULES regex → handler (no LLM) → else report → else `build_context` + LLM; agentic tools add evidence. Fleet perf handlers use `virt_fleet_perf` (Timescale latest row; live keywords or empty columns → QueryPerf). LLM path injects `virt_chat_rag` (runbook/incidents — not estate counts). Deterministic hits skip RAG.
 
 Linux chat: admin router (inventory/direct_cmd) → keyword SSH/Prom → collect XOR agentic → prompt → LLM.
 
@@ -188,8 +192,8 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 |---|---|---|---|
 | 1 | Request | Var | SSE + `ChatTurn` + Redis events |
 | 2 | Query parsing | Partial | `/table` `/json` `/brief` `/diagram` (regex, anywhere); virt typo normalize; NLQ LLM JSON parse |
-| 3 | Intent detection | Var | `classify_chat_intent` + `route_unified` + admin router — **regex/keyword** |
-| 4 | Domain detection | Var | `plan_modules` keyword skor + düşük güvende `route_llm_hint` |
+| 3 | Intent detection | Var | `classify_chat_intent` + `route_unified` + admin router — **regex/keyword** + `intent_text` negation |
+| 4 | Domain detection | Var | `plan_modules` keyword score; esnaf virt+linux does **not** overwrite (Windows / fleet virt kept); low-conf `route_llm_hint` |
 | 5 | Entity extraction | Kısmi | `_servers_mentioned_in_message`, `virt_scope`, VM name substring, NLQ filters |
 | 6 | Context creation | Var | overview + SSH/WinRM + Prom + RAG + facts + episode + tools |
 | 7 | Tool selection | Hibrit | Domain filtresi kural; hangi tool = **LLM**; bazı prefetch = regex |
@@ -352,6 +356,8 @@ Ayrı modül değil. Tetik: `_PERF` / `_LIVE_RESOURCE_KW` / deep keywords.
 | `prometheus_query` | `_prometheus_query_handler` | Prometheus | infra | PromQL |
 | `db_list_critical_events` | handler | SystemEvent | infra | Kritik olaylar |
 
+Virt DB tool domain: **`vcenter` only** (no `infra`). Hidden on Linux/Windows-only plans; visible when the router opens `vcenter`.
+
 ### VMware DB / analiz
 
 | Tool | Kaynak | Amaç |
@@ -468,7 +474,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 
 **RAG’e gidenler:** knowledge/howto, troubleshooting, live (need_rag=True varsayılan), `use_rag=true`.
 
-**Gitmeyenler:** chitchat; `use_rag=false`; inventory fast-path; planning_clarify; virt QA_RULES hit; skip_ctx; embed fail (sessiz boş).
+**Skipped:** chitchat; `use_rag=false`; inventory fast-path; planning_clarify; virt QA_RULES hit (deterministic); skip_ctx; embed fail (empty). Virt LLM/agentic turns **do** RAG (`collect_virt_rag_block`).
 
 **Canlı metrik soruları RAG’e de gider** ama prompt “RAG ile metrik uydurma” der. Ayrı bir “bu soru RAG değil” kapısı yok.
 
@@ -508,7 +514,7 @@ Final Unified prompt (`_build_prompt`):
 1. **System (kesilmez):** Senior Infrastructure Architect kimliği + rol değişimi + yetenekler + OV/vCenter terimleri + yanıt kuralları + `TOPLAMA DURUMU`
 2. **BAGLAM (kesilebilir):** overview, fleet notes, inventory lines, wrapped SSH/WinRM/Prom, learned facts, discovered apps, RAG, playbook, episode, tool results
 3. **ONCEKI KONUSMA (kesilebilir):** son 8 mesaj
-4. **Protected tail (kesilmez):** `KULLANICI SORUSU` + `/table` `/json` `/brief` `/diagram` directive + `YANIT:`
+4. **Protected tail (kesilmez):** `KULLANICI SORUSU` + `/table` `/json` `/brief` `/diagram` directive + `YANIT (Markdown, Türkçe):`
 
 Tool loop ayrıca kendi system’ini kurar: `SYSTEM_PROMPT` + platform hint + persona_addendum + ladder + DB-first + planning + server list (4k) + budgeted context (12k default) + inventory addendum.
 
@@ -771,7 +777,8 @@ Multi-clause: prefetch VM disks, early_stop **atlanır**, LLM `list_kubevirt_vms
 | PREDICTION | Kısmi | slope_per_day / days_to_threshold; uydurma yasak | zaman serisi | db_metric_trend | arithmetic |
 | RECOMMENDATION | Prompt | “öner” persona; doğrulanmış playbook yok | context | — | LLM |
 | AUTOMATION | Ayrı yüzey | Agent HITL mutate; chat READ_ONLY | SSH/WinRM | restart/update/lvm/win_* | LangGraph agent |
-| DIAGRAM | Yes, opt-in | `/draw` `/diagram` `/görselleştir` `/şema` → same final LLM + ` ```mermaid `; frontend mermaid.js | context/tool | none (no new tool) | directive addendum + ChatMermaid |
+| DIAGRAM | Yes, opt-in | `/draw` `/diagram` `/görselleştir` `/şema` → same final LLM + preferred ` ```ainew-diagram ` JSON; fallback ` ```mermaid `; title/labels/commentary in Turkish | context/tool | none (no new tool) | ChatArchitectureDiagram (React Flow) + ChatMermaid |
+| GRAPH | Yes, opt-in + duration/metric | `/graph` `/grafik` `/chart` or “last N hours CPU”; overlay max 8 | Timescale / Prom query_range / virt series | none (no new tool) | ChatMetricChart (Recharts) |
 
 ---
 
@@ -977,8 +984,9 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - `gpt-oss*` yerel modeldir; `gpt-*` OpenAI eşlemesine düşmez (`llm_external.detect_provider`).
 - Chat tool loop **READ_ONLY**; mutate Agent + onay.
 - Vector store runtime: **pgvector**, embed **nomic-embed-text** 768.
-- Virt `QA_RULES`: onlarca regex handler; eşleşirse LLM yok.
-- `/diagram` `/draw` `/görselleştir` `/şema`: same final LLM + ` ```mermaid `; frontend `ChatMermaid`. `/chart` is not an alias.
+- Virt `QA_RULES`: dozens of regex handlers; match skips LLM. Fleet CPU/ready/IOPS/net: DB then live (`virt_fleet_perf`).
+- `/diagram` `/draw` `/görselleştir` `/şema`: same final LLM + preferred ` ```ainew-diagram `; React Flow. Fallback ` ```mermaid ` / `ChatMermaid`. Title, labels and 2–4 bullet commentary in Turkish.
+- `/graph` `/grafik` `/chart`: deterministic Recharts (`chat_charts` → `ChatMessage.meta.charts`). Linux/Windows: `metric_data` (Prom scrape copy), else read-only `query_range`. Virt: monitoring `query_series` (vCenter Timescale). Same unit = overlay (max 8); CPU% × memory% are separate charts. SSH/WinRM does not reconstruct history. `prometheus.yml` is unchanged.
 - `virt_bottleneck_diagnose`: VM vs host kural motoru, eşikler kodda.
 - `linux_virt_io_correlate`: guest iowait × VM disk latency; kanıtlı join şart; eşikler `cross_domain_diagnostics.TH`.
 - “canlı veri mevcut değil” LLM çıktısıdır; `looks_like_no_data_answer` ile izlenir.

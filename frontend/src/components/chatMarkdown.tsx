@@ -1,21 +1,34 @@
 /**
  * Ortak markdown tablo/kod stilleri — geniş rapor tablolarını balon içinde
  * yatay kaydırma ile tutar (taşmayı engeller). Tema değişkenleriyle light/dark okunur.
- * ```mermaid``` blokları ChatMermaid ile çizilir (yeni SSE yok).
+ * ```ainew-diagram``` → React Flow; ```mermaid``` → ChatMermaid (yedek).
  */
 import { Children, isValidElement, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
-import { ChatMermaid } from './ChatMermaid'
+import { ChatDiagramBlock } from './ChatDiagramBlock'
+import { looksLikeMermaid } from '../utils/mermaidToDiagram'
+import { parseArchitectureDiagram } from '../utils/chatDiagramSchema'
 
-function mermaidSourceFromPre(children: ReactNode): string | null {
+function childText(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(childText).join('')
+  if (isValidElement(node)) {
+    return childText((node.props as { children?: ReactNode }).children)
+  }
+  return ''
+}
+
+function fenceLangAndSource(children: ReactNode): { lang: string; source: string } | null {
+  const text = childText(children).replace(/\n$/, '')
+  if (!text.trim()) return null
   for (const child of Children.toArray(children)) {
     if (!isValidElement(child)) continue
     const cls = String((child.props as { className?: string }).className || '')
-    if (!cls.includes('language-mermaid')) continue
-    const raw = (child.props as { children?: React.ReactNode }).children
-    return String(raw ?? '').replace(/\n$/, '')
+    const m = cls.match(/language-([a-z0-9-]+)/i)
+    if (m) return { lang: m[1].toLowerCase(), source: text }
   }
-  return null
+  return { lang: '', source: text }
 }
 
 export const chatMarkdownComponents: Components = {
@@ -43,8 +56,17 @@ export const chatMarkdownComponents: Components = {
         </code>
       ),
   pre: ({ children }) => {
-    const mermaidSrc = mermaidSourceFromPre(children)
-    if (mermaidSrc != null) return <ChatMermaid source={mermaidSrc} />
+    const fence = fenceLangAndSource(children)
+    if (fence) {
+      const lang = fence.lang
+      const isJsonFence = lang === 'ainew-diagram' || lang === 'diagram-json' || lang === 'json'
+      if (isJsonFence && parseArchitectureDiagram(fence.source)) {
+        return <ChatDiagramBlock source={fence.source} />
+      }
+      if (lang === 'mermaid' || looksLikeMermaid(fence.source)) {
+        return <ChatDiagramBlock source={fence.source} preferMermaid={lang === 'mermaid'} />
+      }
+    }
     return (
       <pre className="chat-md-pre bg-cyber-deep border border-white/[0.08] rounded-lg p-3 overflow-x-auto text-xs my-2 max-h-[min(50vh,28rem)] text-slate-200">
         {children}

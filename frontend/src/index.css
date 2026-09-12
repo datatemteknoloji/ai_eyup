@@ -1032,6 +1032,41 @@ html[data-theme="light"] .chat-md-table-wrap {
   stroke-width: 1.75px !important;
 }
 
+/* React Flow: :root color-scheme:dark Canvas'ı siyah boyar — diyagramı zorla açık tut */
+.chat-arch-flow {
+  color-scheme: light;
+  --xy-background-color: #f8fafc;
+  --xy-background-color-default: #f8fafc;
+  --xy-node-background-color: #ffffff;
+  --xy-node-color: #1e293b;
+  --xy-node-border: 1px solid #cbd5e1;
+  --xy-edge-stroke: #64748b;
+  --xy-edge-stroke-default: #64748b;
+  --xy-controls-button-background-color: #ffffff;
+  --xy-controls-button-color: #334155;
+  --xy-controls-button-border-color: #e2e8f0;
+  --xy-attribution-background-color: transparent;
+}
+.chat-arch-flow,
+.chat-arch-flow .react-flow,
+.chat-arch-flow .react-flow__viewport,
+.chat-arch-flow .react-flow__renderer,
+.chat-arch-flow .react-flow__pane,
+.chat-arch-flow .react-flow__container,
+.chat-arch-flow .react-flow__background {
+  background: #f8fafc !important;
+  background-color: #f8fafc !important;
+}
+.chat-arch-flow .react-flow__node {
+  color: #1e293b;
+}
+.chat-arch-flow .react-flow__controls button {
+  background: #ffffff !important;
+  border-bottom-color: #e2e8f0 !important;
+  fill: #334155 !important;
+  color: #334155 !important;
+}
+
 /* ── Hex Grid Background (optional decorative) ───────────────────────────── */
 .hex-bg {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill='none' stroke='rgba(99%2C130%2C194%2C0.06)' stroke-width='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15z'/%3E%3Cpath d='M13.99.25l13 7.5v15l-13 7.5L1 22.75v-15zM27.99 16.75l13 7.5v15l-13 7.5L15 31.75v-15z'/%3E%3C/g%3E%3C/svg%3E");

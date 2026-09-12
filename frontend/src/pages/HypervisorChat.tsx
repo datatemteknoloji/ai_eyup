@@ -13,6 +13,7 @@ import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
 import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
+import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
   NlModelUnavailableBanner, NlChatInput, nlChatColumnClass,
@@ -33,6 +34,7 @@ interface Message {
   report_title?: string
   latency_ms?: number
   error?: string | null
+  charts?: ChatChartPayload[]
   timestamp: Date
 }
 
@@ -254,9 +256,14 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
                   <span>{msg.content}</span>
                 </div>
               ) : (
+                <>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
                   {msg.content}
                 </ReactMarkdown>
+                {msg.charts?.map((chart, ci) => (
+                  <ChatMetricChart key={`${msg.id}-chart-${ci}`} chart={chart} chartId={`hv-${msg.id}-${ci}`} />
+                ))}
+                </>
               )}
             </div>
           )}
@@ -425,6 +432,7 @@ export default function HypervisorChat({
       report_title: m.meta?.report_title,
       latency_ms: m.meta?.latency_ms,
       error: m.meta?.error,
+      charts: Array.isArray(m.meta?.charts) ? m.meta.charts : undefined,
       timestamp: new Date(m.created_at),
     })))
   }, [])

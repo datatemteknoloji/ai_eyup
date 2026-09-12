@@ -166,6 +166,22 @@ _INVENTORY_PATTERNS = [
 ]
 
 
+def is_linux_ops_query(msg: str) -> bool:
+    """systemctl/journal/failed — filo envanter değil, SSH konusu.
+
+    'SSH ile df çekmeden' olumsuz — ops sayılmaz.
+    """
+    from app.services.intent_text import any_keyword_hit, keyword_hit
+
+    if not (msg or "").strip():
+        return False
+    if any_keyword_hit(msg, ("systemctl", "systemd", "journalctl", "journal")):
+        return True
+    if keyword_hit(msg, "failed") and any_keyword_hit(msg, ("servis", "unit", "service")):
+        return True
+    return keyword_hit(msg, "ssh ile")
+
+
 def is_inventory_status_query(msg: str) -> bool:
     """Sayı/özet envanter sorusu (hostname listesi değil) — platform-scoped DB özeti."""
     m = _fold(msg)
@@ -187,10 +203,16 @@ def is_fleet_inventory_query(msg: str) -> bool:
     cmds = extract_direct_commands(msg)
     if cmds:
         return False
+    if is_linux_ops_query(msg):
+        return False
     for pat in _INVENTORY_PATTERNS:
         if re.search(pat, m):
             return True
-    if re.search(r"sunucu", m) and re.search(r"(bilgi|liste|neler|hangileri|kayit|kayıt)", m):
+    # 'listesine düşme' filo listesi değil — yalnız listele/listesi/liste\b
+    if re.search(r"sunucu", m) and re.search(
+        r"(bilgi|\blistele\b|\blistesi\b|\bliste\b(?!s)|neler|hangileri|kayit)",
+        m,
+    ):
         return True
     if re.search(r"sunucu", m) and re.search(r"\bip\b", m):
         if re.search(r"(hostname|fqdn|isim|\bad|adlar|makine)", m):

@@ -3616,18 +3616,21 @@ _TOOL_DOMAIN_OVERRIDE = {
     "db_list_exadata_racks": frozenset({"exadata"}),
     "db_list_exadata_nodes": frozenset({"exadata"}),
     "exadata_health_overview": frozenset({"exadata"}),
-    "db_list_vms": frozenset({"vcenter", "infra"}),
-    "db_vm_detail": frozenset({"vcenter", "infra"}),
-    "db_list_datastores": frozenset({"vcenter", "infra"}),
-    "db_list_esx_hosts": frozenset({"vcenter", "infra"}),
-    "db_list_clusters": frozenset({"vcenter", "infra"}),
-    "virt_health_overview": frozenset({"vcenter", "infra"}),
-    "virt_bottleneck_diagnose": frozenset({"vcenter", "infra"}),
-    "db_metric_trend": frozenset({"vcenter", "infra"}),
+    # Virt DB: yalnız vcenter. "infra" EKLEME — her platformda ortak olduğu için
+    # Linux/Windows-only planda (domains ∩ {infra} ≠ ∅) sızardı. Çapraz soruda
+    # router zaten vcenter açar (linux+virt / virt+ocp). OCP tool'ları ile aynı dar model.
+    "db_list_vms": frozenset({"vcenter"}),
+    "db_vm_detail": frozenset({"vcenter"}),
+    "db_list_datastores": frozenset({"vcenter"}),
+    "db_list_esx_hosts": frozenset({"vcenter"}),
+    "db_list_clusters": frozenset({"vcenter"}),
+    "virt_health_overview": frozenset({"vcenter"}),
+    "virt_bottleneck_diagnose": frozenset({"vcenter"}),
+    "db_metric_trend": frozenset({"vcenter"}),
     "vcenter_property_read": frozenset({"vcenter"}),
-    "db_virt_alarms": frozenset({"vcenter", "infra"}),
+    "db_virt_alarms": frozenset({"vcenter"}),
     "db_list_critical_events": frozenset({"infra"}),
-    "db_virt_cross_match": frozenset({"vcenter", "infra"}),
+    "db_virt_cross_match": frozenset({"vcenter"}),
     "vcenter_ask": frozenset({"vcenter"}),
     "vcenter_live_alarms": frozenset({"vcenter"}),
     "vcenter_live_tasks": frozenset({"vcenter"}),
@@ -3638,12 +3641,8 @@ _TOOL_DOMAIN_OVERRIDE = {
     "list_kubevirt_vms": frozenset({"openshift", "vcenter"}),
     "list_ocp_pods": frozenset({"openshift"}),
     "list_ocp_events": frozenset({"openshift"}),
-    # NOT: "infra" EKLENMEDİ (db_list_vms/db_list_esx_hosts gibi virt DB tool'larından
-    # farklı olarak) — "infra" PLATFORM_TOOL_DOMAINS'te HER platformda ortak olduğu için
-    # o etiket, kesişim testini (tool.domains & domains) her zaman doğru yapıp bu tool'un
-    # Linux/Windows/virt sohbetlerine de sızmasına yol açardı. openshift_ask/list_ocp_pods
-    # ile aynı dar izolasyonu koru: yalnızca "openshift" (+ Unified'da domains=None zaten
-    # tam erişim veriyor, bu tool'lara ayrıca ihtiyaç yok).
+    # OCP: "infra" YOK — virt DB ile aynı dar izolasyon. Unified fallback
+    # domains=None hâlâ tüm tool'ları açar; Linux-only plan açmaz.
     "db_list_ocp_nodes": frozenset({"openshift"}),
     "db_list_ocp_projects": frozenset({"openshift"}),
     "ocp_cluster_status": frozenset({"openshift"}),

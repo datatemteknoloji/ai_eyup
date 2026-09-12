@@ -19,6 +19,7 @@ const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'))
 const Applications = lazy(() => import('./pages/Applications'))
 const Servers = lazy(() => import('./pages/Servers'))
 const Hypervisors = lazy(() => import('./pages/Hypervisors'))
+const VirtMonitoring = lazy(() => import('./pages/VirtMonitoring'))
 const Agent = lazy(() => import('./pages/Agent'))
 const AiAutomationHub = lazy(() => import('./pages/AiAutomationHub'))
 const LiveMetrics = lazy(() => import('./pages/LiveMetrics'))
@@ -268,6 +269,7 @@ function App() {
                       <Route path="/windows/dashboard" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsDashboardPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/servers" element={<RequireModule moduleId="linux"><ErrorBoundary><Servers /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisors" element={<RequireModule moduleId="virtualization"><ErrorBoundary><Hypervisors /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/monitoring" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/dashboard" element={<Navigate to="/hypervisors" replace />} />
                       <Route path="/virt-ops" element={<Navigate to="/virt/ops" replace />} />
                       <Route path="/linux/reports" element={<RequireModule moduleId="linux"><ErrorBoundary><LinuxInfraReportsPage /></ErrorBoundary></RequireModule>} />

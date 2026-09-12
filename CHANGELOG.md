@@ -11,6 +11,25 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.34] - 2026-09-12
+
+### Sanallaştırma Monitoring
+- Yeni sayfa: Sanallaştırma → Monitoring (`/virt/monitoring`) — vCenter/Timescale SoT, Prometheus karışmaz.
+- Kaynak grafikleri: 15m–60g aralık, VM/ESXi/datastore ekseni, çoklu nesne overlay (en fazla 8), metrik slot’ları.
+- Ortam özeti, kapasite, top tüketiciler, ESXi filo karşılaştırması, 24s olay zaman çizelgesi.
+
+### Sohbet grafikleri (`/graph` `/grafik` `/chart`)
+- Linux/Windows/Virt/Unified: Recharts zaman serisi + çapraz overlay (`chat_charts` → `meta.charts`).
+- Linux/Windows: Timescale `metric_data`, boşsa salt okunur Prom `query_range` (scrape yok).
+- Virt: Monitoring `query_series`; aynı birim overlay, farklı birimler ayrı grafik; SSH/WinRM geçmiş eğri değil.
+
+### AI / routing
+- Olumsuz pencere (`intent_text`); virt filo perf DB→QueryPerf; virt chat RAG; diyagram `ainew-diagram` / React Flow.
+- AI Mimari GUIDE (TR/EN) + Cursor kuralı güncellendi.
+
+### UI
+- OS ikonları: VMware (yeşil katman), Ubuntu, Debian, Linux Tux; vCenter adı/Photon/VCSA tanıma.
+
 ## [1.0.9.33] - 2026-09-11
 
 ### AI / sohbet

@@ -157,6 +157,7 @@ async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
             "created_at": m.created_at.isoformat() if m.created_at else "",
             "usage": (m.meta or {}).get("usage") if isinstance(m.meta, dict) else None,
             "evidence": (m.meta or {}).get("evidence") if isinstance(m.meta, dict) else None,
+            "meta": m.meta if isinstance(m.meta, dict) else {},
         }
         for m in messages
     ]
@@ -323,9 +324,7 @@ def _build_prompt(
     tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:
         tail_parts.append(_dir_add.strip())
-        tail_parts.append("YANIT:")
-    else:
-        tail_parts.append("YANIT (Markdown, Türkçe):")
+    tail_parts.append("YANIT (Markdown, Türkçe):")
     tail_block = "\n\n".join(tail_parts)
 
     # Bütçe: system (persona/kurallar) ve soru/direktif asla kesilmez; gerekirse
@@ -473,10 +472,37 @@ async def unified_chat_stream(
                 _is_followup = has_prior_messages(db, session_id)
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
-                # Takip sorularinda VE /table-/json-/brief-/diagram komutlarinda cache'e bakilmiyor —
+                from app.services.chat_output_directives import OutputDirective as _OD
+                from app.services.chat_charts import try_build_chat_charts
+                from app.models.server import Server as _ChartServer
+                _chart = try_build_chat_charts(
+                    db,
+                    message=message,
+                    platform="unified",
+                    pool=db.query(_ChartServer).all(),
+                    explicit=output_directive == _OD.GRAPH,
+                )
+                if _chart:
+                    answer = _chart["summary_text"]
+                    yield _sse({"phase": "answering"})
+                    _timing.note_ttft()
+                    for i in range(0, len(answer), 8):
+                        yield _sse({"token": answer[i:i + 8]})
+                    db.add(ChatMessage(
+                        session_id=session_id, role="assistant", content=answer,
+                        meta={"charts": _chart.get("charts") or [], "intents": _chart.get("intents") or ["chart"]},
+                    ))
+                    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    if s:
+                        s.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    _timing.finish(cache_hit=False, extra={"path": "chart"})
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
+
+                # Takip sorularinda VE /table-/json-/brief-/diagram-/graph komutlarinda cache'e bakilmiyor —
                 # aksi halde ayni soru farkli format komutlariyla sorulunca eski formattaki
                 # cache'lenmis cevap yanlislikla donmus olur (bkz. chat.py'deki ayni mantik).
-                from app.services.chat_output_directives import OutputDirective as _OD
                 _has_directive = output_directive != _OD.NONE
                 cache_key_ids: List[int] = []
                 cached = None if (_is_followup or _has_directive) else get_cached_answer(

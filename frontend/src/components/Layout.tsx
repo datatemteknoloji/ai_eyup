@@ -288,6 +288,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       type: 'group', key: 'virt', name: t('nav_virt'), icon: <Cloud size={18} />, moduleId: 'virtualization',
       children: [
         { type: 'link', path: '/hypervisors', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/virt/monitoring', name: t('nav_virt_monitoring'), icon: <Activity size={15} /> },
         { type: 'link', path: '/infra-reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
           type: 'subgroup', key: 'virt-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.virt), icon: <Brain size={15} />,

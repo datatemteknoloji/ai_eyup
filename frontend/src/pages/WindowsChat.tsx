@@ -11,6 +11,7 @@ import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
+import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -97,7 +98,7 @@ function getFirstMarkdownTable(content: string): string | null {
 }
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string; os_type?: string; connection_config?: any }
-interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; meta?: { charts?: ChatChartPayload[] } | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
@@ -626,6 +627,9 @@ const WindowsChat: React.FC<{
                               </>
                             )}
                           </div>
+                          {msg.meta?.charts?.map((chart, ci) => (
+                            <ChatMetricChart key={`${msg.id}-chart-${ci}`} chart={chart} chartId={`win-${msg.id}-${ci}`} />
+                          ))}
                           {msg.id > 0 && (
                             <>
                               <ChatFeedbackButtons

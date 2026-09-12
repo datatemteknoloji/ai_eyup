@@ -64,10 +64,11 @@ def _route_linux(raw: str, normalized: str) -> RouteResult:
         extract_direct_commands,
         is_fleet_inventory_query,
         is_inventory_status_query,
+        is_linux_ops_query,
     )
 
     # Özet/sayı soruları önce — çapraz platform sızdıran agentic yoluna düşmesin
-    if is_inventory_status_query(raw):
+    if is_inventory_status_query(raw) and not is_linux_ops_query(raw):
         return RouteResult(
             intent=INTENT_INVENTORY_SUMMARY,
             confidence=0.96,

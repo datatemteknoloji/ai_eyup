@@ -120,43 +120,49 @@ def _norm(msg: str) -> str:
 
 
 def _score_modules(ml: str) -> Dict[str, float]:
+    from app.services.intent_text import keyword_hit, regex_hit
+
     scores = {m: 0.0 for m in ALL_MODULES}
     for mod, kws in _STRONG.items():
         for kw in kws:
-            if kw in ml:
+            if keyword_hit(ml, kw):
                 scores[mod] += 2.0 + min(len(kw), 12) * 0.05
-    weak_hit = any(w in ml for w in _WEAK)
+    weak_hit = any(keyword_hit(ml, w) for w in _WEAK)
     if weak_hit:
         for mod in ALL_MODULES:
             if scores[mod] > 0:
                 scores[mod] += 0.35
     # "vm" / "vmlerdeki" / "vms" → güçlü virt (tek başına da single yeter)
-    if _VM_RE.search(ml):
+    if regex_hit(ml, _VM_RE):
         scores[MOD_VIRT] = max(scores[MOD_VIRT], 2.4)
-    if "node-exporter" in ml or "prometheus" in ml:
+    if keyword_hit(ml, "node-exporter") or keyword_hit(ml, "prometheus"):
         scores[MOD_LINUX] += 1.5
+    if any(keyword_hit(ml, k) for k in ("mdstat", "mdadm", "systemctl", "journalctl", "systemd")):
+        scores[MOD_LINUX] = max(scores[MOD_LINUX], 2.4)
     return scores
 
 
 def _wants_multi(ml: str, strong: List[str], soft: List[str]) -> bool:
+    from app.services.intent_text import any_keyword_hit, regex_hit
+
     pool = list(dict.fromkeys(strong + soft))
     if len(strong) >= 2:
         return True
-    virtish = MOD_VIRT in pool or any(
-        k in ml for k in ("vcenter", "esxi", "esx", "vmware")
-    ) or bool(_VM_RE.search(ml))
-    ocpish = MOD_OPENSHIFT in pool or any(
-        k in ml for k in ("openshift", "ocp", "kubevirt", "mtv")
+    virtish = MOD_VIRT in pool or any_keyword_hit(
+        ml, ("vcenter", "esxi", "esx", "vmware")
+    ) or regex_hit(ml, _VM_RE)
+    ocpish = MOD_OPENSHIFT in pool or any_keyword_hit(
+        ml, ("openshift", "ocp", "kubevirt", "mtv")
     )
-    linuxish = MOD_LINUX in pool or any(k in ml for k in _GUEST_OS_HINT)
+    linuxish = MOD_LINUX in pool or any_keyword_hit(ml, _GUEST_OS_HINT)
     winish = MOD_WINDOWS in pool
 
-    if any(k in ml for k in _CROSS_MIGRATE) and virtish and ocpish:
+    if any_keyword_hit(ml, _CROSS_MIGRATE) and virtish and ocpish:
         return True
-    if any(k in ml for k in _JOIN_KW) and virtish and (linuxish or ocpish or winish):
+    if any_keyword_hit(ml, _JOIN_KW) and virtish and (linuxish or ocpish or winish):
         return True
     # VM + guest/SSH/filesystem → virt+linux
-    if virtish and any(k in ml for k in _GUEST_OS_HINT):
+    if virtish and any_keyword_hit(ml, _GUEST_OS_HINT):
         return True
     pairs = [
         (MOD_VIRT, MOD_OPENSHIFT),
@@ -337,15 +343,46 @@ def plan_modules(message: str, *, skip_ctx: bool = False) -> ModulePlan:
         _live_res, _guest_m = False, False
 
     if _live_res and _guest_m:
-        # Esnaf: anlık kaynak için hem DB/vCenter hem SSH yolları açık olsun
-        scores[MOD_LINUX] = max(scores[MOD_LINUX], 2.5)
-        scores[MOD_VIRT] = max(scores[MOD_VIRT], 2.2)
-        return _multi_plan(
-            ml,
-            (MOD_VIRT, MOD_LINUX),
-            reason="esnaf_live_resource:virt+linux",
-            confidence=_CONF_MULTI,
+        from app.services.intent_text import any_keyword_hit, regex_hit
+
+        virtish = (
+            MOD_VIRT in strong
+            or any_keyword_hit(ml, ("vcenter", "vsphere", "esxi", "vmware", "hypervisor"))
+            or regex_hit(ml, _VM_RE)
         )
+        linux_ops = any_keyword_hit(
+            ml,
+            ("ssh", "journalctl", "systemctl", "systemd", "guest", "df -", "mdstat", "mdadm"),
+        )
+        # Windows+Linux karşılaştırma: virt+linux ezmesi Windows'u silmesin
+        if MOD_WINDOWS in strong:
+            mods = [m for m in (MOD_LINUX, MOD_WINDOWS) if m in strong or scores[m] >= 2.0]
+            if MOD_LINUX not in mods and (MOD_LINUX in strong or "linux" in ml):
+                mods.insert(0, MOD_LINUX)
+            if MOD_WINDOWS not in mods:
+                mods.append(MOD_WINDOWS)
+            if virtish and MOD_VIRT in strong:
+                mods.append(MOD_VIRT)
+            mods_t = tuple(dict.fromkeys(m for m in mods if m in ALL_MODULES))
+            if len(mods_t) >= 2:
+                return _multi_plan(
+                    ml, mods_t, reason=f"esnaf_merge:{'+'.join(mods_t)}",
+                    confidence=_CONF_MULTI,
+                )
+        elif virtish and not linux_ops and MOD_LINUX not in strong and MOD_WINDOWS not in strong:
+            # Filo VM CPU/%90 — Linux/Prom zorlama; normal skor yoluna bırak
+            pass
+        elif MOD_LINUX in strong and not virtish:
+            pass
+        else:
+            scores[MOD_LINUX] = max(scores[MOD_LINUX], 2.5)
+            scores[MOD_VIRT] = max(scores[MOD_VIRT], 2.2)
+            return _multi_plan(
+                ml,
+                (MOD_VIRT, MOD_LINUX),
+                reason="esnaf_live_resource:virt+linux",
+                confidence=_CONF_MULTI,
+            )
 
     # Zayıf genel kelime, güçlü/soft yok → virt+linux otomatik keşif (seçim yok)
     if not strong and not soft:
@@ -370,19 +407,21 @@ def plan_modules(message: str, *, skip_ctx: bool = False) -> ModulePlan:
     # Multi?
     if _wants_multi(ml, strong if strong else candidates, soft):
         mods = tuple(strong if len(strong) >= 2 else (strong + soft)[:2])
-        if any(k in ml for k in _CROSS_MIGRATE):
+        from app.services.intent_text import any_keyword_hit, keyword_hit, regex_hit
+
+        if any_keyword_hit(ml, _CROSS_MIGRATE):
             forced: List[str] = []
-            if any(k in ml for k in _STRONG[MOD_VIRT]) or MOD_VIRT in mods or _VM_RE.search(ml):
+            if any_keyword_hit(ml, _STRONG[MOD_VIRT]) or MOD_VIRT in mods or regex_hit(ml, _VM_RE):
                 forced.append(MOD_VIRT)
-            if any(k in ml for k in _STRONG[MOD_OPENSHIFT]) or MOD_OPENSHIFT in mods:
+            if any_keyword_hit(ml, _STRONG[MOD_OPENSHIFT]) or MOD_OPENSHIFT in mods:
                 forced.append(MOD_OPENSHIFT)
             if len(forced) >= 2:
                 mods = tuple(dict.fromkeys(forced + list(mods)))
         if len(mods) < 2:
-            virtish = MOD_VIRT in pool or bool(_VM_RE.search(ml))
-            if virtish and any(k in ml for k in _GUEST_OS_HINT):
+            virtish = MOD_VIRT in pool or regex_hit(ml, _VM_RE)
+            if virtish and any_keyword_hit(ml, _GUEST_OS_HINT):
                 mods = tuple(dict.fromkeys([MOD_VIRT, MOD_LINUX]))
-            elif ("ssh" in ml or "guest" in ml) and MOD_OPENSHIFT in pool:
+            elif (keyword_hit(ml, "ssh") or keyword_hit(ml, "guest")) and MOD_OPENSHIFT in pool:
                 mods = tuple(dict.fromkeys([MOD_OPENSHIFT, MOD_LINUX]))
             elif virtish and MOD_OPENSHIFT in pool:
                 mods = tuple(dict.fromkeys([MOD_VIRT, MOD_OPENSHIFT]))

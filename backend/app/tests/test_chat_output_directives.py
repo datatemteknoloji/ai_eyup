@@ -68,12 +68,15 @@ def test_directive_system_addendum_mentions_command():
     assert "brief" in directive_system_addendum(OutputDirective.BRIEF).lower() or "2-3" in directive_system_addendum(OutputDirective.BRIEF)
     add = directive_system_addendum(OutputDirective.DIAGRAM)
     assert "/diagram" in add
-    assert "```mermaid" in add
+    assert "ainew-diagram" in add
+    assert "mermaid" in add
     assert "xychart" in add
     assert "SVG" in add
-    assert "**" in add or "kalın" in add or "markdown" in add.lower()
+    assert "kind" in add
     assert "yorum" in add.lower()
-    assert "/boot" in add or "tırnak" in add or '["/' in add or "path" in add.lower()
+    assert "TÜRKÇE" in add or "Türkçe" in add
+    assert "What it shows" in add
+    assert "Ne gösteriyor" in add
 
 
 def test_diagram_directive_aliases():
@@ -97,9 +100,11 @@ def test_diagram_no_false_positive():
     msg2, d2 = extract_output_directive("/diagrams lütfen")
     assert d2 == OutputDirective.NONE
     assert "/diagrams" in msg2
-    # /chart Timescale+Recharts yoluna ait; diyagram alias değil
+    # /chart sayısal Recharts (/graph); diyagram alias değil
     msg3, d3 = extract_output_directive("/chart son 2 saat cpu")
-    assert d3 == OutputDirective.NONE
+    assert d3 == OutputDirective.GRAPH
+    assert "/chart" not in msg3
+    assert "son 2 saat cpu" in msg3
 
 
 def test_json_wins_over_diagram():
@@ -116,6 +121,42 @@ def test_table_wins_over_diagram():
 def test_diagram_wins_over_brief():
     _, d = extract_output_directive("/brief /görselleştir akış")
     assert d == OutputDirective.DIAGRAM
+
+
+def test_graph_directive_aliases():
+    for raw in (
+        "web01 son 1 saat cpu /graph",
+        "web01 son 1 saat cpu /grafik",
+        "/graf bellek",
+        "/GRAPH overlay",
+    ):
+        msg, d = extract_output_directive(raw)
+        assert d == OutputDirective.GRAPH, raw
+        assert "/graph" not in msg.lower()
+        assert "/grafik" not in msg.lower()
+
+
+def test_graph_no_false_positive():
+    msg, d = extract_output_directive("bu grafikte ne var")
+    assert d == OutputDirective.NONE
+    msg2, d2 = extract_output_directive("/graphics lütfen")
+    assert d2 == OutputDirective.NONE
+
+
+def test_graph_wins_over_diagram():
+    _, d = extract_output_directive("/diagram /grafik cpu")
+    assert d == OutputDirective.GRAPH
+
+
+def test_table_wins_over_graph():
+    _, d = extract_output_directive("/grafik /table")
+    assert d == OutputDirective.TABLE
+
+
+def test_graph_addendum_forbids_mermaid_series():
+    add = directive_system_addendum(OutputDirective.GRAPH)
+    assert "/graph" in add
+    assert "xychart" in add.lower() or "mermaid" in add.lower()
 
 
 def test_render_rows_as_json_valid_json_block():

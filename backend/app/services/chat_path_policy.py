@@ -102,6 +102,12 @@ def is_knowledge_only(message: Optional[str]) -> bool:
         pass
     if is_deep_live_query(m):
         return False
+    try:
+        from app.services.intent_text import mixed_operational_after_sonra
+        if mixed_operational_after_sonra(m):
+            return False
+    except Exception:
+        pass
     # chat_intent (paylaşımlı sınıflandırıcı — virt sohbetiyle aynı motor): saf
     # kavramsal/eğitim/troubleshooting-metodolojisi sorusu, "neden"/"incele" gibi
     # basit _LIVE_BLOCK_KEYWORDS eşleşmelerine rağmen canlı SSH/WinRM/agentic

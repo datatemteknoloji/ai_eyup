@@ -41,23 +41,32 @@ LADDER_STEPS: Tuple[str, ...] = (
 
 
 def is_live_resource_query(message: str) -> bool:
-    m = (message or "").lower()
+    from app.services.intent_text import any_keyword_hit
+
+    m = message or ""
     if not m.strip():
         return False
-    return any(k in m for k in _LIVE_RESOURCE_KW)
+    return any_keyword_hit(m, _LIVE_RESOURCE_KW)
 
 
 def wants_guest_os_metrics(message: str) -> bool:
     """Guest OS içi metrik (SSH) de gerekir — yalnız hipervizör yetmez."""
-    m = (message or "").lower()
+    from app.services.intent_text import any_keyword_hit, regex_hit
+
+    m = message or ""
     if not is_live_resource_query(m):
         return False
-    # Açık guest/SSH isteği veya genel "sunucu/kaynak" (VM adı + anlık)
-    if any(k in m for k in ("ssh", "guest", "top", "sar", "vmstat", "iostat", "df ", "içinden", "icinden")):
+    if any_keyword_hit(
+        m,
+        ("ssh", "guest", "top", "sar", "vmstat", "iostat", "df ", "içinden", "icinden"),
+    ):
         return True
-    if any(k in m for k in ("sunucu", "server", "kaynak", "cpu", "ram", "bellek", "yük", "yuk", "load")):
+    if any_keyword_hit(
+        m,
+        ("sunucu", "server", "kaynak", "cpu", "ram", "bellek", "yük", "yuk", "load"),
+    ):
         return True
-    return bool(_VM_RE.search(m)) or is_live_resource_query(m)
+    return regex_hit(m, _VM_RE) or is_live_resource_query(m)
 
 
 def ladder_system_addendum(*, has_prometheus: bool = False) -> str:

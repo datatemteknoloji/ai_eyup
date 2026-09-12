@@ -81,3 +81,19 @@ def test_small_context_is_not_truncated():
     prompt = _build_prompt("kaç sunucu var?", "Sunucu sayısı: 12", "", "", None)
     assert "Sunucu sayısı: 12" in prompt
     assert "context kısaltıldı" not in prompt
+
+
+def test_unified_diagram_directive_still_asks_turkish():
+    from app.api.unified_chat import _build_prompt
+    from app.services.chat_output_directives import OutputDirective
+
+    prompt = _build_prompt(
+        "tüm mimariyi göster",
+        "Sunucu sayısı: 12",
+        "",
+        "",
+        OutputDirective.DIAGRAM,
+    )
+    assert prompt.rstrip().endswith("YANIT (Markdown, Türkçe):")
+    assert "What it shows" in prompt
+    assert "Ne gösteriyor" in prompt

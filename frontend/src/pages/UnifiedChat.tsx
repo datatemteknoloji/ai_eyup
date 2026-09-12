@@ -10,6 +10,7 @@ import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
+import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import { ChatEvidenceBadge, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
@@ -116,7 +117,7 @@ function getFirstMarkdownTable(content: string): string | null {
   return out.length > 0 ? out.join('\n') : null
 }
 
-interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; usage?: ChatUsage | null; evidence?: ChatEvidence | null }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; usage?: ChatUsage | null; evidence?: ChatEvidence | null; meta?: { charts?: ChatChartPayload[] } | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
@@ -533,6 +534,9 @@ const UnifiedChat: React.FC<{
                               </>
                             )}
                           </div>
+                          {msg.meta?.charts?.map((chart, ci) => (
+                            <ChatMetricChart key={`${msg.id}-chart-${ci}`} chart={chart} chartId={`un-${msg.id}-${ci}`} />
+                          ))}
                           {msg.id > 0 && (
                             <>
                               <ChatFeedbackButtons

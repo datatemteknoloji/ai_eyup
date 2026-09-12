@@ -240,6 +240,7 @@ async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
             "role": m.role,
             "content": m.content,
             "created_at": m.created_at.isoformat() if m.created_at else "",
+            "meta": m.meta if isinstance(m.meta, dict) else {},
         }
         for m in messages
     ]
@@ -388,9 +389,7 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
     tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:
         tail_parts.append(_dir_add.strip())
-        tail_parts.append("YANIT:")
-    else:
-        tail_parts.append("YANIT (Markdown, Turkce):")
+    tail_parts.append("YANIT (Markdown, Turkce):")
     tail_block = "\n\n".join(tail_parts)
 
     # system (persona/kurallar) + soru asla kesilmez; gerekirse BAGLAM, sonra
@@ -425,7 +424,7 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
     if not raw_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    from app.services.chat_output_directives import extract_output_directive
+    from app.services.chat_output_directives import OutputDirective, extract_output_directive
     message, output_directive = extract_output_directive(raw_message)
 
     session_id = request.session_id
@@ -478,6 +477,27 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         mentioned=mentioned if not has_explicit else None,
     )
     selected_servers = live_targets
+
+    from app.services.chat_charts import try_build_chat_charts
+    _chart = try_build_chat_charts(
+        db,
+        message=message,
+        platform="windows",
+        servers=selected_servers if has_explicit else None,
+        pool=inventory_servers,
+        explicit=output_directive == OutputDirective.GRAPH,
+    )
+    if _chart:
+        db.add(ChatMessage(session_id=session_id, role="user", content=raw_message))
+        db.add(ChatMessage(
+            session_id=session_id, role="assistant", content=_chart["summary_text"],
+            meta={"charts": _chart.get("charts") or [], "intents": _chart.get("intents") or ["chart"]},
+        ))
+        db.commit()
+        return ChatResponse(
+            response=_chart["summary_text"],
+            session_id=session_id,
+        )
 
     ml = message.lower()
     needs_winrm = any(k in ml for k in _ALL_WINRM_KEYWORDS) and not request.skip_server_context
@@ -768,6 +788,30 @@ async def chat_stream(
                     mentioned=mentioned if not has_explicit else None,
                 )
                 selected_servers = live_targets
+
+                from app.services.chat_charts import try_build_chat_charts
+                _chart = try_build_chat_charts(
+                    db,
+                    message=message,
+                    platform="windows",
+                    servers=selected_servers if has_explicit else None,
+                    pool=inventory_servers,
+                    explicit=output_directive == _OD.GRAPH,
+                )
+                if _chart:
+                    answer = _chart["summary_text"]
+                    yield _sse({"phase": "answering"})
+                    _timing.note_ttft()
+                    for i in range(0, len(answer), 8):
+                        yield _sse({"token": answer[i:i + 8]})
+                    db.add(ChatMessage(
+                        session_id=session_id, role="assistant", content=answer,
+                        meta={"charts": _chart.get("charts") or [], "intents": _chart.get("intents") or ["chart"]},
+                    ))
+                    db.commit()
+                    _timing.finish(cache_hit=False, extra={"path": "chart"})
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
 
                 cache_ids = [s.id for s in selected_servers] if has_explicit else []
                 cached = None if (_is_followup or _has_directive) else get_cached_answer(
