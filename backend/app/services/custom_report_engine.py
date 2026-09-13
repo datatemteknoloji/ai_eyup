@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -334,4 +335,28 @@ def execute_definition(db: Session, definition: Any) -> Dict[str, Any]:
         rendered = _render_via_inventory_contract(name, args, raw, directive)
     if not rendered:
         rendered = render_tool_result(raw, directive)
-    return {"ok": ok, "raw": raw, "rendered": rendered, "error": (raw.get("error") if isinstance(raw, dict) and not ok else None)}
+    return {
+        "ok": ok,
+        "raw": raw,
+        "rendered": rendered,
+        "error": (raw.get("error") if isinstance(raw, dict) and not ok else None),
+        "generated_at": datetime.utcnow().isoformat(),
+        "data_as_of": (
+            raw.get("as_of") or raw.get("generated_at") or raw.get("timestamp")
+            if isinstance(raw, dict) else None
+        ),
+        "tool": name,
+        "empty": bool(ok and (
+            raw is None
+            or (isinstance(raw, dict) and (
+                raw.get("count") == 0
+                or raw.get("total") == 0
+                or (isinstance(raw.get("items"), list) and len(raw["items"]) == 0)
+                or (isinstance(raw.get("rows"), list) and len(raw["rows"]) == 0)
+            ))
+            or (isinstance(raw, list) and len(raw) == 0)
+        )),
+        "note": (
+            None if ok else "Tool çağrısı başarısız — rapor boş alanları 0 ile doldurmaz."
+        ),
+    }

@@ -44,6 +44,35 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+def _fleet_summary_no_host_copy(
+    *,
+    entity_count: int,
+    entity_label: str,
+    critical_n: int = 0,
+    warning_n: int = 0,
+    worst_name: Optional[str] = None,
+    worst_hint: Optional[str] = None,
+    extra_lines: Optional[List[str]] = None,
+) -> List[str]:
+    """Üst filo yorumu — host kartı narrative'ini ASLA kopyalamaz.
+
+    Tek varlıkta boş döner (detay kartta yeter); çoklu varlıkta kısa özet.
+    """
+    if entity_count <= 1:
+        return []
+    lines = [
+        f"Filo özeti: {entity_count} {entity_label}; "
+        f"{critical_n} kritik, {warning_n} uyarı. "
+        "Detay her kartın kendi yorumunda — burada tekrar edilmez."
+    ]
+    if worst_name:
+        hint = f" ({worst_hint})" if worst_hint else ""
+        lines.append(f"Öncelikli bakılacak: {worst_name}{hint}.")
+    if extra_lines:
+        lines.extend(extra_lines)
+    return lines
+
+
 # ── Yardımcı: ESX host metrikleri ────────────────────────────────────────────
 
 def _latest_host_metrics(db: Session) -> List[Dict]:
@@ -560,7 +589,12 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
             "status": status,
             "vms_running": h["vms_running"],
             "vms_total": h["vms_total"],
+            "horizon_uncertainty": {
+                "memory": ra.horizon_uncertainty_label(mem_range),
+                "storage": ra.horizon_uncertainty_label(ds_range),
+            },
         })
+        capacity_items[-1]["narrative"] = ra.narrate_capacity_host(capacity_items[-1])
 
     def _days_text(days: Optional[int], rng: Optional[Dict[str, Any]]) -> str:
         """Tek sayı yerine belirsizlik aralığı ('35–60 gün') — daha dürüst ifade."""
@@ -645,6 +679,22 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         if cap.get("accessible") is False:
             warnings.append(f"Datastore '{ds_key}' vCenter'da ERİŞİLEMEZ durumda")
 
+    worst = None
+    if capacity_items:
+        worst = max(capacity_items, key=lambda x: -(x.get("memory", {}).get("used_pct") or 0))
+    fleet_narr = _fleet_summary_no_host_copy(
+        entity_count=len(capacity_items),
+        entity_label="host",
+        critical_n=sum(1 for i in capacity_items if i["status"] == "Kritik"),
+        warning_n=sum(1 for i in capacity_items if i["status"] == "Uyarı"),
+        worst_name=(worst or {}).get("host"),
+        worst_hint=(
+            f"Memory %{(worst.get('memory') or {}).get('used_pct')}"
+            if worst else None
+        ),
+        extra_lines=[f"{len(warnings)} uyarı satırı (datastore/eşik)."] if warnings and len(capacity_items) > 1 else None,
+    )
+
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "capacity_items": capacity_items,
@@ -653,6 +703,7 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         "overall_status": "Kritik" if any(i["status"] == "Kritik" for i in capacity_items) else (
             "Uyarı" if any(i["status"] == "Uyarı" for i in capacity_items) else "Normal"
         ),
+        "narrative": fleet_narr,
     }
 
 
@@ -689,7 +740,7 @@ def generate_risk_dashboard(db: Session) -> Dict[str, Any]:
         sum(1 for e in events if e["severity"] in ("critical", "error")) * 2
     ))
 
-    return {
+    result = {
         "generated_at": datetime.utcnow().isoformat(),
         "risk_score": risk_score,
         "risk_level": "Kritik" if risk_score > 60 else ("Yüksek" if risk_score > 30 else "Normal"),
@@ -704,6 +755,9 @@ def generate_risk_dashboard(db: Session) -> Dict[str, Any]:
         "critical_event_count": sum(1 for e in events if e["severity"] in ("critical", "error")),
         "warning_event_count": sum(1 for e in events if e["severity"] == "warning"),
     }
+    from app.services import report_analytics as ra
+    result["narrative"] = ra.narrate_risk_report(result)
+    return result
 
 
 def generate_vm_health_scores(db: Session) -> Dict[str, Any]:
@@ -883,16 +937,110 @@ def generate_consolidation_report(db: Session) -> Dict[str, Any]:
     vms = _get_vms(db)
 
     powered_off = [v for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn")]
-    low_cpu = [v for v in vms
-               if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")
-               and (v["cpu_count"] or 0) >= 8]  # Yüksek vCPU ataması
+    powered_on = [v for v in vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")]
 
     # Toplam kaynak israfı (kapalı VM'lerin tahsisatı)
     wasted_vcpu = sum(v["cpu_count"] or 0 for v in powered_off)
     wasted_ram = sum(v["memory_gb"] or 0 for v in powered_off)
     wasted_disk = sum(v["disk_gb"] or 0 for v in powered_off)
 
-    return {
+    # Gerçek kullanım: son 7 gün virt_vm_metrics ortalaması (right-sizing)
+    usage_rows = db.execute(text("""
+        SELECT COALESCE(server_id::text, vm_name) AS key,
+               MAX(vm_name) AS vm_name,
+               AVG(cpu_usage_pct) AS avg_cpu,
+               AVG(mem_usage_pct) AS avg_mem,
+               MAX(num_cpu) AS num_cpu,
+               MAX(mem_total_mb) AS mem_total_mb,
+               COUNT(*) AS samples
+        FROM virt_vm_metrics
+        WHERE timestamp >= NOW() - INTERVAL '7 days'
+          AND power_state IN ('POWERED_ON', 'poweredOn', 'up', 'running')
+        GROUP BY COALESCE(server_id::text, vm_name)
+        HAVING COUNT(*) >= 3
+    """)).all()
+    usage_by_name: Dict[str, Any] = {}
+    usage_by_sid: Dict[int, Any] = {}
+    for r in usage_rows:
+        entry = {
+            "avg_cpu_pct": round(float(r.avg_cpu or 0), 1),
+            "avg_mem_pct": round(float(r.avg_mem or 0), 1),
+            "samples": int(r.samples or 0),
+            "num_cpu": int(r.num_cpu or 0) if r.num_cpu else None,
+            "mem_gb": round(float(r.mem_total_mb or 0) / 1024.0, 1) if r.mem_total_mb else None,
+        }
+        if r.key and str(r.key).isdigit():
+            usage_by_sid[int(r.key)] = entry
+        if r.vm_name:
+            usage_by_name[r.vm_name] = entry
+
+    def _usage_for(vm: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        sid = vm.get("id")
+        if sid and sid in usage_by_sid:
+            return usage_by_sid[sid]
+        return usage_by_name.get(vm["name"])
+
+    # Idle: düşük ortalama CPU (<8%) ve anlamlı tahsis (vCPU≥2 veya RAM≥4GB)
+    idle_vms = []
+    for v in powered_on:
+        u = _usage_for(v)
+        if not u:
+            continue
+        vcpu = v["cpu_count"] or u.get("num_cpu") or 0
+        ram = v["memory_gb"] or u.get("mem_gb") or 0
+        if u["avg_cpu_pct"] < 8.0 and (vcpu >= 2 or ram >= 4):
+            idle_vms.append({
+                "vm": v["name"],
+                "cpu": vcpu,
+                "ram_gb": ram,
+                "avg_cpu_pct": u["avg_cpu_pct"],
+                "avg_mem_pct": u["avg_mem_pct"],
+                "samples": u["samples"],
+                "reason": "idle_low_cpu",
+            })
+    idle_vms.sort(key=lambda x: (x["avg_cpu_pct"], -(x["cpu"] or 0)))
+    idle_names = {v["vm"] for v in idle_vms}
+
+    # Oversized: yüksek tahsis + düşük kullanım; idle listesindekiler hariç
+    # (idle zaten daha güçlü sinyal). Metrik yoksa vCPU≥8 heuristic.
+    oversized = []
+    seen = set()
+    for v in powered_on:
+        if v["name"] in idle_names:
+            continue
+        u = _usage_for(v)
+        vcpu = v["cpu_count"] or 0
+        ram = v["memory_gb"] or 0
+        if u and vcpu >= 4 and u["avg_cpu_pct"] < 15.0:
+            oversized.append({
+                "vm": v["name"],
+                "cpu": vcpu,
+                "ram_gb": ram,
+                "avg_cpu_pct": u["avg_cpu_pct"],
+                "avg_mem_pct": u["avg_mem_pct"],
+                "samples": u["samples"],
+                "basis": "usage",
+            })
+            seen.add(v["name"])
+        elif vcpu >= 8 and v["name"] not in seen and not u:
+            oversized.append({
+                "vm": v["name"],
+                "cpu": vcpu,
+                "ram_gb": ram,
+                "avg_cpu_pct": None,
+                "avg_mem_pct": None,
+                "samples": 0,
+                "basis": "allocation_heuristic",
+            })
+            seen.add(v["name"])
+    oversized.sort(key=lambda x: (-(x["cpu"] or 0), x.get("avg_cpu_pct") or 0))
+
+    idle_vcpu = sum(v["cpu"] or 0 for v in idle_vms)
+    idle_ram = sum(v["ram_gb"] or 0 for v in idle_vms)
+
+    covered = sum(1 for v in powered_on if _usage_for(v))
+
+    result = {
         "generated_at": datetime.utcnow().isoformat(),
         "powered_off_vms": {
             "count": len(powered_off),
@@ -902,18 +1050,44 @@ def generate_consolidation_report(db: Session) -> Dict[str, Any]:
             "vms": [{"vm": v["name"], "cpu": v["cpu_count"], "ram_gb": v["memory_gb"], "disk_gb": v["disk_gb"]}
                     for v in powered_off[:30]],
         },
+        "idle_vms": {
+            "count": len(idle_vms),
+            "note": (
+                "Son 7 gün ortalama CPU < %8 ve anlamlı tahsis (vCPU≥2 veya RAM≥4GB). "
+                "virt_vm_metrics tabanlı; metrik yoksa listelenmez."
+            ),
+            "candidate_vcpu": idle_vcpu,
+            "candidate_ram_gb": round(idle_ram, 1),
+            "vms": idle_vms[:25],
+        },
         "oversized_vms": {
-            "count": len(low_cpu),
-            "note": "vCPU≥8 tahsis heuristic — gerçek CPU kullanım metriği değil",
-            "vms": [{"vm": v["name"], "cpu": v["cpu_count"], "ram_gb": v["memory_gb"]}
-                    for v in sorted(low_cpu, key=lambda x: -(x["cpu_count"] or 0))[:20]],
+            "count": len(oversized),
+            "note": (
+                "Idle listesi dışındaki adaylar: vCPU≥4 ve 7g ort. CPU<%15 (usage). "
+                "Metrik yoksa vCPU≥8 allocation heuristic (basis alanında belirtilir)."
+            ),
+            "vms": oversized[:20],
         },
         "consolidation_potential": {
             "reclaimable_vcpu": wasted_vcpu,
             "reclaimable_ram_gb": round(wasted_ram, 1),
             "reclaimable_disk_gb": round(wasted_disk, 1),
+            "idle_candidate_vcpu": idle_vcpu,
+            "idle_candidate_ram_gb": round(idle_ram, 1),
+            "note": (
+                "reclaimable_* = kapalı VM tahsisatı (kesin aday). "
+                "idle_candidate_* = düşük kullanımlı açık VM (inceleme aralığı, otomatik silme değil)."
+            ),
+        },
+        "usage_metrics_coverage": {
+            "vms_with_7d_samples": covered,
+            "powered_on_vms": len(powered_on),
+            "metric_series_groups": len(usage_rows),
         },
     }
+    from app.services import report_analytics as ra
+    result["narrative"] = ra.narrate_consolidation_report(result)
+    return result
 
 
 def generate_lifecycle_report(db: Session) -> Dict[str, Any]:
@@ -1049,17 +1223,48 @@ def generate_forecast_report(db: Session) -> Dict[str, Any]:
             cpu_p95=cpu_p95,
         ))
 
+    fleet_narr: List[str] = []
+    if forecasts:
+        worst = max(
+            forecasts,
+            key=lambda f: (
+                1 if (f.get("critical_now") or {}).get("memory") else 0,
+                1 if (f.get("critical_now") or {}).get("storage") else 0,
+                (f.get("current") or {}).get("mem_pct") or 0,
+            ),
+        )
+        cur = worst.get("current") or {}
+        fleet_narr = _fleet_summary_no_host_copy(
+            entity_count=len(forecasts),
+            entity_label="host",
+            critical_n=sum(
+                1 for f in forecasts
+                if (f.get("critical_now") or {}).get("memory")
+                or (f.get("critical_now") or {}).get("storage")
+            ),
+            warning_n=sum(
+                1 for f in forecasts
+                if (f.get("forecast_6m") or {}).get("mem_pct", 0) > 85
+                or (f.get("forecast_6m") or {}).get("ds_pct", 0) > 85
+            ),
+            worst_name=worst.get("host"),
+            worst_hint=f"Memory %{cur.get('mem_pct')}, Disk %{cur.get('ds_pct')}",
+        )
+
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "forecasts": forecasts,
+        "narrative": fleet_narr,
         "methodology": (
             "Eğim: Theil–Sen (aykırı değere dayanıklı); eşiğe kalan süre "
-            "ikili eğim %25–%75 aralığıyla verilir. Disk/Memory: günlük trend; "
-            "düşüşte %0 extrapolasyonu yok. CPU: p95/mevcut taban; negatif "
-            "trend %0'a inmez."
+            "ikili eğim %25–%75 aralığıyla verilir. Floor yalnızca düşük/yok "
+            "güvende. Disk/Memory medium+ düşüşte ham extrapolasyon. CPU: p95 "
+            "+ muhafazakâr (%50) eğim."
         ),
         "investment_needed": any(
             f["forecast_6m"]["mem_pct"] > 90 or f["forecast_6m"]["ds_pct"] > 90
+            or (f.get("critical_now") or {}).get("memory")
+            or (f.get("critical_now") or {}).get("storage")
             for f in forecasts
         ),
     }
@@ -1332,6 +1537,24 @@ def generate_sla_report(db: Session) -> Dict[str, Any]:
         GROUP BY s.id, s.name, s.status
     """), {"since": since}).all()
 
+    # Offline/bağlantı kopması olaylarından kabaca downtime dakikası (varsa)
+    downtime_rows = db.execute(text("""
+        SELECT server_id,
+               COUNT(*) AS offline_events,
+               COALESCE(SUM(GREATEST(occurrence_count, 1)), 0) AS offline_weight
+        FROM system_events
+        WHERE created_at >= :since
+          AND (
+            severity IN ('critical', 'error', 'emergency')
+            OR lower(COALESCE(event_type, '')) LIKE '%offline%'
+            OR lower(COALESCE(event_type, '')) LIKE '%disconnect%'
+            OR lower(COALESCE(title, '')) LIKE '%offline%'
+            OR lower(COALESCE(title, '')) LIKE '%unreachable%'
+          )
+        GROUP BY server_id
+    """), {"since": since}).all()
+    downtime_map = {int(r.server_id): r for r in downtime_rows if r.server_id}
+
     sla_items = []
     for r in rows:
         crit = int(r.critical_count or 0)
@@ -1339,14 +1562,26 @@ def generate_sla_report(db: Session) -> Dict[str, Any]:
         # Olay yoğunluğundan muhafazakâr tahmin — gerçek uptime değil
         penalty = min(15.0, crit * 0.3 + max(0, total_ev - crit) * 0.05)
         estimated_uptime = max(85.0, 100.0 - penalty)
+        # Offline ağırlığı varsa ek ceza (her ağırlık ≈ 30 dk kabaca; tavan %5)
+        dt = downtime_map.get(int(r.id))
+        offline_penalty = 0.0
+        if dt:
+            offline_penalty = min(5.0, float(dt.offline_weight or 0) * 0.05)
+            estimated_uptime = max(85.0, estimated_uptime - offline_penalty)
+        status = (r.status or "UNKNOWN").upper()
+        if status in ("OFFLINE", "DOWN", "UNREACHABLE", "DISCONNECTED"):
+            estimated_uptime = min(estimated_uptime, 95.0)
+
         sla_items.append({
             "server": r.name,
             "current_status": r.status or "UNKNOWN",
             "critical_events_30d": crit,
             "total_events_30d": total_ev,
+            "offline_weighted_events_30d": int(dt.offline_weight) if dt else 0,
             "estimated_uptime_pct": round(min(100, estimated_uptime), 2),
             "sla_met": estimated_uptime >= 99.0,
             "estimate_type": "event_proxy",
+            "confidence": "low",
         })
 
     met = sum(1 for s in sla_items if s["sla_met"])
@@ -1358,7 +1593,14 @@ def generate_sla_report(db: Session) -> Dict[str, Any]:
         "servers_missing_sla": len(sla_items) - met,
         "overall_sla_compliance_pct": round(met / len(sla_items) * 100, 1) if sla_items else 100,
         "sla_items": sorted(sla_items, key=lambda x: x["estimated_uptime_pct"])[:30],
-        "note": "SLA hesabı olay yoğunluğundan tahmin edilmiştir. Kesin ölçüm için monitoring entegrasyonu gereklidir.",
+        "estimate_type": "event_proxy",
+        "confidence": "low",
+        "note": (
+            "SLA hesabı olay yoğunluğu + offline/kritik ağırlığından TAHMİN edilmiştir "
+            "(estimate_type=event_proxy, confidence=low). Gerçek kesinti süresi ölçülmez; "
+            "kesin uptime için monitoring entegrasyonu gerekir. Değerleri kesin SLA taahhüdü "
+            "olarak kullanmayın."
+        ),
     }
 
 

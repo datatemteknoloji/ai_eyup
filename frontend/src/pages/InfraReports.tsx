@@ -552,6 +552,49 @@ function ExecSummaryView({ d }: { d: any }) {
   )
 }
 
+/** Kural-tabanlı rapor yorumu (backend narrative[]). */
+function NarrativeBlock({ lines, title }: { lines?: string[]; title?: string }) {
+  const t = useT()
+  if (!lines?.length) return null
+  return (
+    <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-blue-300 text-xs font-medium">
+        <Info size={12} />
+        {title || t('rpt_narrative')}
+      </div>
+      <ul className="space-y-1">
+        {lines.map((line, i) => (
+          <li key={i} className="text-[11px] text-slate-300 leading-relaxed flex gap-1.5">
+            <span className="text-blue-400/70 flex-shrink-0">•</span>
+            <span>{line}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function formatGrowthPct(n: number | null | undefined, t: ReturnType<typeof useT>): string {
+  if (n == null || Number.isNaN(n)) return ''
+  const sign = n > 0 ? '+' : ''
+  return t('rpt_forecast_growth', { n: `${sign}${n}` })
+}
+
+function fitLabel(fit: string | undefined, t: ReturnType<typeof useT>): string {
+  if (fit === 'high') return t('rpt_fit_high')
+  if (fit === 'medium') return t('rpt_fit_medium')
+  if (fit === 'none') return t('rpt_fit_none')
+  return t('rpt_fit_low')
+}
+
+function uncLabel(u: string | undefined, t: ReturnType<typeof useT>): string {
+  if (u === 'narrow') return t('rpt_unc_narrow')
+  if (u === 'moderate') return t('rpt_unc_moderate')
+  if (u === 'wide') return t('rpt_unc_wide')
+  if (u === 'already') return t('rpt_unc_already')
+  return t('rpt_unc_none')
+}
+
 /** Eşiğe kalan süre: tek sayı yerine belirsizlik aralığı (backend Theil–Sen). */
 function daysToThresholdText(
   days: number | null | undefined,
@@ -576,6 +619,7 @@ function CapacityView({ d }: { d: any }) {
   const items = d.capacity_items || []
   return (
     <div className="space-y-5">
+      <NarrativeBlock lines={d.narrative} />
       {d.warnings?.length > 0 && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex gap-2">
           <AlertTriangle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
@@ -608,23 +652,51 @@ function CapacityView({ d }: { d: any }) {
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <ProgressBar pct={item.cpu?.used_pct ?? 0} label="CPU" sub={t('rpt_n_cores', { n: item.cpu?.cores ?? 0 })} />
-                {item.cpu?.avg_30d !== null && (
+                {item.cpu?.avg_30d !== null && item.cpu?.avg_30d !== undefined && (
                   <p className="text-slate-500 text-xs mt-1">{t('rpt_avg_30d', { n: item.cpu?.avg_30d })}</p>
+                )}
+                {item.cpu?.trend_confidence && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">{fitLabel(item.cpu.trend_confidence, t)}</p>
                 )}
               </div>
               <div>
                 <ProgressBar pct={item.memory?.used_pct ?? 0} label={t('memory')} sub={t('rpt_gb_free', { n: item.memory?.free_gb ?? 0 })} />
-                {item.memory?.days_to_80pct && (
+                {item.memory?.days_to_80pct != null && item.memory.days_to_80pct === 0 && (
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {t('rpt_already_over_80', { n: item.memory?.used_pct })}</p>
+                )}
+                {item.memory?.days_to_80pct != null && item.memory.days_to_80pct > 0 && (
                   <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {daysToThresholdText(item.memory.days_to_80pct, item.memory.days_to_80pct_range, t)}</p>
+                )}
+                {item.memory?.trend_confidence && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {fitLabel(item.memory.trend_confidence, t)}
+                    {item.horizon_uncertainty?.memory ? ` · ${uncLabel(item.horizon_uncertainty.memory, t)}` : ''}
+                    {item.memory.daily_growth_pct != null ? ` · ${formatGrowthPct(item.memory.daily_growth_pct, t)}` : ''}
+                  </p>
                 )}
               </div>
               <div>
                 <ProgressBar pct={item.storage?.used_pct ?? 0} label="Disk" sub={t('rpt_gb_free', { n: item.storage?.free_gb ?? 0 })} />
-                {item.storage?.days_to_80pct && (
+                {item.storage?.days_to_80pct != null && item.storage.days_to_80pct === 0 && (
+                  <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {t('rpt_already_over_80', { n: item.storage?.used_pct })}</p>
+                )}
+                {item.storage?.days_to_80pct != null && item.storage.days_to_80pct > 0 && (
                   <p className="flex items-center gap-1 text-amber-400 text-xs mt-1"><Zap size={11} strokeWidth={2} /> {daysToThresholdText(item.storage.days_to_80pct, item.storage.days_to_80pct_range, t)}</p>
+                )}
+                {item.storage?.trend_confidence && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {fitLabel(item.storage.trend_confidence, t)}
+                    {item.horizon_uncertainty?.storage ? ` · ${uncLabel(item.horizon_uncertainty.storage, t)}` : ''}
+                    {item.storage.daily_growth_pct != null ? ` · ${formatGrowthPct(item.storage.daily_growth_pct, t)}` : ''}
+                  </p>
                 )}
               </div>
             </div>
+            {item.narrative?.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-700/40">
+                <NarrativeBlock lines={item.narrative} title={t('rpt_host_narrative')} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -805,6 +877,7 @@ function RiskView({ d }: { d: any }) {
   const rs = d.risk_score ?? 0
   return (
     <div className="space-y-5">
+      <NarrativeBlock lines={d.narrative} />
       {/* Score + KPIs */}
       <div className="grid grid-cols-4 gap-3 items-start">
         <div className="flex flex-col items-center bg-slate-800/40 rounded-xl p-4 border border-slate-700/30">
@@ -1140,13 +1213,23 @@ function ConsolidationView({ d }: { d: any }) {
   const poff = d.powered_off_vms || {}
   const pot = d.consolidation_potential || {}
   const over = d.oversized_vms || {}
+  const idle = d.idle_vms || {}
+  const cov = d.usage_metrics_coverage || {}
   return (
     <div className="space-y-5">
+      <NarrativeBlock lines={d.narrative} />
       {/* Waste stats */}
       <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <PackageOpen size={16} className="text-amber-400" />
-          <h3 className="text-amber-300 font-medium text-sm">{t('rpt_reclaim')}</h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <PackageOpen size={16} className="text-amber-400" />
+            <h3 className="text-amber-300 font-medium text-sm">{t('rpt_reclaim')}</h3>
+          </div>
+          {cov.powered_on_vms != null && (
+            <span className="text-[10px] text-slate-500">
+              {t('rpt_usage_coverage', { a: cov.vms_with_7d_samples ?? 0, b: cov.powered_on_vms })}
+            </span>
+          )}
         </div>
         <div className="grid grid-cols-4 gap-3">
           <div className="text-center">
@@ -1166,6 +1249,11 @@ function ConsolidationView({ d }: { d: any }) {
             <div className="text-slate-500 text-xs mt-1">{t('rpt_reclaim_disk')}</div>
           </div>
         </div>
+        {(pot.idle_candidate_vcpu > 0 || pot.idle_candidate_ram_gb > 0) && (
+          <p className="text-[11px] text-slate-400 mt-3">
+            {t('rpt_idle_candidates', { vcpu: pot.idle_candidate_vcpu ?? 0, ram: pot.idle_candidate_ram_gb ?? 0 })}
+          </p>
+        )}
       </div>
       {/* Powered off list */}
       {poff.vms?.length > 0 && (
@@ -1191,10 +1279,31 @@ function ConsolidationView({ d }: { d: any }) {
           </table>
         </div>
       )}
+      {/* Idle (usage-based) */}
+      {idle.vms?.length > 0 && (
+        <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+          <SectionHeader title={t('rpt_idle_vms')} count={idle.count} icon={<Cpu size={14} />} />
+          {idle.note && <p className="text-[11px] text-slate-500 mb-2">{idle.note}</p>}
+          <div className="space-y-1.5">
+            {idle.vms.slice(0, 15).map((v: any) => (
+              <div key={v.vm} className="flex items-center justify-between bg-slate-800/40 rounded-lg px-3 py-2 text-xs">
+                <span className="text-white">{v.vm}</span>
+                <div className="flex items-center gap-3 text-slate-400">
+                  <span className="text-blue-400">{v.cpu} vCPU</span>
+                  <span>{v.ram_gb} GB</span>
+                  <span className="text-amber-400">CPU %{v.avg_cpu_pct}</span>
+                  <span className="text-slate-500">RAM %{v.avg_mem_pct}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Oversized */}
       {over.vms?.length > 0 && (
         <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
           <SectionHeader title={t('rpt_over_vcpu')} count={over.count} icon={<Cpu size={14} />} />
+          {over.note && <p className="text-[11px] text-slate-500 mb-2">{over.note}</p>}
           <div className="space-y-1.5">
             {over.vms.slice(0, 10).map((v: any) => (
               <div key={v.vm} className="flex items-center justify-between bg-slate-800/40 rounded-lg px-3 py-2 text-xs">
@@ -1202,6 +1311,12 @@ function ConsolidationView({ d }: { d: any }) {
                 <div className="flex items-center gap-3">
                   <span className="text-blue-400">{v.cpu} vCPU</span>
                   <span className="text-slate-400">{v.ram_gb} GB Memory</span>
+                  {v.avg_cpu_pct != null && <span className="text-amber-400">CPU %{v.avg_cpu_pct}</span>}
+                  {v.basis && (
+                    <span className="text-[10px] text-slate-500 border border-slate-600/40 rounded px-1.5 py-0.5">
+                      {v.basis === 'usage' ? t('rpt_basis_usage') : t('rpt_basis_alloc')}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -1351,6 +1466,12 @@ function ForecastView({ d }: { d: any }) {
   const { locale } = useLocale()
   const forecasts = d.forecasts || []
   const colColor = (v: number) => v > 90 ? 'text-red-400 font-bold' : v > 80 ? 'text-amber-400' : v > 65 ? 'text-yellow-400' : 'text-green-400'
+  const kindBadge = (kind?: string) => {
+    if (kind === 'growth') return { cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', label: t('rpt_proj_growth') }
+    if (kind === 'decline') return { cls: 'bg-violet-500/15 text-violet-300 border-violet-500/30', label: t('rpt_proj_decline') }
+    if (kind === 'floor') return { cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30', label: t('rpt_proj_floor') }
+    return { cls: 'bg-slate-500/20 text-slate-300 border-slate-500/30', label: t('rpt_proj_stable') }
+  }
   return (
     <div className="space-y-5">
       {d.investment_needed && (
@@ -1359,12 +1480,15 @@ function ForecastView({ d }: { d: any }) {
           <span className="text-red-300 text-sm font-medium">{t('rpt_cap_invest')}</span>
         </div>
       )}
+      <p className="text-slate-500 text-xs leading-relaxed">{t('rpt_forecast_ui_hint')}</p>
+      <p className="text-slate-500 text-[11px] leading-relaxed">{t('rpt_cpu_proj_hint')}</p>
+      <NarrativeBlock lines={d.narrative} />
       <div className="grid grid-cols-2 gap-4">
         {forecasts.map((item: any) => (
           <div key={item.host} className="bg-slate-800/40 rounded-xl border border-slate-700/30 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
               <span className="text-white font-semibold">{item.host}</span>
-              {(item.forecast_6m?.mem_pct > 85 || item.forecast_6m?.ds_pct > 85) && (
+              {(item.forecast_6m?.mem_pct > 85 || item.forecast_6m?.ds_pct > 85 || item.critical_now?.memory) && (
                 <SeverityBadge level="Uyarı" />
               )}
             </div>
@@ -1385,19 +1509,82 @@ function ForecastView({ d }: { d: any }) {
                     const m3 = item.forecast_3m?.[`${res}_pct`] ?? 0
                     const m6 = item.forecast_6m?.[`${res}_pct`] ?? 0
                     const m12 = item.forecast_12m?.[`${res}_pct`] ?? 0
+                    const meta = item.metric_projection?.[res]
+                    const badge = kindBadge(meta?.kind)
+                    const growthKey = res === 'cpu' ? 'cpu_pct_per_day' : res === 'mem' ? 'mem_pct_per_day' : 'ds_pct_per_day'
+                    const growth = item.daily_growth?.[growthKey]
+                    const fit = meta?.fit || item.trend_fit?.[res === 'ds' ? 'storage' : res === 'mem' ? 'memory' : 'cpu'] || meta?.confidence
+                    const unc = meta?.horizon_uncertainty || item.horizon_uncertainty?.[res === 'ds' ? 'storage' : res === 'mem' ? 'memory' : '']
                     return (
                       <tr key={res} className="border-t border-slate-700/30">
-                        <td className="py-2 flex items-center gap-1.5 text-slate-400">{icons[res]} {labels[res]}</td>
-                        <td className={`py-2 text-center ${colColor(curr)}`}>%{curr}</td>
-                        <td className={`py-2 text-center ${colColor(m3)}`}>%{m3}</td>
-                        <td className={`py-2 text-center ${colColor(m6)}`}>%{m6}</td>
-                        <td className={`py-2 text-center ${colColor(m12)}`}>%{m12}</td>
+                        <td className="py-2 align-top">
+                          <div className="flex items-center gap-1.5 text-slate-400">{icons[res]} {labels[res]}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
+                            <span className="text-[10px] text-slate-500">{fitLabel(fit, t)}</span>
+                            {unc && res !== 'cpu' && (
+                              <span className="text-[10px] text-slate-500">{uncLabel(unc, t)}</span>
+                            )}
+                          </div>
+                          {res === 'cpu' ? (
+                            <div className="text-[10px] text-slate-500 mt-0.5">{t('rpt_cpu_slope_note', { n: growth ?? 0 })}</div>
+                          ) : growth != null ? (
+                            <div className="text-[10px] text-slate-500 mt-0.5">{formatGrowthPct(growth, t)}</div>
+                          ) : null}
+                          {meta?.floored && meta?.raw_12m_pct != null && (
+                            <div className="text-[10px] text-amber-400/80 mt-0.5">{t('rpt_raw_12m', { n: meta.raw_12m_pct })}</div>
+                          )}
+                          {meta?.kind === 'decline' && meta?.note && (
+                            <div className="text-[10px] text-violet-300/80 mt-0.5 max-w-[11rem] leading-snug">{meta.note}</div>
+                          )}
+                          {meta?.kind === 'floor' && meta?.note && (
+                            <div className="text-[10px] text-amber-400/80 mt-0.5 max-w-[11rem] leading-snug">{meta.note}</div>
+                          )}
+                        </td>
+                        <td className={`py-2 text-center align-top ${colColor(curr)}`}>%{curr}</td>
+                        <td className={`py-2 text-center align-top ${colColor(m3)}`}>%{m3}</td>
+                        <td className={`py-2 text-center align-top ${colColor(m6)}`}>%{m6}</td>
+                        <td className={`py-2 text-center align-top ${colColor(m12)}`}>%{m12}</td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
-              {/* trend mini bar */}
+              {/* eşiğe kalan süre aralığı */}
+              <div className="mt-3 space-y-1.5 border-t border-slate-700/40 pt-3">
+                {(['memory', 'storage'] as const).map(res => {
+                  const range = item.days_to_80pct?.[res]
+                  const curr = item.current?.[res === 'memory' ? 'mem_pct' : 'ds_pct'] ?? 0
+                  const label = res === 'memory' ? t('memory') : 'Disk'
+                  const unc = item.horizon_uncertainty?.[res]
+                  if (range == null && curr < 80) {
+                    return (
+                      <p key={res} className="text-[11px] text-slate-500">
+                        {label}: {t('rpt_days_80_none')}
+                      </p>
+                    )
+                  }
+                  if (range?.typical === 0 || curr >= 80) {
+                    return (
+                      <p key={res} className="text-[11px] text-amber-400 flex items-center gap-1">
+                        <Zap size={11} /> {label}: {t('rpt_already_over_80', { n: curr })}
+                      </p>
+                    )
+                  }
+                  return (
+                    <p key={res} className="text-[11px] text-slate-300 flex items-center gap-1 flex-wrap">
+                      <Zap size={11} className="text-amber-400" />
+                      {label}: {daysToThresholdText(range?.typical, range, t)}
+                      {unc && <span className="text-slate-500">({uncLabel(unc, t)})</span>}
+                    </p>
+                  )
+                })}
+              </div>
+              {item.narrative?.length > 0 && (
+                <div className="mt-3">
+                  <NarrativeBlock lines={item.narrative} title={t('rpt_host_narrative')} />
+                </div>
+              )}
               <div className="mt-3 space-y-1">
                 {['mem', 'ds'].map(res => {
                   const curr = item.current?.[`${res}_pct`] ?? 0
@@ -1716,6 +1903,14 @@ function SlaView({ d }: { d: any }) {
   const compliance = d.overall_sla_compliance_pct ?? 100
   return (
     <div className="space-y-5">
+      <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 text-xs text-amber-200/90 leading-relaxed">
+        {d.note || t('rpt_sla_proxy_banner')}
+        {(d.estimate_type || d.confidence) && (
+          <span className="ml-2 text-amber-400/80">
+            [{d.estimate_type || 'event_proxy'} · {d.confidence || 'low'}]
+          </span>
+        )}
+      </div>
       <div className="grid grid-cols-4 gap-3 items-start">
         <div className="flex flex-col items-center bg-slate-800/40 rounded-xl p-4 border border-slate-700/30">
           <ScoreGauge score={Math.round(compliance)} max={100} label={t('rpt_sla_compliance')} size={96} />
@@ -1744,12 +1939,6 @@ function SlaView({ d }: { d: any }) {
           ))}
         </div>
       </div>
-      {d.note && (
-        <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
-          <span>{d.note}</span>
-        </div>
-      )}
     </div>
   )
 }

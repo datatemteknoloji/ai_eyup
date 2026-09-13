@@ -33,10 +33,34 @@ class ForecastPoint:
     confidence: str
     method: str
     note: Optional[str] = None
+    raw_value_pct: Optional[float] = None  # floor öncesi ham extrapolasyon
+    floored: bool = False
 
 
 def _clamp_pct(v: float) -> float:
     return round(max(0.0, min(100.0, float(v))), 1)
+
+
+def horizon_uncertainty_label(rng: Optional[Dict[str, Any]]) -> str:
+    """Eşiğe kalan gün aralığının genişliği — trend R² 'güven'inden ayrı.
+
+    narrow | moderate | wide | none | already
+    """
+    if not rng:
+        return "none"
+    if rng.get("typical") == 0:
+        return "already"
+    fastest, slowest = rng.get("fastest"), rng.get("slowest")
+    if fastest is None:
+        return "none"
+    if slowest is None:
+        return "wide"
+    span = int(slowest) - int(fastest)
+    if span >= 365 or (fastest > 0 and slowest / max(fastest, 1) >= 5):
+        return "wide"
+    if span >= 90:
+        return "moderate"
+    return "narrow"
 
 
 def linear_regression_slope(xs: Sequence[float], ys: Sequence[float]) -> Tuple[float, Optional[float]]:
@@ -195,30 +219,65 @@ def project_storage_memory(
     *,
     floor_pct: Optional[float] = None,
 ) -> ForecastPoint:
-    """Disk/Memory: trend + medyan taban; negatif extrapolasyon yok."""
-    floor = floor_pct if floor_pct is not None else current_pct
+    """Disk/Memory projeksiyonu.
+
+    Floor yalnızca istatistiksel güven düşükse (none/low) uygulanır —
+    'değer kritik' tek başına floor tetiklemez. medium/high + düşüşte ham
+    extrapolasyon gösterilir (alt sınır %0).
+    """
+    _ = floor_pct  # API uyumu; floor artık current_pct ile low-conf'ta yapılır
+    raw = _clamp_pct(current_pct + trend.daily_slope * horizon_days)
+
     if trend.confidence == "none":
         return ForecastPoint(
             value_pct=_clamp_pct(current_pct),
             confidence="none",
             method="stable",
             note="Yetersiz metrik geçmişi — mevcut seviye gösterildi",
+            raw_value_pct=raw,
+            floored=True,
         )
-    raw = current_pct + trend.daily_slope * horizon_days
-    if trend.daily_slope < 0:
-        # Düşüş trendi: mevcut seviyenin altına inme (CPU gibi 0'a gitme)
-        val = max(floor, raw)
-        method = "stable_decline"
-        note = "Düşüş trendi — taban mevcut seviye"
-    else:
-        val = raw
-        method = "linear_growth"
-        note = None
+
+    if trend.confidence == "low":
+        # Düşük güven: extrapolasyona güvenme; ham değeri şeffaflık için tut
+        return ForecastPoint(
+            value_pct=_clamp_pct(current_pct),
+            confidence="low",
+            method="stable_low_conf",
+            note=(
+                "Düşük trend güveni — projeksiyon mevcut seviyede sabit "
+                f"(ham {horizon_days}g: %{raw})"
+            ),
+            raw_value_pct=raw,
+            floored=True,
+        )
+
+    # medium / high — ham trend (düşüş dahil)
+    if trend.daily_slope < -0.001:
+        return ForecastPoint(
+            value_pct=raw,
+            confidence=trend.confidence,
+            method="linear_decline",
+            note="Düşüş trendi — ham extrapolasyon (taban yok)",
+            raw_value_pct=raw,
+            floored=False,
+        )
+    if trend.daily_slope > 0.001:
+        return ForecastPoint(
+            value_pct=raw,
+            confidence=trend.confidence,
+            method="linear_growth",
+            note=None,
+            raw_value_pct=raw,
+            floored=False,
+        )
     return ForecastPoint(
-        value_pct=_clamp_pct(val),
+        value_pct=_clamp_pct(current_pct),
         confidence=trend.confidence,
-        method=method,
-        note=note,
+        method="stable",
+        note="Anlamlı eğim yok — mevcut seviye",
+        raw_value_pct=raw,
+        floored=False,
     )
 
 
@@ -228,33 +287,47 @@ def project_cpu(
     trend: TrendResult,
     horizon_days: int,
 ) -> ForecastPoint:
-    """CPU oynak — ortalama lineer extrapolasyon yapmıyoruz."""
+    """CPU oynak — ortalama lineer extrapolasyon yerine p95 + muhafazakâr eğim."""
     base = p95_pct if p95_pct is not None else current_pct
     floor = max(current_pct, base * 0.85)
+    # Ham (kullanıcı kafadan current×slope sanmasın diye ayrı tutulur)
+    raw_from_current = _clamp_pct(current_pct + trend.daily_slope * horizon_days)
+    raw_conservative = _clamp_pct(base + trend.daily_slope * horizon_days * 0.5)
 
     if trend.confidence in ("none", "low") or abs(trend.daily_slope) < 0.01:
         return ForecastPoint(
             value_pct=_clamp_pct(base),
             confidence=trend.confidence if trend.confidence != "none" else "low",
             method="p95_stable",
-            note="CPU için ortalama trend extrapolasyonu uygulanmadı (p95/mevcut taban)",
+            note=(
+                "CPU: p95/mevcut taban (düşük güven veya zayıf eğim) — "
+                f"ham current×eğim {horizon_days}g: %{raw_from_current}"
+            ),
+            raw_value_pct=raw_from_current,
+            floored=True,
         )
 
     if trend.daily_slope > 0:
-        val = min(100.0, base + trend.daily_slope * horizon_days * 0.5)
         return ForecastPoint(
-            value_pct=_clamp_pct(val),
+            value_pct=raw_conservative,
             confidence=trend.confidence,
             method="conservative_growth",
-            note="CPU büyüme tahmini muhafazakâr (eğimin %50'si)",
+            note=(
+                f"CPU: p95 taban (%{_clamp_pct(base)}) + eğimin %50'si "
+                f"(ham current×eğim: %{raw_from_current})"
+            ),
+            raw_value_pct=raw_from_current,
+            floored=False,
         )
 
-    # Negatif trend: 0'a inme — tabanda kal
+    # Negatif + yeterli güven: mean-revert floor (CPU %0'a inmesin)
     return ForecastPoint(
         value_pct=_clamp_pct(floor),
         confidence=trend.confidence,
         method="mean_revert_floor",
-        note="CPU düşüş trendi — %0 extrapolasyonu yok",
+        note=f"CPU düşüş — taban; ham current×eğim: %{raw_from_current}",
+        raw_value_pct=raw_from_current,
+        floored=True,
     )
 
 
@@ -324,6 +397,17 @@ def build_threshold_forecast(
     return out
 
 
+def _projection_kind(method: str) -> str:
+    """UI için: growth | decline | stable | floor."""
+    if method in ("linear_growth", "conservative_growth"):
+        return "growth"
+    if method == "linear_decline":
+        return "decline"
+    if method in ("stable_decline", "mean_revert_floor", "stable_low_conf"):
+        return "floor"
+    return "stable"
+
+
 def build_forecast_payload(
     host: str,
     current: Dict[str, float],
@@ -335,29 +419,52 @@ def build_forecast_payload(
 ) -> Dict[str, Any]:
     """Tek host için 3/6/12 ay tahmin paketi."""
     horizons = {"forecast_3m": 90, "forecast_6m": 180, "forecast_12m": 365}
+    mem_range = days_to_threshold_range(current.get("mem_pct"), mem_trend)
+    ds_range = days_to_threshold_range(current.get("ds_pct"), ds_trend)
     out: Dict[str, Any] = {
         "host": host,
         "current": current,
+        "critical_now": {
+            "cpu": (current.get("cpu_pct") or 0) >= 80,
+            "memory": (current.get("mem_pct") or 0) >= 80,
+            "storage": (current.get("ds_pct") or 0) >= 80,
+        },
         "daily_growth": {
             "cpu_pct_per_day": round(cpu_trend.daily_slope, 4),
             "mem_pct_per_day": round(mem_trend.daily_slope, 4),
             "ds_pct_per_day": round(ds_trend.daily_slope, 4),
         },
+        "trend_fit": {
+            "cpu": cpu_trend.confidence,
+            "memory": mem_trend.confidence,
+            "storage": ds_trend.confidence,
+        },
+        # Geriye uyumluluk
         "trend_confidence": {
             "cpu": cpu_trend.confidence,
             "memory": mem_trend.confidence,
             "storage": ds_trend.confidence,
         },
-        "days_to_80pct": {
-            "memory": days_to_threshold_range(current.get("mem_pct"), mem_trend),
-            "storage": days_to_threshold_range(current.get("ds_pct"), ds_trend),
+        "horizon_uncertainty": {
+            "memory": horizon_uncertainty_label(mem_range),
+            "storage": horizon_uncertainty_label(ds_range),
         },
+        "days_to_80pct": {
+            "memory": mem_range,
+            "storage": ds_range,
+        },
+        "cpu_projection_note": (
+            "CPU projeksiyonu p95 taban + eğimin %50'si kullanır; "
+            "tablodaki 'Şimdi' anlık değerle kafadan çarpım yapmayın."
+        ),
         "methodology": (
-            "Eğim: Theil–Sen (dayanıklı), aralık: ikili eğim %25–%75; "
-            "Disk/Memory: günlük trend + düşüşte taban; "
-            "CPU: p95 tabanlı, %0 extrapolasyonu yok"
+            "Eğim: Theil–Sen; trend uyumu R² tabanlı; eşiğe gün aralığı eğim "
+            "IQR'sinden (tarih belirsizliği ayrı). Floor yalnızca düşük/yok "
+            "güvende. Disk/Memory medium+ düşüşte ham extrapolasyon. "
+            "CPU: p95 + muhafazakâr (%50) eğim."
         ),
     }
+    metric_meta: Dict[str, Any] = {}
     for key, days in horizons.items():
         cpu_f = project_cpu(current["cpu_pct"], cpu_p95, cpu_trend, days)
         mem_f = project_storage_memory(current["mem_pct"], mem_trend, days)
@@ -369,5 +476,308 @@ def build_forecast_payload(
             "cpu_method": cpu_f.method,
             "mem_method": mem_f.method,
             "ds_method": ds_f.method,
+            "cpu_raw_pct": cpu_f.raw_value_pct,
+            "mem_raw_pct": mem_f.raw_value_pct,
+            "ds_raw_pct": ds_f.raw_value_pct,
         }
+        if key == "forecast_12m":
+            metric_meta = {
+                "cpu": {
+                    "method": cpu_f.method,
+                    "kind": _projection_kind(cpu_f.method),
+                    "note": cpu_f.note,
+                    "confidence": cpu_f.confidence,
+                    "fit": cpu_trend.confidence,
+                    "raw_12m_pct": cpu_f.raw_value_pct,
+                    "floored": cpu_f.floored,
+                },
+                "mem": {
+                    "method": mem_f.method,
+                    "kind": _projection_kind(mem_f.method),
+                    "note": mem_f.note,
+                    "confidence": mem_f.confidence,
+                    "fit": mem_trend.confidence,
+                    "horizon_uncertainty": horizon_uncertainty_label(mem_range),
+                    "raw_12m_pct": mem_f.raw_value_pct,
+                    "floored": mem_f.floored,
+                },
+                "ds": {
+                    "method": ds_f.method,
+                    "kind": _projection_kind(ds_f.method),
+                    "note": ds_f.note,
+                    "confidence": ds_f.confidence,
+                    "fit": ds_trend.confidence,
+                    "horizon_uncertainty": horizon_uncertainty_label(ds_range),
+                    "raw_12m_pct": ds_f.raw_value_pct,
+                    "floored": ds_f.floored,
+                },
+            }
+    out["metric_projection"] = metric_meta
+    out["narrative"] = narrate_forecast_host(out)
     return out
+
+
+def _fit_tr(fit: str) -> str:
+    return {"high": "yüksek", "medium": "orta", "low": "düşük", "none": "yetersiz"}.get(fit, fit)
+
+
+def _unc_tr(u: str) -> str:
+    return {
+        "narrow": "dar",
+        "moderate": "orta",
+        "wide": "geniş",
+        "already": "eşik aşılmış",
+        "none": "hesaplanamadı",
+    }.get(u, u)
+
+
+def narrate_capacity_host(item: Dict[str, Any]) -> List[str]:
+    """Kural-tabanlı kapasite host yorumu — yalnızca payload sayılarından."""
+    lines: List[str] = []
+    host = item.get("host", "Host")
+    mem = item.get("memory") or {}
+    stor = item.get("storage") or {}
+    cpu = item.get("cpu") or {}
+
+    mem_pct = mem.get("used_pct")
+    ds_pct = stor.get("used_pct")
+    cpu_pct = cpu.get("used_pct")
+
+    # 1) Şu an kritik (projeksiyondan bağımsız)
+    crit_bits = []
+    if mem_pct is not None and mem_pct >= 90:
+        crit_bits.append(f"Memory kritik (%{mem_pct})")
+    elif mem_pct is not None and mem_pct >= 80:
+        crit_bits.append(f"Memory yüksek (%{mem_pct})")
+    if ds_pct is not None and ds_pct >= 90:
+        crit_bits.append(f"Disk kritik (%{ds_pct})")
+    elif ds_pct is not None and ds_pct >= 80:
+        crit_bits.append(f"Disk yüksek (%{ds_pct})")
+    if cpu_pct is not None and cpu_pct >= 80:
+        crit_bits.append(f"CPU yüksek (%{cpu_pct})")
+    if crit_bits:
+        lines.append(f"{host}: şu an {' · '.join(crit_bits)} — mevcut durum acil izleme gerektirir.")
+    else:
+        lines.append(f"{host}: anlık kaynak kullanımı eşik altında (CPU %{cpu_pct}, Memory %{mem_pct}, Disk %{ds_pct}).")
+
+    # 2) Trend / eşiğe gün — memory
+    mem_days = mem.get("days_to_80pct")
+    mem_rng = mem.get("days_to_80pct_range")
+    mem_fit = mem.get("trend_confidence") or "none"
+    mem_growth = mem.get("daily_growth_pct")
+    if mem_pct is not None and mem_pct >= 80:
+        lines.append(
+            f"Memory zaten %80 üzerinde; eşiğe kalan süre 0. "
+            f"Trend uyumu {_fit_tr(mem_fit)}"
+            + (f", günlük eğim {mem_growth}%/gün." if mem_growth is not None else ".")
+        )
+    elif mem_days is not None and mem_rng:
+        unc = horizon_uncertainty_label(mem_rng)
+        fastest, slowest = mem_rng.get("fastest"), mem_rng.get("slowest")
+        if slowest is None:
+            span = f"en iyimser {fastest} gün (yavaş uçta eşiğe ulaşmıyor)"
+        else:
+            span = f"{fastest}–{slowest} gün"
+        lines.append(
+            f"Memory trend uyumu {_fit_tr(mem_fit)}; %80 için tahmini süre {span} "
+            f"(tarih belirsizliği: {_unc_tr(unc)}). Kesin tarih yerine izlemeye devam edilmeli."
+        )
+    elif mem_growth is not None and mem_growth <= 0:
+        lines.append(
+            f"Memory yükselen trend yok (eğim {mem_growth}%/gün, uyum {_fit_tr(mem_fit)}) — "
+            "eşiğe süre hesaplanmadı."
+        )
+
+    # 3) Disk
+    ds_days = stor.get("days_to_80pct")
+    ds_rng = stor.get("days_to_80pct_range")
+    ds_fit = stor.get("trend_confidence") or "none"
+    ds_growth = stor.get("daily_growth_pct")
+    if ds_pct is not None and ds_pct >= 80:
+        lines.append(f"Disk zaten %80 üzerinde (%{ds_pct}). Kapasite planlaması gözden geçirilmeli.")
+    elif ds_days is not None and ds_rng:
+        unc = horizon_uncertainty_label(ds_rng)
+        fastest, slowest = ds_rng.get("fastest"), ds_rng.get("slowest")
+        if slowest is None:
+            span = f"en iyimser {fastest} gün"
+        else:
+            span = f"{fastest}–{slowest} gün"
+        lines.append(
+            f"Disk trend uyumu {_fit_tr(ds_fit)}; %80'e tahmini ulaşım {span} içinde "
+            f"(tarih belirsizliği: {_unc_tr(unc)})."
+        )
+    elif ds_growth is not None:
+        lines.append(
+            f"Disk eğimi {ds_growth}%/gün (uyum {_fit_tr(ds_fit)}) — "
+            "anlamlı eşiğe-süre üretilmedi."
+        )
+
+    lines.append("Bu metin kural tabanlıdır; yatırım tavsiyesi değil, kapasite planlaması için bilgilendirmedir.")
+    return lines
+
+
+def narrate_forecast_host(payload: Dict[str, Any]) -> List[str]:
+    """Forecast host yorumu — floor sonrası durum + ham şeffaflık."""
+    lines: List[str] = []
+    host = payload.get("host", "Host")
+    cur = payload.get("current") or {}
+    meta = payload.get("metric_projection") or {}
+    crit = payload.get("critical_now") or {}
+    f12 = payload.get("forecast_12m") or {}
+
+    if crit.get("memory"):
+        lines.append(
+            f"Memory şu an kritik seviyede (%{cur.get('mem_pct')}). "
+            "Uzun vadeli projeksiyon bunu gölgelemez — mevcut durum önceliklidir."
+        )
+    if crit.get("storage"):
+        lines.append(f"Disk şu an kritik/yüksek (%{cur.get('ds_pct')}).")
+
+    for key, label in (("mem", "Memory"), ("ds", "Disk"), ("cpu", "CPU")):
+        m = meta.get(key) or {}
+        kind = m.get("kind")
+        raw = m.get("raw_12m_pct")
+        shown = f12.get(f"{key}_pct") if key != "cpu" else f12.get("cpu_pct")
+        if key == "mem":
+            shown = f12.get("mem_pct")
+        elif key == "ds":
+            shown = f12.get("ds_pct")
+        fit = m.get("fit") or m.get("confidence")
+        if kind == "floor" and raw is not None and shown is not None:
+            lines.append(
+                f"{label}: projeksiyon tabanda sabit (%{shown}); "
+                f"ham 12ay %{raw} (düşük güven veya CPU koruması). Trend uyumu {_fit_tr(fit or '')}."
+            )
+        elif kind == "decline" and shown is not None:
+            lines.append(
+                f"{label}: düşüş trendi yansıtılıyor (12ay %{shown}). "
+                f"Trend uyumu {_fit_tr(fit or '')}."
+            )
+        elif kind == "growth" and key == "cpu":
+            lines.append(
+                "CPU: p95 taban + eğimin %50'si ile muhafazakâr büyüme — "
+                "anlık % × günlük eğim ile eşleşmez."
+            )
+        elif kind == "growth" and shown is not None:
+            unc = m.get("horizon_uncertainty")
+            extra = f" Tarih belirsizliği: {_unc_tr(unc)}." if unc else ""
+            lines.append(
+                f"{label}: büyüme projeksiyonu (12ay %{shown}), trend uyumu {_fit_tr(fit or '')}.{extra}"
+            )
+
+    ds_unc = (payload.get("horizon_uncertainty") or {}).get("storage")
+    ds_rng = (payload.get("days_to_80pct") or {}).get("storage")
+    if ds_unc == "wide" and ds_rng and ds_rng.get("typical") not in (None, 0):
+        lines.append(
+            f"Disk için trend uyumu iyi olsa bile eşiğe ulaşma aralığı geniş "
+            f"({ds_rng.get('fastest')}–{ds_rng.get('slowest')} gün) — kesin tarih verilmemeli."
+        )
+
+    if not lines:
+        lines.append(f"{host}: belirgin kritik durum veya güçlü trend sinyali yok.")
+    return lines
+
+
+def narrate_risk_report(data: Dict[str, Any]) -> List[str]:
+    """Risk dashboard özeti — en kötü sinyale öncelik."""
+    risks = data.get("risks") or {}
+    lines: List[str] = []
+    level = data.get("risk_level") or "Normal"
+    score = data.get("risk_score")
+    crit = data.get("critical_event_count") or 0
+    warn = data.get("warning_event_count") or 0
+
+    lines.append(
+        f"Genel risk seviyesi: {level}"
+        + (f" (skor {score}/100)." if score is not None else ".")
+    )
+
+    mem_h = risks.get("high_memory_hosts") or []
+    cpu_h = risks.get("high_cpu_hosts") or []
+    ds_h = risks.get("high_storage_hosts") or []
+    if mem_h:
+        worst = max(mem_h, key=lambda h: h.get("mem_pct") or 0)
+        lines.append(
+            f"En kritik kaynak baskısı: Memory — {worst.get('host')} %{worst.get('mem_pct')} "
+            f"({len(mem_h)} host eşik üstü). Ortalamaya bakılmamalı."
+        )
+    if ds_h:
+        worst = max(ds_h, key=lambda h: h.get("ds_pct") or 0)
+        lines.append(
+            f"Disk baskısı: {worst.get('host')} %{worst.get('ds_pct')} ({len(ds_h)} host)."
+        )
+    if cpu_h:
+        worst = max(cpu_h, key=lambda h: h.get("cpu_pct") or 0)
+        lines.append(
+            f"CPU baskısı: {worst.get('host')} %{worst.get('cpu_pct')} ({len(cpu_h)} host)."
+        )
+    if crit:
+        top = (risks.get("top_alarm_servers") or [{}])[0]
+        if top.get("server"):
+            lines.append(
+                f"Son 7 günde {crit} kritik/hata olayı; en yoğun: {top.get('server')} "
+                f"({top.get('events')} olay)."
+            )
+        else:
+            lines.append(f"Son 7 günde {crit} kritik/hata ve {warn} uyarı olayı.")
+    no_tools = risks.get("no_tools_vms") or []
+    if no_tools:
+        lines.append(
+            f"{len(no_tools)} açık VM'de VMware Tools eksik/çalışmıyor — izlenebilirlik riski."
+        )
+    maint = risks.get("maintenance_hosts") or []
+    if maint:
+        lines.append(f"Bakım modunda host: {', '.join(maint)}.")
+
+    if not mem_h and not cpu_h and not ds_h and not crit and not no_tools:
+        lines.append("Eşik üstü host veya kritik olay kümesi yok — görünür risk düşük.")
+
+    lines.append(
+        "Yorum kural tabanlıdır; güvenlik açığı taraması değildir. "
+        "Öncelik en kötü host/olaya verilmiştir."
+    )
+    return lines
+
+
+def narrate_consolidation_report(data: Dict[str, Any]) -> List[str]:
+    """Konsolidasyon yorumu — reclaim vs idle ayrımı."""
+    lines: List[str] = []
+    poff = data.get("powered_off_vms") or {}
+    idle = data.get("idle_vms") or {}
+    over = data.get("oversized_vms") or {}
+    pot = data.get("consolidation_potential") or {}
+    cov = data.get("usage_metrics_coverage") or {}
+
+    lines.append(
+        f"Kapalı VM: {poff.get('count', 0)} adet — geri kazanılabilir tahsis "
+        f"{pot.get('reclaimable_vcpu', 0)} vCPU / {pot.get('reclaimable_ram_gb', 0)} GB RAM / "
+        f"{pot.get('reclaimable_disk_gb', 0)} GB disk (kesin aday; silmeden önce doğrulayın)."
+    )
+    lines.append(
+        f"Düşük kullanımlı (idle) açık VM: {idle.get('count', 0)} — inceleme adayı "
+        f"{pot.get('idle_candidate_vcpu', 0)} vCPU / {pot.get('idle_candidate_ram_gb', 0)} GB RAM "
+        "(otomatik silme önerisi değil)."
+    )
+    if over.get("count"):
+        lines.append(
+            f"Aşırı tahsis adayı (idle dışı): {over.get('count')} VM — "
+            "usage veya allocation heuristic (basis alanına bakın)."
+        )
+    covered = cov.get("vms_with_7d_samples")
+    total = cov.get("powered_on_vms")
+    if covered is not None and total:
+        lines.append(
+            f"7 günlük kullanım metriği kapsamı: {covered}/{total} açık VM. "
+            "Kapsam düşükse oversized/idle listeleri eksik kalabilir."
+        )
+    # En kötü idle örneği
+    idle_vms = idle.get("vms") or []
+    if idle_vms:
+        worst = idle_vms[0]
+        lines.append(
+            f"Örnek idle: {worst.get('vm')} ({worst.get('cpu')} vCPU, 7g ort. CPU %{worst.get('avg_cpu_pct')})."
+        )
+    lines.append(
+        "Yorum bilgilendirme amaçlıdır; rightsizing kararı iş etkisiyle birlikte gözden geçirilmelidir."
+    )
+    return lines

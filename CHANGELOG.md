@@ -11,6 +11,14 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.35] - 2026-09-13
+
+### Raporlar (Kapasite / Tahmin / Risk / Konsolidasyon)
+- Tahmin: trend uyumu ile eşiğe-tarih belirsizliği ayrıldı; CPU p95+%50 eğim notu; büyüme formatı düzeltildi (`%/gün`).
+- Floor kuralı: yalnızca düşük/yok trend güvende; medium+ düşüşte ham extrapolasyon; ham 12ay değeri şeffaf.
+- Kapasite / Risk / Konsolidasyon / Tahmin: kural tabanlı yorum (`narrative`); tek host’ta filo/host yorum tekrarı kaldırıldı.
+- Konsolidasyon: `virt_vm_metrics` ile idle / usage-based oversized; SLA event_proxy şeffaflığı; özel raporda `as_of` / empty.
+
 ## [1.0.9.34] - 2026-09-12
 
 ### Sanallaştırma Monitoring

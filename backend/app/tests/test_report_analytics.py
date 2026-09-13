@@ -15,11 +15,35 @@ def test_cpu_negative_trend_does_not_go_to_zero():
     assert pt.method in ("mean_revert_floor", "p95_stable", "conservative_growth")
 
 
-def test_storage_decline_floors_at_current():
+def test_storage_decline_allows_raw_when_fit_medium():
+    """medium/high güven + düşüş → floor yok (ham extrapolasyon)."""
     trend = compute_trend_from_series([50, 48, 45, 40, 35], min_samples=3)
     assert trend.daily_slope < 0
-    pt = project_storage_memory(20.0, trend, 365, floor_pct=20.0)
-    assert pt.value_pct >= 20.0
+    # Force medium if sample small
+    from app.services.report_analytics import TrendResult
+    med = TrendResult(
+        daily_slope=trend.daily_slope,
+        confidence="medium",
+        sample_count=trend.sample_count,
+        r_squared=0.5,
+        slope_low=trend.slope_low,
+        slope_high=trend.slope_high,
+    )
+    pt = project_storage_memory(20.0, med, 365)
+    assert pt.method == "linear_decline"
+    assert pt.floored is False
+    assert pt.value_pct < 20.0  # düşüş yansır
+    assert pt.raw_value_pct == pt.value_pct
+
+
+def test_storage_decline_floors_when_fit_low():
+    from app.services.report_analytics import TrendResult
+    low = TrendResult(daily_slope=-0.5, confidence="low", sample_count=10, r_squared=0.1)
+    pt = project_storage_memory(40.0, low, 90)
+    assert pt.floored is True
+    assert pt.value_pct == 40.0
+    assert pt.raw_value_pct is not None
+    assert pt.raw_value_pct < 40.0
 
 
 def test_storage_growth_capped_at_100():
