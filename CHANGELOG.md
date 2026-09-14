@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.36] - 2026-09-14
+
 ### Sanallaştırma — çoklu vCenter
 - Nesne kimliği `(hypervisor_id, ad)`; aynı adlı VM, ESXi ve datastore ikinci vCenter'da birleşmez.
 - Monitoring, seri sorguları, raporlar, virt sohbet grafikleri ve envanter senkronu bu kimliği kullanır.
