@@ -986,7 +986,7 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - Vector store runtime: **pgvector**, embed **nomic-embed-text** 768.
 - Virt `QA_RULES`: onlarca regex handler; eşleşirse LLM yok. Filo CPU/ready/IOPS/ağ: DB sonra canlı (`virt_fleet_perf`).
 - `/diagram` `/draw` `/görselleştir` `/şema`: aynı final LLM + tercih ` ```ainew-diagram `; frontend React Flow. Yedek ` ```mermaid ` / `ChatMermaid`. Başlık, etiket ve 2–4 maddelik yorum Türkçe.
-- `/graph` `/grafik` `/chart`: deterministik Recharts (`chat_charts` → `ChatMessage.meta.charts`). Linux/Windows: `metric_data` (Prom scrape kopyası), boşsa salt okunur `query_range`. Virt: Monitoring `query_series` (vCenter Timescale). Aynı birim = overlay (en fazla 8); CPU% × bellek% ayrı grafik. SSH/WinRM geçmiş eğri üretmez. `prometheus.yml` değişmez.
+- `/graph` `/grafik` `/chart`: deterministik Recharts (`chat_charts` → `ChatMessage.meta.charts`). Linux/Windows: `metric_data` (Prom scrape kopyası), boşsa salt okunur `query_range`. Virt: Monitoring `query_series` (vCenter Timescale); nesne kimliği `(hypervisor_id, ad)` — aynı ad iki vCenter'da ayrı seri. İstenen süre penceresi yuvarlanmaz (10 gün = 10 gün). Kova: ≤24s ham, ≤14 gün saatlik, ≤60 gün 4s, daha uzun 12s. Aynı birim = overlay (en fazla 8); CPU% × bellek% ayrı grafik. SSH/WinRM geçmiş eğri üretmez. `prometheus.yml` değişmez. Sohbet PDF: `meta.charts` inline SVG; `mermaid` / `ainew-diagram` çitleri kaynak kod değil SVG.
 - `virt_bottleneck_diagnose`: VM vs host kural motoru, eşikler kodda.
 - `linux_virt_io_correlate`: guest iowait × VM disk latency; kanıtlı join şart; eşikler `cross_domain_diagnostics.TH`.
 - “canlı veri mevcut değil” LLM çıktısıdır; `looks_like_no_data_answer` ile izlenir.

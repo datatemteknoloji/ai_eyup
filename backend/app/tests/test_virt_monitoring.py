@@ -5,8 +5,11 @@ from app.services.virt_monitoring import (
     MAX_SERIES_OBJECTS,
     RANGE_SPEC,
     _build_summary,
+    _hv_sql,
     _metric_column,
+    bucket_for_window,
     metric_catalog,
+    parse_hypervisor_ids,
     parse_names,
     parse_range,
     query_series,
@@ -20,6 +23,27 @@ def test_range_keys_match_ui_contract():
     assert parse_range("8h") == "8h"
     assert parse_range("nope") == "8h"
     assert parse_range(None) == "8h"
+
+
+def test_bucket_for_window_does_not_round_ten_days_to_thirty():
+    assert bucket_for_window(60) is None
+    assert bucket_for_window(24 * 60) is None
+    assert bucket_for_window(10 * 24 * 60) == "1 hour"
+    assert bucket_for_window(14 * 24 * 60) == "1 hour"
+    assert bucket_for_window(15 * 24 * 60) == "4 hours"
+    assert bucket_for_window(90 * 24 * 60) == "12 hours"
+
+
+def test_hypervisor_ids_parse_and_scope():
+    assert parse_hypervisor_ids() is None
+    assert parse_hypervisor_ids(hypervisor_ids="") == []
+    assert parse_hypervisor_ids(hypervisor_ids="2, 2, 9") == [2, 9]
+    assert parse_hypervisor_ids(3, "3,4") == [3, 4]
+    clause, params = _hv_sql([4, 9])
+    assert clause == "hypervisor_id IN (:hvf0, :hvf1)"
+    assert params == {"hvf0": 4, "hvf1": 9}
+    assert _hv_sql([]) == ("FALSE", {})
+    assert _hv_sql(None) == ("TRUE", {})
 
 
 def test_parse_names_caps_and_dedupes():

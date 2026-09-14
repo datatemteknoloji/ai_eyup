@@ -77,7 +77,7 @@ def _fleet_summary_no_host_copy(
 
 def _latest_host_metrics(db: Session) -> List[Dict]:
     rows = db.execute(text("""
-        SELECT DISTINCT ON (host_name)
+        SELECT DISTINCT ON (hypervisor_id, host_name)
             host_name, hypervisor_id,
             cpu_usage_pct, cpu_usage_mhz, cpu_total_mhz, cpu_cores,
             mem_used_mb, mem_total_mb, mem_usage_pct,
@@ -86,13 +86,24 @@ def _latest_host_metrics(db: Session) -> List[Dict]:
             vms_running, vms_total, connection_state, maintenance_mode,
             timestamp
         FROM hypervisor_host_metrics
-        ORDER BY host_name, timestamp DESC
+        ORDER BY hypervisor_id, host_name, timestamp DESC
     """)).all()
+    from app.models.hypervisor import Hypervisor
+    from app.services.virt_scope import count_names, disambiguate
+    hv_ids = {r.hypervisor_id for r in rows if r.hypervisor_id is not None}
+    hv_names = {
+        h.id: h.name
+        for h in db.query(Hypervisor).filter(Hypervisor.id.in_(hv_ids or [-1])).all()
+    } if hv_ids else {}
+    counts = count_names((r.hypervisor_id, r.host_name or "") for r in rows)
     result = []
     for r in rows:
+        raw_name = r.host_name or ""
         result.append({
-            "host": r.host_name,
+            "host": disambiguate(raw_name, r.hypervisor_id, counts, hv_names),
+            "host_key": raw_name,
             "hypervisor_id": r.hypervisor_id,
+            "hypervisor_name": hv_names.get(r.hypervisor_id),
             "cpu_pct": round(r.cpu_usage_pct or 0, 1),
             "cpu_cores": r.cpu_cores or 0,
             "cpu_mhz_used": r.cpu_usage_mhz or 0,
@@ -259,29 +270,31 @@ def _detect_host_metric_anomalies(db: Session) -> List[Dict]:
     """Son 24 saatte baseline'a göre anormal host metrik artışları."""
     rows = db.execute(text("""
         WITH recent AS (
-            SELECT host_name,
+            SELECT hypervisor_id, host_name,
                    MAX(cpu_usage_pct) AS peak_cpu,
                    MAX(mem_usage_pct) AS peak_mem,
                    MAX(ds_usage_pct) AS peak_ds
             FROM hypervisor_host_metrics
             WHERE timestamp >= NOW() - INTERVAL '24 hours'
-            GROUP BY host_name
+            GROUP BY hypervisor_id, host_name
         ),
         baseline AS (
-            SELECT host_name,
+            SELECT hypervisor_id, host_name,
                    AVG(cpu_usage_pct) AS avg_cpu,
                    AVG(mem_usage_pct) AS avg_mem,
                    AVG(ds_usage_pct) AS avg_ds
             FROM hypervisor_host_metrics
             WHERE timestamp >= NOW() - INTERVAL '7 days'
-            GROUP BY host_name
+            GROUP BY hypervisor_id, host_name
         )
-        SELECT r.host_name,
+        SELECT r.hypervisor_id, r.host_name,
                r.peak_cpu, b.avg_cpu,
                r.peak_mem, b.avg_mem,
                r.peak_ds, b.avg_ds
         FROM recent r
-        JOIN baseline b ON r.host_name = b.host_name
+        JOIN baseline b
+          ON r.host_name = b.host_name
+         AND r.hypervisor_id IS NOT DISTINCT FROM b.hypervisor_id
     """)).all()
 
     anomalies = []
@@ -304,6 +317,7 @@ def _detect_host_metric_anomalies(db: Session) -> List[Dict]:
         if issues:
             anomalies.append({
                 "host": r.host_name,
+                "hypervisor_id": r.hypervisor_id,
                 "issues": issues,
                 "peak_cpu_pct": round(peak_cpu, 1),
                 "avg_cpu_pct": round(avg_cpu, 1),
@@ -505,7 +519,7 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
 
     # 30 günlük trend hesapla
     trend_rows = db.execute(text("""
-        SELECT host_name,
+        SELECT hypervisor_id, host_name,
                AVG(cpu_usage_pct) as avg_cpu,
                AVG(mem_usage_pct) as avg_mem,
                AVG(ds_usage_pct) as avg_ds,
@@ -513,14 +527,14 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
                MAX(cpu_usage_pct) as max_cpu
         FROM hypervisor_host_metrics
         WHERE timestamp >= NOW() - INTERVAL '30 days'
-        GROUP BY host_name
+        GROUP BY hypervisor_id, host_name
     """)).all()
-    trend_map = {r.host_name: r for r in trend_rows}
+    trend_map = {(r.hypervisor_id, r.host_name): r for r in trend_rows}
 
     # 90 günlük büyüme — report_analytics (host başına seri)
     capacity_items = []
     for h in hosts:
-        trend = trend_map.get(h["host"])
+        trend = trend_map.get((h.get("hypervisor_id"), h.get("host_key") or h["host"]))
 
         from app.services import report_analytics as ra
 
@@ -528,9 +542,10 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
             SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
             FROM hypervisor_host_metrics
             WHERE host_name = :host
+              AND hypervisor_id IS NOT DISTINCT FROM :hid
               AND timestamp >= NOW() - INTERVAL '90 days'
             ORDER BY timestamp ASC
-        """), {"host": h["host"]}).all()
+        """), {"host": h.get("host_key") or h["host"], "hid": h.get("hypervisor_id")}).all()
         cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
         mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
         ds_series = ra.aggregate_host_metrics_series(series_rows, value_key="ds_usage_pct")
@@ -1190,14 +1205,15 @@ def generate_forecast_report(db: Session) -> Dict[str, Any]:
     forecasts = []
 
     for h in hosts:
-        host_name = h["host"]
+        host_name = h.get("host_key") or h["host"]
         series_rows = db.execute(text("""
             SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
             FROM hypervisor_host_metrics
             WHERE host_name = :host
+              AND hypervisor_id IS NOT DISTINCT FROM :hid
               AND timestamp >= NOW() - INTERVAL '90 days'
             ORDER BY timestamp ASC
-        """), {"host": host_name}).all()
+        """), {"host": host_name, "hid": h.get("hypervisor_id")}).all()
 
         cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
         mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
@@ -1476,7 +1492,7 @@ def generate_performance_bottleneck(db: Session) -> Dict[str, Any]:
 
     # Son 24 saatin peak değerleri
     peak_rows = db.execute(text("""
-        SELECT host_name,
+        SELECT hypervisor_id, host_name,
                MAX(cpu_usage_pct) as peak_cpu,
                MAX(mem_usage_pct) as peak_mem,
                MAX(ds_usage_pct) as peak_ds,
@@ -1485,13 +1501,13 @@ def generate_performance_bottleneck(db: Session) -> Dict[str, Any]:
                AVG(mem_usage_pct) as avg_mem
         FROM hypervisor_host_metrics
         WHERE timestamp >= NOW() - INTERVAL '24 hours'
-        GROUP BY host_name
+        GROUP BY hypervisor_id, host_name
     """)).all()
-    peak_map = {r.host_name: r for r in peak_rows}
+    peak_map = {(r.hypervisor_id, r.host_name): r for r in peak_rows}
 
     bottlenecks = []
     for h in hosts:
-        p = peak_map.get(h["host"])
+        p = peak_map.get((h.get("hypervisor_id"), h.get("host_key") or h["host"]))
         issues = []
         if h["mem_pct"] > 85: issues.append(f"Memory pressure (%{h['mem_pct']})")
         if h["cpu_pct"] > 80: issues.append(f"CPU doygun (%{h['cpu_pct']})")

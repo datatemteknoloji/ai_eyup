@@ -284,7 +284,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
                 title: msg.report_title || t('chat_pdf_hv'),
                 subtitle: msg.timestamp.toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR'),
                 filename: `hypervisor_analiz_${msg.timestamp.toISOString().split('T')[0]}`,
-              })}
+              }, msg.charts)}
               className="ml-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-red-400 transition-colors"
               title="PDF olarak indir"
             >
@@ -583,6 +583,7 @@ export default function HypervisorChat({
             role: m.role,
             content: m.content,
             created_at: m.timestamp?.toISOString?.() || undefined,
+            charts: m.charts,
           })))}
           select={pdfSelect}
           fullExport={{

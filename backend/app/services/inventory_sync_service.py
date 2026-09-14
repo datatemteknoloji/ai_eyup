@@ -14,6 +14,7 @@ from app.models.credential import GlobalCredential
 from app.models.hypervisor import Hypervisor
 from app.models.server import Server
 from app.services.snapshot_service import _apply_vm_details_to_server
+from app.services.virt_scope import owned_by_other_vcenter
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +132,17 @@ def _find_existing_server(db: Session, hypervisor_id: int, vm: dict) -> Server |
             Server.hypervisor_vm_id == vm_id,
         ).first()
     if not existing and vm_ip:
-        existing = db.query(Server).filter(Server.ip_address == vm_ip).first()
-    if not existing:
-        existing = db.query(Server).filter(Server.name == vm_name).first()
+        by_ip = db.query(Server).filter(Server.ip_address == vm_ip).all()
+        existing = next(
+            (s for s in by_ip if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)),
+            None,
+        )
+    if not existing and vm_name:
+        by_name = db.query(Server).filter(Server.name == vm_name).all()
+        existing = next(
+            (s for s in by_name if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)),
+            None,
+        )
     return existing
 
 

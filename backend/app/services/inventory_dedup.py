@@ -100,6 +100,9 @@ def detect_duplicate_groups(db: Session) -> List[Dict[str, Any]]:
     def _group(key: str, match_type: str, items: List[Server]) -> None:
         if len(items) < 2:
             return
+        bound = {s.hypervisor_id for s in items if s.hypervisor_id}
+        if len(bound) > 1:
+            return
         ids = {s.id for s in items}
         if ids & seen_ids:
             return
@@ -142,6 +145,10 @@ def merge_servers(db: Session, keep_id: int, merge_ids: List[int], dry_run: bool
 
     actions = []
     for s in to_merge:
+        if s.hypervisor_id and keep.hypervisor_id and s.hypervisor_id != keep.hypervisor_id:
+            raise ValueError(
+                f"Farklı vCenter kayıtları birleştirilemez ({s.name} ↔ {keep.name})"
+            )
         actions.append({"from_id": s.id, "from_name": s.name, "into_id": keep_id})
         if dry_run:
             continue

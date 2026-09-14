@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # ── Boyut kayıt defteri ──────────────────────────────────────────────────────
 # boyut → { varlık_tipi: satırda o boyutu taşıyan anahtarlar }
@@ -356,3 +356,70 @@ def child_datastore_names(vms: Sequence[Dict[str, Any]]) -> Set[str]:
                     if name:
                         out.add(name)
     return out
+
+
+# ── Çoklu vCenter kimliği ────────────────────────────────────────────────────
+# Aynı ad iki vCenter'da ayrı nesnedir. Grafik/seçici ref'i: hv:{id}:{ad}
+
+_REF_RE = re.compile(r"^hv:(\d+):(.*)$", re.DOTALL)
+
+
+def encode_ref(hypervisor_id: Optional[int], name: str) -> str:
+    name = (name or "").strip()
+    if hypervisor_id is None or not name:
+        return name
+    return f"hv:{int(hypervisor_id)}:{name}"
+
+
+def parse_ref(token: str) -> Tuple[Optional[int], str]:
+    raw = (token or "").strip()
+    m = _REF_RE.match(raw)
+    if m and m.group(2):
+        return int(m.group(1)), m.group(2)
+    return None, raw
+
+
+def owned_by_other_vcenter(existing_hv_id: Optional[int], this_hv_id: int) -> bool:
+    return existing_hv_id is not None and int(existing_hv_id) != int(this_hv_id)
+
+
+def disambiguate(
+    name: str,
+    hypervisor_id: Optional[int],
+    name_counts: Dict[str, int],
+    hv_names: Dict[int, str],
+) -> str:
+    """Aynı ad birden fazla vCenter'da varsa etikete vCenter adını ekle."""
+    if name_counts.get(name, 0) <= 1:
+        return name
+    label = hv_names.get(int(hypervisor_id)) if hypervisor_id is not None else None
+    return f"{name} ({label or f'vCenter {hypervisor_id}'})"
+
+
+def count_names(pairs: Iterable[Tuple[Optional[int], str]]) -> Dict[str, int]:
+    seen = set()
+    counts: Dict[str, int] = {}
+    for hv_id, name in pairs:
+        if not name:
+            continue
+        key = (hv_id, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def sql_pair_filter(
+    pairs: Sequence[Tuple[int, str]], *, hv_col: str, name_col: str,
+) -> Tuple[str, Dict[str, object]]:
+    """(hypervisor_id, name) OR zinciri. Boşsa 'FALSE'."""
+    if not pairs:
+        return "FALSE", {}
+    parts = []
+    params: Dict[str, object] = {}
+    for i, (hv_id, name) in enumerate(pairs):
+        parts.append(f"({hv_col} = :hv{i} AND {name_col} = :nm{i})")
+        params[f"hv{i}"] = int(hv_id)
+        params[f"nm{i}"] = name
+    return "(" + " OR ".join(parts) + ")", params

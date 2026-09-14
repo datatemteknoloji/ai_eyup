@@ -44,7 +44,7 @@ TH = {
 }
 
 _VM_SQL = """
-    SELECT vm_name,
+    SELECT hypervisor_id, vm_name,
            max(host_name)  AS host_name,
            max(cluster_name) AS cluster_name,
            max(datastore)  AS datastore,
@@ -62,13 +62,13 @@ _VM_SQL = """
     FROM virt_vm_metrics
     WHERE timestamp >= now() - (:hours * interval '1 hour')
       AND vm_name ILIKE :vm
-    GROUP BY vm_name
+    GROUP BY hypervisor_id, vm_name
     ORDER BY ready_p95 DESC NULLS LAST
     LIMIT :limit
 """
 
 _HOST_SQL = """
-    SELECT host_name,
+    SELECT host_name, hypervisor_id,
            max(cluster_name) AS cluster_name,
            count(*)          AS samples,
            percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_usage_pct) AS cpu_p95,
@@ -85,7 +85,7 @@ _HOST_SQL = """
     FROM hypervisor_host_metrics
     WHERE timestamp >= now() - (:hours * interval '1 hour')
       AND host_name ILIKE :host
-    GROUP BY host_name
+    GROUP BY hypervisor_id, host_name
     LIMIT 50
 """
 
@@ -307,7 +307,8 @@ def classify_bottleneck(
             logger.warning("classify_bottleneck host sorgusu (%s): %s", hn, e)
             rows = []
         for row in rows:
-            hosts[str(row.get("host_name") or "").strip().lower()] = {
+            key = f"{row.get('hypervisor_id')}|{str(row.get('host_name') or '').strip().lower()}"
+            hosts[key] = {
                 k: (_f(v) if k not in ("host_name", "cluster_name") else v)
                 for k, v in row.items()
             }
@@ -318,7 +319,8 @@ def classify_bottleneck(
             k: (_f(v) if k not in ("vm_name", "host_name", "cluster_name", "datastore") else v)
             for k, v in raw.items()
         }
-        host = hosts.get(str(vm.get("host_name") or "").strip().lower())
+        host_key = f"{raw.get('hypervisor_id')}|{str(raw.get('host_name') or '').strip().lower()}"
+        host = hosts.get(host_key)
         items.append(_classify_row(vm, host))
 
     host_only = not vm_rows and host_name

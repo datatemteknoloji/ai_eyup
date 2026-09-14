@@ -3,6 +3,8 @@
  * html2canvas + jsPDF ile DOM elementini PDF olarak indirir.
  * Temiz beyaz arka plan üzerinde render edilir.
  */
+import type { ChatChartPayload } from '../components/ChatMetricChart'
+import { chartsToHtml, extractDiagramSlots, injectDiagramSlots } from './chatPdfVisuals'
 
 export interface PdfExportOptions {
   filename?: string
@@ -120,24 +122,59 @@ export async function exportElementToPdf(
  * Markdown metnini sade HTML'e çevirip yeni pencerede açar → tarayıcı PDF olarak kaydedebilir.
  * jsPDF alternatifsiz yaklaşım — daha iyi typography kontrolü.
  */
+export interface ChatPdfExportMessage {
+  role: string
+  content: string
+  created_at?: string
+  charts?: ChatChartPayload[] | null
+  meta?: { charts?: ChatChartPayload[] } | null
+}
+
+function chartsOf(m: ChatPdfExportMessage): ChatChartPayload[] {
+  return m.charts || m.meta?.charts || []
+}
+
+async function markdownToPrintHtml(markdown: string, charts?: ChatChartPayload[] | null): Promise<string> {
+  const { text, html } = await extractDiagramSlots(markdown || '')
+  return injectDiagramSlots(markdownToHtml(text), html) + chartsToHtml(charts)
+}
+
 export function exportMarkdownToPrintWindow(
   markdown: string,
-  options: PdfExportOptions = {}
+  options: PdfExportOptions = {},
+  charts?: ChatChartPayload[] | null,
 ): void {
   const title = options.title || 'Rapor'
   const filename = options.filename || `rapor_${new Date().toISOString().split('T')[0]}`
+  void (async () => {
+    const html = await markdownToPrintHtml(markdown, charts)
+    writePrintDocument(html, { ...options, title, filename })
+  })()
+}
 
-  // Basit markdown → HTML dönüştürücü (react-markdown yerine tarayıcıda)
-  const html = markdownToHtml(markdown)
+function escapeHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function writePrintDocument(
+  html: string,
+  options: PdfExportOptions & { title: string; filename: string },
+): void {
+  const title = options.title
+  const filename = options.filename
 
   const printWindow = window.open('', '_blank', 'width=900,height=700')
   if (!printWindow) { alert('Popup engelleyici kapalı değil, lütfen izin verin.'); return }
 
-  printWindow.document.write(`<!DOCTYPE html>
+  const doc = `<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <title>${title}</title>
+  <title>__TITLE__</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -211,6 +248,8 @@ export function exportMarkdownToPrintWindow(
       color: #374151;
     }
     hr { border: none; border-top: 1px solid #e5e7eb; margin: 18px 0; }
+    .chat-pdf-chart, .chat-pdf-diagram { margin: 12px 0; page-break-inside: avoid; }
+    .chat-pdf-chart svg, .chat-pdf-diagram svg { max-width: 100%; height: auto; }
     .no-print { display: none; }
 
     @media print {
@@ -221,10 +260,10 @@ export function exportMarkdownToPrintWindow(
 </head>
 <body>
   <div class="doc-header">
-    <h1>${title}</h1>
+    <h1>__TITLE__</h1>
     <div class="meta">
       Oluşturulma: ${new Date().toLocaleString('tr-TR')} &nbsp;·&nbsp; ainew Platform
-      ${options.subtitle ? `&nbsp;·&nbsp; ${options.subtitle}` : ''}
+      __SUBTITLE__
     </div>
   </div>
 
@@ -238,16 +277,21 @@ export function exportMarkdownToPrintWindow(
   </div>
 
   <div class="content">
-    ${html}
+    __BODY__
   </div>
 
   <script>
-    document.title = ${JSON.stringify(filename)};
+    document.title = __FILENAME__;
     // Otomatik olarak print dialog aç (küçük gecikme ile)
     setTimeout(() => window.print(), 400);
   <\/script>
 </body>
-</html>`)
+</html>`
+  printWindow.document.write(doc
+    .replace('__TITLE__', escapeHtml(title))
+    .replace('__SUBTITLE__', options.subtitle ? `&nbsp;·&nbsp; ${escapeHtml(options.subtitle)}` : '')
+    .replace('__FILENAME__', JSON.stringify(filename))
+    .replace('__BODY__', html))
   printWindow.document.close()
 }
 
@@ -301,32 +345,34 @@ export function exportMultipleRcaToPrintWindow(
   })
 }
 
-/** Chat geçmişini (soru-cevap) tek PDF / yazdırma penceresinde açar. */
+/** Chat geçmişini (soru-cevap) tek PDF / yazdırma penceresinde açar. Grafik ve diyagram SVG olur. */
 export function exportChatMessagesToPrintWindow(
-  messages: Array<{ role: string; content: string; created_at?: string }>,
+  messages: ChatPdfExportMessage[],
   options: PdfExportOptions = {},
 ): void {
-  const parts: string[] = []
-  for (const m of messages) {
-    if (!m?.content?.trim()) continue
-    const isUser = m.role === 'user'
-    const label = isUser ? 'Soru' : 'Asistan'
-    const when = m.created_at
-      ? new Date(m.created_at).toLocaleString('tr-TR')
-      : ''
-    parts.push(
-      `### ${label}${when ? ` — ${when}` : ''}\n\n${m.content.trim()}\n\n---\n`,
-    )
-  }
-  if (parts.length === 0) {
-    alert('Dışa aktarılacak mesaj yok')
-    return
-  }
-  exportMarkdownToPrintWindow(parts.join('\n'), {
-    title: options.title || 'AI Asistan Sohbeti',
-    subtitle: options.subtitle || new Date().toLocaleString('tr-TR'),
-    filename: options.filename || `ai_sohbet_${new Date().toISOString().slice(0, 10)}`,
-  })
+  void (async () => {
+    const parts: string[] = []
+    for (const m of messages) {
+      const charts = m.role === 'user' ? [] : chartsOf(m)
+      if (!m?.content?.trim() && !charts.length) continue
+      const isUser = m.role === 'user'
+      const label = isUser ? 'Soru' : 'Asistan'
+      const when = m.created_at
+        ? new Date(m.created_at).toLocaleString('tr-TR')
+        : ''
+      const body = await markdownToPrintHtml(m.content || '', charts)
+      parts.push(`<h3>${label}${when ? ` — ${when}` : ''}</h3>${body}<hr>`)
+    }
+    if (parts.length === 0) {
+      alert('Dışa aktarılacak mesaj yok')
+      return
+    }
+    writePrintDocument(parts.join('\n'), {
+      title: options.title || 'AI Asistan Sohbeti',
+      subtitle: options.subtitle || new Date().toLocaleString('tr-TR'),
+      filename: options.filename || `ai_sohbet_${new Date().toISOString().slice(0, 10)}`,
+    })
+  })()
 }
 
 // ── Basit Markdown → HTML parser ──────────────────────────────────────────────

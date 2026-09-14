@@ -276,7 +276,7 @@ def _get_esx_hosts(db: Session) -> List[Dict[str, Any]]:
     """En güncel ESX host metriklerini getir."""
     try:
         rows = db.execute(text("""
-            SELECT DISTINCT ON (host_name)
+            SELECT DISTINCT ON (hypervisor_id, host_name)
                 host_name, hypervisor_id,
                 cpu_usage_pct, cpu_usage_mhz, cpu_total_mhz, cpu_cores,
                 mem_used_mb, mem_total_mb, mem_usage_pct,
@@ -286,17 +286,25 @@ def _get_esx_hosts(db: Session) -> List[Dict[str, Any]]:
                 connection_state, power_state, maintenance_mode,
                 timestamp
             FROM hypervisor_host_metrics
-            ORDER BY host_name, timestamp DESC
+            ORDER BY hypervisor_id, host_name, timestamp DESC
         """)).all()
     except Exception:
         return []
 
     result = []
+    from app.services.virt_scope import count_names, disambiguate
+    hv_ids = {r.hypervisor_id for r in rows if r.hypervisor_id is not None}
+    hv_names = {}
+    if hv_ids:
+        from app.models.hypervisor import Hypervisor
+        hv_names = {h.id: h.name for h in db.query(Hypervisor).filter(Hypervisor.id.in_(hv_ids)).all()}
+    counts = count_names((r.hypervisor_id, r.host_name or "") for r in rows)
     for r in rows:
         mem_free_gb = round((r.mem_total_mb - r.mem_used_mb) / 1024, 1) if r.mem_total_mb and r.mem_used_mb else None
         cpu_free_pct = round(100 - r.cpu_usage_pct, 1) if r.cpu_usage_pct is not None else None
         result.append({
-            "host": r.host_name,
+            "host": disambiguate(r.host_name or "", r.hypervisor_id, counts, hv_names),
+            "host_key": r.host_name,
             "hypervisor_id": r.hypervisor_id,
             "cpu_pct": round(r.cpu_usage_pct, 1) if r.cpu_usage_pct else 0,
             "cpu_free_pct": cpu_free_pct,
@@ -326,7 +334,7 @@ def _get_host_inventory(db: Session) -> Dict[str, Dict[str, Any]]:
     try:
         rows = db.execute(text("""
             SELECT DISTINCT ON (hypervisor_id, host_ref)
-                host_name, vendor, model, uuid, cpu_model,
+                hypervisor_id, host_name, vendor, model, uuid, cpu_model,
                 pnics, vswitches, portgroups, vnics, dns
             FROM hypervisor_host_inventory
             ORDER BY hypervisor_id, host_ref, last_synced_at DESC
@@ -335,8 +343,15 @@ def _get_host_inventory(db: Session) -> Dict[str, Dict[str, Any]]:
         return {}
 
     out: Dict[str, Dict[str, Any]] = {}
+    from app.services.virt_scope import count_names, disambiguate
+    counts = count_names((r.hypervisor_id, r.host_name or "") for r in rows)
+    hv_ids = {r.hypervisor_id for r in rows if r.hypervisor_id is not None}
+    hv_names: Dict[int, str] = {}
+    if hv_ids:
+        from app.models.hypervisor import Hypervisor
+        hv_names = {h.id: h.name for h in db.query(Hypervisor).filter(Hypervisor.id.in_(hv_ids)).all()}
     for r in rows:
-        out[r.host_name] = {
+        payload = {
             "vendor":     r.vendor,
             "model":      r.model,
             "uuid":       r.uuid,
@@ -347,6 +362,10 @@ def _get_host_inventory(db: Session) -> Dict[str, Dict[str, Any]]:
             "vnics":      r.vnics or [],
             "dns":        r.dns or {},
         }
+        label = disambiguate(r.host_name or "", r.hypervisor_id, counts, hv_names)
+        out[label] = payload
+        if counts.get(r.host_name or "", 0) <= 1 and r.host_name:
+            out[r.host_name] = payload
     return out
 
 

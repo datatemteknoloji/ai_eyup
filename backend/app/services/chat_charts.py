@@ -248,15 +248,31 @@ def resolve_os_targets(
 
 
 def _virt_inventory_names(db: Session, kind: str) -> List[str]:
+    return [name for name, _ref in _virt_inventory_refs(db, kind)]
+
+
+def _virt_inventory_refs(db: Session, kind: str) -> List[tuple]:
+    """(görünen ad, hv:id:ad) — aynı ad iki vCenter'da iki ref."""
     from app.services.virt_monitoring import _KIND_TABLE
+    from app.services.virt_scope import encode_ref
 
     table, key = _KIND_TABLE.get(kind, _KIND_TABLE["vm"])
     try:
         rows = db.execute(text(
-            f"SELECT DISTINCT {key} AS name FROM {table} "
+            f"SELECT DISTINCT hypervisor_id, {key} AS name FROM {table} "
             f"WHERE {key} IS NOT NULL AND {key} <> ''"
         ))
-        return [str(r[0]) for r in rows if r[0]]
+        out = []
+        seen = set()
+        for hid, name in rows:
+            if not name:
+                continue
+            ref = encode_ref(hid, str(name))
+            if ref in seen:
+                continue
+            seen.add(ref)
+            out.append((str(name), ref))
+        return out
     except Exception as exc:
         logger.warning("chat_charts virt inventory: %s", exc)
         return []
@@ -428,6 +444,7 @@ def _build_virt_charts(
     from app.services.virt_monitoring import query_series
 
     range_key = hours_to_range_key(hours)
+    window_minutes = max(15, int(round(float(hours) * 60)))
     hours_label = _format_duration_label(hours)
     charts: List[Dict[str, Any]] = []
     multi = len(names) > 1
@@ -439,10 +456,16 @@ def _build_virt_charts(
         by_unit: Dict[str, List[Dict[str, Any]]] = {}
         unit_of: Dict[str, str] = {}
         for metric in metrics:
-            raw = query_series(db, kind=kind, names=names, metric=metric, range_key=range_key)
+            raw = query_series(
+                db, kind=kind, names=names, metric=metric,
+                range_key=range_key, window_minutes=window_minutes,
+            )
             if not any(len((s.get("points") or [])) >= 2 for s in (raw.get("series") or [])):
-                if range_key not in ("24h", "7d", "30d", "60d"):
-                    raw = query_series(db, kind=kind, names=names, metric=metric, range_key="24h")
+                if window_minutes < 1440:
+                    raw = query_series(
+                        db, kind=kind, names=names, metric=metric,
+                        range_key="24h", window_minutes=1440,
+                    )
             unit = raw.get("unit") or ""
             unit_of[metric] = unit
             mlabel = _VIRT_METRIC_LABEL.get(metric, metric)
@@ -553,14 +576,17 @@ def try_build_chat_charts(
 
     if virt_like or plat == "virt":
         kind = detect_virt_kind(message)
-        inventory = _virt_inventory_names(db, kind)
-        names = match_named_entities(message, inventory)
+        inventory_refs = _virt_inventory_refs(db, kind)
+        names = match_named_entities(message, [n for n, _r in inventory_refs])
         if not names and kind == "vm":
             for alt in ("host", "datastore"):
-                alt_names = match_named_entities(message, _virt_inventory_names(db, alt))
+                alt_refs = _virt_inventory_refs(db, alt)
+                alt_names = match_named_entities(message, [n for n, _r in alt_refs])
                 if alt_names:
-                    kind, names = alt, alt_names
+                    kind, names, inventory_refs = alt, alt_names, alt_refs
                     break
+        refs = [ref for n, ref in inventory_refs if n in set(names)]
+        names = refs or names
         if not names:
             if explicit:
                 return {
@@ -576,7 +602,8 @@ def try_build_chat_charts(
         charts, sources = _build_virt_charts(
             db, kind=kind, names=names, hours=hours, groups=groups,
         )
-        titled = ", ".join(names)
+        display = [n for n, ref in inventory_refs if ref in set(names)]
+        titled = ", ".join(dict.fromkeys(display or names))
         title = titled
         if not charts:
             missing = list(names)

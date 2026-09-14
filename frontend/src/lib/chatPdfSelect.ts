@@ -1,11 +1,13 @@
 import { useCallback, useMemo, useState } from 'react'
-import { exportChatMessagesToPrintWindow, type PdfExportOptions } from '../utils/pdfExport'
+import { exportChatMessagesToPrintWindow, type ChatPdfExportMessage, type PdfExportOptions } from '../utils/pdfExport'
 
 export type ChatPdfMsg = {
   id: string | number
   role: string
   content: string
   created_at?: string
+  charts?: ChatPdfExportMessage['charts']
+  meta?: ChatPdfExportMessage['meta']
 }
 
 export type ChatPdfPair<T extends ChatPdfMsg = ChatPdfMsg> = {

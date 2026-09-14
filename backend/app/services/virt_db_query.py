@@ -143,6 +143,7 @@ def list_vms_db(
             "cluster": s.vm_cluster,
             "datastore": s.vm_datastore,
             "guest_os": s.vm_guest_os_full or s.os_type,
+            "hypervisor_id": s.hypervisor_id,
             "hypervisor": hv_map.get(s.hypervisor_id),
             "vcenter": hv_map.get(s.hypervisor_id),
             "cpu_mhz": s.vm_cpu_usage_mhz,
@@ -313,6 +314,7 @@ def list_datastores_db(
             "usage_pct": r.usage_pct,
             "accessible": r.accessible,
             "host_count": r.host_count,
+            "hypervisor_id": r.hypervisor_id,
             "hypervisor": hv_map.get(r.hypervisor_id),
             "as_of": r.as_of.isoformat() if r.as_of else None,
         }
@@ -437,6 +439,7 @@ def list_esx_hosts_db(
             "vendor": getattr(inv, "vendor", None) if inv else None,
             "model": getattr(inv, "model", None) if inv else None,
             "cpu_model": getattr(inv, "cpu_model", None) if inv else None,
+            "hypervisor_id": r.hypervisor_id,
             "hypervisor": hv_map.get(r.hypervisor_id),
             "cpu_pct": r.cpu_usage_pct,
             "mem_pct": r.mem_usage_pct,
@@ -627,6 +630,7 @@ def list_clusters_db(
         items.append({
             "name": r.name,
             "cluster_ref": r.cluster_ref,
+            "hypervisor_id": r.hypervisor_id,
             "hypervisor": hv_map.get(r.hypervisor_id),
             "hosts": r.hosts,
             "effective_hosts": r.effective_hosts,
@@ -730,13 +734,13 @@ def _latest_vm_utilization(
 
     sql = text(
         """
-        SELECT DISTINCT ON (vm_name)
-               vm_name, timestamp, cpu_usage_pct, mem_usage_pct, cpu_ready_pct,
+        SELECT DISTINCT ON (hypervisor_id, vm_name)
+               hypervisor_id, vm_name, timestamp, cpu_usage_pct, mem_usage_pct, cpu_ready_pct,
                disk_latency_ms, balloon_mb, swapped_mb, power_state
         FROM virt_vm_metrics
         WHERE vm_name IS NOT NULL
           AND timestamp >= now() - (:hours * interval '1 hour')
-        ORDER BY vm_name, timestamp DESC
+        ORDER BY hypervisor_id, vm_name, timestamp DESC
         LIMIT :lim
         """
     )
@@ -750,9 +754,14 @@ def _latest_vm_utilization(
         return out
     for r in rows:
         m = dict(r._mapping)
-        key = norm_join_key(str(m.get("vm_name") or ""))
-        if key:
+        key = f"{m.get('hypervisor_id')}|{norm_join_key(str(m.get('vm_name') or ''))}"
+        if m.get("hypervisor_id") is not None and norm_join_key(str(m.get("vm_name") or "")):
             out[key] = m
+        plain = norm_join_key(str(m.get("vm_name") or ""))
+        if plain and plain not in out:
+            out[plain] = m
+        elif plain and out.get(plain) and out[plain].get("hypervisor_id") != m.get("hypervisor_id"):
+            out.pop(plain, None)
     return out
 
 
@@ -900,19 +909,27 @@ def cross_match_virt_db(
         axis_keys: List[str] = []
         seen_k: set = set()
         for h in hosts_raw:
-            k = norm_join_key(str(h.get("name") or ""))
+            raw_name = norm_join_key(str(h.get("name") or ""))
+            k = f"{h.get('hypervisor_id')}|{raw_name}" if h.get("hypervisor_id") is not None and raw_name else raw_name
             if k and k not in seen_k:
                 seen_k.add(k)
                 axis_keys.append(k)
         if not axis_keys:
-            for k in sorted(vms_by_host.keys()):
-                if k not in seen_k:
+            for v in vms_raw:
+                raw_name = norm_join_key(str(v.get("host") or ""))
+                k = f"{v.get('hypervisor_id')}|{raw_name}" if v.get("hypervisor_id") is not None and raw_name else raw_name
+                if k and k not in seen_k:
                     seen_k.add(k)
                     axis_keys.append(k)
 
         for k in axis_keys:
-            h = (hosts_by_name.get(k) or [{}])[0]
-            vms = vms_by_host.get(k, [])
+            h = next((row for row in hosts_raw if (
+                f"{row.get('hypervisor_id')}|{norm_join_key(str(row.get('name') or ''))}" if row.get("hypervisor_id") is not None else norm_join_key(str(row.get("name") or ""))
+            ) == k), {})
+            vms = [
+                v for v in vms_raw
+                if (f"{v.get('hypervisor_id')}|{norm_join_key(str(v.get('host') or ''))}" if v.get("hypervisor_id") is not None else norm_join_key(str(v.get("host") or ""))) == k
+            ]
             # Alarm: entity=host veya entity ∈ VM adları
             alarms = list(alarms_by_entity.get(k, []))
             for v in vms:
@@ -957,7 +974,7 @@ def cross_match_virt_db(
             vkey = norm_join_key(vname)
             if not vkey:
                 continue
-            util = vm_util.get(vkey) or {}
+            util = vm_util.get(f"{v.get('hypervisor_id')}|{vkey}") or vm_util.get(vkey) or {}
             hkey = norm_join_key(str(v.get("host") or ""))
             h = (hosts_by_name.get(hkey) or [{}])[0]
             d = (ds_by_name.get(norm_join_key(str(v.get("datastore") or ""))) or [{}])[0]

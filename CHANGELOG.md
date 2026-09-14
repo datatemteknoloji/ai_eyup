@@ -11,6 +11,20 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Sanallaştırma — çoklu vCenter
+- Nesne kimliği `(hypervisor_id, ad)`; aynı adlı VM, ESXi ve datastore ikinci vCenter'da birleşmez.
+- Monitoring, seri sorguları, raporlar, virt sohbet grafikleri ve envanter senkronu bu kimliği kullanır.
+- Monitoring'de vCenter seçimi VM/ESXi/Datastore ekseninin hemen önünde; çoklu seçim, varsayılan ilk vCenter.
+- Envanter eşleştirme ve birleştirme başka vCenter'ın Server satırını sahiplenmez.
+
+### Sohbet grafikleri ve PDF
+- Aralık penceresi yuvarlanmaz (ör. 10 gün 10 gün kalır); eksen aralığa göre saat veya gün gösterir.
+- Açık temada grafik tooltip'i okunur.
+- Sohbet PDF: `/graph` grafikleri ve mermaid / `ainew-diagram` çizimleri SVG olarak gömülür.
+
+### Düzeltme
+- Monitoring VM listesi, SQLAlchemy `in_()` boolean hatası yüzünden 500 vermez.
+
 ## [1.0.9.35] - 2026-09-13
 
 ### Raporlar (Kapasite / Tahmin / Risk / Konsolidasyon)

@@ -601,6 +601,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
   const t = useT()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all')
+  const [hvFilter, setHvFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'name' | 'cpu' | 'ram'>('name')
   const [selectedVm, setSelectedVm] = useState<VM | null>(null)
 
@@ -618,6 +619,9 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
       list = list.filter(v => v.name.toLowerCase().includes(q) || v.ip_address?.includes(q) || v.os_type?.toLowerCase().includes(q))
     }
     
+    if (hvFilter !== 'all') {
+      list = list.filter(v => String(v.hypervisor_id) === hvFilter)
+    }
     if (filter === 'online') {
       list = list.filter(v => isVmOnline(v.status, v.vm_power_state))
     } else if (filter === 'offline') {
@@ -654,7 +658,18 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
               className="bg-cyber-deep border border-white/[0.06] rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 w-48"
             />
           </div>
-          {/* Filter */}
+          {hypervisors.length > 1 && (
+            <select
+              value={hvFilter}
+              onChange={e => setHvFilter(e.target.value)}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50 max-w-[200px]"
+            >
+              <option value="all">{t('vmn_all_vcenters')}</option>
+              {hypervisors.map(h => (
+                <option key={h.id} value={String(h.id)}>{h.name}</option>
+              ))}
+            </select>
+          )}
           <select
             value={filter}
             onChange={e => setFilter(e.target.value as any)}

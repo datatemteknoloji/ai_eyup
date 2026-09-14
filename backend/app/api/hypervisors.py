@@ -258,11 +258,15 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
 
 
 @router.get("/monitoring/overview")
-def virt_monitoring_overview(db: Session = Depends(get_db)):
-    """vCenter/Timescale özet — grafik serisi yok, seçimsiz açılış için."""
-    from app.services.virt_monitoring import build_overview
+def virt_monitoring_overview(
+    hypervisor_id: Optional[int] = None,
+    hypervisor_ids: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """vCenter/Timescale özet — hypervisor_ids (virgüllü) verilirse yalnız o vCenter'lar."""
+    from app.services.virt_monitoring import build_overview, parse_hypervisor_ids
     try:
-        return build_overview(db)
+        return build_overview(db, hypervisor_ids=parse_hypervisor_ids(hypervisor_id, hypervisor_ids))
     except Exception as e:
         logger.exception("virt monitoring overview")
         raise HTTPException(status_code=500, detail=str(e))
@@ -273,13 +277,18 @@ def virt_monitoring_objects(
     kind: str = "host",
     q: str = "",
     cluster: str = "",
+    hypervisor_id: Optional[int] = None,
+    hypervisor_ids: Optional[str] = None,
     limit: int = 80,
     db: Session = Depends(get_db),
 ):
-    """VM / ESXi / datastore seçici (arama, max 200)."""
-    from app.services.virt_monitoring import list_objects
+    """VM / ESXi / datastore seçici (arama, vCenter, max 200)."""
+    from app.services.virt_monitoring import list_objects, parse_hypervisor_ids
     try:
-        return list_objects(db, kind=kind, q=q, cluster=cluster, limit=limit)
+        return list_objects(
+            db, kind=kind, q=q, cluster=cluster,
+            hypervisor_ids=parse_hypervisor_ids(hypervisor_id, hypervisor_ids), limit=limit,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1575,10 +1584,10 @@ async def get_quick_stats(db: Session = Depends(get_db)):
     # ESX host metrikleri — en son kayıt başına
     try:
         rows = db.execute(text("""
-            SELECT DISTINCT ON (host_name)
-                cpu_usage_pct, mem_usage_pct
+            SELECT DISTINCT ON (hypervisor_id, host_name)
+                cpu_usage_pct, mem_usage_pct, hypervisor_id, host_name
             FROM hypervisor_host_metrics
-            ORDER BY host_name, timestamp DESC
+            ORDER BY hypervisor_id, host_name, timestamp DESC
         """)).all()
         host_count = len(rows)
         avg_cpu = round(sum(r.cpu_usage_pct or 0 for r in rows) / host_count, 1) if host_count else 0

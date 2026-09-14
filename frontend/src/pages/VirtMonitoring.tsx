@@ -173,32 +173,88 @@ const VirtMonitoring: React.FC = () => {
   const [slots, setSlots] = useState<string[]>(DEFAULT_METRICS.vm)
   const [search, setSearch] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [hvIds, setHvIds] = useState<string[]>([])
+  const [hvPickerOpen, setHvPickerOpen] = useState(false)
+  const hvDefaulted = useRef(false)
+  const [labels, setLabels] = useState<Record<string, string>>({})
   const [fullscreen, setFullscreen] = useState<number | null>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const hvPickerRef = useRef<HTMLDivElement>(null)
+  const hvKey = [...hvIds].sort().join(',')
 
   useEffect(() => {
     setSlots([...DEFAULT_METRICS[kind]])
     setSelected([])
     setSearch('')
-  }, [kind])
+    setLabels({})
+  }, [kind, hvKey])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (pickerRef.current && !pickerRef.current.contains(target)) {
         setPickerOpen(false)
+      }
+      if (hvPickerRef.current && !hvPickerRef.current.contains(target)) {
+        setHvPickerOpen(false)
       }
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
-  const overview = useQuery({
-    queryKey: ['virt-monitoring-overview'],
+  const hypervisors = useQuery({
+    queryKey: ['virt-monitoring-hypervisors'],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/overview`)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/`)
+      if (!r.ok) return []
+      const data = await r.json()
+      return Array.isArray(data) ? data : []
+    },
+    staleTime: 60_000,
+  })
+
+  const vcenters = useMemo(
+    () => (hypervisors.data || []).filter((h: { type?: string }) => (h.type || '').toLowerCase() === 'vmware'),
+    [hypervisors.data],
+  )
+
+  useEffect(() => {
+    if (hvDefaulted.current || !vcenters.length) return
+    const first = [...vcenters].sort((a: { name?: string }, b: { name?: string }) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'tr'),
+    )[0]
+    hvDefaulted.current = true
+    if (first?.id != null) setHvIds([String(first.id)])
+  }, [vcenters])
+
+  const sortedVcenters = useMemo(
+    () => [...vcenters].sort((a: { name?: string }, b: { name?: string }) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'tr'),
+    ),
+    [vcenters],
+  )
+  const allVcentersOn = sortedVcenters.length > 0 && hvIds.length === sortedVcenters.length
+  const hvLabel = (() => {
+    if (!hvIds.length) return t('vmn_pick_vcenter')
+    if (allVcentersOn && sortedVcenters.length > 1) return t('vmn_all_vcenters')
+    if (hvIds.length === 1) {
+      const hit = sortedVcenters.find((h: { id: number; name?: string }) => String(h.id) === hvIds[0])
+      return hit?.name || t('vmn_vcenter')
+    }
+    return t('vmn_vcenters_n', { n: hvIds.length })
+  })()
+
+  const overview = useQuery({
+    queryKey: ['virt-monitoring-overview', hvKey],
+    queryFn: async () => {
+      const p = new URLSearchParams()
+      if (hvKey) p.set('hypervisor_ids', hvKey)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/overview?${p}`)
       if (!r.ok) throw new Error(t('vmn_overview_fail'))
       return r.json()
     },
+    enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
     refetchInterval: 120_000,
   })
 
@@ -213,14 +269,15 @@ const VirtMonitoring: React.FC = () => {
   })
 
   const objects = useQuery({
-    queryKey: ['virt-monitoring-objects', kind],
+    queryKey: ['virt-monitoring-objects', kind, hvKey],
     queryFn: async () => {
       const p = new URLSearchParams({ kind, limit: '200' })
+      if (hvKey) p.set('hypervisor_ids', hvKey)
       const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
       if (!r.ok) throw new Error('objects')
       return r.json()
     },
-    enabled: pickerOpen,
+    enabled: pickerOpen && (hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0)),
     staleTime: 60_000,
   })
   const filteredObjects = useMemo(() => {
@@ -228,7 +285,7 @@ const VirtMonitoring: React.FC = () => {
     const q = search.trim().toLowerCase()
     if (!q) return items
     return items.filter((o: any) =>
-      [o.name, o.hint, o.host, o.cluster, o.status].some((x) => String(x || '').toLowerCase().includes(q)),
+      [o.name, o.hint, o.host, o.cluster, o.status, o.hypervisor_name].some((x) => String(x || '').toLowerCase().includes(q)),
     )
   }, [objects.data, search])
 
@@ -280,11 +337,18 @@ const VirtMonitoring: React.FC = () => {
   const health = ov?.health
   const src = ov?.data_source
 
-  const toggle = (name: string) => {
+  const objectLabel = (o: { id?: string; name?: string; hypervisor_name?: string }) => {
+    const name = o.name || o.id || ''
+    const many = (hypervisors.data || []).length > 1
+    return many && o.hypervisor_name ? `${name} · ${o.hypervisor_name}` : name
+  }
+
+  const toggle = (id: string, label?: string) => {
+    if (label) setLabels((prev) => ({ ...prev, [id]: label }))
     setSelected((prev) => {
-      if (prev.includes(name)) return prev.filter((x) => x !== name)
+      if (prev.includes(id)) return prev.filter((x) => x !== id)
       if (prev.length >= MAX_SEL) return prev
-      return [...prev, name]
+      return [...prev, id]
     })
   }
 
@@ -333,6 +397,49 @@ const VirtMonitoring: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <Activity size={16} className="text-blue-400" />
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{t('vmn_charts')}</div>
+          {sortedVcenters.length > 0 && (
+            <div className="relative" ref={hvPickerRef}>
+              <button
+                type="button"
+                onClick={() => setHvPickerOpen((v) => !v)}
+                className="min-w-[160px] max-w-[240px] truncate bg-[#0d1422] border border-white/[0.06] rounded-lg px-3 py-1.5 text-xs text-left text-white"
+                title={t('vmn_vcenter')}
+              >
+                {hvLabel}
+              </button>
+              {hvPickerOpen && (
+                <div className="absolute z-40 top-full mt-1 w-72 max-h-72 overflow-auto bg-[#0d1422] border border-white/[0.1] rounded-xl shadow-xl">
+                  <label className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] text-xs text-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allVcentersOn}
+                      onChange={() => {
+                        hvDefaulted.current = true
+                        setHvIds(allVcentersOn ? [] : sortedVcenters.map((h: { id: number }) => String(h.id)))
+                      }}
+                    />
+                    {t('vmn_all_vcenters')}
+                  </label>
+                  {sortedVcenters.map((h: { id: number; name: string }) => {
+                    const id = String(h.id)
+                    return (
+                      <label key={id} className="flex items-center gap-2 px-3 py-2 text-xs text-white cursor-pointer hover:bg-white/[0.04]">
+                        <input
+                          type="checkbox"
+                          checked={hvIds.includes(id)}
+                          onChange={() => {
+                            hvDefaulted.current = true
+                            setHvIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+                          }}
+                        />
+                        <span className="truncate">{h.name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex rounded-lg border border-white/[0.06] overflow-hidden">
             {(['vm', 'host', 'datastore'] as Kind[]).map((k) => (
               <button
@@ -381,7 +488,10 @@ const VirtMonitoring: React.FC = () => {
                     type="button"
                     className="text-xs text-blue-400"
                     onClick={() => {
-                      setSelected(filteredObjects.map((x: any) => x.name).slice(0, MAX_SEL))
+                      setSelected(filteredObjects.map((x: any) => x.id).slice(0, MAX_SEL))
+                      const next: Record<string, string> = {}
+                      filteredObjects.slice(0, MAX_SEL).forEach((x: any) => { next[x.id] = objectLabel(x) })
+                      setLabels((prev) => ({ ...prev, ...next }))
                     }}
                   >
                     {t('vmn_select_filter', { n: MAX_SEL })}
@@ -389,18 +499,20 @@ const VirtMonitoring: React.FC = () => {
                 </div>
                 <div className="max-h-64 overflow-y-auto p-1">
                   {filteredObjects.map((o: any) => {
-                    const on = selected.includes(o.name)
-                    const idx = selected.indexOf(o.name)
+                    const on = selected.includes(o.id)
+                    const idx = selected.indexOf(o.id)
                     return (
                       <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer">
-                        <input type="checkbox" checked={on} onChange={() => toggle(o.name)} />
+                        <input type="checkbox" checked={on} onChange={() => toggle(o.id, objectLabel(o))} />
                         <span
                           className="mt-1 w-2 h-2 rounded-full shrink-0"
                           style={{ backgroundColor: on ? COLORS[idx % COLORS.length] : '#334155' }}
                         />
                         <span>
                           <span className="text-sm text-slate-200 block">{o.name}</span>
-                          <span className="text-[11px] text-slate-500">{o.hint}</span>
+                          <span className="text-[11px] text-slate-500">
+                            {o.hypervisor_name ? `${o.hypervisor_name} · ` : ''}{o.hint}
+                          </span>
                         </span>
                       </label>
                     )
@@ -416,7 +528,7 @@ const VirtMonitoring: React.FC = () => {
             {selected.map((n) => (
               <span key={n} className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-200">
                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colorMap[n] }} />
-                {n}
+                {labels[n] || n}
                 <button type="button" onClick={() => toggle(n)} className="text-slate-500 hover:text-white">×</button>
               </span>
             ))}

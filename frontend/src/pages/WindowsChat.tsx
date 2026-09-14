@@ -602,7 +602,7 @@ const WindowsChat: React.FC<{
                                   title: t('chat_pdf_win'),
                                   subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') : undefined,
                                   filename: `windows_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
-                                })}
+                                }, msg.meta?.charts)}
                                 className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1"
                               >
                                 <FileDown size={12} /> PDF
