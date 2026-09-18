@@ -330,6 +330,7 @@ const WindowsChat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: (_: unknown, sessionId: number) => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['windows-chat-sessions'], prev => (prev ?? []).filter(s => s.id !== sessionId))
       queryClient.removeQueries({ queryKey: ['windows-chat-messages', sessionId] })
       if (selectedSessionId === sessionId) setSelectedSessionId(null)
@@ -342,6 +343,7 @@ const WindowsChat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: () => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['windows-chat-sessions'], [])
       queryClient.removeQueries({ queryKey: ['windows-chat-messages'] })
       setSelectedSessionId(null)

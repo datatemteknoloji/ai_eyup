@@ -47,7 +47,7 @@ METRIC_GROUPS: Dict[str, List[tuple]] = {
 
 _GROUP_KEYWORDS: Dict[str, List[str]] = {
     "iops": ["iops", "ıops", "disk iops"],
-    "disk_io": ["disk io", "diskio", "disk i/o", "disk okuma", "disk yazma"],
+    "disk_io": ["disk io", "diskio", "disk i/o", "disk okuma", "disk yazma", "i/o", "ı/o"],
     "cpu": ["cpu", "işlemci", "islemci"],
     "memory": ["ram", "bellek", "memory", "hafıza", "hafiza"],
     "disk": ["disk"],

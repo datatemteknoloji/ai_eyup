@@ -355,6 +355,7 @@ const Chat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: (_: unknown, sessionId: number) => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['chat-sessions', inventoryPlatform], prev => (prev ?? []).filter(s => s.id !== sessionId))
       queryClient.removeQueries({ queryKey: ['chat-messages', sessionId] })
       if (selectedSessionId === sessionId) setSelectedSessionId(null)
@@ -367,6 +368,7 @@ const Chat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: () => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['chat-sessions', inventoryPlatform], [])
       queryClient.removeQueries({ queryKey: ['chat-messages'] })
       setSelectedSessionId(null)

@@ -471,6 +471,7 @@ export default function HypervisorChat({
       if (!r.ok) throw new Error('Delete failed')
     },
     onSuccess: (_d, id) => {
+      abortChatStream('hypervisor', { keepPartial: false })
       queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
       if (selectedSessionId === id) {
         setSelectedSessionId(null)
@@ -485,6 +486,7 @@ export default function HypervisorChat({
       if (!r.ok) throw new Error('Clear failed')
     },
     onSuccess: () => {
+      abortChatStream('hypervisor', { keepPartial: false })
       queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
       setSelectedSessionId(null)
       setMessages([])

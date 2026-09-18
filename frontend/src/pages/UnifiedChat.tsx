@@ -314,6 +314,7 @@ const UnifiedChat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: (_: unknown, sessionId: number) => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['unified-chat-sessions'], prev => (prev ?? []).filter(s => s.id !== sessionId))
       queryClient.removeQueries({ queryKey: ['unified-chat-messages', sessionId] })
       if (selectedSessionId === sessionId) setSelectedSessionId(null)
@@ -326,6 +327,7 @@ const UnifiedChat: React.FC<{
       if (!res.ok) throw new Error('Failed')
     },
     onSuccess: () => {
+      abortChatStream(streamChannel, { keepPartial: false })
       queryClient.setQueryData<ChatSession[]>(['unified-chat-sessions'], [])
       queryClient.removeQueries({ queryKey: ['unified-chat-messages'] })
       setSelectedSessionId(null)

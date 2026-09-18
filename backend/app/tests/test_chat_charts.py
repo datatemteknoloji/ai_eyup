@@ -84,7 +84,63 @@ def test_resolve_os_targets_from_message():
     assert {s.name for s in out} == {"alpha", "beta"}
 
 
-def test_explicit_graph_without_targets_explains():
+def test_io_keyword_maps_to_disk_io_group():
+    got = parse_chart_intent("carddrcdb01 son 24 saat cpu memory ve I/O /graph", explicit=True)
+    assert got is not None
+    assert "cpu" in got["groups"]
+    assert "memory" in got["groups"]
+    assert "disk_io" in got["groups"]
+
+
+def test_resolve_linux_chart_hosts_prom_only(monkeypatch):
+    up = {"carddrcdb01.sys.yapikredi.com.tr:9100": "1"}
+    monkeypatch.setattr(
+        "app.services.monitoring.prometheus_metrics.get_node_exporter_up_map",
+        lambda: up,
+    )
+    from app.services.chat_charts import resolve_linux_chart_hosts
+    hosts = resolve_linux_chart_hosts(
+        "carddrcdb01 son 24 saat cpu /graph",
+        pool=[],
+    )
+    assert len(hosts) == 1
+    assert hosts[0].server is None
+    assert hosts[0].instance == "carddrcdb01.sys.yapikredi.com.tr:9100"
+    assert "carddrcdb01" in hosts[0].name.lower()
+
+
+def test_try_build_prom_only_graph(monkeypatch):
+    up = {"carddrcdb01.sys.yapikredi.com.tr:9100": "1"}
+    monkeypatch.setattr(
+        "app.services.monitoring.prometheus_metrics.get_node_exporter_up_map",
+        lambda: up,
+    )
+    pts = [{"t": f"2026-09-12T10:0{i}:00Z", "v": float(i + 1)} for i in range(2)]
+
+    def fake_prom(instance, metric_name, hours, **_k):
+        assert "carddrcdb01" in instance
+        return pts
+
+    monkeypatch.setattr("app.services.chat_charts._prom_query_range_instance", fake_prom)
+    out = try_build_chat_charts(
+        MagicMock(),
+        message="carddrcdb01 son 24 saat cpu /graph",
+        platform="linux",
+        pool=[],
+        explicit=True,
+    )
+    assert out is not None
+    assert out["charts"]
+    assert "carddrcdb01" in out["summary_text"].lower() or "carddrcdb01" in (
+        out["charts"][0].get("server_name") or ""
+    )
+
+
+def test_explicit_graph_without_targets_explains(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.monitoring.prometheus_metrics.get_node_exporter_up_map",
+        lambda: {},
+    )
     db = MagicMock()
     out = try_build_chat_charts(db, message="grafik istiyorum", platform="linux", explicit=True)
     assert out is not None
@@ -92,7 +148,11 @@ def test_explicit_graph_without_targets_explains():
     assert "sunucu" in out["summary_text"].lower()
 
 
-def test_implicit_without_targets_falls_through():
+def test_implicit_without_targets_falls_through(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.monitoring.prometheus_metrics.get_node_exporter_up_map",
+        lambda: {},
+    )
     db = MagicMock()
     assert try_build_chat_charts(
         db, message="son 1 saat cpu", platform="linux", explicit=False,
@@ -122,6 +182,7 @@ def test_os_overlay_two_servers_two_metrics(monkeypatch):
         return pts, "timescale"
 
     monkeypatch.setattr("app.services.chat_charts._fetch_os_points", fake_fetch)
+    monkeypatch.setattr("app.services.chat_charts._resolve_server_instance", lambda _s: None)
     s1 = SimpleNamespace(id=1, name="web01")
     s2 = SimpleNamespace(id=2, name="web02")
     from app.services.chat_charts import _build_os_charts

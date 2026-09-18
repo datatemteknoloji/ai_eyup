@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { useTheme } from '../theme/ThemeProvider'
+import { niceTimeTicks, niceYDomain } from '../utils/chatChartScale'
 
 export interface ChatChartSeries {
   metric_name: string
@@ -83,9 +84,17 @@ const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> =
     ? { bg: '#ffffff', border: '#cbd5e1', label: '#334155', item: '#0f172a' }
     : { bg: '#1e293b', border: '#334155', label: '#cbd5e1', item: '#f8fafc' }
 
-  const { chartData, spanMs } = useMemo(() => {
+  const { chartData, spanMs, yDomain, xTicks } = useMemo(() => {
     const allTimestamps = new Set<string>()
-    chart.series.forEach(s => s.points.forEach(p => allTimestamps.add(p.t)))
+    let rawMin = Infinity
+    let rawMax = -Infinity
+    chart.series.forEach(s => s.points.forEach(p => {
+      allTimestamps.add(p.t)
+      if (Number.isFinite(p.v)) {
+        rawMin = Math.min(rawMin, p.v)
+        rawMax = Math.max(rawMax, p.v)
+      }
+    }))
     const timestamps = Array.from(allTimestamps).sort()
     const first = timestamps[0] ? new Date(timestamps[0]).getTime() : 0
     const last = timestamps.length ? new Date(timestamps[timestamps.length - 1]).getTime() : 0
@@ -98,7 +107,23 @@ const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> =
       })
       return point
     })
-    return { chartData: rows, spanMs: span }
+    const yDomain = Number.isFinite(rawMin)
+      ? niceYDomain(rawMin, rawMax, chart.unit || '')
+      : { min: 0, max: chart.unit === '%' ? 100 : 1 }
+    const wanted = span > 0 ? niceTimeTicks(first, last) : []
+    const xTicks = wanted.map((ms) => {
+      let best = timestamps[0]
+      let bestD = Infinity
+      for (const ts of timestamps) {
+        const d = Math.abs(new Date(ts).getTime() - ms)
+        if (d < bestD) {
+          bestD = d
+          best = ts
+        }
+      }
+      return best
+    }).filter((ts, i, arr) => arr.indexOf(ts) === i)
+    return { chartData: rows, spanMs: span, yDomain, xTicks }
   }, [chart])
 
   if (!chartData.length) {
@@ -132,8 +157,8 @@ const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> =
               stroke={axis}
               fontSize={10}
               tickLine={false}
-              interval="preserveStartEnd"
-              minTickGap={28}
+              ticks={xTicks}
+              interval={0}
               tickFormatter={(v) => formatChartTick(String(v), spanMs)}
               angle={spanMs > 36 * 3600 * 1000 ? -28 : 0}
               textAnchor={spanMs > 36 * 3600 * 1000 ? 'end' : 'middle'}
@@ -143,8 +168,16 @@ const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> =
               stroke={axis}
               fontSize={10}
               tickLine={false}
-              tickFormatter={(v) => (chart.unit === 'B/s' ? formatBytesPerSec(Number(v)) : String(v))}
-              width={chart.unit === 'B/s' ? 56 : 36}
+              tickCount={5}
+              domain={[yDomain.min, yDomain.max]}
+              allowDataOverflow
+              tickFormatter={(v) => {
+                const n = Number(v)
+                if (chart.unit === 'B/s') return formatBytesPerSec(n)
+                if (chart.unit === '%') return `${n.toFixed(n < 10 ? 1 : 0)}%`
+                return String(Math.round(n * 100) / 100)
+              }}
+              width={chart.unit === 'B/s' ? 56 : 44}
             />
             <Tooltip
               contentStyle={{

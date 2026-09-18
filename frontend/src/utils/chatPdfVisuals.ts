@@ -1,6 +1,9 @@
 import mermaid from 'mermaid'
 import type { ChatChartPayload } from '../components/ChatMetricChart'
+import { niceTimeTicks, niceYDomain } from './chatChartScale'
 import { parseArchitectureDiagram } from './chatDiagramSchema'
+
+export { niceYDomain } from './chatChartScale'
 
 const CHART_COLORS = ['#2563eb', '#059669', '#d97706', '#db2777', '#7c3aed', '#0891b2']
 
@@ -42,13 +45,25 @@ function formatVal(v: number, unit: string): string {
   return String(Math.round(v * 100) / 100)
 }
 
+function seriesStats(points: { t: string; v: number }[]): { min: number; max: number; last: number } | null {
+  const vals = points.map((p) => p.v).filter((v) => Number.isFinite(v))
+  if (!vals.length) return null
+  return {
+    min: Math.min(...vals),
+    max: Math.max(...vals),
+    last: vals[vals.length - 1],
+  }
+}
+
 /** Chat chart payload → yazdırılabilir SVG (Recharts ekranda kalır). */
 export function chartToSvg(chart: ChatChartPayload): string {
   const series = (chart.series || []).filter((s) => (s.points || []).length >= 2)
   if (!series.length) return ''
-  const w = 680
-  const h = 240
-  const pad = { l: 48, r: 12, t: 28, b: 36 }
+  const w = 900
+  const legendRows = Math.ceil(series.length / 2)
+  const legendH = 22 + legendRows * 18
+  const pad = { l: 56, r: 16, t: 32, b: 28 + legendH }
+  const h = 300 + legendH
   const iw = w - pad.l - pad.r
   const ih = h - pad.t - pad.b
   const stamps = new Set<string>()
@@ -57,43 +72,57 @@ export function chartToSvg(chart: ChatChartPayload): string {
   const first = new Date(times[0]).getTime()
   const last = new Date(times[times.length - 1]).getTime()
   const span = Math.max(1, last - first)
-  let minV = Infinity
-  let maxV = -Infinity
+  let rawMin = Infinity
+  let rawMax = -Infinity
   series.forEach((s) => s.points.forEach((p) => {
     if (Number.isFinite(p.v)) {
-      minV = Math.min(minV, p.v)
-      maxV = Math.max(maxV, p.v)
+      rawMin = Math.min(rawMin, p.v)
+      rawMax = Math.max(rawMax, p.v)
     }
   }))
-  if (!Number.isFinite(minV)) return ''
-  if (chart.unit === '%' && minV >= 0 && maxV <= 100) {
-    minV = 0
-    maxV = 100
-  } else if (maxV === minV) {
-    maxV = minV + 1
-    minV = Math.max(0, minV - 1)
-  }
+  if (!Number.isFinite(rawMin)) return ''
+  const { min: minV, max: maxV } = niceYDomain(rawMin, rawMax, chart.unit || '')
+  const ySpan = Math.max(1e-9, maxV - minV)
   const xOf = (t: string) => pad.l + ((new Date(t).getTime() - first) / span) * iw
-  const yOf = (v: number) => pad.t + (1 - (v - minV) / (maxV - minV)) * ih
+  const yOf = (v: number) => pad.t + (1 - (v - minV) / ySpan) * ih
   const paths = series.map((s, i) => {
     const pts = [...s.points].sort((a, b) => a.t.localeCompare(b.t))
     const d = pts.map((p, idx) => `${idx ? 'L' : 'M'}${xOf(p.t).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(' ')
     const color = CHART_COLORS[i % CHART_COLORS.length]
-    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`
   }).join('')
-  const ticks = [0, 0.5, 1].map((f) => {
-    const t = new Date(first + span * f).toISOString()
-    const x = pad.l + f * iw
-    return `<text x="${x}" y="${h - 10}" text-anchor="middle" font-size="10" fill="#475569">${esc(formatTick(t, span))}</text>`
+  const xTimes = niceTimeTicks(first, last)
+  const ticks = xTimes.map((ms, i) => {
+    const x = xOf(new Date(ms).toISOString())
+    const anchor = i === 0 ? 'start' : i === xTimes.length - 1 ? 'end' : 'middle'
+    return `<line x1="${x.toFixed(1)}" y1="${pad.t}" x2="${x.toFixed(1)}" y2="${pad.t + ih}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="${x.toFixed(1)}" y="${pad.t + ih + 18}" text-anchor="${anchor}" font-size="11" fill="#334155">${esc(formatTick(new Date(ms).toISOString(), span))}</text>`
   }).join('')
-  const yTicks = [maxV, (maxV + minV) / 2, minV].map((v, i) => {
-    const y = pad.t + (i / 2) * ih
-    return `<text x="${pad.l - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#475569">${esc(formatVal(v, chart.unit))}</text>
-      <line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#e2e8f0"/>`
+  const yTickCount = 5
+  const yTicks = Array.from({ length: yTickCount }, (_, i) => {
+    const f = i / (yTickCount - 1)
+    const v = maxV - f * ySpan
+    const y = pad.t + f * ih
+    return `<text x="${pad.l - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="#334155">${esc(formatVal(v, chart.unit))}</text>
+      <line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#e2e8f0" stroke-width="1"/>`
+  }).join('')
+  const legend = series.map((s, i) => {
+    const color = CHART_COLORS[i % CHART_COLORS.length]
+    const col = i % 2
+    const row = Math.floor(i / 2)
+    const x = pad.l + col * (iw / 2)
+    const y = pad.t + ih + 38 + row * 18
+    const name = (s.label || s.metric_name || `seri-${i + 1}`).slice(0, 40)
+    const st = seriesStats([...s.points].sort((a, b) => a.t.localeCompare(b.t)))
+    const line = st
+      ? `${name}  ${formatVal(st.min, chart.unit)}–${formatVal(st.max, chart.unit)} · son ${formatVal(st.last, chart.unit)}`
+      : name
+    return `<rect x="${x}" y="${y - 8}" width="12" height="3" rx="1" fill="${color}"/>
+      <text x="${x + 18}" y="${y}" font-size="11" fill="#0f172a">${esc(line)}</text>`
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;background:#fff">
-    <text x="${pad.l}" y="16" font-size="12" font-weight="600" fill="#0f172a">${esc(chart.title)}</text>
-    ${yTicks}${paths}${ticks}
+    <text x="${pad.l}" y="20" font-size="13" font-weight="600" fill="#0f172a">${esc(chart.title)}</text>
+    ${yTicks}${paths}${ticks}${legend}
   </svg>`
 }
 

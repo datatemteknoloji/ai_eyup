@@ -1,7 +1,8 @@
 """Sohbet zaman serisi grafikleri — modül SoT → ChatChartPayload (Recharts).
 
 Linux/Windows: Timescale `metric_data` (Prom scrape kopyası); boşsa salt okunur
-Prometheus query_range. Canlı SSH/WinRM geçmiş eğri üretmez.
+Prometheus query_range. Linux: envanterde olmayan scrape hedefleri de
+`up` map + instance etiketi ile çizilir (Canlı Metrikler ile aynı çözümleme).
 Virt: vCenter Timescale (`query_series`) — Prometheus karışmaz.
 Aynı birim = tek grafik, çok seri (çapraz overlay, en fazla 8 nesne).
 Farklı birim (CPU % × bellek %) = ayrı grafikler.
@@ -9,6 +10,8 @@ Farklı birim (CPU % × bellek %) = ayrı grafikler.
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -162,6 +165,9 @@ def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict
     for group, keywords in list(_GROUP_KEYWORDS.items()) + list(_EXTRA_GROUP_KEYWORDS.items()):
         if any(kw in ml for kw in keywords) and group not in groups:
             groups.append(group)
+    # "I/O" / "IO" → disk_io (disk kullanım % değil; okuma/yazma)
+    if re.search(r"(?<![a-z0-9])i/?o(?![a-z0-9])", ml) and "disk_io" not in groups:
+        groups.append("disk_io")
 
     if hours is None and not groups and not explicit:
         return None
@@ -222,6 +228,33 @@ def _cap_servers(servers: Sequence[Server]) -> List[Server]:
     return out
 
 
+@dataclass
+class ChartHost:
+    """Linux grafik hedefi — envanter Server ve/veya Prometheus instance."""
+    name: str
+    instance: Optional[str] = None
+    server: Optional[Server] = None
+
+    @property
+    def key(self) -> str:
+        if self.server is not None and getattr(self.server, "id", None) is not None:
+            return f"srv:{self.server.id}"
+        return f"prom:{self.instance or self.name}"
+
+
+# Timescale / METRICS_TO_SYNC adı → Canlı Metrikler preset anahtarı
+_METRIC_TO_PRESET: Dict[str, str] = {
+    "cpu_usage_percent": "cpu",
+    "memory_usage_percent": "memory",
+    "disk_root_usage_percent": "disk",
+    "network_rx_bytes_per_sec": "net_rx",
+    "network_tx_bytes_per_sec": "net_tx",
+    "load1": "load",
+    "disk_read_bytes_per_sec": "disk_read",
+    "disk_write_bytes_per_sec": "disk_write",
+}
+
+
 def resolve_os_targets(
     message: str,
     *,
@@ -245,6 +278,94 @@ def resolve_os_targets(
         if len(hits) >= MAX_CHART_OBJECTS:
             break
     return _cap_servers(hits)
+
+
+def _display_name_for_instance(instance: str) -> str:
+    host = (instance or "").rsplit(":", 1)[0]
+    return host.split(".")[0] if host else instance
+
+
+def _server_matches_instance(server: Server, instance: str) -> bool:
+    host = (instance or "").rsplit(":", 1)[0].lower()
+    short = host.split(".")[0]
+    for cand in (server.name, server.hostname, getattr(server, "vm_name", None), server.ip_address):
+        if not cand:
+            continue
+        c = str(cand).strip().lower()
+        if c == host or c == short or host.startswith(c + ".") or c.split(".")[0] == short:
+            return True
+    return False
+
+
+def resolve_linux_chart_hosts(
+    message: str,
+    *,
+    selected: Optional[Sequence[Server]] = None,
+    pool: Optional[Sequence[Server]] = None,
+) -> List[ChartHost]:
+    """Envanter + Prometheus scrape hedefleri (Canlı Metrikler çözümlemesi)."""
+    from app.services.monitoring.prometheus_metrics import (
+        get_node_exporter_up_map,
+        match_prometheus_instance,
+        resolve_prometheus_instances_from_message,
+    )
+
+    up_map: Dict[str, str] = {}
+    try:
+        up_map = get_node_exporter_up_map() or {}
+    except Exception as exc:
+        logger.debug("chat_charts up_map: %s", exc)
+
+    out: List[ChartHost] = []
+    seen: set = set()
+
+    def _add(host: ChartHost) -> None:
+        if host.key in seen:
+            return
+        seen.add(host.key)
+        out.append(host)
+
+    if selected:
+        for s in _cap_servers(selected):
+            inst = None
+            if up_map:
+                inst, _up = match_prometheus_instance(
+                    up_map,
+                    ip=s.ip_address,
+                    hostname=s.hostname,
+                    name=s.name,
+                )
+            if not inst and s.ip_address:
+                inst = f"{s.ip_address}:9100"
+            _add(ChartHost(name=s.name or s.hostname or s.ip_address or "?", instance=inst, server=s))
+        return out
+
+    pool_list = list(pool or [])
+    inv = resolve_os_targets(message, pool=pool_list)
+    named = resolve_prometheus_instances_from_message(message, up_map) if up_map else []
+
+    # Prometheus instance öncelikli — envanter eşleşmesi varsa Server bağla
+    for inst in named:
+        matched = next((s for s in pool_list if _server_matches_instance(s, inst)), None)
+        label = (matched.name if matched else None) or _display_name_for_instance(inst)
+        _add(ChartHost(name=label, instance=inst, server=matched))
+        if len(out) >= MAX_CHART_OBJECTS:
+            return out
+
+    for s in inv:
+        if any(h.server is not None and h.server.id == s.id for h in out):
+            continue
+        inst = None
+        if up_map:
+            inst, _up = match_prometheus_instance(
+                up_map, ip=s.ip_address, hostname=s.hostname, name=s.name,
+            )
+        if not inst and s.ip_address:
+            inst = f"{s.ip_address}:9100"
+        _add(ChartHost(name=s.name or "?", instance=inst, server=s))
+        if len(out) >= MAX_CHART_OBJECTS:
+            break
+    return out
 
 
 def _virt_inventory_names(db: Session, kind: str) -> List[str]:
@@ -276,6 +397,101 @@ def _virt_inventory_refs(db: Session, kind: str) -> List[tuple]:
     except Exception as exc:
         logger.warning("chat_charts virt inventory: %s", exc)
         return []
+
+
+def _prom_query_range_instance(
+    instance: str,
+    metric_name: str,
+    hours: float,
+    *,
+    kind: str = "linux",
+) -> List[Dict[str, Any]]:
+    """Salt okunur query_range — scrape / prometheus.yml değişmez. Instance birebir."""
+    try:
+        import httpx
+        from app.core.config import settings
+        from app.services.monitoring.prometheus_metrics import (
+            linux_live_preset_queries,
+            linux_promql_selector,
+        )
+    except Exception:
+        return []
+
+    url = (getattr(settings, "PROMETHEUS_URL", None) or "").rstrip("/")
+    if not url or not instance:
+        return []
+    if kind != "linux":
+        return []
+    preset = _METRIC_TO_PRESET.get(metric_name)
+    if not preset:
+        return []
+    selector = linux_promql_selector([instance])
+    query = linux_live_preset_queries(selector).get(preset)
+    if not query:
+        return []
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=hours)
+    step = max(15, int(hours * 3600 / MAX_POINTS_PER_SERIES))
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            resp = client.get(
+                f"{url}/api/v1/query_range",
+                params={
+                    "query": query,
+                    "start": start.timestamp(),
+                    "end": end.timestamp(),
+                    "step": step,
+                },
+            )
+        if resp.status_code != 200:
+            return []
+        payload = resp.json()
+        if payload.get("status") != "success":
+            return []
+        results = (payload.get("data") or {}).get("result") or []
+        if not results:
+            return []
+        values = results[0].get("values") or []
+        points = []
+        for ts, val in values:
+            try:
+                points.append({
+                    "t": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(),
+                    "v": round(float(val), 3),
+                })
+            except (TypeError, ValueError):
+                continue
+        return _downsample(points, MAX_POINTS_PER_SERIES)
+    except Exception as exc:
+        logger.debug("chat_charts prom instance: %s", exc)
+        return []
+
+
+def _resolve_server_instance(server: Server) -> Optional[str]:
+    try:
+        from app.services.monitoring.prometheus_metrics import (
+            get_node_exporter_up_map,
+            match_prometheus_instance,
+        )
+        from app.services.platform_scope import is_windows_server
+        from app.services.monitoring.prometheus_metrics import WINDOWS_EXPORTER_PORT
+    except Exception:
+        return f"{server.ip_address}:9100" if server.ip_address else None
+    try:
+        win = is_windows_server(server)
+    except Exception:
+        win = False
+    port = WINDOWS_EXPORTER_PORT if win else 9100
+    try:
+        up_map = get_node_exporter_up_map() or {}
+        inst, _up = match_prometheus_instance(
+            up_map, ip=server.ip_address, hostname=server.hostname, name=server.name,
+        )
+        if inst:
+            return inst
+    except Exception:
+        pass
+    return f"{server.ip_address}:{port}" if server.ip_address else None
 
 
 def _fetch_os_points(
@@ -314,78 +530,26 @@ def _fetch_os_points(
         points = [{"t": ts.isoformat(), "v": round(float(val), 3)} for ts, val in rows]
         return _downsample(points, MAX_POINTS_PER_SERIES), src
     if allow_prom:
-        promo = _prom_query_range_points(server, metric_name, max(hours, 8.0))
-        if promo:
-            return promo, "prometheus"
+        inst = _resolve_server_instance(server)
+        if inst:
+            promo = _prom_query_range_instance(inst, metric_name, max(hours, 8.0))
+            if promo:
+                return promo, "prometheus"
     return [], "none"
 
 
-def _prom_query_range_points(
-    server: Server,
+def _fetch_host_points(
+    db: Session,
+    host: ChartHost,
     metric_name: str,
     hours: float,
-) -> List[Dict[str, Any]]:
-    """Salt okunur query_range — scrape / prometheus.yml değişmez."""
-    try:
-        import httpx
-        from app.core.config import apply_promql_job, settings
-        from app.services.metric_sync import METRICS_TO_SYNC, WINDOWS_METRICS_TO_SYNC
-        from app.services.monitoring.prometheus_metrics import WINDOWS_EXPORTER_PORT
-        from app.services.platform_scope import is_windows_server
-    except Exception:
-        return []
-
-    url = (getattr(settings, "PROMETHEUS_URL", None) or "").rstrip("/")
-    if not url or not server.ip_address:
-        return []
-    win = False
-    try:
-        win = is_windows_server(server)
-    except Exception:
-        win = False
-    catalog = WINDOWS_METRICS_TO_SYNC if win else METRICS_TO_SYNC
-    template = next((t for t, name, _u, _c in catalog if name == metric_name), None)
-    if not template:
-        return []
-    port = WINDOWS_EXPORTER_PORT if win else 9100
-    instance = f"{server.ip_address}:{port}"
-    query = apply_promql_job(template.replace("{instance}", instance), kind="windows" if win else "linux")
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(hours=hours)
-    step = max(15, int(hours * 3600 / MAX_POINTS_PER_SERIES))
-    try:
-        with httpx.Client(timeout=8.0) as client:
-            resp = client.get(
-                f"{url}/api/v1/query_range",
-                params={
-                    "query": query,
-                    "start": start.timestamp(),
-                    "end": end.timestamp(),
-                    "step": step,
-                },
-            )
-        if resp.status_code != 200:
-            return []
-        payload = resp.json()
-        if payload.get("status") != "success":
-            return []
-        results = (payload.get("data") or {}).get("result") or []
-        if not results:
-            return []
-        values = results[0].get("values") or []
-        points = []
-        for ts, val in values:
-            try:
-                points.append({
-                    "t": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(),
-                    "v": round(float(val), 3),
-                })
-            except (TypeError, ValueError):
-                continue
-        return _downsample(points, MAX_POINTS_PER_SERIES)
-    except Exception as exc:
-        logger.debug("chat_charts prom fallback: %s", exc)
-        return []
+) -> Tuple[List[Dict[str, Any]], str]:
+    if host.server is not None:
+        return _fetch_os_points(db, host.server, metric_name, hours, allow_prom=True)
+    if host.instance:
+        pts = _prom_query_range_instance(host.instance, metric_name, max(hours, 8.0))
+        return (pts, "prometheus") if pts else ([], "none")
+    return [], "none"
 
 
 def _build_os_charts(
@@ -394,9 +558,26 @@ def _build_os_charts(
     hours: float,
     groups: Sequence[str],
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    hosts = [
+        ChartHost(
+            name=s.name or "?",
+            instance=_resolve_server_instance(s),
+            server=s,
+        )
+        for s in servers
+    ]
+    return _build_linux_charts(db, hosts, hours, groups)
+
+
+def _build_linux_charts(
+    db: Session,
+    hosts: Sequence[ChartHost],
+    hours: float,
+    groups: Sequence[str],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     charts: List[Dict[str, Any]] = []
     sources: List[str] = []
-    multi = len(servers) > 1
+    multi = len(hosts) > 1
     hours_label = _format_duration_label(hours)
     for group in groups:
         specs = METRIC_GROUPS.get(group)
@@ -404,16 +585,16 @@ def _build_os_charts(
             continue
         unit = specs[0][2]
         series: List[Dict[str, Any]] = []
-        for server in servers:
+        for host in hosts:
             for metric_name, label, _unit in specs:
-                points, src = _fetch_os_points(db, server, metric_name, hours)
+                points, src = _fetch_host_points(db, host, metric_name, hours)
                 if src != "none" and src not in sources:
                     sources.append(src)
                 if not points:
                     continue
-                series_label = f"{server.name} — {label}" if multi else label
+                series_label = f"{host.name} — {label}" if multi else label
                 series.append({
-                    "metric_name": f"{server.id}:{metric_name}",
+                    "metric_name": f"{host.key}:{metric_name}",
                     "label": series_label,
                     "points": points,
                 })
@@ -421,13 +602,14 @@ def _build_os_charts(
             continue
         title = f"{_OS_GROUP_TITLE.get(group, group)} — Son {hours_label}"
         if multi:
-            title = f"{title} ({len(servers)} sunucu)"
+            title = f"{title} ({len(hosts)} sunucu)"
+        srv0 = hosts[0].server if len(hosts) == 1 else None
         charts.append({
             "type": "timeseries",
             "title": title,
             "unit": unit,
-            "server_id": servers[0].id if len(servers) == 1 else None,
-            "server_name": servers[0].name if len(servers) == 1 else None,
+            "server_id": srv0.id if srv0 is not None else None,
+            "server_name": hosts[0].name if len(hosts) == 1 else None,
             "series": series,
         })
     return charts, sources
@@ -620,25 +802,52 @@ def try_build_chat_charts(
                     "intents": ["chart", "openshift"],
                 }
             return None
-        targets = resolve_os_targets(message, selected=servers, pool=pool)
-        if not targets:
-            if explicit:
-                return {
-                    "summary_text": (
-                        "Grafik için sunucu adı yazın veya listeden seçin "
-                        f"(en fazla {MAX_CHART_OBJECTS}). "
-                        "Örnek: `web01 ve web02 son 1 saat CPU /grafik`."
-                    ),
-                    "charts": [],
-                    "intents": ["chart", plat],
-                }
-            return None
-        if plat == "exadata":
-            notes.append("_Exadata cell/ASM canlı metrik yok; linked compute host Timescale serisi kullanılır._")
-        charts, sources = _build_os_charts(db, targets, hours, groups)
-        title = ", ".join(s.name for s in targets)
-        if not charts:
-            missing = [s.name for s in targets]
+        use_prom_hosts = plat in ("linux", "unified", "")
+        if use_prom_hosts:
+            hosts = resolve_linux_chart_hosts(
+                message,
+                selected=servers if servers else None,
+                pool=pool,
+            )
+            if not hosts:
+                if explicit:
+                    return {
+                        "summary_text": (
+                            "Grafik için sunucu adı yazın (Linux envanteri veya "
+                            "Prometheus'ta scrape edilen hostname) "
+                            f"(en fazla {MAX_CHART_OBJECTS}). "
+                            "Örnek: `web01 ve web02 son 1 saat CPU /grafik`."
+                        ),
+                        "charts": [],
+                        "intents": ["chart", plat],
+                    }
+                return None
+            charts, sources = _build_linux_charts(db, hosts, hours, groups)
+            title = ", ".join(h.name for h in hosts)
+            if not charts:
+                missing = [h.name for h in hosts]
+            if any(h.server is None and h.instance for h in hosts):
+                notes.append("_Kaynak: Prometheus scrape (envanter kaydı gerekmez)._")
+        else:
+            targets = resolve_os_targets(message, selected=servers, pool=pool)
+            if not targets:
+                if explicit:
+                    return {
+                        "summary_text": (
+                            "Grafik için sunucu adı yazın veya listeden seçin "
+                            f"(en fazla {MAX_CHART_OBJECTS}). "
+                            "Örnek: `web01 ve web02 son 1 saat CPU /grafik`."
+                        ),
+                        "charts": [],
+                        "intents": ["chart", plat],
+                    }
+                return None
+            if plat == "exadata":
+                notes.append("_Exadata cell/ASM canlı metrik yok; linked compute host Timescale serisi kullanılır._")
+            charts, sources = _build_os_charts(db, targets, hours, groups)
+            title = ", ".join(s.name for s in targets)
+            if not charts:
+                missing = [s.name for s in targets]
 
     if not charts and not explicit:
         return None

@@ -68,6 +68,12 @@ def test_cpu_preset_uses_avg_by_instance_and_single_selector():
     assert "node_disk_read_bytes_total" in q["disk_read"]
 
 
+def test_intent_io_maps_to_disk_family():
+    intent = parse_prom_chat_intent("carddrcdb01 için cpu, memory ve I/O")
+    assert intent["depth"] == "preset"
+    assert intent["families"] == {"cpu", "memory", "disk"}
+
+
 def test_intent_short_metric_is_preset_family():
     intent = parse_prom_chat_intent("cpu ve ram getir")
     assert intent["depth"] == "preset"

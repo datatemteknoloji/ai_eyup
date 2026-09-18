@@ -11,6 +11,16 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Sohbet grafikleri
+- Prometheus’ta olup envanterde olmayan Linux host’lar `/graph` ile çizilir; instance eşlemesi FQDN ile birebir.
+- “I/O” disk okuma/yazma serisine gider; disk doluluk yüzdesi ile karışmaz.
+
+### Sohbet PDF ve grafik ölçeği
+- PDF lejantında seri adı, min–max ve son değer yazar.
+- Düşük yüzde serilerinde Y ekseni 0–100’e sabitlenmez; dalga okunur. Geniş kullanımda 0–100 kalır.
+- 12 saatlik pencerede saat ekseni yaklaşık saatliktir; dikey ızgara dalgayı saate bağlar.
+- Sohbet silinince veya temizlenince akan yanıt iptal edilir (Linux, Windows, Unified, Virt).
+
 ## [1.0.9.36] - 2026-09-14
 
 ### Sanallaştırma — çoklu vCenter

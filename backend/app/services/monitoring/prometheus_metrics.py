@@ -147,7 +147,7 @@ _METRIC_STOPWORDS = {
 _FAMILY_KEYWORDS = {
     "cpu": ("cpu",),
     "memory": ("ram", "memory", "bellek", "swap"),
-    "disk": ("disk",),
+    "disk": ("disk", "i/o", "ı/o", "diskio", "disk io", "disk i/o"),
     "network": ("network", "ağ", "ag", "trafik", "traffic", "bandwidth", "rx", "tx"),
     "load": ("load", "yük", "yuk"),
 }
@@ -275,6 +275,9 @@ def parse_prom_chat_intent(message: str) -> Dict[str, Any]:
     """Soru → aileler + derinlik (preset | family | all_node)."""
     ml = (message or "").lower()
     families = {fam for fam, kws in _FAMILY_KEYWORDS.items() if any(k in ml for k in kws)}
+    # "I/O" / "IO" (slash olmadan) → disk; "option" gibi kelimelerde yanlış pozitif olmasın
+    if re.search(r"(?<![a-z0-9])i/?o(?![a-z0-9])", ml):
+        families.add("disk")
     all_node = any(
         k in ml
         for k in (

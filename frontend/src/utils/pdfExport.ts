@@ -249,7 +249,10 @@ function writePrintDocument(
     }
     hr { border: none; border-top: 1px solid #e5e7eb; margin: 18px 0; }
     .chat-pdf-chart, .chat-pdf-diagram { margin: 12px 0; page-break-inside: avoid; }
-    .chat-pdf-chart svg, .chat-pdf-diagram svg { max-width: 100%; height: auto; }
+    .chat-pdf-chart svg, .chat-pdf-diagram svg {
+      max-width: 100%; height: auto; display: block;
+      shape-rendering: geometricPrecision; text-rendering: geometricPrecision;
+    }
     .no-print { display: none; }
 
     @media print {
