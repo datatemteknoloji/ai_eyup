@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.37] - 2026-09-18
+
 ### Sohbet grafikleri
 - Prometheus’ta olup envanterde olmayan Linux host’lar `/graph` ile çizilir; instance eşlemesi FQDN ile birebir.
 - “I/O” disk okuma/yazma serisine gider; disk doluluk yüzdesi ile karışmaz.
