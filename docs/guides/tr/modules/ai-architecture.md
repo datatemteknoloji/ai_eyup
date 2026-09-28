@@ -63,7 +63,7 @@ Ayarlar → Hakkında → **AI Mimari** bu metni PDF yapar. Kural ile kod çeli�
 | Full Scan Policy | `chat_full_scan_policy.py` | `resolve_full_scan_turn` | Tam filo onayı | session+mesaj | clarify/decline/confirm | Keyword + session state |
 | Chitchat Policy | `chat_chitchat_policy.py` | `canned_chitchat_answer` | Selamlaşma, LLM yok | mesaj | sabit metin | Keyword |
 | Output Directives | `chat_output_directives.py` | `extract_output_directive` | `/table` `/json` `/brief` `/diagram` `/graph` | mesaj | directive | Regex (her yerde); `/graph` `/grafik` `/chart` = Recharts (`chat_charts`) |
-| Chat Charts | `chat_charts.py` | `try_build_chat_charts` | Sohbet zaman serisi + çapraz overlay | mesaj, platform, hedefler | `meta.charts` + özet | Timescale / Prom query_range / virt `query_series`; max 8; birim ayrımı |
+| Chat Charts | `chat_charts.py` | `try_build_chat_charts` | Sohbet zaman serisi + çapraz overlay | mesaj, platform, hedefler | `meta.charts` + özet | Timescale / Prom query_range / virt `query_series` / OCP `ocp_resource_metrics`; max 8; birim ayrımı; **Top-N**: isim yoksa `en yüksek/top N` → rank sonra seri (linux/virt/ocp) |
 | Tool Policy | `chat_tool_policy.py` | `should_use_db_first` | İlk 2 adımda canlı vCenter gizle | platform/domains | bool | Hardcoded |
 
 ## 1.3 Tool / LLM / yanıt
@@ -178,7 +178,7 @@ User (UnifiedChat.tsx)
 
 **Önemli gerçek:** “Router → Context → Tool → LLM → Response” tahmini eksik. Sistemde **erken çıkışlar** (chitchat, cache, inventory, planning clarify, virt deterministic tablo) LLM’i tamamen atlar. Tool loop **bazen** final cevabı da kendisi üretir (`deterministic_answer`).
 
-Virt chat farklıdır: QA_RULES regex → handler (LLM yok) → yoksa report → yoksa `build_context` + LLM; yanında agentic tool loop kanıt ekler. Filo perf handler’ları `virt_fleet_perf` (Timescale son satır; canlı kelime veya boş kolon → QueryPerf). LLM dalında `virt_chat_rag` (runbook/incident; estate sayısı değil). Deterministik hit RAG almaz.
+Virt chat farklıdır: QA_RULES regex → handler (LLM yok) → yoksa report → yoksa `build_context` + LLM; yanında agentic tool loop kanıt ekler. Filo perf handler’ları `virt_fleet_perf` (Timescale son satır; canlı kelime veya boş kolon → QueryPerf). LLM dalında `virt_chat_rag` (runbook/incident; estate sayısı değil). Deterministik hit RAG almaz. Cluster HA/DRS / failover / hiyerarşi: `h_cluster_ha_drs` ve `h_inventory_hierarchy` önce `virt_clusters` + host metrikleri (`db_list_clusters`); canlı ClusterComputeResource yalnızca DB boşsa.
 
 Linux chat: admin router (inventory/direct_cmd) → keyword SSH/Prom → collect XOR agentic → prompt → LLM.
 
@@ -281,6 +281,8 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 | Prompt | `_PLATFORM_HINTS["openshift"]` |
 | RAG | Seed `OCP-*.md`; ayrı vektör namespace yok |
 | APIs | OpenShift/K8s + KubeVirt client. Ayrı `/openshift/ask` yok; sohbet `POST /chat/stream` + `platform=openshift` |
+| Monitoring UI | `/openshift/monitoring` — API modu: Virt tarzı özet + overlay (`metrics.k8s.io` → Timescale `ocp_resource_metrics`). Prometheus modu (Ayarlar’da OpenShift binding URL varsa varsayılan): **Kubernetes Views** (Global / Namespaces / Nodes / Pods); kenarda GPU DCGM + `kubevirt_vmi_*` şablonları (`/monitoring/prom/*`, `ocp_prometheus_query`). Hub: `/monitoring`. Other (binding=none): çoklu kaynak + `collector_type` (prometheus\|telegraf\|opentelemetry\|zabbix); hub’da **label** listelenir (generic Other değil). Prom uyumlu → metrik gezgini; Zabbix kayıt+test (grafik/chat adaptörü sonraki faz). Unified chat: tam label → `custom_prometheus_query`. Linux `PROMETHEUS_URL` seed ayrı. Sohbet API: `ocp_monitoring_query`; Prom: `ocp_prometheus_query`. |
+| Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, subject arama, token can-i, OAuth IdP (READ-ONLY küme API). Sohbet: `ocp_access_query`. |
 | LLM | Tool JSON text |
 
 ## Exadata / Oracle
@@ -365,7 +367,7 @@ Virt DB tool domain: **yalnız `vcenter`** (`infra` yok). Linux/Windows-only pla
 | `db_list_vms` | servers/virt inventory | VM listesi + disks |
 | `db_vm_detail` | DB | Tek VM |
 | `db_list_datastores` | virt_datastores | Kapasite |
-| `db_list_esx_hosts` | host inventory+metrics | ESXi join |
+| `db_list_esx_hosts` | host inventory+metrics | ESXi join; **`cluster=`** ile vSphere cluster daraltma (zorunlu kapsam) |
 | `db_list_clusters` | virt_clusters | HA/DRS + `ha_verdict` |
 | `db_metric_trend` | Timescale virt metrics | Trend / days_to_threshold |
 | `virt_bottleneck_diagnose` | virt_vm_metrics + host | VM vs host kök neden |
@@ -396,6 +398,13 @@ Virt DB tool domain: **yalnız `vcenter`** (`infra` yok). Linux/Windows-only pla
 | `ocp_storage_overview` | PV/PVC/SC |
 | `ocp_network_overview` | NAD/Multus |
 | `ocp_resource_quota` | RQ/LR |
+| `ocp_monitoring_query` | Timescale CPU/Memory (overview/top/trend/series/cross) |
+| `ocp_prometheus_query` | OpenShift Prometheus — **Views** (global/ns/nodes/pods) / DCGM / kubevirt_vmi_* |
+| `ocp_access_query` | OpenShift Access/RBAC — Users/Groups/Roles/Bindings/IdP/can-i (READ-ONLY) |
+| `ocp_pod_logs` | Pod log okuma (CrashLoop teşhisi; READ-ONLY) |
+| `ocp_resource_yaml` | Kaynak YAML okuma (apply yok; READ-ONLY) |
+| `virt_prometheus_query` | VMware Prometheus (vmware_exporter) |
+| `custom_prometheus_query` | Other kaynak — Unified + tam label / source_id; collector_type prometheus/telegraf/otel→PromQL (+ kayıttaki job/extra_selectors); Zabbix sonraki faz |
 | `list_kubevirt_vms` / `kubevirt_vm_detail` / `kubevirt_snapshots` | KubeVirt |
 | `list_datavolumes` / `list_ocp_migrations` | CDI / LM |
 
@@ -436,6 +445,9 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 | Timescale virt/host metrics | CPU ready, latency, balloon | Periyodik collect | Zaman serisi | trend, bottleneck |
 | vCenter REST/SOAP | inventory, perf, snapshots, tasks | Canlı | Yapısal | live tools, prefetch |
 | OpenShift/K8s/KubeVirt API | pod, event, VM, quota | Canlı | Yapısal | ocp/kubevirt tools |
+| OCP `metrics.k8s.io` | node/pod/vm anlık CPU+bellek | Canlı → Timescale örnek | Yapısal | Monitoring API modu + `ocp_monitoring_query` / `/grafik` |
+| OCP Prometheus | Kubernetes Views + DCGM + kubevirt_vmi_* | Canlı PromQL | Yapısal | Monitoring Prom modu + `ocp_prometheus_query` |
+| Other monitoring | Serbest kaynaklar (Prom ailesi / Zabbix kayıt) | Canlı PromQL (uyumlu) | Keşif + label | Hub label listesi + Unified `custom_prometheus_query` |
 | OCP DB cache | nodes/projects | Sync | Yapısal | db_list_ocp_* |
 | SSH | komut çıktısı | Canlı | Yarı yapısal | collector + get_* |
 | WinRM | PS/event | Canlı | Yarı yapısal | windows collect/tools |
@@ -502,7 +514,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 
 - `unified_chat` collection_summary: “canlı veri toplanamadı (zaman aşımı/bağlantı)”
 - LLM’in ürettiği “canlı veri mevcut değil” — `chat_coverage._NO_DATA_PATTERNS` bunu yakalar
-- Virt **ve Unified final**: evidence varken bu cümle gelirse ikinci LLM; olmazsa ham kanıt. Unified SSE `replace_answer`.
+- Virt **ve Unified final**: evidence varken bu cümle gelirse ikinci LLM; olmazsa ham kanıt. Unified SSE `replace_answer`. Ayrıca kanıtta olmayan IP uydurma ve host/cluster adını yok sayma (`chat_evidence.answer_invents_ips` / genişletilmiş `answer_ignores_evidence`) fallback tetikler.
 - Cache: “veri yok” cevapları cache’e yazılmaz / hit yok sayılır
 
 ---
@@ -993,6 +1005,8 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - History: 8 mesaj. Episode: Redis 45 dk.
 - Token budget runtime setting, default 32k.
 - Prometheus sohbet context’i tek JOIN tablosu; `prometheus.yml` değişmez.
+- OpenShift Monitoring (`/openshift/monitoring`): **API modu** kube API + `metrics.k8s.io` → Timescale; **Prometheus modu** bound OpenShift kaynağı — varsayılan Kubernetes Views (Global/NS/Nodes/Pods, Grafana parity), kenarda DCGM / kubevirt. Ana hub `/monitoring` modül + Other **label** listesi (collector_type). Other chat yalnız Unified + mesajda kayıtlı label (`custom_prometheus_query`; Views şablonu yok; Zabbix adaptörü sonraki faz). Scrape yazılmaz.
+- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY), `ocp_pod_logs` / `ocp_resource_yaml` (teşhis; apply yok), `virt_prometheus_query`, `custom_prometheus_query` (Other + collector_type).
 - Ayrı sohbetler: `/chat` (linux|openshift|exadata), `/windows-chat`, `/hypervisors/ask`, `/agent`, `/nlq`, `/rca`.
 
 # ASSUMPTIONS

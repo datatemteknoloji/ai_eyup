@@ -449,6 +449,212 @@ def cluster_overview_api(
     return result
 
 
+@router.get("/monitoring/overview")
+def ocp_monitoring_overview(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+):
+    """Cluster monitoring özeti — metrics.k8s.io → Timescale. Prometheus yok."""
+    from app.services.openshift.ocp_monitoring import build_overview
+    try:
+        return build_overview(db, cluster_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("ocp monitoring overview")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+@router.get("/monitoring/objects")
+def ocp_monitoring_objects(
+    cluster_id: int,
+    kind: str = "node",
+    q: str = "",
+    limit: int = 200,
+    db: Session = Depends(get_db),
+):
+    """Node / Pod / VM seçici."""
+    from app.services.openshift.ocp_monitoring import list_objects
+    try:
+        return list_objects(db, cluster_id=cluster_id, kind=kind, q=q, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("ocp monitoring objects")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+@router.get("/monitoring/metrics")
+def ocp_monitoring_metrics(kind: str = "node"):
+    """Grafik preset whitelist."""
+    from app.services.openshift.ocp_monitoring import metric_catalog
+    try:
+        return {"ok": True, "kind": kind, "metrics": metric_catalog(kind)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/monitoring/series")
+def ocp_monitoring_series(
+    cluster_id: int,
+    kind: str = "node",
+    names: str = "",
+    metric: str = "cpu_pct",
+    range: str = "8h",
+    db: Session = Depends(get_db),
+):
+    """Seçili nesnelerin Timescale serisi."""
+    from app.services.openshift.ocp_monitoring import parse_names, query_series
+    try:
+        return query_series(
+            db,
+            cluster_id=cluster_id,
+            kind=kind,
+            names=parse_names(names),
+            metric=metric,
+            range_key=range,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("ocp monitoring series")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+@router.post("/monitoring/sync")
+def ocp_monitoring_sync(
+    cluster_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """metrics.k8s.io örneklerini Timescale'e yaz (manuel tetik)."""
+    from app.services.openshift.ocp_monitoring import sync_all_ocp_monitoring_metrics, sync_cluster_metrics
+    try:
+        if cluster_id is not None:
+            cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
+            if not cluster:
+                raise HTTPException(status_code=404, detail="Cluster bulunamadı")
+            return {"ok": True, **sync_cluster_metrics(db, cluster)}
+        return {"ok": True, **sync_all_ocp_monitoring_metrics(db)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("ocp monitoring sync")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+# ── Prometheus mode (Kubernetes Views default · GPU · KubeVirt) ─────────────
+
+@router.get("/monitoring/prom/overview")
+def ocp_prom_overview(source_id: Optional[str] = None, db: Session = Depends(get_db)):
+    from app.services.openshift.ocp_prom_monitoring import overview
+    return overview(db, source_id=source_id)
+
+
+@router.get("/monitoring/prom/templates")
+def ocp_prom_templates():
+    from app.services.openshift.ocp_prom_monitoring import templates
+    return {"ok": True, "templates": templates()}
+
+
+@router.get("/monitoring/prom/catalog")
+def ocp_prom_catalog(family: Optional[str] = None):
+    from app.services.openshift.ocp_prom_monitoring import catalog
+    return {"ok": True, "metrics": catalog(family)}
+
+
+@router.get("/monitoring/prom/labels")
+def ocp_prom_labels(
+    kind: str = "namespace",
+    namespace: Optional[str] = None,
+    source_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.openshift.ocp_prom_monitoring import label_options
+    return label_options(kind, namespace=namespace, source_id=source_id, db=db)
+
+
+@router.get("/monitoring/prom/views")
+def ocp_prom_views(
+    view: str = "global",
+    range_sec: int = 900,
+    source_id: Optional[str] = None,
+    top_n: int = 6,
+    namespace: Optional[str] = None,
+    node: Optional[str] = None,
+    pod: Optional[str] = None,
+    instance: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.openshift.ocp_prom_monitoring import views_bundle
+    try:
+        return views_bundle(
+            view,
+            range_sec=range_sec,
+            source_id=source_id,
+            db=db,
+            top_n=top_n,
+            namespace=namespace,
+            node=node,
+            pod=pod,
+            instance=instance,
+        )
+    except Exception as e:
+        logger.exception("ocp monitoring views")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+@router.get("/monitoring/prom/allocation")
+def ocp_prom_allocation(source_id: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
+    from app.services.openshift.ocp_prom_monitoring import allocation_table
+    return allocation_table(db, source_id=source_id, limit=limit)
+
+
+@router.get("/monitoring/prom/series")
+def ocp_prom_series(
+    metric: str = "gpu_util",
+    range_sec: int = 900,
+    source_id: Optional[str] = None,
+    top_n: int = 8,
+    namespace: Optional[str] = None,
+    node: Optional[str] = None,
+    pod: Optional[str] = None,
+    instance: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.openshift.ocp_prom_monitoring import series
+    try:
+        return series(
+            metric,
+            range_sec=range_sec,
+            source_id=source_id,
+            db=db,
+            top_n=top_n,
+            namespace=namespace,
+            node=node,
+            pod=pod,
+            instance=instance,
+        )
+    except Exception as e:
+        logger.exception("ocp monitoring series")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
+@router.get("/clusters/{cluster_id}/monitoring")
+def cluster_monitoring_api(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+):
+    """Geriye uyumluluk — overview ile aynı."""
+    from app.services.openshift.ocp_monitoring import build_overview
+    try:
+        return build_overview(db, cluster_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("ocp monitoring error cluster_id=%s", cluster_id)
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+
+
 @router.get("/clusters/{cluster_id}/operators-health")
 def cluster_operators_health(cluster_id: int, db: Session = Depends(get_db)):
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
@@ -476,6 +682,146 @@ def cluster_storage(cluster_id: int, db: Session = Depends(get_db)):
         return cluster_ops.storage_overview(client)
     except Exception as e:
         logger.exception("storage error")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+# ── Access / RBAC (READ-ONLY) ─────────────────────────────────────────────────
+
+def _access_client(cluster_id: int, db: Session):
+    cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster bulunamadı")
+    from app.services.openshift import cluster_ops
+    return cluster, cluster_ops.client_from_cluster(cluster)
+
+
+@router.get("/clusters/{cluster_id}/access/overview")
+def access_overview(cluster_id: int, db: Session = Depends(get_db)):
+    """Users/Groups/Roles/Bindings sayıları + OAuth IdP + token yetki teşhisi."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import access_overview as _ov
+        return _ov(client)
+    except Exception as e:
+        logger.exception("access overview")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/list")
+def access_list(
+    cluster_id: int,
+    kind: str,
+    namespace: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    """kind=users|groups|identities|roles|clusterroles|rolebindings|clusterrolebindings|serviceaccounts"""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import list_access
+        out = list_access(client, kind, namespace=namespace, q=q, limit=limit)
+        if not out.get("ok") and out.get("error"):
+            # Yetki yok → 200 + ok:false (UI göstersin); cluster yok değil
+            return out
+        return out
+    except Exception as e:
+        logger.exception("access list")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/get")
+def access_get(
+    cluster_id: int,
+    kind: str,
+    name: str,
+    namespace: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import get_access
+        out = get_access(client, kind, name, namespace=namespace)
+        if not out.get("ok"):
+            raise HTTPException(status_code=404, detail=out.get("error") or "bulunamadı")
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("access get")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/subject")
+def access_subject(
+    cluster_id: int,
+    subject_kind: str = "User",
+    subject_name: str = "",
+    subject_namespace: Optional[str] = None,
+    namespace: Optional[str] = None,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    """User/Group/SA için RoleBinding + ClusterRoleBinding listesi."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import subject_bindings
+        return subject_bindings(
+            client,
+            subject_kind=subject_kind,
+            subject_name=subject_name,
+            subject_namespace=subject_namespace,
+            namespace=namespace,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.exception("access subject")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/can-i")
+def access_can_i(
+    cluster_id: int,
+    verb: str = "get",
+    resource: str = "pods",
+    api_group: str = "",
+    namespace: Optional[str] = None,
+    name: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Kayıtlı cluster token SelfSubjectAccessReview."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import self_can_i
+        return self_can_i(
+            client, verb=verb, resource=resource, api_group=api_group,
+            namespace=namespace, name=name,
+        )
+    except Exception as e:
+        logger.exception("access can-i")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/identity-providers")
+def access_identity_providers(cluster_id: int, db: Session = Depends(get_db)):
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import identity_providers
+        return identity_providers(client)
+    except Exception as e:
+        logger.exception("access idp")
         raise HTTPException(status_code=502, detail=str(e)[:300]) from e
     finally:
         client.logout()
@@ -1201,6 +1547,29 @@ def cluster_resources(
         client.logout()
 
 
+@router.get("/clusters/{cluster_id}/resource-detail")
+def cluster_resource_detail(
+    cluster_id: int,
+    kind: str,
+    name: str,
+    namespace: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Deployment/Pod/PVC/… Atlas tarzı detay (koşullar, env, pod’lar, olaylar)."""
+    cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster bulunamadı")
+    from app.services.openshift import cluster_ops
+    client = cluster_ops.client_from_cluster(cluster)
+    try:
+        detail = cluster_ops.resource_detail(client, kind, name, namespace=namespace)
+        if not detail:
+            raise HTTPException(status_code=404, detail="Kaynak bulunamadı veya yetki yok")
+        return detail
+    finally:
+        client.logout()
+
+
 @router.get("/clusters/{cluster_id}/resource-yaml")
 def cluster_resource_yaml(
     cluster_id: int,
@@ -1337,6 +1706,7 @@ def cluster_pod_logs(
     container: Optional[str] = None,
     tail: int = 300,
     previous: bool = False,
+    timestamps: bool = True,
     db: Session = Depends(get_db),
 ):
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
@@ -1346,10 +1716,245 @@ def cluster_pod_logs(
     client = cluster_ops.client_from_cluster(cluster)
     try:
         return cluster_ops.pod_logs(
-            client, namespace, pod, container=container, tail=tail, previous=previous,
+            client, namespace, pod,
+            container=container, tail=tail, previous=previous, timestamps=timestamps,
         )
     finally:
         client.logout()
+
+
+@router.websocket("/clusters/{cluster_id}/pods/{namespace}/{pod}/exec")
+async def cluster_pod_exec(
+    websocket: WebSocket,
+    cluster_id: int,
+    namespace: str,
+    pod: str,
+    token: str = "",
+    container: str = "",
+    shell: str = "/bin/sh",
+):
+    """Pod exec terminal — tarayıcı ↔ ainew ↔ kube API exec (Atlas protokolü).
+
+    JWT: ?token=  · Opsiyonel: container=
+    Upstream: v4.channel.k8s.io
+    Tarayıcı → {"type":"input","data":"..."} | {"type":"resize","cols":N,"rows":M}
+    Tarayıcı ← düz metin (stdout/stderr birleşik)
+    """
+    import asyncio
+    import json
+    import ssl
+    from urllib.parse import quote, urlencode, urlparse
+
+    import websockets
+    from app.core.database import ThreadSessionLocal as SessionLocal
+    from app.core.security import decode_access_token
+    from app.models.user import User
+    from app.services.hypervisor_credentials import plain
+    from app.services.openshift import cluster_ops
+
+    payload = decode_access_token(token) if token else None
+    if not payload:
+        await websocket.accept()
+        await websocket.send_text("\r\n\033[31mYetkilendirme hatası.\033[0m\r\n")
+        await websocket.close(code=4401)
+        return
+
+    db = SessionLocal()
+    upstream = None
+    try:
+        uid = payload.get("uid")
+        user = (
+            db.query(User).filter(User.id == uid, User.is_active == True).first()
+            if uid is not None
+            else None
+        )
+        if not user:
+            await websocket.accept()
+            await websocket.send_text("\r\n\033[31mKullanıcı bulunamadı.\033[0m\r\n")
+            await websocket.close(code=4401)
+            return
+
+        cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
+        if not cluster:
+            await websocket.accept()
+            await websocket.close(code=1011, reason="Cluster bulunamadı")
+            return
+
+        cc = cluster.connection_config or {}
+        ocp_token = plain(cc.get("token") or "")
+        if not ocp_token and cc.get("username") and cc.get("password"):
+            client = cluster_ops.client_from_cluster(cluster)
+            ocp_token = client.token or ""
+            client.logout()
+        if not ocp_token:
+            await websocket.accept()
+            await websocket.send_text("\r\n\033[31mCluster token yok.\033[0m\r\n")
+            await websocket.close(code=1011)
+            return
+
+        # Container seçilmemişse pod detayından ilkini al
+        cont = (container or "").strip()
+        if not cont:
+            client = cluster_ops.client_from_cluster(cluster)
+            try:
+                detail = cluster_ops.pod_detail(client, namespace, pod) or {}
+                for c in (detail.get("containers") or []):
+                    if c.get("name"):
+                        cont = c["name"]
+                        break
+            finally:
+                client.logout()
+        if not cont:
+            await websocket.accept()
+            await websocket.send_text("\r\n\033[31mContainer bulunamadı.\033[0m\r\n")
+            await websocket.close(code=1011)
+            return
+
+        api_url = (cc.get("api_url") or cluster.api_url or "").rstrip("/")
+        from app.services.host_resolve import rewrite_url_host
+        resolved_api, _note, orig_host = rewrite_url_host(
+            api_url if "://" in api_url else f"https://{api_url}"
+        )
+        parsed = urlparse(resolved_api)
+        host = parsed.netloc or parsed.path
+        # Atlas: bash -l tercih, yoksa sh (prompt stderr'de kalsın)
+        qs = urlencode([
+            ("stdin", "true"),
+            ("stdout", "true"),
+            ("stderr", "true"),
+            ("tty", "true"),
+            ("container", cont),
+            ("command", "/bin/sh"),
+            ("command", "-c"),
+            ("command", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh"),
+        ])
+        exec_url = (
+            f"wss://{host}/api/v1/namespaces/{quote(namespace, safe='')}"
+            f"/pods/{quote(pod, safe='')}/exec?{qs}"
+        )
+        verify_ssl = bool(cc.get("verify_ssl", False))
+        ssl_ctx = ssl.create_default_context()
+        if not verify_ssl:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        await websocket.accept()
+        await websocket.send_text(
+            f"\033[90mBağlanılıyor: {namespace}/{pod} · {cont}\033[0m\r\n"
+        )
+
+        ws_headers = {"Authorization": f"Bearer {ocp_token}"}
+        if orig_host:
+            ws_headers["Host"] = orig_host
+        try:
+            try:
+                upstream = await websockets.connect(
+                    exec_url,
+                    ssl=ssl_ctx,
+                    additional_headers=ws_headers,
+                    subprotocols=["v4.channel.k8s.io", "v3.channel.k8s.io", "v2.channel.k8s.io"],
+                    max_size=8 * 1024 * 1024,
+                )
+            except TypeError:
+                upstream = await websockets.connect(
+                    exec_url,
+                    ssl=ssl_ctx,
+                    extra_headers=ws_headers,
+                    subprotocols=["v4.channel.k8s.io", "v3.channel.k8s.io", "v2.channel.k8s.io"],
+                    max_size=8 * 1024 * 1024,
+                )
+        except Exception as e:
+            await websocket.send_text(f"\r\n\033[31mExec bağlantı hatası: {e}\033[0m\r\n")
+            await websocket.close()
+            return
+
+        async def pump_up():
+            """kube → browser: stdout/stderr düz metin (Atlas)."""
+            try:
+                async for message in upstream:
+                    raw = message if isinstance(message, (bytes, bytearray)) else str(message).encode()
+                    if not raw:
+                        continue
+                    channel, data = raw[0], raw[1:]
+                    if channel in (1, 2) and data:  # stdout / stderr
+                        await websocket.send_text(data.decode("utf-8", errors="replace"))
+                    elif channel == 3 and data:  # error
+                        try:
+                            err = json.loads(data.decode("utf-8", errors="replace"))
+                            if err.get("status") != "Success":
+                                await websocket.send_text(
+                                    f"\r\n[oturum sonlandı: {err.get('message', 'bilinmeyen')}]\r\n"
+                                )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        async def pump_down():
+            """browser → kube: {"type":"input"|"resize", ...} (Atlas JSON)."""
+            try:
+                while True:
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    raw_text = msg.get("text")
+                    raw_bytes = msg.get("bytes")
+                    if raw_text is not None:
+                        try:
+                            payload = json.loads(raw_text)
+                        except Exception:
+                            # düz metin → stdin (geriye uyum)
+                            await upstream.send(b"\x00" + raw_text.encode("utf-8", errors="replace"))
+                            continue
+                        if payload.get("type") == "input":
+                            data = (payload.get("data") or "").encode("utf-8", errors="replace")
+                            await upstream.send(b"\x00" + data)
+                        elif payload.get("type") == "resize":
+                            dims = json.dumps({
+                                "Width": int(payload.get("cols", 80)),
+                                "Height": int(payload.get("rows", 24)),
+                            }).encode()
+                            await upstream.send(b"\x04" + dims)
+                    elif raw_bytes is not None:
+                        raw = bytes(raw_bytes)
+                        if raw.startswith(b"\x01") and b"," in raw[1:]:
+                            try:
+                                dims = raw[1:].decode("ascii", errors="ignore")
+                                cols_s, rows_s = dims.split(",", 1)
+                                payload_r = json.dumps({
+                                    "Width": int(cols_s),
+                                    "Height": int(rows_s),
+                                }).encode()
+                                await upstream.send(b"\x04" + payload_r)
+                            except Exception:
+                                await upstream.send(b"\x00" + raw)
+                        else:
+                            await upstream.send(b"\x00" + raw)
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+
+        t1 = asyncio.create_task(pump_up())
+        t2 = asyncio.create_task(pump_down())
+        _d, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("pod exec error")
+    finally:
+        db.close()
+        if upstream is not None:
+            try:
+                await upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.get("/nodes")

@@ -75,6 +75,30 @@ const PLATFORM_COLOR: Record<string, string> = {
   kvm: 'from-orange-600/20 to-amber-600/10 border-orange-500/30',
   hyperv: 'from-blue-600/20 to-cyan-600/10 border-blue-500/30',
   proxmox: 'from-red-600/20 to-orange-600/10 border-red-500/30',
+  openshift_virt: 'from-rose-600/20 to-red-700/10 border-rose-500/35',
+}
+
+function PlatformTypeIcon({ type }: { type: string }) {
+  if (type === 'vmware') {
+    return (
+      <img src="/assets/logos/vmware-logo.svg" alt="" className="w-6 h-6 object-contain" />
+    )
+  }
+  if (type === 'openshift_virt') {
+    return (
+      <img src="/assets/logos/redhat-logo.png" alt="" className="w-7 h-7 object-contain" />
+    )
+  }
+  if (type === 'kvm') {
+    return <Server size={18} className="text-orange-300" />
+  }
+  if (type === 'hyperv') {
+    return <Layers size={18} className="text-sky-300" />
+  }
+  if (type === 'proxmox') {
+    return <HardDrive size={18} className="text-orange-400" />
+  }
+  return <Cloud size={18} className="text-slate-200" />
 }
 
 function relTime(iso: string | null, t: (key: TranslationKey, vars?: Record<string, string | number>) => string): string {
@@ -110,8 +134,8 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
     <div className={`rounded-xl border bg-gradient-to-br p-4 w-[min(100%,320px)] min-w-[280px] flex-shrink-0 ${style}`}>
       <div className="flex items-start justify-between mb-3 gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center flex-shrink-0">
-            <Cloud size={18} className="text-white" />
+          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-white/10 flex items-center justify-center flex-shrink-0">
+            <PlatformTypeIcon type={p.type} />
           </div>
           <div className="min-w-0">
             <div className="text-white font-semibold truncate">{p.name}</div>

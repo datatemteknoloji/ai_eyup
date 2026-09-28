@@ -44,8 +44,8 @@ function ClusterCard({ c }: { c: ClusterSummary }) {
     }`}>
       <div className="flex items-start justify-between mb-3 gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center flex-shrink-0">
-            <Boxes size={18} className="text-white" />
+          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-rose-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+            <img src="/assets/logos/redhat-logo.png" alt="" className="w-7 h-7 object-contain" />
           </div>
           <div className="min-w-0">
             <div className="text-white font-semibold truncate">{c.name}</div>

@@ -167,9 +167,42 @@ def run_esx_metric_sync() -> Dict[str, Any]:
             if not ok:
                 return {"skipped": True}
             logger.info("Celery fleet: ESX metric sync")
-            return sync_esx_metrics(db) or {}
+            result = sync_esx_metrics(db) or {}
+            try:
+                from app.services.openshift_virt_host_metrics import sync_openshift_virt_host_metrics
+                ocp = sync_openshift_virt_host_metrics(db) or {}
+                result["openshift_virt"] = ocp
+            except Exception as ocp_exc:
+                logger.warning("OpenShift Virt host metric sync atlandı: %s", ocp_exc)
+                result["openshift_virt"] = {"error": str(ocp_exc)}
+            try:
+                from app.services.openshift.ocp_monitoring import sync_all_ocp_monitoring_metrics
+                result["openshift_monitoring"] = sync_all_ocp_monitoring_metrics(db) or {}
+            except Exception as mon_exc:
+                logger.warning("OpenShift monitoring metric sync atlandı: %s", mon_exc)
+                result["openshift_monitoring"] = {"error": str(mon_exc)}
+            return result
     except Exception as exc:
         logger.exception("Celery ESX metric sync hata")
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
+def run_ocp_monitoring_sync() -> Dict[str, Any]:
+    """metrics.k8s.io örneklerini Timescale'e yaz — Monitoring grafikleri için geçmiş."""
+    from app.services.fleet_mutex import fleet_lock
+    from app.services.openshift.ocp_monitoring import sync_all_ocp_monitoring_metrics
+
+    db = _db()
+    try:
+        with fleet_lock("ocp_monitoring", ttl_sec=120) as ok:
+            if not ok:
+                return {"skipped": True}
+            logger.info("Celery fleet: OCP monitoring metric sync")
+            return sync_all_ocp_monitoring_metrics(db) or {}
+    except Exception as exc:
+        logger.exception("Celery OCP monitoring sync hata")
         return {"error": str(exc)}
     finally:
         db.close()

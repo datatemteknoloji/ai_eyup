@@ -113,8 +113,16 @@ def _server_list_item(
 
 
 def _name_mismatch_sql_filter():
-    """vm_name dolu ve normalize(short hostname) != normalize(vm_name)."""
-    short_hn = func.split_part(func.lower(func.coalesce(Server.hostname, "")), ".", 1)
+    """vm_name dolu ve normalize(short hostname) != normalize(vm_name).
+
+    Hostname kaynağı: Server.hostname (SSH / sync) veya vm_guest_hostname (Tools/agent).
+    """
+    effective_hn = func.coalesce(
+        func.nullif(func.trim(func.coalesce(Server.hostname, "")), ""),
+        func.nullif(func.trim(func.coalesce(Server.vm_guest_hostname, "")), ""),
+        "",
+    )
+    short_hn = func.split_part(func.lower(effective_hn), ".", 1)
     norm_hn = func.regexp_replace(short_hn, "[^a-z0-9]", "", "g")
     norm_vm = func.regexp_replace(
         func.lower(func.coalesce(Server.vm_name, "")), "[^a-z0-9]", "", "g"
@@ -123,7 +131,7 @@ def _name_mismatch_sql_filter():
         Server.vm_name.isnot(None),
         func.length(func.trim(Server.vm_name)) > 0,
         or_(
-            func.length(func.trim(func.coalesce(Server.hostname, ""))) == 0,
+            func.length(func.trim(effective_hn)) == 0,
             norm_hn != norm_vm,
         ),
     )
@@ -468,6 +476,7 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
                 _, raw, _ = ssh.execute_command("cat /etc/os-release 2>/dev/null")
                 info = _parse_os_release(raw)
                 _, k_out, _ = ssh.execute_command("uname -r")
+                _, hn_out, _ = ssh.execute_command("hostname -s 2>/dev/null || hostname")
                 _, cpu_out, _ = ssh.execute_command("nproc 2>/dev/null")
                 _, mem_out, _ = ssh.execute_command(
                     "free -g 2>/dev/null | awk '/^Mem:/{print $2}'"
@@ -490,6 +499,9 @@ def refresh_os_info(body: dict = None, db: Session = Depends(get_db)):
                     "os_type": info.get("ID") or snap["os_type"],
                     "kernel_version": k_out.strip() or None,
                 }
+                live_hn = (hn_out or "").strip().splitlines()[0].strip() if hn_out else ""
+                if live_hn:
+                    payload["hostname"] = live_hn[:255]
                 if cpu_out.strip().isdigit():
                     payload["cpu_cores"] = int(cpu_out.strip())
                 if mem_gb is not None and mem_gb >= 0:

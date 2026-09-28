@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search, FileDown } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search, FileDown, Trash2, PlugZap, X, Plus } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -130,6 +130,20 @@ interface GeneralSettings {
   pushgateway_url?: string
   prometheus_linux_jobs?: string[]
   prometheus_windows_jobs?: string[]
+  monitoring_sources?: {
+    id: string
+    label: string
+    url: string
+    binding: string
+    token_set?: boolean
+    collector_type?: string
+    username?: string
+    password_set?: boolean
+    verify_ssl?: boolean
+    prom_compatible?: boolean
+    jobs?: string[]
+    extra_selectors?: string
+  }[]
   metric_retention_days?: number
   management_server_ip?: string
   detected_management_ip?: string
@@ -1746,6 +1760,186 @@ const Settings: React.FC = () => {
   const [promSaving, setPromSaving] = useState(false)
   const [promSaved, setPromSaved] = useState(false)
   const [promError, setPromError] = useState('')
+  const [extraSources, setExtraSources] = useState<
+    {
+      id: string
+      label: string
+      url: string
+      binding: string
+      token: string
+      token_set?: boolean
+      collector_type: string
+      username: string
+      password: string
+      password_set?: boolean
+      verify_ssl: boolean
+      jobs: string[]
+      job_input: string
+      extra_selectors: string
+    }[]
+  >([])
+  const [srcSaving, setSrcSaving] = useState(false)
+  const [srcMsg, setSrcMsg] = useState('')
+  const [srcTesting, setSrcTesting] = useState<Record<string, boolean>>({})
+  const [srcTestMsg, setSrcTestMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
+
+  React.useEffect(() => {
+    const list = (generalSettings?.monitoring_sources || []).filter((s) => s.binding !== 'linux')
+    setExtraSources(
+      list.map((s) => ({
+        id: s.id,
+        label: s.label,
+        url: s.url,
+        binding: s.binding,
+        token: '',
+        token_set: s.token_set,
+        collector_type: s.collector_type || 'prometheus',
+        username: s.username || '',
+        password: '',
+        password_set: s.password_set,
+        verify_ssl: s.verify_ssl !== false,
+        jobs: Array.isArray(s.jobs) ? [...s.jobs] : [],
+        job_input: '',
+        extra_selectors: s.extra_selectors || '',
+      })),
+    )
+  }, [JSON.stringify(generalSettings?.monitoring_sources)])
+
+  const testExtraSource = async (idx: number) => {
+    const s = extraSources[idx]
+    if (!s) return
+    const key = s.id || String(idx)
+    setSrcTesting((m) => ({ ...m, [key]: true }))
+    setSrcTestMsg((m) => ({ ...m, [key]: { ok: false, text: '' } }))
+    try {
+      const body: Record<string, string | boolean> = {}
+      if (!s.url.trim() && !s.id) throw new Error(t('set_mon_test_need_url'))
+      if (s.url.trim()) body.url = s.url.trim()
+      if (s.token.trim()) body.token = s.token.trim()
+      if (s.id) body.source_id = s.id
+      body.binding = s.binding
+      body.collector_type = s.binding === 'none' ? s.collector_type : 'prometheus'
+      if (s.username.trim()) body.username = s.username.trim()
+      if (s.password.trim()) body.password = s.password.trim()
+      body.verify_ssl = s.verify_ssl
+      const r = await fetch(`${API_BASE_URL}/settings/monitoring-sources/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data.detail || t('set_mon_test_fail'))
+      const ok = !!data.ok
+      const extra = data.zabbix_version ? ` · zabbix ${data.zabbix_version}` : ''
+      setSrcTestMsg((m) => ({
+        ...m,
+        [key]: {
+          ok,
+          text: ok
+            ? t('set_mon_test_ok', { code: data.status_code || 200 }) + extra
+            : t('set_mon_test_bad', { code: data.status_code || '?' }),
+        },
+      }))
+    } catch (e: any) {
+      setSrcTestMsg((m) => ({
+        ...m,
+        [key]: { ok: false, text: e?.message || t('set_mon_test_fail') },
+      }))
+    } finally {
+      setSrcTesting((m) => ({ ...m, [key]: false }))
+    }
+  }
+
+  const saveExtraSources = async () => {
+    setSrcSaving(true)
+    setSrcMsg('')
+    try {
+      for (let i = 0; i < extraSources.length; i++) {
+        const s = extraSources[i]
+        if (!s.label.trim() && !s.url.trim()) continue
+        if (!s.url.trim()) throw new Error(t('set_mon_test_need_url'))
+        const body: Record<string, string | boolean> = {
+          url: s.url.trim(),
+          binding: s.binding,
+          collector_type: s.binding === 'none' ? s.collector_type : 'prometheus',
+          verify_ssl: s.verify_ssl,
+        }
+        if (s.token.trim()) body.token = s.token.trim()
+        if (s.username.trim()) body.username = s.username.trim()
+        if (s.password.trim()) body.password = s.password.trim()
+        if (s.id) body.source_id = s.id
+        const r = await fetch(`${API_BASE_URL}/settings/monitoring-sources/test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await r.json().catch(() => ({}))
+        const key = s.id || String(i)
+        if (!r.ok || !data.ok) {
+          setSrcTestMsg((m) => ({
+            ...m,
+            [key]: {
+              ok: false,
+              text: data.detail || t('set_mon_test_bad', { code: data.status_code || r.status }),
+            },
+          }))
+          throw new Error(
+            `${s.label || s.url}: ${data.detail || t('set_mon_test_bad', { code: data.status_code || r.status })}`,
+          )
+        }
+        setSrcTestMsg((m) => ({
+          ...m,
+          [key]: { ok: true, text: t('set_mon_test_ok', { code: data.status_code || 200 }) },
+        }))
+      }
+      const linuxSrc = {
+        id: 'linux-default',
+        label: 'Linux Prometheus',
+        url: promForm.prometheus_url.trim() || generalSettings?.prometheus_url || '',
+        binding: 'linux',
+        collector_type: 'prometheus',
+        token: '',
+      }
+      const body = {
+        sources: [
+          linuxSrc,
+          ...extraSources.map((s) => ({
+            id: s.id,
+            label: s.label.trim(),
+            url: s.url.trim(),
+            binding: s.binding,
+            collector_type: s.binding === 'none' ? s.collector_type : 'prometheus',
+            username: s.username.trim(),
+            verify_ssl: s.verify_ssl,
+            jobs: s.collector_type === 'zabbix' && s.binding === 'none' ? [] : s.jobs,
+            extra_selectors:
+              s.collector_type === 'zabbix' && s.binding === 'none'
+                ? ''
+                : s.extra_selectors.trim(),
+            ...(s.token.trim() ? { token: s.token.trim() } : {}),
+            ...(s.password.trim() ? { password: s.password.trim() } : {}),
+          })),
+        ],
+        pushgateway_url: promForm.pushgateway_url.trim(),
+        prometheus_linux_jobs: promForm.linux_jobs,
+        prometheus_windows_jobs: promForm.windows_jobs,
+      }
+      const r = await fetch(`${API_BASE_URL}/settings/monitoring-sources`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data.detail || t('set_save_fail'))
+      setSrcMsg(t('saved'))
+      queryClient.invalidateQueries({ queryKey: ['general-settings'] })
+      setTimeout(() => setSrcMsg(''), 3000)
+    } catch (e: any) {
+      setSrcMsg(e?.message || t('set_save_fail'))
+    } finally {
+      setSrcSaving(false)
+    }
+  }
   React.useEffect(() => {
     if (generalSettings?.remote_llm) {
       const r = generalSettings.remote_llm
@@ -2880,10 +3074,10 @@ const Settings: React.FC = () => {
                                 ...f,
                                 linux_jobs: f.linux_jobs.filter(j => j !== job),
                               }))}
-                              className="text-blue-300/80 hover:text-white"
+                              className="text-blue-300/80 hover:text-white p-0.5"
                               title={t('remove')}
                             >
-                              ×
+                              <X size={12} strokeWidth={2.2} />
                             </button>
                           </span>
                         ))}
@@ -2946,10 +3140,10 @@ const Settings: React.FC = () => {
                                 ...f,
                                 windows_jobs: f.windows_jobs.filter(j => j !== job),
                               }))}
-                              className="text-emerald-300/80 hover:text-white"
+                              className="text-emerald-300/80 hover:text-white p-0.5"
                               title={t('remove')}
                             >
-                              ×
+                              <X size={12} strokeWidth={2.2} />
                             </button>
                           </span>
                         ))}
@@ -3004,6 +3198,301 @@ const Settings: React.FC = () => {
                       </button>
                       {promSaved && <span className="text-green-400 text-sm">{t('saved')}</span>}
                       {promError && <span className="text-red-400 text-sm">{promError}</span>}
+                    </div>
+
+                    <div className="border-t border-white/[0.06] pt-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-sm font-medium text-white">{t('set_mon_sources_title')}</h4>
+                          <p className="text-xs text-slate-500 mt-1">{t('set_mon_sources_hint')}</p>
+                          <p className="text-[10px] text-slate-600 mt-0.5">{t('set_mon_label_help')}</p>
+                          <p className="text-[10px] text-slate-500 mt-1">{t('set_mon_edit_hint')}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExtraSources((arr) => [
+                            ...arr,
+                            {
+                              id: `src-${Date.now()}`,
+                              label: '',
+                              url: '',
+                              binding: 'none',
+                              token: '',
+                              collector_type: 'prometheus',
+                              username: '',
+                              password: '',
+                              verify_ssl: true,
+                              jobs: [],
+                              job_input: '',
+                              extra_selectors: '',
+                            },
+                          ])}
+                          className="shrink-0 p-2 rounded-md text-slate-400 hover:text-emerald-300 hover:bg-white/[0.06] mr-1"
+                          title={t('set_mon_add_source')}
+                          aria-label={t('set_mon_add_source')}
+                        >
+                          <Plus size={16} strokeWidth={1.8} />
+                        </button>
+                      </div>
+                      {extraSources.map((s, idx) => {
+                        const key = s.id || String(idx)
+                        const testState = srcTestMsg[key]
+                        const isOther = s.binding === 'none'
+                        const isZabbix = isOther && s.collector_type === 'zabbix'
+                        const isPromFamily = !isZabbix
+                        return (
+                        <div key={key} className="space-y-2 p-3 rounded-lg bg-cyber-card/50 border border-white/[0.04]">
+                          <div className="grid md:grid-cols-12 gap-2 items-end">
+                            <div className="md:col-span-2">
+                              <label className="text-[10px] text-slate-500">{t('set_mon_label')}</label>
+                              <input
+                                value={s.label}
+                                onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))}
+                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                              />
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="text-[10px] text-slate-500">{t('set_mon_binding')}</label>
+                              <select
+                                value={s.binding}
+                                onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? {
+                                  ...x,
+                                  binding: e.target.value,
+                                  collector_type: e.target.value === 'none' ? x.collector_type : 'prometheus',
+                                } : x))}
+                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                              >
+                                <option value="openshift">OpenShift</option>
+                                <option value="virtualization">Virtualization</option>
+                                <option value="none">{t('set_mon_binding_none')}</option>
+                              </select>
+                            </div>
+                            {isOther && (
+                              <div className="md:col-span-2">
+                                <label className="text-[10px] text-slate-500">{t('set_mon_collector')}</label>
+                                <select
+                                  value={s.collector_type}
+                                  onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, collector_type: e.target.value } : x))}
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                >
+                                  <option value="prometheus">Prometheus</option>
+                                  <option value="telegraf">Telegraf</option>
+                                  <option value="opentelemetry">OpenTelemetry</option>
+                                  <option value="zabbix">Zabbix</option>
+                                </select>
+                              </div>
+                            )}
+                            <div className={isOther ? 'md:col-span-4' : 'md:col-span-5'}>
+                              <label className="text-[10px] text-slate-500">
+                                {isZabbix ? t('set_mon_zabbix_url') : t('set_prom_url')}
+                              </label>
+                              <input
+                                value={s.url}
+                                onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, url: e.target.value } : x))}
+                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                placeholder={isZabbix ? 'https://zabbix.example/api_jsonrpc.php' : 'https://prometheus.example:9090'}
+                              />
+                            </div>
+                            <div className="md:col-span-2 flex items-center gap-1 justify-end pb-0.5">
+                              <button
+                                type="button"
+                                onClick={() => testExtraSource(idx)}
+                                disabled={!!srcTesting[key] || !s.url.trim()}
+                                className="p-2 rounded-md text-slate-400 hover:text-emerald-300 hover:bg-white/[0.06] disabled:opacity-40"
+                                title={t('set_mon_test')}
+                              >
+                                <PlugZap size={16} strokeWidth={1.8} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExtraSources((arr) => arr.filter((_, i) => i !== idx))
+                                  setSrcTestMsg((m) => {
+                                    const next = { ...m }
+                                    delete next[key]
+                                    return next
+                                  })
+                                }}
+                                className="p-2 rounded-md text-slate-400 hover:text-red-300 hover:bg-white/[0.06]"
+                                title={t('remove')}
+                              >
+                                <Trash2 size={16} strokeWidth={1.8} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid md:grid-cols-12 gap-2 items-end">
+                            {isPromFamily && (
+                              <div className="md:col-span-4">
+                                <label className="text-[10px] text-slate-500">
+                                  {t('set_mon_token')}{s.token_set ? ' · set' : ''}
+                                </label>
+                                <input
+                                  type="password"
+                                  value={s.token}
+                                  onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, token: e.target.value } : x))}
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                  placeholder="••••••••"
+                                />
+                              </div>
+                            )}
+                            {isZabbix && (
+                              <>
+                                <div className="md:col-span-3">
+                                  <label className="text-[10px] text-slate-500">{t('set_mon_zabbix_user')}</label>
+                                  <input
+                                    value={s.username}
+                                    onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, username: e.target.value } : x))}
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                    placeholder="Admin"
+                                  />
+                                </div>
+                                <div className="md:col-span-3">
+                                  <label className="text-[10px] text-slate-500">
+                                    {t('set_mon_zabbix_pass')}{s.password_set ? ' · set' : ''}
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={s.password}
+                                    onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, password: e.target.value } : x))}
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                    placeholder="••••••••"
+                                  />
+                                </div>
+                                <div className="md:col-span-3">
+                                  <label className="text-[10px] text-slate-500">
+                                    {t('set_mon_token')}{s.token_set ? ' · set' : ''}
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={s.token}
+                                    onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, token: e.target.value } : x))}
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                    placeholder={t('set_mon_zabbix_token_ph')}
+                                  />
+                                </div>
+                              </>
+                            )}
+                            {isOther && (
+                              <div className="md:col-span-2 flex items-center gap-2 pt-4">
+                                <input
+                                  id={`verify-ssl-${key}`}
+                                  type="checkbox"
+                                  checked={s.verify_ssl}
+                                  onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, verify_ssl: e.target.checked } : x))}
+                                  className="rounded border-slate-600"
+                                />
+                                <label htmlFor={`verify-ssl-${key}`} className="text-[10px] text-slate-400">
+                                  {t('set_mon_verify_ssl')}
+                                </label>
+                              </div>
+                            )}
+                          </div>
+                          {isPromFamily && (
+                            <div className="grid md:grid-cols-12 gap-2 items-end border-t border-white/[0.04] pt-2">
+                              <div className="md:col-span-6">
+                                <label className="text-[10px] text-slate-500">
+                                  {t('set_mon_jobs')}
+                                  <span className="text-slate-600 ml-1">{t('set_jobs_multi')}</span>
+                                </label>
+                                <div className="flex flex-wrap gap-1.5 mb-1.5 min-h-[1.5rem]">
+                                  {s.jobs.map((job) => (
+                                    <span
+                                      key={job}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-200 text-[11px] font-mono"
+                                    >
+                                      {job}
+                                      <button
+                                        type="button"
+                                        onClick={() => setExtraSources((arr) => arr.map((x, i) => i === idx ? {
+                                          ...x,
+                                          jobs: x.jobs.filter((j) => j !== job),
+                                        } : x))}
+                                        className="text-blue-300/80 hover:text-white p-0.5"
+                                        title={t('remove')}
+                                      >
+                                        <X size={11} strokeWidth={2.2} />
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <input
+                                    value={s.job_input}
+                                    onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, job_input: e.target.value } : x))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        const v = s.job_input.trim()
+                                        if (v && !s.jobs.includes(v)) {
+                                          setExtraSources((arr) => arr.map((x, i) => i === idx ? {
+                                            ...x,
+                                            jobs: [...x.jobs, v],
+                                            job_input: '',
+                                          } : x))
+                                        }
+                                      }
+                                    }}
+                                    placeholder={t('set_mon_job_ph')}
+                                    className="flex-1 bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const v = s.job_input.trim()
+                                      if (v && !s.jobs.includes(v)) {
+                                        setExtraSources((arr) => arr.map((x, i) => i === idx ? {
+                                          ...x,
+                                          jobs: [...x.jobs, v],
+                                          job_input: '',
+                                        } : x))
+                                      }
+                                    }}
+                                    className="px-2 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-white"
+                                  >
+                                    {t('add')}
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="md:col-span-6">
+                                <label className="text-[10px] text-slate-500">{t('set_mon_extra_sel')}</label>
+                                <input
+                                  value={s.extra_selectors}
+                                  onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, extra_selectors: e.target.value } : x))}
+                                  placeholder={t('set_mon_extra_sel_ph')}
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                />
+                                <p className="text-[10px] text-slate-600 mt-0.5">{t('set_mon_extra_sel_hint')}</p>
+                              </div>
+                            </div>
+                          )}
+                          {isOther && isPromFamily && (s.collector_type === 'telegraf' || s.collector_type === 'opentelemetry') && (
+                            <p className="text-[10px] text-slate-500">{t('set_mon_prom_compat_hint')}</p>
+                          )}
+                          {isPromFamily && (
+                            <p className="text-[10px] text-slate-600">{t('set_mon_jobs_hint')}</p>
+                          )}
+                          {isZabbix && (
+                            <p className="text-[10px] text-amber-500/80">{t('set_mon_zabbix_phase_hint')}</p>
+                          )}
+                          {testState?.text && (
+                            <div className={`text-[11px] ${testState.ok ? 'text-emerald-400' : 'text-amber-400'}`}>
+                              {testState.text}
+                            </div>
+                          )}
+                        </div>
+                        )
+                      })}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={saveExtraSources}
+                          disabled={srcSaving}
+                          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
+                        >
+                          {srcSaving ? t('saving') : t('set_mon_save_sources')}
+                        </button>
+                        {srcMsg && <span className="text-xs text-slate-400 self-center">{srcMsg}</span>}
+                      </div>
                     </div>
 
                     {/* Yönetim Sunucu IP */}

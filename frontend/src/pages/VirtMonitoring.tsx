@@ -9,9 +9,11 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
+import { MonitoringShell } from '../components/monitoring/MonitoringShell'
 
 const RANGES = ['15m', '30m', '1h', '2h', '8h', '24h', '7d', '30d', '60d'] as const
 const MAX_SEL = 8
+const SCOPE_LS_KEY = 'ainew.virt.monitoring.scope'
 const COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ec4899',
   '#06b6d4', '#a3e635', '#f97316', '#38bdf8',
@@ -63,18 +65,44 @@ function deltaCls(v?: number | null) {
 
 const METRIC_LABEL: Record<string, string> = {
   cpu_pct: 'CPU %',
+  cpu_mhz: 'CPU MHz',
   mem_pct: 'Bellek %',
+  mem_used_mb: 'Bellek kullanılan MB',
   cpu_ready_pct: 'CPU ready %',
+  cpu_ready_ms: 'CPU ready ms',
+  cpu_costop_ms: 'CPU costop ms',
   disk_latency_ms: 'Disk latency ms',
+  disk_device_latency_ms: 'Disk device latency ms',
+  disk_read_iops: 'Disk okuma IOPS',
+  disk_write_iops: 'Disk yazma IOPS',
+  balloon_mb: 'Balloon MB',
+  swapped_mb: 'Swapped MB',
+  mem_balloon_mb: 'Balloon MB',
+  mem_swap_used_mb: 'Host swap MB',
+  mem_swapin_kbps: 'Swap-in KBps',
+  mem_swapout_kbps: 'Swap-out KBps',
+  net_rx_kbps: 'Net Rx KBps',
+  net_tx_kbps: 'Net Tx KBps',
+  net_dropped_rx: 'Net dropped Rx',
+  net_dropped_tx: 'Net dropped Tx',
+  guest_disk_pct: 'Guest disk %',
+  snapshot_count: 'Snapshot adet',
+  ds_pct: 'Datastore % (host toplam)',
+  vms_running: 'Çalışan VM',
   usage_pct: 'Doluluk %',
   free_gb: 'Boş GB',
+  used_gb: 'Kullanılan GB',
+  capacity_gb: 'Kapasite GB',
+  uncommitted_gb: 'Uncommitted GB',
   read_latency_ms: 'Okuma latency ms',
+  write_latency_ms: 'Yazma latency ms',
+  read_iops: 'Okuma IOPS',
   write_iops: 'Yazma IOPS',
 }
 
 function Panel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-cyber-card border border-white/[0.06] rounded-xl p-4 ${className}`}>{children}</div>
+    <div className={`bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 ${className}`}>{children}</div>
   )
 }
 
@@ -165,7 +193,15 @@ function VirtChart({
   )
 }
 
-const VirtMonitoring: React.FC = () => {
+const VirtMonitoring: React.FC<{
+  embedded?: boolean
+  sourceId?: string
+  hubLeading?: React.ReactNode
+}> = ({
+  embedded = false,
+  sourceId,
+  hubLeading,
+}) => {
   const t = useT()
   const [kind, setKind] = useState<Kind>('vm')
   const [selected, setSelected] = useState<string[]>([])
@@ -176,6 +212,8 @@ const VirtMonitoring: React.FC = () => {
   const [hvIds, setHvIds] = useState<string[]>([])
   const [hvPickerOpen, setHvPickerOpen] = useState(false)
   const hvDefaulted = useRef(false)
+  const [clusterFilter, setClusterFilter] = useState('')
+  const [hostFilter, setHostFilter] = useState('')
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [fullscreen, setFullscreen] = useState<number | null>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -187,7 +225,20 @@ const VirtMonitoring: React.FC = () => {
     setSelected([])
     setSearch('')
     setLabels({})
-  }, [kind, hvKey])
+  }, [kind, hvKey, clusterFilter, hostFilter])
+
+  // Chat ile paylaşılan Monitoring kapsamı (cluster/ESXi kaybolmaz — eksen ayrı)
+  useEffect(() => {
+    const payload = {
+      hypervisor_ids: hvIds,
+      cluster: clusterFilter,
+      host: hostFilter,
+      kind,
+    }
+    try {
+      localStorage.setItem(SCOPE_LS_KEY, JSON.stringify(payload))
+    } catch { /* ignore */ }
+  }, [hvIds, clusterFilter, hostFilter, kind])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -269,15 +320,52 @@ const VirtMonitoring: React.FC = () => {
   })
 
   const objects = useQuery({
-    queryKey: ['virt-monitoring-objects', kind, hvKey],
+    queryKey: ['virt-monitoring-objects', kind, hvKey, clusterFilter, hostFilter],
     queryFn: async () => {
       const p = new URLSearchParams({ kind, limit: '200' })
       if (hvKey) p.set('hypervisor_ids', hvKey)
+      if (clusterFilter) p.set('cluster', clusterFilter)
+      if (hostFilter) p.set('host', hostFilter)
       const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
       if (!r.ok) throw new Error('objects')
       return r.json()
     },
     enabled: pickerOpen && (hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0)),
+    staleTime: 60_000,
+  })
+
+  // Cluster dropdown — host envanterinden (filtre yok)
+  const clusterOpts = useQuery({
+    queryKey: ['virt-monitoring-clusters', hvKey],
+    queryFn: async () => {
+      const p = new URLSearchParams({ kind: 'host', limit: '200' })
+      if (hvKey) p.set('hypervisor_ids', hvKey)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
+      if (!r.ok) return [] as string[]
+      const data = await r.json()
+      const set = new Set<string>()
+      for (const it of data.items || []) {
+        if (it.cluster) set.add(String(it.cluster))
+      }
+      return [...set].sort((a, b) => a.localeCompare(b, 'tr'))
+    },
+    enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
+    staleTime: 60_000,
+  })
+
+  // ESXi dropdown — seçili cluster'a göre (boş = tüm hostlar)
+  const hostOpts = useQuery({
+    queryKey: ['virt-monitoring-hosts', hvKey, clusterFilter],
+    queryFn: async () => {
+      const p = new URLSearchParams({ kind: 'host', limit: '200' })
+      if (hvKey) p.set('hypervisor_ids', hvKey)
+      if (clusterFilter) p.set('cluster', clusterFilter)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
+      if (!r.ok) return [] as { name: string; cluster?: string }[]
+      const data = await r.json()
+      return (data.items || []).map((it: any) => ({ name: it.name, cluster: it.cluster }))
+    },
+    enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
     staleTime: 60_000,
   })
   const filteredObjects = useMemo(() => {
@@ -353,31 +441,41 @@ const VirtMonitoring: React.FC = () => {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-[1600px]">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[26px] font-extrabold text-white tracking-tight">{t('vmn_title')}</h1>
-          <p className="text-sm text-slate-400 mt-1">{t('vmn_subtitle')}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className={`font-semibold ${tone(src?.state)}`}>
+    <MonitoringShell
+      title={t('vmn_title')}
+      subtitle={t('vmn_subtitle')}
+      mode="api"
+      onModeChange={() => {}}
+      prometheusConfigured={false}
+      showModeToggle={false}
+      embedded={embedded}
+      hubLeading={hubLeading}
+      extraHeader={
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 flex-1 min-w-0">
+          <Link to="/virt/events" className="text-blue-400 hover:underline whitespace-nowrap">{t('vmn_open_events')}</Link>
+          <Link to="/virt/chat" className="text-blue-400 hover:underline whitespace-nowrap" title={t('vmn_chat_scope_hint')}>
+            {t('vmn_open_chat')}
+          </Link>
+          <span className="text-slate-600 hidden sm:inline">|</span>
+          <span className={`font-medium whitespace-nowrap ${tone(src?.state)}`}>
             vCenter · {src?.state || '—'}
           </span>
-          <span className="text-slate-500">
-            {t('vmn_last_sync')}: {src?.last_host_sync ? new Date(src.last_host_sync).toLocaleString('tr-TR') : '—'}
+          <span className="text-slate-500 whitespace-nowrap hidden md:inline">
+            {src?.last_host_sync
+              ? `${t('vmn_last_sync')}: ${new Date(src.last_host_sync).toLocaleString('tr-TR')}`
+              : ''}
             {src?.host_age_min != null ? ` · ${src.host_age_min} dk` : ''}
           </span>
           {src?.stale && <span className="text-amber-400">{t('vmn_stale')}</span>}
-          <Link to="/virt/events" className="text-blue-400 hover:underline">{t('vmn_open_events')}</Link>
-          <Link to="/virt/chat" className="text-blue-400 hover:underline">{t('vmn_open_chat')}</Link>
         </div>
-      </div>
-
+      }
+    >
+    <div className="space-y-3">
       {overview.isError && (
         <div className="text-sm text-red-400">{t('vmn_overview_fail')}</div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
         {[
           { label: t('vmn_health'), value: health?.label, cls: tone(health?.grade) },
           { label: t('vmn_healthy'), value: health?.hosts?.healthy ?? '—', cls: 'text-emerald-400' },
@@ -387,22 +485,22 @@ const VirtMonitoring: React.FC = () => {
           { label: t('vmn_availability'), value: health?.availability_pct != null ? `${health.availability_pct}%` : '—' },
         ].map((k) => (
           <Panel key={k.label}>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{k.label}</div>
-            <div className={`text-xl font-semibold mt-1 ${k.cls || 'text-white'}`}>{k.value}</div>
+            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">{k.label}</div>
+            <div className={`text-base font-semibold mt-0.5 ${k.cls || 'text-white'}`}>{k.value}</div>
           </Panel>
         ))}
       </div>
 
       <Panel>
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <Activity size={16} className="text-blue-400" />
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <Activity size={14} className="text-blue-400" />
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{t('vmn_charts')}</div>
           {sortedVcenters.length > 0 && (
             <div className="relative" ref={hvPickerRef}>
               <button
                 type="button"
                 onClick={() => setHvPickerOpen((v) => !v)}
-                className="min-w-[160px] max-w-[240px] truncate bg-[#0d1422] border border-white/[0.06] rounded-lg px-3 py-1.5 text-xs text-left text-white"
+                className="min-w-[140px] max-w-[220px] truncate bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-left text-white"
                 title={t('vmn_vcenter')}
               >
                 {hvLabel}
@@ -430,6 +528,8 @@ const VirtMonitoring: React.FC = () => {
                           onChange={() => {
                             hvDefaulted.current = true
                             setHvIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+                            setClusterFilter('')
+                            setHostFilter('')
                           }}
                         />
                         <span className="truncate">{h.name}</span>
@@ -440,13 +540,42 @@ const VirtMonitoring: React.FC = () => {
               )}
             </div>
           )}
-          <div className="flex rounded-lg border border-white/[0.06] overflow-hidden">
+          <select
+            value={clusterFilter}
+            onChange={(e) => {
+              setClusterFilter(e.target.value)
+              setHostFilter('')
+            }}
+            className="bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-white max-w-[180px]"
+            title={
+              (clusterOpts.data || []).length
+                ? t('vmn_cluster_filter')
+                : t('vmn_no_clusters')
+            }
+          >
+            <option value="">{t('vmn_all_clusters')}</option>
+            {(clusterOpts.data || []).map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <select
+            value={hostFilter}
+            onChange={(e) => setHostFilter(e.target.value)}
+            className="bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-white max-w-[160px]"
+            title={t('vmn_esxi_filter')}
+          >
+            <option value="">{t('vmn_all_esxi')}</option>
+            {(hostOpts.data || []).map((h) => (
+              <option key={h.name} value={h.name}>{h.name}</option>
+            ))}
+          </select>
+          <div className="flex rounded-md border border-white/[0.06] overflow-hidden">
             {(['vm', 'host', 'datastore'] as Kind[]).map((k) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setKind(k)}
-                className={`px-3 py-1.5 text-xs ${kind === k ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                className={`px-2.5 py-1 text-xs ${kind === k ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 {t(`vmn_axis_${k}` as any)}
               </button>
@@ -455,7 +584,7 @@ const VirtMonitoring: React.FC = () => {
           <select
             value={range}
             onChange={(e) => setRange(e.target.value)}
-            className="bg-[#0d1422] border border-white/[0.06] rounded-lg px-2 py-1.5 text-sm text-white"
+            className="bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-white"
           >
             {RANGES.map((r) => (
               <option key={r} value={r}>{t(`vmn_range_${r}` as any)}</option>
@@ -465,7 +594,7 @@ const VirtMonitoring: React.FC = () => {
             <button
               type="button"
               onClick={() => setPickerOpen((v) => !v)}
-              className="min-w-[220px] bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-left text-white"
+              className="min-w-[200px] bg-cyber-deep border border-white/[0.06] rounded-md px-2.5 py-1 text-xs text-left text-white"
             >
               {selected.length === 0 ? t('vmn_pick') : t('vmn_selected', { n: selected.length })}
             </button>
@@ -685,6 +814,7 @@ const VirtMonitoring: React.FC = () => {
         </div>
       )}
     </div>
+    </MonitoringShell>
   )
 }
 

@@ -57,7 +57,7 @@ export function hardenMermaidSvg(svg: string): string {
       const st = (el as Element).getAttribute('style') || ''
       ;(el as Element).setAttribute(
         'style',
-        `${st.replace(/color\s*:[^;]+;?/gi, '')};color:${TEXT_FILL} !important;fill:${TEXT_FILL}`,
+        `${st.replace(/color\s*:[^;]+;?/gi, '')};color:${TEXT_FILL} !important;fill:${TEXT_FILL};overflow:visible;word-break:break-word;white-space:normal`,
       )
     })
 
@@ -183,9 +183,13 @@ function safeDomId(raw: string): string {
 export function ChatMermaid({
   source,
   fallback = null,
+  delayMs = 350,
+  className = '',
 }: {
   source: string
   fallback?: ArchitectureDiagram | null
+  delayMs?: number
+  className?: string
 }) {
   const t = useT()
   const rid = safeDomId(useId())
@@ -210,17 +214,17 @@ export function ChatMermaid({
           setPhase(looksComplete(trimmed) ? 'error' : 'pending')
         }
       }
-    }, 350)
+    }, delayMs)
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [trimmed, rid])
+  }, [trimmed, rid, delayMs])
 
   if (phase === 'ok' && svg) {
     return (
       <div
-        className="chat-mermaid my-3 max-w-full overflow-x-auto rounded-lg border border-slate-300 bg-white p-4 shadow-sm"
+        className={`chat-mermaid my-3 max-w-full overflow-x-auto rounded-lg border border-slate-300 bg-white p-4 shadow-sm ${className}`}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     )

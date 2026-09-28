@@ -1,5 +1,6 @@
 /**
- * KubeVirt VM listesi — Atlas KubeVirtSection'a yakın: özet + satır içi C/M + VNC konsol.
+ * KubeVirt VM listesi — satır içi C/M + VNC / güç aksiyonları.
+ * listOnly: özet kartları yok — Linux sunucu listesi tarzı yalnız satırlar.
  */
 import React, { useMemo, useState } from 'react'
 import {
@@ -36,6 +37,13 @@ function openVmConsole(clusterId: number, namespace: string, name: string) {
   window.open(url, `ocp-console-${namespace}-${name}`, 'width=1280,height=800')
 }
 
+function isRunning(vm: VmRow): boolean {
+  return (
+    (vm.power_state || '').toLowerCase() === 'poweredon' ||
+    (vm.phase || vm.printable_status || '').toLowerCase() === 'running'
+  )
+}
+
 function UsageBar({ label, pct }: { label: string; pct: number | null }) {
   const t = useT()
   const p = pct == null ? null : Math.max(0, Math.min(100, pct))
@@ -54,7 +62,20 @@ function UsageBar({ label, pct }: { label: string; pct: number | null }) {
   )
 }
 
-export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
+type Props = {
+  clusterId: number
+  /** Özet kartlarını gizle — yalnız VM satır listesi */
+  listOnly?: boolean
+  search?: string
+  statusFilter?: 'all' | 'running' | 'stopped'
+}
+
+export default function OcpVmsPanel({
+  clusterId,
+  listOnly = false,
+  search = '',
+  statusFilter = 'all',
+}: Props) {
   const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
@@ -75,12 +96,20 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
 
   const vms = data?.vms || []
 
+  const filtered = useMemo(() => {
+    const ql = search.trim().toLowerCase()
+    return vms.filter((v) => {
+      const run = isRunning(v)
+      if (statusFilter === 'running' && !run) return false
+      if (statusFilter === 'stopped' && run) return false
+      if (!ql) return true
+      const blob = `${v.name} ${v.namespace} ${v.ip_address || ''} ${v.node || ''} ${v.node_name || ''}`.toLowerCase()
+      return blob.includes(ql)
+    })
+  }, [vms, search, statusFilter])
+
   const summary = useMemo(() => {
-    const running = vms.filter(
-      (v) =>
-        (v.power_state || '').toLowerCase() === 'poweredon' ||
-        (v.phase || v.printable_status || '').toLowerCase() === 'running',
-    )
+    const running = vms.filter(isRunning)
     const allocCpu = vms.reduce((s, v) => s + (v.cpu_count || v.cpu_cores || 0), 0)
     const allocMemGb = Math.round(
       (vms.reduce((s, v) => s + (v.memory_mb || (v.memory_gb || 0) * 1024), 0) / 1024) * 10,
@@ -124,101 +153,110 @@ export default function OcpVmsPanel({ clusterId }: { clusterId: number }) {
 
   return (
     <div className="space-y-4">
-      {/* Sanallaştırma özeti — Atlas Virtualization Overview benzeri */}
-      <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <MonitorPlay size={16} className="text-violet-400" />
-          <h3 className="text-sm font-semibold text-slate-100">{t('ocp_virt_summary')}</h3>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            className="ml-auto text-xs px-2 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.04] inline-flex items-center gap-1"
-          >
-            <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
-          </button>
-        </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500">{t('ocp_total_vm')}</div>
-            <div className="text-lg font-bold text-slate-100">{vms.length}</div>
-            <div className="text-emerald-400 mt-0.5">{t('ocp_n_running', { n: summary.running })}</div>
-            <div className="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-emerald-500"
-                style={{ width: `${vms.length ? (summary.running / vms.length) * 100 : 0}%` }}
-              />
+      {!listOnly && (
+        <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <MonitorPlay size={16} className="text-violet-400" />
+            <h3 className="text-sm font-semibold text-slate-100">{t('ocp_virt_summary')}</h3>
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="ml-auto text-xs px-2 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.04] inline-flex items-center gap-1"
+            >
+              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
+            </button>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
+              <div className="text-slate-500">{t('ocp_total_vm')}</div>
+              <div className="text-lg font-bold text-slate-100">{vms.length}</div>
+              <div className="text-emerald-400 mt-0.5">{t('ocp_n_running', { n: summary.running })}</div>
+              <div className="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500"
+                  style={{ width: `${vms.length ? (summary.running / vms.length) * 100 : 0}%` }}
+                />
+              </div>
             </div>
-          </div>
-          <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500">{t('ocp_alloc')}</div>
-            <div className="text-slate-100 mt-1">{t('ocp_alloc_line', { cpu: summary.allocCpu, mem: summary.allocMemGb })}</div>
-            <div className="text-slate-500 mt-2 text-[11px]">
-              Node:{' '}
-              {Object.entries(summary.byNode)
-                .map(([n, c]) => `${n.split('.')[0]}:${c}`)
-                .join(' · ') || '—'}
+            <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
+              <div className="text-slate-500">{t('ocp_alloc')}</div>
+              <div className="text-slate-100 mt-1">{t('ocp_alloc_line', { cpu: summary.allocCpu, mem: summary.allocMemGb })}</div>
+              <div className="text-slate-500 mt-2 text-[11px]">
+                Node:{' '}
+                {Object.entries(summary.byNode)
+                  .map(([n, c]) => `${n.split('.')[0]}:${c}`)
+                  .join(' · ') || '—'}
+              </div>
             </div>
-          </div>
-          <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500 mb-1">{t('ocp_top_cpu')}</div>
-            {summary.topCpu.length === 0 && <div className="text-slate-600">—</div>}
-            {summary.topCpu.map((v) => {
-              const cores = v.cpu_count || v.cpu_cores || 1
-              const pct = ((v.usage?.cpu_millicores || 0) / (cores * 1000)) * 100
-              return (
-                <div key={`${v.namespace}/${v.name}`} className="flex justify-between gap-2 text-[11px] py-0.5">
-                  <span className="text-slate-300 truncate">{v.name}</span>
-                  <span className="text-slate-500 tabular-nums">{pct.toFixed(1)}%</span>
-                </div>
-              )
-            })}
-          </div>
-          <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
-            <div className="text-slate-500 mb-1">{t('ocp_top_mem')}</div>
-            {summary.topMem.length === 0 && <div className="text-slate-600">—</div>}
-            {summary.topMem.map((v) => {
-              const total = v.memory_mb || (v.memory_gb || 0) * 1024 || 1
-              const pct = ((v.usage?.memory_mb || 0) / total) * 100
-              return (
-                <div key={`${v.namespace}/${v.name}`} className="py-0.5">
-                  <div className="flex justify-between gap-2 text-[11px]">
+            <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
+              <div className="text-slate-500 mb-1">{t('ocp_top_cpu')}</div>
+              {summary.topCpu.length === 0 && <div className="text-slate-600">—</div>}
+              {summary.topCpu.map((v) => {
+                const cores = v.cpu_count || v.cpu_cores || 1
+                const pct = ((v.usage?.cpu_millicores || 0) / (cores * 1000)) * 100
+                return (
+                  <div key={`${v.namespace}/${v.name}`} className="flex justify-between gap-2 text-[11px] py-0.5">
                     <span className="text-slate-300 truncate">{v.name}</span>
-                    <span className={`tabular-nums ${pct > 85 ? 'text-red-400' : 'text-slate-500'}`}>
-                      {pct.toFixed(1)}%
-                    </span>
+                    <span className="text-slate-500 tabular-nums">{pct.toFixed(1)}%</span>
                   </div>
-                  <div className="h-1 rounded-full bg-slate-800 overflow-hidden mt-0.5">
-                    <div
-                      className={`h-full ${pct > 85 ? 'bg-red-500' : 'bg-blue-500'}`}
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
+                )
+              })}
+            </div>
+            <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2">
+              <div className="text-slate-500 mb-1">{t('ocp_top_mem')}</div>
+              {summary.topMem.length === 0 && <div className="text-slate-600">—</div>}
+              {summary.topMem.map((v) => {
+                const total = v.memory_mb || (v.memory_gb || 0) * 1024 || 1
+                const pct = ((v.usage?.memory_mb || 0) / total) * 100
+                return (
+                  <div key={`${v.namespace}/${v.name}`} className="py-0.5">
+                    <div className="flex justify-between gap-2 text-[11px]">
+                      <span className="text-slate-300 truncate">{v.name}</span>
+                      <span className={`tabular-nums ${pct > 85 ? 'text-red-400' : 'text-slate-500'}`}>
+                        {pct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="h-1 rounded-full bg-slate-800 overflow-hidden mt-0.5">
+                      <div
+                        className={`h-full ${pct > 85 ? 'bg-red-500' : 'bg-blue-500'}`}
+                        style={{ width: `${Math.min(100, pct)}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* VM listesi */}
       <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-2">
         <div className="flex items-center gap-2 mb-1">
           <MonitorPlay size={16} className="text-rose-400" />
           <h3 className="text-sm font-semibold text-slate-100">{t('ocp_vms_kubevirt')}</h3>
-          <span className="text-xs text-slate-500">{vms.length}</span>
+          <span className="text-xs text-slate-500">
+            {filtered.length === vms.length ? vms.length : `${filtered.length}/${vms.length}`}
+          </span>
+          {listOnly && (
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="ml-auto text-xs px-2 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.04] inline-flex items-center gap-1"
+            >
+              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} /> {t('refresh_action')}
+            </button>
+          )}
         </div>
 
-        {vms.length === 0 ? (
+        {filtered.length === 0 ? (
           <p className="text-sm text-slate-500 py-8 text-center">
-            {isFetching ? t('loading') : t('ocp_no_kubevirt_vm')}
+            {isFetching ? t('loading') : vms.length === 0 ? t('ocp_no_kubevirt_vm') : t('ocp_vms_filter_empty')}
           </p>
         ) : (
           <div className="space-y-1.5">
-            {vms.map((vm) => {
+            {filtered.map((vm) => {
               const key = `${vm.namespace}/${vm.name}`
-              const running =
-                (vm.power_state || '').toLowerCase() === 'poweredon' ||
-                (vm.phase || vm.printable_status || '').toLowerCase() === 'running'
+              const running = isRunning(vm)
               const cpu = vm.cpu_count || vm.cpu_cores || 0
               const memMb = vm.memory_mb || Math.round((vm.memory_gb || 0) * 1024)
               const memG = memMb ? Math.round((memMb / 1024) * 10) / 10 : null

@@ -247,6 +247,27 @@ def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_prog
     svc_new = sum(1 for s in services if _upsert_workload(db, cluster, s["namespace"], "service", s))
     route_new = sum(1 for rt in routes if _upsert_workload(db, cluster, rt["namespace"], "route", rt))
 
+    # KubeVirt VM'leri → servers (Linux Sunucular / Sanallaştırma envanteri)
+    _prog(phase="saving", percent=96, message="KubeVirt VM'ler Linux/Virt envanterine yazılıyor...")
+    kv_result: dict = {"skipped": True, "total_vms": 0, "synced_count": 0, "errors": []}
+    try:
+        from app.services.openshift_virt_inventory import sync_kubevirt_vms_into_servers
+        kv_result = sync_kubevirt_vms_into_servers(db, cluster) or kv_result
+        for err in kv_result.get("errors") or []:
+            if err and err not in errors:
+                errors.append(f"kubevirt_vms: {err}")
+    except Exception as exc:
+        logger.exception("KubeVirt→servers sync failed (cluster=%s)", cluster.name)
+        errors.append(f"kubevirt_vms: {exc}")
+        kv_result = {"skipped": False, "total_vms": 0, "synced_count": 0, "errors": [str(exc)]}
+
+    try:
+        from app.services.openshift_virt_host_metrics import sync_openshift_virt_host_metrics
+        hm = sync_openshift_virt_host_metrics(db) or {}
+        kv_result["host_metrics"] = hm.get("hosts", 0)
+    except Exception as exc:
+        logger.warning("OpenShift Virt host metrics after cluster sync: %s", exc)
+
     cluster.last_sync = datetime.now(timezone.utc)
     db.add(cluster)
 
@@ -257,15 +278,21 @@ def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_prog
         "deployments": len(deployments), "deployments_new": deploy_new,
         "services": len(services), "services_new": svc_new,
         "routes": len(routes), "routes_new": route_new,
+        "kubevirt_vms": kv_result.get("total_vms", 0),
+        "kubevirt_vms_new": kv_result.get("synced_count", 0),
+        "kubevirt_skipped": bool(kv_result.get("skipped")),
         "errors": errors,
     }
 
     if errors:
         _prog(status="error", phase="error", percent=100, message="; ".join(errors)[:300], error="; ".join(errors)[:300])
     else:
+        kv_msg = ""
+        if not kv_result.get("skipped"):
+            kv_msg = f", {kv_result.get('total_vms', 0)} KubeVirt VM"
         _prog(
             status="done", phase="done", percent=100,
-            message=f"Tamamlandı — {len(nodes)} node, {len(projects)} proje, {len(pods)} pod",
+            message=f"Tamamlandı — {len(nodes)} node, {len(projects)} proje, {len(pods)} pod{kv_msg}",
         )
     return result
 

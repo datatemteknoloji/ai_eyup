@@ -3,11 +3,11 @@
  * ainew API + stil. Atlas’a runtime bağlantısı yok.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   Boxes, LayoutGrid, FolderOpen, Network, Database, Layers, Stethoscope,
-  Share2, Globe, HardDrive, Server, Settings2, FileCode, MonitorPlay,
+  Share2, Globe, HardDrive, Server, Settings2, FileCode,
   HeartPulse, AlertTriangle, RefreshCw, Info, ChevronRight, ChevronLeft, ArrowRightLeft,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
@@ -20,7 +20,6 @@ import OcpPodsPanel from '../components/openshift/OcpPodsPanel'
 import OcpMtvPanel from '../components/openshift/OcpMtvPanel'
 import OcpClusterManageMenu from '../components/openshift/OcpClusterManageMenu'
 import OcpProjectPicker from '../components/openshift/OcpProjectPicker'
-import OcpVmsPanel from '../components/openshift/OcpVmsPanel'
 import {
   NEEDS_PROJECT, SECTION_KIND, type OcpCluster, type OcpSection,
 } from '../components/openshift/ocpTypes'
@@ -171,10 +170,6 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
     enabled: !!clusterId && section === 'riskler',
   })
 
-  const hasKubevirt = (overview?.operators || []).some(
-    (o: any) => o.group === 'kubevirt.io' && o.installed,
-  )
-
   const NAV = useMemo(() => {
     const groups: { group?: string; items: { id: OcpSection; label: string; icon: any }[] }[] = [
       {
@@ -218,7 +213,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
       {
         group: t('ocp_nav_virt'),
         items: [
-          ...(hasKubevirt ? [{ id: 'vms' as OcpSection, label: t('ocp_nav_vms'), icon: MonitorPlay }] : []),
+          // VM listesi ayrı sayfa (/openshift/vms) — Explorer'da tekrarlanmaz
           { id: 'tasima' as OcpSection, label: t('ocp_nav_mtv'), icon: ArrowRightLeft },
         ],
       },
@@ -231,7 +226,12 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
       },
     ]
     return groups.filter((g) => g.items.length > 0)
-  }, [hasKubevirt, t])
+  }, [t])
+
+  // Eski /openshift?section=vms yer imi → dedicated VM listesi
+  if (section === 'vms' || sectionFromUrl === 'vms') {
+    return <Navigate to="/openshift/vms" replace />
+  }
 
   const active: OcpSection = NAV.flatMap((g) => g.items.map((i) => i.id)).includes(section)
     ? section
@@ -525,10 +525,11 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                 />
               )}
 
-              {active === 'vms' && clusterId && <OcpVmsPanel clusterId={clusterId} />}
-
               {/* AIOps kısayolları */}
               <div className="flex flex-wrap gap-2 pt-2 text-[11px] text-slate-500">
+                <Link to="/openshift/vms" className="inline-flex items-center gap-1 text-violet-300/80 hover:underline">
+                  {t('nav_virtual_machines')} <ChevronRight size={12} />
+                </Link>
                 <Link to="/openshift/ops" className="inline-flex items-center gap-1 text-rose-300/80 hover:underline">
                   {t('nav_command_center')} <ChevronRight size={12} />
                 </Link>

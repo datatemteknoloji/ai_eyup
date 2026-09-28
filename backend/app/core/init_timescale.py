@@ -108,6 +108,7 @@ def init_timescaledb():
             for _tbl, _chunk, _keep in (
                 ("virt_vm_metrics", "7 days", "90 days"),
                 ("virt_datastore_metrics", "7 days", "180 days"),
+                ("ocp_resource_metrics", "1 day", "30 days"),
             ):
                 _run(
                     conn,
@@ -143,6 +144,7 @@ def init_timescaledb():
                 ("hypervisor_host_metrics", "hypervisor_id, host_name", "7 days"),
                 ("virt_vm_metrics", "hypervisor_id, vm_ref", "7 days"),
                 ("virt_datastore_metrics", "hypervisor_id, name", "7 days"),
+                ("ocp_resource_metrics", "cluster_id, kind, object_key", "3 days"),
                 ("metric_data", "server_id, metric_name", "3 days"),
             ):
                 _run(

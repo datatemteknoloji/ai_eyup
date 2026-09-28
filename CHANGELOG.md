@@ -11,6 +11,23 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.38] - 2026-09-29
+
+### OpenShift Access / RBAC
+- Yeni sayfa `/openshift/access`: Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, subject arama, token can-i, OAuth IdP (küme API, salt okunur).
+- Namespaceli listeler (Roles / RoleBindings / SA) ve can-i / SA subject: proje listesinden namespace listbox.
+- Sohbet: `ocp_access_query` (READ-ONLY).
+
+### OpenShift teşhis (sohbet)
+- `ocp_pod_logs` — pod log okuma; çok-container pod’da otomatik app container seçimi.
+- `ocp_resource_yaml` — kaynak YAML okuma. Apply/patch yok; düzeltme metin önerisi.
+
+### OpenShift Monitoring
+- `/openshift/monitoring`: Virt tarzı özet + overlay grafikler (Node/Pod/VM). `metrics.k8s.io` → Timescale `ocp_resource_metrics` (saklama 30 gün, örnek ~60 sn). Cluster seçici; kimlik `(cluster_id, kind, object_key)`. Deploy öncesi geçmiş yok (API geriye doldurulamaz).
+- Prometheus modu: Kubernetes Views (Global / Namespaces / Nodes / Pods) + GPU DCGM / kubevirt şablonları; hub `/monitoring`; Other kaynaklar label + `collector_type`.
+- Sohbet: `ocp_monitoring_query` / `ocp_prometheus_query`. `/openshift/chat` + `/grafik` OCP Timescale serisi.
+- `/grafik` Top-N zinciri (linux / virt / ocp): isim yoksa önce sırala, sonra seri.
+
 ## [1.0.9.37] - 2026-09-18
 
 ### Sohbet grafikleri

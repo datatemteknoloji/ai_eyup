@@ -55,16 +55,38 @@ def _history_from_cagg_or_raw(db: Session, server_id: int, metric_name: str, sta
 
 # ── Prometheus proxy ────────────────────────────────────────────────────────
 # Frontend, Prometheus'a doğrudan tarayıcıdan değil bu proxy üzerinden erişir —
-# böylece Prometheus host'u/portu sadece backend'de (PROMETHEUS_URL) bilinir,
-# müşteri kurulumlarında hardcoded adres kalmaz ve CORS gerekmez.
+# source_id / module ile multi-source registry çözülür.
+
+
+def _resolve_prom_target(
+    source_id: Optional[str] = None,
+    module: Optional[str] = None,
+):
+    from app.services.monitoring_sources import (
+        load_sources_runtime,
+        resolve,
+        prom_base_url,
+        prom_headers,
+    )
+    sources = load_sources_runtime()
+    src = resolve(sources, source_id=source_id or None, module=module or "linux")
+    return prom_base_url(src), prom_headers(src), src
+
+
 @router.get("/prometheus/query")
-async def prometheus_query(query: str = Query(...)):
+async def prometheus_query(
+    query: str = Query(...),
+    source_id: Optional[str] = Query(None),
+    module: Optional[str] = Query("linux"),
+):
     """PromQL anlık sorgu — /api/v1/query proxy."""
+    base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             resp = await client.get(
-                f"{settings.PROMETHEUS_URL}/api/v1/query",
+                f"{base}/api/v1/query",
                 params={"query": query},
+                headers=headers,
             )
         resp.raise_for_status()
         return resp.json()
@@ -78,13 +100,17 @@ async def prometheus_query_range(
     start: int = Query(...),
     end: int = Query(...),
     step: int = Query(...),
+    source_id: Optional[str] = Query(None),
+    module: Optional[str] = Query("linux"),
 ):
     """PromQL zaman aralığı sorgusu — /api/v1/query_range proxy."""
+    base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             resp = await client.get(
-                f"{settings.PROMETHEUS_URL}/api/v1/query_range",
+                f"{base}/api/v1/query_range",
                 params={"query": query, "start": start, "end": end, "step": step},
+                headers=headers,
             )
         resp.raise_for_status()
         return resp.json()
@@ -93,11 +119,19 @@ async def prometheus_query_range(
 
 
 @router.get("/prometheus/labels/{label_name}")
-async def prometheus_label_values(label_name: str):
+async def prometheus_label_values(
+    label_name: str,
+    source_id: Optional[str] = Query(None),
+    module: Optional[str] = Query("linux"),
+):
     """Bir label'ın alabileceği değerler — /api/v1/label/{name}/values proxy."""
+    base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{settings.PROMETHEUS_URL}/api/v1/label/{label_name}/values")
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            resp = await client.get(
+                f"{base}/api/v1/label/{label_name}/values",
+                headers=headers,
+            )
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPError as e:

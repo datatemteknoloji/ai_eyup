@@ -16,6 +16,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/custom/sources")
+async def custom_prom_sources(db: Session = Depends(get_db)):
+    """Other (binding=none) Prometheus kaynakları."""
+    from app.services.custom_prom_monitoring import list_sources
+    return {"ok": True, "sources": list_sources(db)}
+
+
+@router.get("/custom/metrics")
+async def custom_prom_metrics(
+    q: str = "",
+    source_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.custom_prom_monitoring import search_metrics
+    return search_metrics(q, source_id=source_id, db=db)
+
+
+@router.get("/custom/labels/{label_name}")
+async def custom_prom_labels(
+    label_name: str,
+    source_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.custom_prom_monitoring import label_values
+    return label_values(label_name, source_id=source_id, db=db)
+
+
+@router.get("/custom/series")
+async def custom_prom_series(
+    metric: str,
+    source_id: Optional[str] = None,
+    range_sec: int = 900,
+    top_n: int = 8,
+    db: Session = Depends(get_db),
+):
+    from app.services.custom_prom_monitoring import series
+    return series(metric, range_sec=range_sec, source_id=source_id, db=db, top_n=top_n)
+
+
 @router.get("/metrics/servers")
 async def list_metric_servers(
     platform: str | None = None,

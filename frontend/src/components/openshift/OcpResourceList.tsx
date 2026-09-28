@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { FileCode, RefreshCw, Search, X, Minus, Plus, RotateCcw } from 'lucide-react'
+import { FileCode, RefreshCw, Search, X, Minus, Plus, RotateCcw, Eye } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
 import { useT } from '../../i18n/LocaleProvider'
+import OcpResourceDetailDrawer from './OcpResourceDetailDrawer'
 
 type Item = { name: string; namespace?: string; age?: string; info?: string }
 
@@ -11,7 +12,8 @@ const SCALABLE = ['deployments', 'statefulsets']
 const RESTARTABLE = ['deployments', 'statefulsets', 'daemonsets']
 
 /**
- * Kaynak listesi — proje bağlamı + YAML; Deployment/STS için ölçek ± ve restart.
+ * Kaynak listesi — satıra tıklayınca Atlas tarzı detay çekmecesi;
+ * Deployment/STS için ölçek ± ve restart.
  */
 export default function OcpResourceList({
   clusterId,
@@ -34,6 +36,7 @@ export default function OcpResourceList({
   const [q, setQ] = useState('')
   const [yamlView, setYamlView] = useState<{ name: string; text: string } | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  const [detail, setDetail] = useState<{ kind: string; name: string; namespace?: string } | null>(null)
 
   const ns = namespaced ? (namespace || '') : ''
   const needsProject = namespaced && !ns
@@ -66,8 +69,15 @@ export default function OcpResourceList({
     setYamlView({ name: it.name, text: d.yaml || d.error || '—' })
   }
 
+  const openDetail = (it: Item) => {
+    setDetail({
+      kind,
+      name: it.name,
+      namespace: it.namespace || ns || undefined,
+    })
+  }
+
   const parseReplicas = (info?: string) => {
-    // "1/2" → desired 2
     const m = (info || '').match(/(\d+)\s*\/\s*(\d+)/)
     return m ? parseInt(m[2], 10) : 0
   }
@@ -186,14 +196,18 @@ export default function OcpResourceList({
               {items.map((it) => (
                 <div
                   key={`${it.namespace}/${it.name}`}
-                  className="group flex items-center gap-3 rounded-lg border border-white/[0.05] bg-cyber-deep/40 hover:border-white/[0.1] px-3 py-2.5"
+                  className="group flex items-center gap-3 rounded-lg border border-white/[0.05] bg-cyber-deep/40 hover:border-rose-500/30 px-3 py-2.5 cursor-pointer"
+                  onClick={() => openDetail(it)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openDetail(it) }}
+                  role="button"
+                  tabIndex={0}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-100 font-mono truncate">{it.name}</p>
+                    <p className="text-sm text-slate-100 font-mono truncate group-hover:text-white">{it.name}</p>
                     {it.info && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{it.info}</p>}
                   </div>
                   <span className="text-[11px] text-slate-600 flex-shrink-0 tabular-nums">{it.age}</span>
-                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                  <div className="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                     {canWrite && RESTARTABLE.includes(kind) && (
                       acting === it.name ? (
                         <RefreshCw size={14} className="animate-spin text-slate-500 mx-1" />
@@ -218,6 +232,10 @@ export default function OcpResourceList({
                         </>
                       )
                     )}
+                    <button type="button" title={t('ocp_open_detail')} onClick={() => openDetail(it)}
+                      className="p-1.5 rounded-md text-slate-500 hover:text-rose-300 hover:bg-rose-500/10">
+                      <Eye size={14} />
+                    </button>
                     <button type="button" title="YAML" onClick={() => loadYaml(it)}
                       className="p-1.5 rounded-md text-slate-500 hover:text-violet-300 hover:bg-violet-500/10">
                       <FileCode size={14} />
@@ -247,6 +265,17 @@ export default function OcpResourceList({
             </pre>
           </div>
         </div>
+      )}
+
+      {detail && (
+        <OcpResourceDetailDrawer
+          clusterId={clusterId}
+          kind={detail.kind}
+          name={detail.name}
+          namespace={detail.namespace}
+          onClose={() => setDetail(null)}
+          onOpenPod={(pNs, pName) => setDetail({ kind: 'pods', name: pName, namespace: pNs })}
+        />
       )}
     </div>
   )

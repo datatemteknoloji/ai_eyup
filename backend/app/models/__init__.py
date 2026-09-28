@@ -16,7 +16,7 @@ from app.models.virt_datastore import VirtDatastore
 from app.models.virt_cluster import VirtCluster
 from app.models.virt_metric import VirtVmMetric, VirtDatastoreMetric
 from app.models.exadata import ExadataRack, ExadataNode
-from app.models.openshift import OpenShiftCluster, OpenShiftNode, OpenShiftProject, OpenShiftWorkload
+from app.models.openshift import OpenShiftCluster, OpenShiftNode, OpenShiftProject, OpenShiftWorkload, OcpResourceMetric
 from app.models.package_job import PackageFile, PackageJob
 from app.models.repository import RepoSource, RepoSyncJob, RepoPackage
 from app.models.system_update import SystemUpdatePlan, SystemUpdateJob

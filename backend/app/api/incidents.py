@@ -4,7 +4,7 @@ Incidents API - AIOps Incident Management + RCA
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import and_, case, desc, func
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
@@ -15,11 +15,22 @@ from app.core.config import settings, get_active_model
 from app.models.event import Incident, SystemEvent
 from app.models.server import Server
 from app.models.user import User
-from app.services.platform_scope import filter_incidents_for_platform
+from app.services.platform_scope import (
+    incident_affected_server_clause,
+    incident_platform_clause,
+)
 from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _touch_stats() -> None:
+    try:
+        from app.services.dashboard_stats_cache import invalidate_dashboard_stats
+        invalidate_dashboard_stats()
+    except Exception:
+        pass
 
 
 class IncidentCreate(BaseModel):
@@ -39,26 +50,93 @@ class IncidentUpdate(BaseModel):
     resolution: Optional[str] = None
 
 
+class IncidentBulkAction(BaseModel):
+    incident_ids: List[int]
+    action: str  # investigating | resolved | closed | delete
+
+
+def _filtered_incidents(
+    db: Session,
+    *,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    platform: Optional[str] = None,
+    server_id: Optional[int] = None,
+):
+    q = db.query(Incident)
+    if status:
+        q = q.filter(Incident.status == status)
+    if severity:
+        q = q.filter(Incident.severity == severity)
+    if search:
+        q = q.filter(Incident.title.ilike(f"%{search}%"))
+    if server_id:
+        q = q.filter(incident_affected_server_clause(server_id))
+    clause = incident_platform_clause(platform, db)
+    if clause is not None:
+        q = q.filter(clause)
+    return q
+
+
+def _resolve_linked_events(db: Session, inc: Incident) -> int:
+    """Çözülmemiş bağlı event'leri çöz. Incident silinince çağrılmaz."""
+    if not inc.related_events:
+        return 0
+    now = datetime.utcnow()
+    events = db.query(SystemEvent).filter(
+        SystemEvent.id.in_(inc.related_events),
+        SystemEvent.resolved == False,  # noqa: E712
+    ).all()
+    for e in events:
+        e.resolved = True
+        e.resolved_at = now
+    return len(events)
+
+
+def _apply_status(db: Session, inc: Incident, status: str) -> int:
+    inc.status = status
+    if status in ("resolved", "closed"):
+        inc.resolved_at = datetime.utcnow()
+        return _resolve_linked_events(db, inc)
+    return 0
+
+
+def compute_incident_stats(db: Session, platform: Optional[str] = None) -> dict:
+    """Incident sayaçları. Dashboard önbelleği bunu arka planda çağırır."""
+    q = _filtered_incidents(db, platform=platform)
+    total, open_count, investigating, resolved, critical = q.with_entities(
+        func.count(Incident.id),
+        func.coalesce(func.sum(case((Incident.status == "open", 1), else_=0)), 0),
+        func.coalesce(func.sum(case((Incident.status == "investigating", 1), else_=0)), 0),
+        func.coalesce(func.sum(case((Incident.status.in_(("resolved", "closed")), 1), else_=0)), 0),
+        func.coalesce(func.sum(case((
+            and_(Incident.status == "open", Incident.severity == "critical"), 1
+        ), else_=0)), 0),
+    ).one()
+    return {
+        "total": int(total or 0),
+        "open": int(open_count or 0),
+        "investigating": int(investigating or 0),
+        "resolved": int(resolved or 0),
+        "critical": int(critical or 0),
+    }
+
+
 @router.get("/stats")
 async def incident_stats(
     platform: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Incident istatistikleri"""
-    incidents = db.query(Incident).all()
-    incidents = filter_incidents_for_platform(incidents, platform, db)
-    total = len(incidents)
-    open_count = sum(1 for i in incidents if i.status == "open")
-    investigating = sum(1 for i in incidents if i.status == "investigating")
-    resolved = sum(1 for i in incidents if i.status in ("resolved", "closed"))
-    critical = sum(1 for i in incidents if i.severity == "critical" and i.status == "open")
-    return {
-        "total": total,
-        "open": open_count,
-        "investigating": investigating,
-        "resolved": resolved,
-        "critical": critical,
-    }
+    """Incident istatistikleri — platform filtresi SQL'de, sonuç önbellekte."""
+    from app.services.dashboard_stats_cache import get_or_compute
+
+    return get_or_compute(
+        "incidents",
+        platform,
+        "",
+        lambda: compute_incident_stats(db, platform),
+    )
 
 
 _LIST_DESC_MAX = 200
@@ -101,35 +179,113 @@ def _incident_list_item(inc: Incident, server_map: dict) -> dict:
     }
 
 
+@router.get("/servers")
+async def incident_servers(
+    platform: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Bu platformdaki incident'lerde geçen sunucular (filtre kutusu)."""
+    q = db.query(Incident.affected_servers)
+    clause = incident_platform_clause(platform, db)
+    if clause is not None:
+        q = q.filter(clause)
+    ids: set = set()
+    for (arr,) in q.all():
+        if not isinstance(arr, list):
+            continue
+        for raw in arr:
+            if isinstance(raw, int):
+                ids.add(raw)
+            elif isinstance(raw, str) and raw.isdigit():
+                ids.add(int(raw))
+    if not ids:
+        return []
+    rows = (
+        db.query(Server.id, Server.name)
+        .filter(Server.id.in_(list(ids)))
+        .order_by(Server.name.asc())
+        .all()
+    )
+    return [{"id": r.id, "name": r.name} for r in rows]
+
+
+@router.post("/bulk-action")
+async def bulk_action(data: IncidentBulkAction, db: Session = Depends(get_db)):
+    """Toplu incele / çöz / kapat / sil.
+
+    Çöz ve kapat bağlı açık event'leri de çözer. Silme event'lere dokunmaz.
+    """
+    action = (data.action or "").strip()
+    if action not in ("investigating", "resolved", "closed", "delete"):
+        raise HTTPException(status_code=400, detail="Geçersiz işlem")
+    ids = list(dict.fromkeys(data.incident_ids or []))[:500]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Incident seçilmedi")
+    incidents = db.query(Incident).filter(Incident.id.in_(ids)).all()
+    if not incidents:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+
+    affected = 0
+    resolved_events = 0
+    if action == "delete":
+        for inc in incidents:
+            db.delete(inc)
+            affected += 1
+        db.commit()
+        _touch_stats()
+        return {"success": True, "affected": affected, "resolved_events": 0}
+
+    changed: List[Incident] = []
+    for inc in incidents:
+        if action == "investigating" and inc.status == "open":
+            _apply_status(db, inc, "investigating")
+            affected += 1
+        elif action == "resolved" and inc.status in ("open", "investigating"):
+            resolved_events += _apply_status(db, inc, "resolved")
+            affected += 1
+            changed.append(inc)
+        elif action == "closed" and inc.status in ("open", "investigating", "resolved"):
+            resolved_events += _apply_status(db, inc, "closed")
+            affected += 1
+            changed.append(inc)
+    db.commit()
+    _touch_stats()
+    for inc in changed:
+        try:
+            from app.services.runbook_candidates import maybe_create_runbook_candidate
+            maybe_create_runbook_candidate(db, inc)
+        except Exception as e:
+            logger.debug("Runbook candidate atlandı: %s", e)
+    return {"success": True, "affected": affected, "resolved_events": resolved_events}
+
+
 @router.get("/")
 async def list_incidents(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     search: Optional[str] = None,
     platform: Optional[str] = None,
+    server_id: Optional[int] = None,
     limit: int = Query(default=50, le=200),
-    offset: int = 0,
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db)
 ):
-    """Incident listesi (slim) — tam RCA/açıklama için GET /{id}."""
-    q = db.query(Incident)
-    if status:
-        q = q.filter(Incident.status == status)
-    if severity:
-        q = q.filter(Incident.severity == severity)
-    if search:
-        q = q.filter(Incident.title.ilike(f"%{search}%"))
-
-    q = q.order_by(desc(Incident.created_at))
-
-    # Platform filtresi Python'da; yoksa SQL limit/offset
-    if platform:
-        all_matching = filter_incidents_for_platform(q.all(), platform, db)
-        total = len(all_matching)
-        incidents = all_matching[offset : offset + limit]
-    else:
-        total = q.count()
-        incidents = q.offset(offset).limit(limit).all()
+    """Incident listesi (slim). Platform ve sunucu filtresi SQL'de; sayfa LIMIT/OFFSET."""
+    q = _filtered_incidents(
+        db,
+        status=status,
+        severity=severity,
+        search=search,
+        platform=platform,
+        server_id=server_id,
+    )
+    total = q.count()
+    incidents = (
+        q.order_by(desc(Incident.created_at), desc(Incident.id))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     all_server_ids: set = set()
     for inc in incidents:
@@ -159,6 +315,7 @@ async def create_incident(data: IncidentCreate, db: Session = Depends(get_db)):
     )
     db.add(incident)
     db.commit()
+    _touch_stats()
     db.refresh(incident)
     return {
         "id": incident.id,
@@ -177,19 +334,7 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
 
     resolved_events = 0
     if data.status:
-        inc.status = data.status
-        if data.status in ("resolved", "closed"):
-            inc.resolved_at = datetime.utcnow()
-            # Incident kapanınca bağlı (çözülmemiş) event'leri de çöz
-            if inc.related_events:
-                events = db.query(SystemEvent).filter(
-                    SystemEvent.id.in_(inc.related_events),
-                    SystemEvent.resolved == False  # noqa: E712
-                ).all()
-                for e in events:
-                    e.resolved = True
-                    e.resolved_at = datetime.utcnow()
-                    resolved_events += 1
+        resolved_events = _apply_status(db, inc, data.status)
     if data.severity:
         inc.severity = data.severity
     if data.assigned_to is not None:
@@ -198,6 +343,7 @@ async def update_incident(incident_id: int, data: IncidentUpdate, db: Session = 
         inc.resolution = data.resolution
 
     db.commit()
+    _touch_stats()
     db.refresh(inc)
 
     # Dalga C1: resolved + çözüm metni → runbook adayı (Chroma'ya otomatik yazılmaz)
@@ -262,6 +408,7 @@ async def delete_incident(incident_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Incident bulunamadı")
     db.delete(inc)
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Incident silindi"}
 
 

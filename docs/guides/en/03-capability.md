@@ -30,7 +30,7 @@ Connections are **not** added here — Integrations → vCenter/OLVM.
 
 ### 12.7 OpenShift and oVirt
 
-OpenShift: `/openshift/ops` · `/openshift` · `/openshift/vms` · events · incidents · `/openshift/chat`.
+OpenShift: `/openshift/ops` · `/openshift` · `/openshift/vms` · `/openshift/monitoring` · events · incidents · `/openshift/chat`.
 
 oVirt/OLVM: Integrations → vCenter/OLVM (`kvm`) then virt dashboard and `/virt/chat`. KubeVirt: `/openshift/vms` plus virt inventory.
 

@@ -526,6 +526,7 @@ def _db_list_esx_hosts_handler(db: Session, args: Dict[str, Any], ctx: Dict[str,
             db,
             hypervisor=args.get("hypervisor"),
             name_filter=args.get("name_filter"),
+            cluster=args.get("cluster"),
             fields=fields if isinstance(fields, list) else None,
         )
     except Exception as e:
@@ -740,44 +741,117 @@ _VC_PROPERTY_CATALOG: Dict[str, Dict[str, str]] = {
         "summary.rebootRequired": "Yeniden başlatma gerekli mi",
         "config.product.fullName": "ESXi sürüm adı",
         "hardware.biosInfo.biosVersion": "BIOS sürümü",
+        "hardware.cpuInfo.numCpuCores": "Fiziksel core",
+        "hardware.cpuInfo.numCpuThreads": "Thread",
+        "hardware.memorySize": "Toplam RAM (byte)",
         "runtime.inMaintenanceMode": "Bakım modu",
         "runtime.bootTime": "Son açılış zamanı",
+        "runtime.connectionState": "connected/disconnected/notResponding",
         "runtime.healthSystemRuntime.systemHealthInfo.numericSensorInfo": "Donanım sensörleri",
-        "config.storageDevice.multipathInfo": "Multipath/LUN path durumu",
+        "config.storageDevice.multipathInfo": "Multipath/LUN path (APD/PDL ipucu)",
+        "config.network.vswitch": "Standard vSwitch listesi",
+        "config.network.proxySwitch": "Distributed switch proxy (VDS host tarafı)",
+        "config.network.portgroup": "Port group (vSS)",
         "config.dateTimeInfo.ntpConfig.server": "NTP sunucuları",
+        "config.firewall.defaultPolicy": "Host firewall varsayılan",
+        "config.lockdownMode": "Lockdown mode",
         "configIssue": "Yapılandırma uyarıları",
     },
     "ClusterComputeResource": {
         "name": "Cluster adı",
         "host": "Üye host MOR listesi",
+        "resourcePool": "Root resource pool",
         "summary.effectiveCpu": "Kullanılabilir CPU (MHz)",
         "summary.effectiveMemory": "Kullanılabilir RAM (MB)",
+        "summary.numHosts": "Host sayısı",
+        "summary.overallStatus": "Cluster overall status",
+        "configuration.dasConfig.enabled": "HA açık mı",
+        "configuration.dasConfig.admissionControlEnabled": "Admission control",
         "configuration.dasConfig.admissionControlPolicy": "HA admission control politikası",
+        "configuration.dasConfig.defaultVmBehavior": "HA VM restart davranışı",
+        "configuration.dasConfig.hostMonitoring": "Host monitoring",
+        "configuration.dasConfig.vmMonitoring": "VM monitoring",
+        "configuration.dasConfig.hBDatastoreCandidatePolicy": "Heartbeat datastore politikası",
+        "configuration.drsConfig.enabled": "DRS açık mı",
+        "configuration.drsConfig.defaultVmBehavior": "DRS automation (manual/partial/fullyAutomated)",
         "configuration.drsConfig.vmotionRate": "DRS migration eşiği (1-5)",
         "configurationEx.drsConfig.option": "DRS gelişmiş ayarlar",
+        "configuration.drsConfig.enableVmBehaviorOverrides": "VM DRS override",
+        "configuration.dpmConfigInfo.enabled": "DPM",
+        "configurationEx.vsanConfigInfo.enabled": "vSAN cluster mi",
     },
     "Datastore": {
         "name": "Datastore adı",
+        "summary.type": "VMFS/NFS/vSAN/…",
         "summary.capacity": "Toplam kapasite (byte)",
         "summary.freeSpace": "Boş alan (byte)",
         "summary.uncommitted": "Thin provisioning taahhüt edilmemiş alan",
         "summary.maintenanceMode": "Bakım modu",
         "summary.accessible": "Erişilebilir mi",
+        "summary.multipleHostAccess": "Çoklu host erişimi",
         "host": "Mount eden host'lar ve mount durumu",
         "iormConfiguration.enabled": "Storage IO Control açık mı",
         "info.vmfs.ssd": "SSD mi",
+        "info.vmfs.majorVersion": "VMFS major",
+        "info.nas.remoteHost": "NFS remote host",
+        "info.nas.remotePath": "NFS path",
     },
     "VirtualMachine": {
         "name": "VM adı",
         "runtime.host": "Çalıştığı host MOR",
         "runtime.powerState": "Güç durumu",
+        "runtime.connectionState": "Bağlantı",
+        "runtime.question": "VM soru bekliyor mu",
         "summary.storage.committed": "Kullanılan disk (byte)",
         "summary.storage.uncommitted": "Taahhüt edilmemiş (snapshot/thin)",
+        "summary.quickStats.uptimeSeconds": "Uptime",
+        "summary.quickStats.overallCpuDemand": "CPU demand (MHz)",
+        "summary.quickStats.guestMemoryUsage": "Guest mem (MB)",
+        "summary.quickStats.hostMemoryUsage": "Host mem (MB)",
+        "summary.quickStats.balloonedMemory": "Balloon (MB)",
+        "summary.quickStats.swappedMemory": "Swapped (MB)",
         "config.version": "Hardware sürümü",
+        "config.template": "Template mi",
+        "config.guestFullName": "Guest OS",
         "guest.toolsRunningStatus": "VMware Tools durumu",
+        "guest.toolsVersionStatus2": "Tools sürüm durumu",
+        "guest.ipAddress": "Guest IP",
         "config.hardware.numCPU": "vCPU",
         "config.hardware.memoryMB": "RAM (MB)",
+        "config.hardware.device": "Sanal donanım (disk/NIC)",
+        "config.cpuAllocation.reservation": "CPU reservation",
+        "config.cpuAllocation.limit": "CPU limit",
+        "config.cpuAllocation.shares": "CPU shares",
+        "config.memoryAllocation.reservation": "Mem reservation",
+        "config.memoryAllocation.limit": "Mem limit",
+        "config.memoryAllocation.shares": "Mem shares",
         "snapshot.rootSnapshotList": "Snapshot ağacı",
+        "resourceConfig": "Resource allocation özeti",
+        "parentVApp": "vApp üyeliği",
+    },
+    "Network": {
+        "name": "Network / port group adı",
+        "summary.accessible": "Erişilebilir",
+        "summary.ipPoolName": "IP pool (varsa)",
+        "host": "Bağlı host'lar",
+        "vm": "Bağlı VM'ler",
+    },
+    "DistributedVirtualSwitch": {
+        "name": "VDS adı",
+        "summary.productInfo.version": "VDS sürüm",
+        "config.maxMtu": "MTU",
+        "config.uplinkPortPolicy.uplinkPortName": "Uplink port adları",
+        "config.defaultPortConfig": "Varsayılan port politikası",
+    },
+    "ResourcePool": {
+        "name": "Resource pool adı",
+        "summary.configuredMemoryMB": "Yapılandırılmış RAM",
+        "runtime.cpu.maxUsage": "CPU max usage",
+        "runtime.memory.maxUsage": "Mem max usage",
+        "config.cpuAllocation": "CPU shares/reservation/limit",
+        "config.memoryAllocation": "Mem shares/reservation/limit",
+        "vm": "Üye VM MOR",
+        "resourcePool": "Alt pool'lar",
     },
 }
 
@@ -1581,6 +1655,290 @@ def _ocp_resource_quota_handler(db: Session, args: Dict[str, Any], ctx: Dict[str
         return {"ok": False, "error": str(e)}
 
 
+def _ocp_monitoring_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Timescale ocp_resource_metrics — overview/top/trend/series/cross (READ-ONLY)."""
+    try:
+        from app.services.ocp_chat_metrics import run_ocp_monitoring_query
+        names = args.get("names") or args.get("targets")
+        if isinstance(names, str):
+            names = [n.strip() for n in names.split(",") if n.strip()]
+        return run_ocp_monitoring_query(
+            db,
+            mode=args.get("mode") or "overview",
+            kind=args.get("kind") or args.get("entity") or "node",
+            metric=args.get("metric"),
+            names=names,
+            name_filter=args.get("name_filter") or args.get("name") or args.get("target"),
+            cluster=args.get("cluster") or args.get("hypervisor"),
+            range_key=args.get("range") or args.get("range_key"),
+            lookback_hours=args.get("lookback_hours") or args.get("hours"),
+            days=args.get("days") or args.get("lookback_days"),
+            top_n=args.get("top_n") or args.get("limit") or 10,
+            order=args.get("order"),
+            namespace=args.get("namespace"),
+            list_catalog=bool(args.get("list_catalog")),
+        )
+    except Exception as e:
+        logger.error("[Tool] ocp_monitoring_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.openshift.ocp_prom_monitoring import run_ocp_prom_query
+        range_sec = 900
+        if args.get("range_sec") is not None:
+            range_sec = int(args.get("range_sec") or 900)
+        elif args.get("hours") is not None:
+            range_sec = int(float(args.get("hours") or 0.25) * 3600)
+        out = run_ocp_prom_query(
+            mode=args.get("mode") or "overview",
+            metric_id=args.get("metric") or args.get("metric_id"),
+            family=args.get("family"),
+            range_sec=range_sec,
+            source_id=args.get("source_id"),
+            question=args.get("question") or (ctx or {}).get("message"),
+            view=args.get("view"),
+            namespace=args.get("namespace"),
+            node=args.get("node"),
+            pod=args.get("pod"),
+            instance=args.get("instance"),
+            top_n=int(args.get("top_n") or 40),
+            relax_selection=True,
+            label_kind=args.get("label_kind") or args.get("kind"),
+        )
+        out["footnote"] = "_Kaynak: ocp_prometheus_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] ocp_prometheus_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _ocp_access_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """OpenShift Users/Groups/Roles/Bindings — READ-ONLY küme API."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    client = None
+    try:
+        from app.services.openshift.ocp_access import run_access_query
+        client = _build_ocp_client(cluster)
+        out = run_access_query(
+            client,
+            mode=args.get("mode") or "overview",
+            kind=args.get("kind"),
+            name=args.get("name"),
+            namespace=args.get("namespace"),
+            q=args.get("q") or args.get("query") or args.get("search"),
+            subject_kind=args.get("subject_kind"),
+            subject_name=args.get("subject_name"),
+            subject_namespace=args.get("subject_namespace"),
+            verb=args.get("verb"),
+            resource=args.get("resource"),
+            api_group=args.get("api_group"),
+            limit=int(args.get("limit") or 200),
+        )
+        out["cluster"] = cluster.name
+        out["footnote"] = "_Kaynak: ocp_access_ (READ-ONLY)_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] ocp_access_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+
+def _ocp_pod_logs_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Pod container log'ları — READ-ONLY (kümede değişiklik yok)."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    namespace = (args.get("namespace") or "").strip()
+    pod = (args.get("pod") or args.get("name") or "").strip()
+    if not namespace or not pod:
+        return {"ok": False, "error": "namespace ve pod zorunlu"}
+    client = None
+    try:
+        from app.services.openshift import cluster_ops
+        client = _build_ocp_client(cluster)
+        out = cluster_ops.pod_logs(
+            client,
+            namespace,
+            pod,
+            container=(args.get("container") or None),
+            tail=int(args.get("tail") or 200),
+            previous=bool(args.get("previous")),
+            timestamps=args.get("timestamps", True) is not False,
+        )
+        # Chat context'i şişirmesin
+        logs = out.get("logs") or ""
+        if len(logs) > 24000:
+            logs = logs[-24000:]
+            out["truncated"] = True
+            out["logs"] = logs
+        out["cluster"] = cluster.name
+        out["namespace"] = namespace
+        out["pod"] = pod
+        out["footnote"] = "_Kaynak: ocp_pod_logs_ (READ-ONLY)_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] ocp_pod_logs hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+
+def _ocp_resource_yaml_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Kaynak YAML okuma — READ-ONLY. kind: pods|deployments|… (RESOURCE_KINDS)."""
+    cluster = resolve_openshift_cluster(db, args)
+    if not cluster:
+        return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
+    kind = (args.get("kind") or "").strip().lower()
+    name = (args.get("name") or "").strip()
+    namespace = (args.get("namespace") or "").strip() or None
+    if not kind or not name:
+        return {"ok": False, "error": "kind ve name zorunlu"}
+    client = None
+    try:
+        from app.services.openshift import cluster_ops
+        client = _build_ocp_client(cluster)
+        # Tekil/çoğul alias
+        aliases = {
+            "pod": "pods", "deployment": "deployments", "service": "services",
+            "route": "routes", "configmap": "configmaps", "pvc": "persistentvolumeclaims",
+            "persistentvolumeclaim": "persistentvolumeclaims", "pv": "persistentvolumes",
+            "node": "nodes", "storageclass": "storageclasses", "vm": "virtualmachines",
+            "virtualmachine": "virtualmachines", "statefulset": "statefulsets",
+            "daemonset": "daemonsets",
+        }
+        kind = aliases.get(kind, kind)
+        out = cluster_ops.get_resource_yaml(client, kind, name, namespace=namespace)
+        yaml_text = out.get("yaml") or ""
+        if len(yaml_text) > 28000:
+            out["yaml"] = yaml_text[:28000] + "\n# … truncated …\n"
+            out["truncated"] = True
+        out["cluster"] = cluster.name
+        out["kind"] = kind
+        out["name"] = name
+        out["namespace"] = namespace
+        out["footnote"] = (
+            "_Kaynak: ocp_resource_yaml_ (READ-ONLY — apply/patch YOK; "
+            "düzeltme önerisini metin olarak ver)_"
+        )
+        return out
+    except Exception as e:
+        logger.error("[Tool] ocp_resource_yaml hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+
+def _virt_prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from app.services.virt_prom_monitoring import run_virt_prom_query
+        out = run_virt_prom_query(
+            mode=args.get("mode") or "overview",
+            metric_id=args.get("metric") or args.get("metric_id"),
+            range_sec=int(args.get("range_sec") or 900),
+            source_id=args.get("source_id"),
+            raw_query=args.get("query") or args.get("raw_query"),
+        )
+        out["footnote"] = "_Kaynak: virt_prometheus_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] virt_prometheus_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _custom_prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Other kaynak — Unified + label/pin. Prom uyumlu → PromQL; Zabbix → bilgilendirici hata."""
+    try:
+        from app.services.monitoring_sources import (
+            load_sources_from_db, match_custom_label, list_custom, is_prom_compatible,
+        )
+        from app.services.custom_prom_monitoring import run_custom_prom_query
+
+        sources = load_sources_from_db(db)
+        customs = list_custom(sources)
+        if not customs:
+            return {"ok": False, "error": "Other monitoring kaynağı yok", "source_kind": "custom_prometheus"}
+
+        pin = (args.get("source_id") or (ctx or {}).get("monitoring_source") or "").strip()
+        if pin.startswith("custom:"):
+            pin = pin.split(":", 1)[1]
+        source_id = args.get("source_id") or None
+        if pin and not source_id:
+            source_id = pin
+
+        question = (args.get("question") or args.get("query") or (ctx or {}).get("message") or "")
+        hit_src = None
+        if not source_id:
+            hits = match_custom_label(question, sources)
+            if len(hits) == 0:
+                labels = [f"{s.label} ({s.collector_type})" for s in customs]
+                return {
+                    "ok": False,
+                    "error": (
+                        "Other kaynağı için mesajda ayarlardaki label’ın tamamı geçmeli "
+                        f"(ör. {customs[0].label!r}) veya source_id verin."
+                    ),
+                    "available_labels": labels,
+                    "source_kind": "custom_prometheus",
+                }
+            if len(hits) > 1:
+                return {
+                    "ok": False,
+                    "error": "Birden fazla Other label eşleşti; hangisini kullanacağınızı yazın.",
+                    "matches": [f"{s.label} ({s.collector_type})" for s in hits],
+                    "source_kind": "custom_prometheus",
+                }
+            hit_src = hits[0]
+            source_id = hit_src.id
+        else:
+            hit_src = next((s for s in customs if s.id == source_id), None)
+
+        if hit_src and not is_prom_compatible(hit_src):
+            return {
+                "ok": False,
+                "error": (
+                    f"{hit_src.label!r} collector_type={hit_src.collector_type}. "
+                    "Chat metrik sorgusu şimdilik Prometheus uyumlu Other kaynaklarda "
+                    "(prometheus / telegraf→Prom / opentelemetry→Prom). "
+                    "Zabbix adaptörü sonraki fazda."
+                ),
+                "source": hit_src.public_dict(),
+                "source_kind": f"custom:{hit_src.label}",
+            }
+
+        out = run_custom_prom_query(
+            mode=args.get("mode") or "query",
+            source_id=source_id,
+            metric=args.get("metric"),
+            query=args.get("promql") or args.get("query") or args.get("metric"),
+            q=args.get("q") or args.get("search"),
+            range_sec=int(args.get("range_sec") or 900),
+        )
+        label = next((s.label for s in customs if s.id == source_id), source_id)
+        ct = next((s.collector_type for s in customs if s.id == source_id), "prometheus")
+        out["footnote"] = f"_Kaynak: {ct} · {label}_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] custom_prometheus_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def _resolve_kubevirt_client(db: Session, args: Dict[str, Any]):
     """KubeVirt istemcisi — ÖNCE ayrı tanımlı 'openshift_virt' Hypervisor kaydını dener
     (list_kubevirt_vms ile aynı yol); yoksa OpenShiftCluster bağlantı bilgisiyle (aynı
@@ -2194,7 +2552,9 @@ TOOLS: Dict[str, Tool] = {
             "ESXi host bilgisini DATABASE'den listeler. "
             "metrics (CPU/RAM/state) ile inventory (IP, version, vendor) JOIN edilir — "
             "tek satırda birleşik sonuç. "
-            "Kullanıcının istediği alanları fields ile geç (örn. name,ip,version). "
+            "Kullanıcının istediği alanları fields ile geç (örn. name,ip,version,cluster). "
+            "Belirli bir vSphere CLUSTER'daki hostlar için cluster= zorunlu — "
+            "filtresiz çağrı TÜM host'ları döner (kapsam sızıntısı). "
             "fields yoksa kısa özet: name,ip,version,connection_state,hypervisor. "
             "Canlı API yok; stale/eksik alan için sync veya vcenter_ask."
         ),
@@ -2202,6 +2562,13 @@ TOOLS: Dict[str, Tool] = {
             "type": "object",
             "properties": {
                 "hypervisor": {"type": "string", "description": "vCenter adı (opsiyonel)"},
+                "cluster": {
+                    "type": "string",
+                    "description": (
+                        "vSphere cluster adı (substring). Kullanıcı 'X cluster'daki hostlar' "
+                        "dediyse BUNU geç — name_filter host adı içindir, cluster için değil."
+                    ),
+                },
                 "name_filter": {
                     "type": "string",
                     "description": (
@@ -3076,6 +3443,252 @@ TOOLS: Dict[str, Tool] = {
         direct_handler=_ocp_resource_quota_handler,
         direct_label="OpenShift namespace ResourceQuota/LimitRange",
     ),
+    "ocp_monitoring_query": Tool(
+        name="ocp_monitoring_query",
+        description=(
+            "OpenShift Monitoring (READ-ONLY) — Timescale `ocp_resource_metrics` "
+            "(metrics.k8s.io örnekleri; ~60 sn, saklama 30 gün). Virt vcenter_perf_query / "
+            "db_metric_trend eşleniği. "
+            "mode=overview: küme sağlık + top consumers + 24s/7g delta. "
+            "mode=top: anlık Top-N (kind=node|pod|vm, metric=cpu_pct|memory_pct|cpu_used_cores|"
+            "memory_used_gb|restarts). "
+            "mode=trend: son N gün avg/last/delta (kötüleşenler order=worsening). "
+            "mode=series: isimli nesne zaman serisi özeti (names zorunlu; lookback_hours veya "
+            "range=1h|8h|24h|7d|30d). "
+            "mode=cross: yüksek CPU node ⋈ o node'daki pod/VM. "
+            "list_catalog=true → metrik whitelist. "
+            "Disk/net/migration/kubevirt_vmi_* YOK — uydurma. Prometheus/PromQL KULLANMA. "
+            "Namespace kotası için ocp_resource_quota; canlı pod listesi için list_ocp_pods."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "overview|top|trend|series|cross|catalog (varsayılan overview)",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "node|pod|vm (varsayılan node)",
+                },
+                "metric": {
+                    "type": "string",
+                    "description": (
+                        "cpu_pct, memory_pct, cpu_used_cores, memory_used_gb, restarts "
+                        "(kind'e göre)"
+                    ),
+                },
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "series için nesne adları (worker-1 veya ns/pod; en fazla 8)",
+                },
+                "name_filter": {
+                    "type": "string",
+                    "description": "top/trend ILIKE filtresi veya tek hedef adı",
+                },
+                "cluster": {"type": "string", "description": "OpenShift cluster adı (opsiyonel)"},
+                "namespace": {"type": "string", "description": "pod/vm namespace filtresi"},
+                "range": {
+                    "type": "string",
+                    "description": "series aralığı: 15m|30m|1h|2h|8h|24h|7d|30d",
+                },
+                "lookback_hours": {
+                    "type": "number",
+                    "description": "series/trend saat penceresi (trend'de days yoksa /24)",
+                },
+                "days": {"type": "number", "description": "trend gün penceresi (varsayılan 7, max 30)"},
+                "top_n": {"type": "integer", "description": "Top-N (varsayılan 10, max 50)"},
+                "order": {
+                    "type": "string",
+                    "description": "top: highest|lowest; trend: worsening|improving|highest|lowest",
+                },
+                "list_catalog": {
+                    "type": "boolean",
+                    "description": "true ise metrik kataloğunu listeler",
+                },
+            },
+            "required": [],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_monitoring_query_handler,
+        direct_label="OpenShift Monitoring metrik sorgusu",
+    ),
+    "ocp_prometheus_query": Tool(
+        name="ocp_prometheus_query",
+        description=(
+            "OpenShift bound Prometheus (READ-ONLY). Üç şablon: "
+            "(1) Kubernetes Views — Grafana k8s_views birebir: view=global|namespaces|nodes|pods "
+            "(cluster/ns/node/pod CPU·mem·net·OOM·restart·QoS·disk·throttle); "
+            "(2) GPU/DCGM; (3) kubevirt_vmi_* (VMI CPU/mem/disk/net). "
+            "mode=overview|templates|catalog|views|series|allocation|labels. "
+            "Çapraz: mode=views ile bir view’ın tüm panelleri; veya mode=series + metric id "
+            "(örn. vg_oom_events_by_namespace, vn_cpu_usage_by_pod, vnd_cpu_usage_by_mode). "
+            "Filtre: namespace/node/pod/instance (çoklu virgülle). question yazılırsa view/metric çıkarılır. "
+            "Timescale/API (ocp_monitoring_query) DEĞİL — cAdvisor/node-exporter/Thanos."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "overview|templates|catalog|views|series|allocation|labels",
+                },
+                "view": {"type": "string", "description": "global|namespaces|nodes|pods (mode=views)"},
+                "family": {"type": "string", "description": "gpu|kubevirt|global|namespaces|nodes|pods"},
+                "metric": {"type": "string", "description": "catalog id (mode=series)"},
+                "namespace": {"type": "string"},
+                "node": {"type": "string"},
+                "pod": {"type": "string"},
+                "instance": {"type": "string"},
+                "label_kind": {"type": "string", "description": "namespace|node|instance|pod (mode=labels)"},
+                "range_sec": {"type": "integer"},
+                "top_n": {"type": "integer"},
+                "source_id": {"type": "string"},
+                "question": {"type": "string"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_prometheus_query_handler,
+        direct_label="OpenShift Prometheus (Views/DCGM/VMI)",
+    ),
+    "ocp_access_query": Tool(
+        name="ocp_access_query",
+        description=(
+            "OpenShift Access / RBAC (READ-ONLY). Users, Groups, Identities, Roles, "
+            "ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, OAuth IdP, "
+            "subject binding arama, kayıtlı token SelfSubjectAccessReview (can-i). "
+            "mode=overview|list|get|subject|group_members|can_i|identity_providers. "
+            "list/get: kind=users|groups|identities|roles|clusterroles|rolebindings|"
+            "clusterrolebindings|serviceaccounts. subject: subject_kind=User|Group|ServiceAccount "
+            "+ subject_name. OLUŞTURMA/SİLME YOK — yalnız okuma."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": (
+                        "overview|list|get|subject|group_members|can_i|identity_providers"
+                    ),
+                },
+                "kind": {"type": "string"},
+                "name": {"type": "string"},
+                "namespace": {"type": "string"},
+                "q": {"type": "string", "description": "liste filtre metni"},
+                "subject_kind": {"type": "string"},
+                "subject_name": {"type": "string"},
+                "subject_namespace": {"type": "string"},
+                "verb": {"type": "string"},
+                "resource": {"type": "string"},
+                "api_group": {"type": "string"},
+                "limit": {"type": "integer"},
+                "cluster": {"type": "string"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_access_query_handler,
+        direct_label="OpenShift Access / RBAC",
+    ),
+    "ocp_pod_logs": Tool(
+        name="ocp_pod_logs",
+        description=(
+            "OpenShift pod log'ları (READ-ONLY). CrashLoop/ImagePull/OOM teşhisi için. "
+            "namespace + pod zorunlu; container opsiyonel; previous=true önceki container. "
+            "Kümede değişiklik YAPMAZ — yalnız log okur."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string"},
+                "pod": {"type": "string"},
+                "container": {"type": "string"},
+                "tail": {"type": "integer", "description": "son N satır (default 200, max 5000)"},
+                "previous": {"type": "boolean"},
+                "cluster": {"type": "string"},
+            },
+            "required": ["namespace", "pod"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_pod_logs_handler,
+        direct_label="OpenShift pod logs",
+    ),
+    "ocp_resource_yaml": Tool(
+        name="ocp_resource_yaml",
+        description=(
+            "OpenShift kaynak YAML okuma (READ-ONLY). "
+            "kind=pods|deployments|statefulsets|daemonsets|services|configmaps|"
+            "persistentvolumeclaims|routes|virtualmachines|persistentvolumes|nodes|storageclasses. "
+            "Namespaceli kind'da namespace zorunlu. Apply/patch/create YOK — yalnız okur; "
+            "düzeltme için örnek YAML metin olarak öner."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string"},
+                "name": {"type": "string"},
+                "namespace": {"type": "string"},
+                "cluster": {"type": "string"},
+            },
+            "required": ["kind", "name"],
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_ocp_resource_yaml_handler,
+        direct_label="OpenShift resource YAML",
+    ),
+    "virt_prometheus_query": Tool(
+        name="virt_prometheus_query",
+        description=(
+            "VMware Prometheus / vmware_exporter (READ-ONLY). mode=overview|catalog|discover|series. "
+            "metric=vm_cpu|vm_mem|host_cpu|… vCenter Timescale DEĞİL."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "metric": {"type": "string"},
+                "range_sec": {"type": "integer"},
+                "source_id": {"type": "string"},
+                "query": {"type": "string"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_virt_prometheus_query_handler,
+        direct_label="VMware Prometheus",
+    ),
+    "custom_prometheus_query": Tool(
+        name="custom_prometheus_query",
+        description=(
+            "Other/custom monitoring kaynağı (READ-ONLY, yalnız Unified). "
+            "Mesajda kaynak label’ının tamamı geçmeli veya source_id. "
+            "collector_type prometheus|telegraf|opentelemetry → PromQL keşif/sorgu; "
+            "zabbix şimdilik kayıtlıdır, metrik adaptörü sonraki faz. "
+            "mode=list_sources|search|series|query."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "source_id": {"type": "string"},
+                "metric": {"type": "string"},
+                "promql": {"type": "string"},
+                "query": {"type": "string"},
+                "question": {"type": "string"},
+                "q": {"type": "string"},
+                "range_sec": {"type": "integer"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_custom_prometheus_query_handler,
+        direct_label="Other Prometheus",
+    ),
     "kubevirt_vm_detail": Tool(
         name="kubevirt_vm_detail",
         description=(
@@ -3651,6 +4264,13 @@ _TOOL_DOMAIN_OVERRIDE = {
     "list_datavolumes": frozenset({"openshift"}),
     "list_ocp_migrations": frozenset({"openshift"}),
     "ocp_resource_quota": frozenset({"openshift"}),
+    "ocp_monitoring_query": frozenset({"openshift"}),
+    "ocp_prometheus_query": frozenset({"openshift"}),
+    "ocp_access_query": frozenset({"openshift"}),
+    "ocp_pod_logs": frozenset({"openshift"}),
+    "ocp_resource_yaml": frozenset({"openshift"}),
+    "virt_prometheus_query": frozenset({"vcenter"}),
+    "custom_prometheus_query": frozenset({"infra"}),  # Unified’da label gate ile
     "kubevirt_vm_detail": frozenset({"openshift", "vcenter"}),
     "kubevirt_snapshots": frozenset({"openshift", "vcenter"}),
 }

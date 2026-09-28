@@ -144,11 +144,15 @@ def _manager_status(hv: Hypervisor, hosts: List[HypervisorHostMetric], vm_stats:
                 "title": "Metrik sync gecikmesi",
                 "detail": f"Son metrik {stale_minutes} dk önce",
             })
-    elif htype == "vmware":
+    elif htype in ("vmware", "openshift_virt"):
         issues.append({
             "severity": "warning",
             "title": "Host metrik verisi yok",
-            "detail": "ESX metrik sync henüz çalışmamış olabilir",
+            "detail": (
+                "ESX metrik sync henüz çalışmamış olabilir"
+                if htype == "vmware"
+                else "OpenShift node metrik sync henüz çalışmamış olabilir"
+            ),
         })
 
     disconnected = sum(

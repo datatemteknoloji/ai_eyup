@@ -82,10 +82,27 @@ def _known_host_names(db: Session) -> List[str]:
 def _known_cluster_names(db: Session) -> List[str]:
     def _load() -> List[str]:
         from app.models.server import Server
+        from app.models.virt_cluster import VirtCluster
+        from app.models.hypervisor_metric import HypervisorHostMetric
         from app.services.platform_scope import vm_filter_condition
 
-        rows = db.query(Server.vm_cluster).filter(vm_filter_condition()).distinct().all()
-        return _clean_sorted(r[0] for r in rows)
+        names = []
+        names.extend(r[0] for r in db.query(Server.vm_cluster).filter(vm_filter_condition()).distinct().all())
+        try:
+            names.extend(r[0] for r in db.query(VirtCluster.name).distinct().all())
+        except Exception:
+            pass
+        try:
+            names.extend(
+                r[0]
+                for r in db.query(HypervisorHostMetric.cluster_name)
+                .filter(HypervisorHostMetric.cluster_name.isnot(None))
+                .distinct()
+                .all()
+            )
+        except Exception:
+            pass
+        return _clean_sorted(names)
 
     return _cached("cluster_name", _load)
 

@@ -1032,6 +1032,29 @@ html[data-theme="light"] .chat-md-table-wrap {
   stroke-width: 1.75px !important;
 }
 
+/* Monitoring mimari: kutu boyutuna sığan yazı; kesilme olmasın */
+.mon-arch-mermaid .nodeLabel,
+.mon-arch-mermaid .edgeLabel,
+.mon-arch-mermaid .label,
+.mon-arch-mermaid .cluster-label,
+.mon-arch-mermaid foreignObject,
+.mon-arch-mermaid foreignObject div,
+.mon-arch-mermaid foreignObject span,
+.mon-arch-mermaid foreignObject p,
+.mon-arch-mermaid text,
+.mon-arch-mermaid tspan {
+  font-size: 13px !important;
+  font-weight: 550 !important;
+  line-height: 1.35 !important;
+}
+.mon-arch-mermaid foreignObject {
+  overflow: visible !important;
+}
+.mon-arch-mermaid .cluster-label foreignObject div,
+.mon-arch-mermaid .cluster span {
+  white-space: nowrap !important;
+}
+
 /* React Flow: :root color-scheme:dark Canvas'ı siyah boyar — diyagramı zorla açık tut */
 .chat-arch-flow {
   color-scheme: light;

@@ -115,3 +115,31 @@ def test_ignore_heuristic_matches_virt_guard():
     assert not answer_ignores_evidence(
         "192.168.1.101 hostunda RAM 95.5 seviyesinde, sağlık skoru 50.", EVIDENCE,
     )
+
+
+def test_invented_ip_is_rejected_even_in_long_answer():
+    from app.services.chat_evidence import answer_invents_ips
+    long = (
+        "Prod-Cluster tek bir ESXi hostu (192.168.1.101) içeriyor. "
+        "Ayrıca esx-prod-01 (192.168.1.102) ve esx-prod-02 (192.168.1.103) "
+        "gibi hostlar da olabilir. " * 5
+    )
+    evidence = (
+        'host_names=["192.168.1.101","esx-prod-01","esx-prod-02"] '
+        "Prod-Cluster hosts=3 ha_verdict=Failover kapasitesi var"
+    )
+    assert answer_invents_ips(long, evidence)
+    assert answer_ignores_evidence(long, evidence)
+
+
+def test_missing_host_names_while_talking_hosts_is_rejected():
+    evidence = (
+        "Prod-Cluster host_names=esx-prod-01,esx-prod-02,192.168.1.101 "
+        "Lab-Cluster host_names=esx-lab-01 count=3"
+    )
+    bad = (
+        "Prod-Cluster tek bir ESXi hostu içeriyor. "
+        "HA yalnızca en az iki hostlu kümede çalışır. "
+        "Dolayısıyla VM'ler otomatik kurtarılamaz."
+    )
+    assert answer_ignores_evidence(bad, evidence)

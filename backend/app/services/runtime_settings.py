@@ -233,6 +233,12 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "ESXi host metrik toplama.",
         "env": "ESX_METRIC_INTERVAL_SEC",
     },
+    "ocp_monitoring_interval_sec": {
+        "default": 60, "type": "int", "min": 30, "max": 900,
+        "group": "background", "label": "OpenShift monitoring örnek aralığı (sn)",
+        "help": "metrics.k8s.io → Timescale ocp_resource_metrics. Geçmiş bu aralıkla birikir; API geriye doldurulamaz.",
+        "env": "OCP_MONITORING_INTERVAL_SEC",
+    },
     "rag_reindex_interval_sec": {
         "default": 1800, "type": "int", "min": 300, "max": 86400,
         "group": "background", "label": "RAG reindex aralığı (sn)",

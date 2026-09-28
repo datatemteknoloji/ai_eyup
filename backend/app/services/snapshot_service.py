@@ -112,6 +112,16 @@ def _apply_vm_details_to_server(server: Server, details: dict, db: Session) -> N
     if not (server.os_version or "").strip() and details.get("vm_guest_os_full"):
         server.os_version = str(details["vm_guest_os_full"])[:255]
 
+    # VMware Tools / guest agent hostname → Server.hostname (isim uyumsuz filtresi bunu kullanır)
+    guest_hn = (details.get("vm_guest_hostname") or details.get("hostname") or "").strip()
+    vm_name = (details.get("vm_name") or server.vm_name or server.name or "").strip()
+    if guest_hn:
+        if not server.vm_name and vm_name:
+            server.vm_name = vm_name
+        cur = (server.hostname or "").strip()
+        if not cur or cur == (server.name or "") or (vm_name and cur == vm_name):
+            server.hostname = guest_hn
+
     db.add(server)
     db.commit()
 

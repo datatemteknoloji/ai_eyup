@@ -219,9 +219,12 @@ class KubeVirtClient:
                 ip_address = self._vmi_primary_ip(vmi_status)
 
                 guest_os = ""
+                guest_hn = ""
                 guest_info = vmi_status.get("guestOSInfo") or {}
                 if guest_info:
                     guest_os = guest_info.get("prettyName") or guest_info.get("name") or ""
+                    # qemu-guest-agent bazen hostname alanı göndermez — uydurma (VM adı) yazma
+                    guest_hn = (guest_info.get("hostname") or "").strip()
 
                 status = "ONLINE" if str(phase).lower() in ("running",) else "OFFLINE"
                 printable = (vm.get("status") or {}).get("printableStatus") or phase
@@ -229,10 +232,12 @@ class KubeVirtClient:
                 power_state = "poweredOn" if str(phase).lower() == "running" else "poweredOff"
                 memory_mb = int(round(memory_gb * 1024)) if memory_gb else 0
 
+                # vm_id = namespace/name — get_vm_full_details ve enrichment bunu bekler (UID değil)
                 inventory.append({
                     "name": name,
                     "ip_address": ip_address,
-                    "hostname": (guest_info.get("hostname") if guest_info else None) or name,
+                    "hostname": guest_hn or name,
+                    "vm_guest_hostname": guest_hn,
                     "os_type": guest_os,
                     "guest_os": guest_os,
                     "cpu_cores": cpu_cores,
@@ -241,7 +246,8 @@ class KubeVirtClient:
                     "memory_mb": memory_mb,
                     "status": status,
                     "power_state": power_state,
-                    "vm_id": uid or key,
+                    "vm_id": key,
+                    "uid": uid,
                     "moref": key,
                     "namespace": namespace,
                     "node_name": node_name,
@@ -524,7 +530,8 @@ class KubeVirtClient:
                 # Virt inventory uyumu
                 "vm_id": f"{namespace}/{vm_name}",
                 "vm_name": vm_name,
-                "vm_guest_hostname": guest_info.get("hostname") or vm_name,
+                # Agent hostname yoksa VM adı uydurma — mismatch için boş bırak
+                "vm_guest_hostname": (guest_info.get("hostname") or "").strip(),
                 "vm_guest_ip": guest_ip,
                 "vm_cpu_count": cpu_cores,
                 "vm_memory_mb": memory_mb,
@@ -548,7 +555,7 @@ class KubeVirtClient:
                 "memory_mb": memory_mb,
                 "ip_address": guest_ip,
                 "guest_os": guest_info.get("prettyName") or guest_info.get("name") or "",
-                "hostname": guest_info.get("hostname") or vm_name,
+                "hostname": (guest_info.get("hostname") or "").strip() or vm_name,
                 "machine_type": machine_type,
                 "launcher_pod": launcher,
                 "disks": disks_out,

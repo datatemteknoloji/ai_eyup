@@ -35,7 +35,7 @@ SSH ile RHEL/Ubuntu benzeri host’ları envantere almak, metrik izlemek, paket/
               /linux/dashboard  /metrics  /linux/chat
 ```
 
-Backend `network_mode: host` ile hedefe SSH açar. Konuk VM’ler hypervisor senkronundan `servers`’a düşebilir; fiziksel kayıt entegrasyondandır.
+Backend `network_mode: host` ile hedefe SSH açar. Konuk VM’ler hypervisor senkronundan (VMware/OLVM ve OpenShift Virt/KubeVirt — OCP cluster sync ile) `servers`’a düşer; fiziksel kayıt entegrasyondandır.
 
 ---
 

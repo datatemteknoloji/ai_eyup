@@ -172,6 +172,23 @@ def _enrich_server_from_client(
         logger.debug("VM detay zenginleştirme atlandı (%s): %s", server.name, exc)
 
 
+def _inventory_guest_hostname(vm: dict) -> str:
+    """Inventory satırından guest OS hostname — VMware Tools / oVirt agent / KubeVirt guestOSInfo.
+
+    `hostname` alanı çoğu client'ta guest hostname'dir (yoksa VM adına düşer).
+    `vm_guest_hostname` yalnızca gerçek guest değeri taşır (KubeVirt boş bırakabilir).
+    """
+    explicit = (vm.get("vm_guest_hostname") or "").strip()
+    if explicit:
+        return explicit
+    hn = (vm.get("hostname") or "").strip()
+    name = (vm.get("name") or "").strip()
+    # hostname yalnızca VM adı fallback'iyse guest sayma
+    if hn and name and hn.lower() == name.lower():
+        return ""
+    return hn
+
+
 def _upsert_vm_record(
     db: Session,
     hypervisor: Hypervisor,
@@ -184,6 +201,10 @@ def _upsert_vm_record(
     vm_name = vm.get("name", "Unknown")
     vm_status_val = _vm_status(vm)
     vm_id = (vm.get("vm_id") or "").strip()
+    guest_hn = _inventory_guest_hostname(vm)
+    # VMware sync_vms_to_inventory: hostname = Tools host_name (guest)
+    # KubeVirt: hostname = guest veya VM adı; guest yoksa vm_name kullan
+    row_hostname = (vm.get("hostname") or "").strip() or vm_name
     existing = _find_existing_server(db, hypervisor.id, vm)
     created = False
 
@@ -199,7 +220,7 @@ def _upsert_vm_record(
             }
         existing = Server(
             name=vm_name,
-            hostname=vm_name,
+            hostname=row_hostname,
             ip_address=vm.get("ip_address", ""),
             status=vm_status_val,
             os_type=vm.get("os_type", ""),
@@ -210,18 +231,41 @@ def _upsert_vm_record(
             ai_ready=False,
             hypervisor_id=hypervisor.id,
             hypervisor_vm_id=vm_id,
+            vm_name=vm_name,
+            vm_guest_hostname=guest_hn or None,
         )
         db.add(existing)
         created = True
     else:
         if vm_name and existing.name != vm_name:
             existing.name = vm_name
-        if vm_name and (not existing.hostname or existing.hostname == existing.name):
-            existing.hostname = vm_name
+        existing.vm_name = vm_name
+        if guest_hn:
+            existing.vm_guest_hostname = guest_hn
+        # Hostname: guest tercih et. Elle/SSH ile konmuş ve VM adından farklıysa koru.
+        cur_hn = (existing.hostname or "").strip()
+        if guest_hn and (
+            not cur_hn
+            or cur_hn == (existing.name or "")
+            or cur_hn == vm_name
+            or cur_hn.lower() == (existing.vm_name or "").lower()
+        ):
+            existing.hostname = guest_hn
+        elif not cur_hn:
+            existing.hostname = row_hostname
+        elif cur_hn == (existing.name or "") and row_hostname and row_hostname != vm_name:
+            # Eski kayıt: hostname hâlâ VM adı, inventory guest getirmiş (VMware Tools)
+            existing.hostname = row_hostname
         existing.status = vm_status_val
         if not existing.hypervisor_id:
             existing.hypervisor_id = hypervisor.id
-        if vm_id and not existing.hypervisor_vm_id:
+        if vm_id and (
+            not existing.hypervisor_vm_id
+            or (
+                # KubeVirt: eski UID → namespace/name yükselt
+                "/" in vm_id and "/" not in (existing.hypervisor_vm_id or "")
+            )
+        ):
             existing.hypervisor_vm_id = vm_id
         if not existing.server_type:
             existing.server_type = "VIRTUAL"
@@ -245,6 +289,7 @@ def _upsert_vm_record(
         or not existing.vm_tools_status
         or not existing.vm_datastore
         or not existing.vm_last_sync
+        or not existing.vm_name
     )
     if preloaded_details:
         _enrich_server_from_client(

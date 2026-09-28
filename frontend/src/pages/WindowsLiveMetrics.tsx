@@ -57,7 +57,7 @@ const SummaryCard: React.FC<{ icon: React.ReactNode; label: string; value: strin
   </div>
 )
 
-const WindowsLiveMetrics: React.FC = () => {
+const WindowsLiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const t = useT()
   const { locale } = useLocale()
   const [refreshMs, setRefreshMs] = useState(30_000)
@@ -86,12 +86,14 @@ const WindowsLiveMetrics: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {!embedded && (
         <div>
           <h1 className="text-xl font-bold text-white">{t('wlm_title')}</h1>
           <p className="text-slate-400 text-sm mt-0.5">
             {t('wlm_subtitle')}
           </p>
         </div>
+        )}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
             {refreshOptions.map(opt => (

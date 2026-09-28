@@ -19,6 +19,7 @@ def reload_runtime_settings_from_db() -> None:
         from app.models.app_settings import AppSettings
         from app.core.config import settings as cfg
         import os
+        import json
 
         db = SessionLocal()
         try:
@@ -50,6 +51,35 @@ def reload_runtime_settings_from_db() -> None:
             cfg.REMOTE_LLM_VERIFY_SSL = rows["remote_llm_verify_ssl"].lower() == "true"
         if rows.get("remote_llm_ca_bundle") is not None:
             cfg.REMOTE_LLM_CA_BUNDLE = rows["remote_llm_ca_bundle"]
+
+        # Prometheus / monitoring sources
+        if rows.get("prometheus_url"):
+            cfg.PROMETHEUS_URL = rows["prometheus_url"].rstrip("/")
+            os.environ["PROMETHEUS_URL"] = cfg.PROMETHEUS_URL
+        if rows.get("pushgateway_url") is not None:
+            cfg.PUSHGATEWAY_URL = (rows["pushgateway_url"] or "").rstrip("/")
+            os.environ["PUSHGATEWAY_URL"] = cfg.PUSHGATEWAY_URL
+        if rows.get("prometheus_linux_jobs"):
+            try:
+                from app.core.config import _parse_job_list
+                jobs = json.loads(rows["prometheus_linux_jobs"])
+                if isinstance(jobs, list):
+                    cfg.PROMETHEUS_LINUX_JOBS = [str(x).strip() for x in jobs if str(x).strip()] or ["node-exporter"]
+                else:
+                    cfg.PROMETHEUS_LINUX_JOBS = _parse_job_list(str(rows["prometheus_linux_jobs"]), ["node-exporter"])
+            except Exception:
+                pass
+        if rows.get("prometheus_windows_jobs"):
+            try:
+                from app.core.config import _parse_job_list
+                jobs = json.loads(rows["prometheus_windows_jobs"])
+                if isinstance(jobs, list):
+                    cfg.PROMETHEUS_WINDOWS_JOBS = [str(x).strip() for x in jobs if str(x).strip()] or ["windows-exporter"]
+                else:
+                    cfg.PROMETHEUS_WINDOWS_JOBS = _parse_job_list(str(rows["prometheus_windows_jobs"]), ["windows-exporter"])
+            except Exception:
+                pass
+        # monitoring_prometheus_sources: runtime'da DB'den okunur (load_sources_from_db)
 
         from app.services.runtime_settings import invalidate_cache
         invalidate_cache()

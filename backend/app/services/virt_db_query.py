@@ -352,6 +352,7 @@ def list_esx_hosts_db(
     *,
     hypervisor: Optional[str] = None,
     name_filter: Optional[str] = None,
+    cluster: Optional[str] = None,
     fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """ESXi host listesi — metrics ⋈ inventory join; fields ile dinamik projeksiyon.
@@ -381,6 +382,8 @@ def list_esx_hosts_db(
             q = q.filter(HypervisorHostMetric.hypervisor_id == hv.id)
     if name_filter:
         q = q.filter(HypervisorHostMetric.host_name.ilike(f"%{name_filter.strip()}%"))
+    if cluster:
+        q = q.filter(HypervisorHostMetric.cluster_name.ilike(f"%{cluster.strip()}%"))
 
     subq = (
         q.with_entities(

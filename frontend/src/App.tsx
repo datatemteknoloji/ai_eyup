@@ -20,6 +20,7 @@ const Applications = lazy(() => import('./pages/Applications'))
 const Servers = lazy(() => import('./pages/Servers'))
 const Hypervisors = lazy(() => import('./pages/Hypervisors'))
 const VirtMonitoring = lazy(() => import('./pages/VirtMonitoring'))
+const MonitoringHub = lazy(() => import('./pages/MonitoringHub'))
 const Agent = lazy(() => import('./pages/Agent'))
 const AiAutomationHub = lazy(() => import('./pages/AiAutomationHub'))
 const LiveMetrics = lazy(() => import('./pages/LiveMetrics'))
@@ -35,6 +36,9 @@ const ExecutiveDashboard = lazy(() => import('./pages/ExecutiveDashboard'))
 const ExadataDashboard = lazy(() => import('./pages/ExadataDashboard'))
 const OpenShiftDashboard = lazy(() => import('./pages/OpenShiftDashboard'))
 const OpenShiftExplorer = lazy(() => import('./pages/OpenShiftExplorer'))
+const OpenShiftMonitoring = lazy(() => import('./pages/OpenShiftMonitoring'))
+const OpenShiftAccessPage = lazy(() => import('./pages/OpenShiftAccessPage'))
+const OpenShiftVmsPage = lazy(() => import('./pages/OpenShiftVmsPage'))
 const OpenShiftVmConsolePage = lazy(() => import('./pages/OpenShiftVmConsolePage'))
 const IntegrationsHub = lazy(() => import('./pages/IntegrationsHub'))
 const PhysicalHostsPage = lazy(() => import('./pages/PhysicalHostsPage'))
@@ -226,6 +230,7 @@ const HomeRedirect: React.FC = () => {
   if (hasModule('exadata')) return <Navigate to="/exadata" replace />
   if (hasModule('openshift')) return <Navigate to="/openshift" replace />
   if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
+  if (hasModule('monitoring')) return <Navigate to="/monitoring" replace />
   if (hasModule('level1')) return <Navigate to="/level1" replace />
   if (hasModule('integrations')) return <Navigate to="/integrations" replace />
   return (
@@ -265,6 +270,14 @@ function App() {
                       <Route path="/" element={<ErrorBoundary><HomeRedirect /></ErrorBoundary>} />
                       <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
                       <Route path="/executive" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveDashboard /></ErrorBoundary></RequireModule>} />
+                      <Route
+                        path="/monitoring"
+                        element={
+                          <RequireModule moduleId="monitoring">
+                            <ErrorBoundary><MonitoringHub /></ErrorBoundary>
+                          </RequireModule>
+                        }
+                      />
                       <Route path="/linux/dashboard" element={<RequireModule moduleId="linux"><ErrorBoundary><LinuxDashboardPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/dashboard" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsDashboardPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/servers" element={<RequireModule moduleId="linux"><ErrorBoundary><Servers /></ErrorBoundary></RequireModule>} />
@@ -317,7 +330,9 @@ function App() {
                       <Route path="/exadata/baseline" element={<Navigate to="/exadata/analysis?tab=baseline" replace />} />
 
                       <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer initialSection="vms" /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftVmsPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/monitoring" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftMonitoring /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/access" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftAccessPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/chat" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />

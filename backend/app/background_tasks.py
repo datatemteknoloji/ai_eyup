@@ -99,9 +99,11 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_system_update_recovery()))
         self.tasks.append(asyncio.create_task(self._periodic_vm_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_openshift_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_ocp_monitoring_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_auto_onboarding()))
         self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
         self.tasks.append(asyncio.create_task(self._periodic_windows_live_metrics()))
+        self.tasks.append(asyncio.create_task(self._periodic_dashboard_stats()))
         self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
@@ -127,6 +129,21 @@ class BackgroundTaskManager:
         except Exception:
             pass
         logger.info("Background tasks stopped")
+
+    async def _periodic_dashboard_stats(self):
+        """Sağlık sayaçlarını (event + incident) periyodik say. Sayfa açılışı önbellekten okur."""
+        logger.info("Dashboard stats cache warmer started (60s)")
+        await asyncio.sleep(20)
+        while self.running:
+            try:
+                from app.services.dashboard_stats_cache import refresh_dashboard_stat_caches
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, refresh_dashboard_stat_caches)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Dashboard stats cache error: %s", e)
+            await asyncio.sleep(60)
 
     async def _syslog_receiver_supervisor(self):
         """UDP syslog alıcı — Ayarlar → syslog_receiver_enabled."""
@@ -298,10 +315,17 @@ class BackgroundTaskManager:
                     inv_result = await loop.run_in_executor(None, sync_all_openshift_clusters, db)
                     if inv_result.get("total_clusters", 0) > 0:
                         ev_result = await loop.run_in_executor(None, sync_all_openshift_events, db)
+                        try:
+                            from app.services.openshift.ocp_monitoring import sync_all_ocp_monitoring_metrics
+                            mon = await loop.run_in_executor(None, sync_all_ocp_monitoring_metrics, db)
+                        except Exception as mon_exc:
+                            logger.warning("OCP monitoring metric sync: %s", mon_exc)
+                            mon = {}
                         logger.info(
-                            "OpenShift sync: %s cluster, %s yeni olay",
+                            "OpenShift sync: %s cluster, %s yeni olay, monitoring rows=%s",
                             inv_result.get("total_clusters", 0),
                             ev_result.get("total_saved", 0),
+                            mon.get("rows", 0),
                         )
                         from app.services import qa_cache
                         qa_cache.invalidate_all()
@@ -315,6 +339,26 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"OpenShift sync task error: {e}")
                 await asyncio.sleep(_rt_sec("openshift_sync_interval_sec", 600))
+
+    async def _periodic_ocp_monitoring_sync(self):
+        """OCP Monitoring Timescale örnekleri — varsayılan 60s (geçmiş birikir)."""
+        logger.info("OCP monitoring metric sync started (60s interval)")
+        await asyncio.sleep(20)
+
+        while self.running:
+            try:
+                from app.services.fleet_jobs import run_ocp_monitoring_sync
+                await _enqueue_or_run(
+                    "fleet.ocp_monitoring_sync",
+                    run_ocp_monitoring_sync,
+                    label="ocp_monitoring",
+                )
+                await asyncio.sleep(_rt_sec("ocp_monitoring_interval_sec", 60))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"OCP monitoring sync task error: {e}")
+                await asyncio.sleep(_rt_sec("ocp_monitoring_interval_sec", 60))
 
     async def _periodic_esx_metric_sync(self):
         """ESX host metrikleri — Celery."""

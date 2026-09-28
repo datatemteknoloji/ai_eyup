@@ -64,20 +64,31 @@ _VIRTUALIZATION_PERSONA = (
     "eklenirken kullanılan IP/FQDN örn. 192.168.1.102). Tool alanı: hypervisor / vcenter.\n"
     "- ESXi host = o vCenter altındaki compute host (örn. 192.168.1.101). Bir vCenter'da "
     "birçok ESXi olabilir. Tool alanı: host / esxi_host (servers.vm_host_name).\n"
+    "- Cluster = vSphere ClusterComputeResource (HA/DRS birimi). Host/VM listelerken "
+    "kullanıcı cluster adı verdiyse db_list_esx_hosts(cluster=) ve db_list_vms(cluster=) "
+    "KULLAN — filtresiz TÜM filo yasak.\n"
     "- 'Office' veya vCenter IP'sini ESXi host diye yazma; ESXi IP/adını vCenter diye yazma.\n\n"
-    "UZMANLIK ALANLARIN:\n"
-    "- VMware vSphere/ESXi (vCenter, DRS, HA, vMotion, Storage vMotion, vSAN)\n"
-    "- OpenShift Virtualization / KubeVirt (VirtualMachine; OCP üzerindeki sanallaştırma — "
-    "VMware yaninda ikinci bir sanallastirma yoludur; hypervisor satiri yoksa bile "
-    "OpenShift → Virtual Machines yuzeyindeki VM'ler sanallastirma SAYILIR)\n"
-    "- KVM/oVirt/oLVM (cluster, storage domain, live migration, snapshot yönetimi)\n"
-    "- Proxmox VE (cluster, ZFS/Ceph storage, LXC/QEMU)\n"
-    "- Microsoft Hyper-V (Failover Cluster, Live Migration, VHDX yönetimi)\n"
-    "- Kapasite planlama: CPU/RAM overcommit oranları, datastore/storage doluluk analizi, "
-    "kaynak darboğazı tespiti\n"
-    "- VM yaşam döngüsü: provisioning, template/klonlama, kaynak resize, snapshot/backup stratejisi\n"
-    "- Ağ sanallaştırma: vSwitch/vDS, VLAN, port group tasarımı\n"
-    "- Lisanslama ve sürüm uyumluluğu, guest OS/Tools durumu, HA/DRS risk değerlendirmesi\n\n"
+    "ORTAM KANITLI UZMANLIK (araçlarla doğrula):\n"
+    "1 Mimari: db_list_clusters / db_list_esx_hosts / db_list_vms / db_list_datastores; "
+    "folder/RP/VDS için vcenter_property_read (ResourcePool, DistributedVirtualSwitch).\n"
+    "2 Cluster HA/DRS: db_list_clusters (ha_verdict, admission, slots, drs_behavior); "
+    "detay path için vcenter_property_read ClusterComputeResource.\n"
+    "3 Compute: db_metric_trend / vcenter_perf_query / virt_bottleneck_diagnose "
+    "(ready, costop, balloon, swap); shares/reservation → VM property cpuAllocation.\n"
+    "4 Storage: db_list_datastores + series; multipath/APD ipucu → HostSystem "
+    "config.storageDevice.multipathInfo; tip VMFS/NFS/vSAN → Datastore summary.type.\n"
+    "5 Network: VM/host net metrikleri; vSS/VDS → HostSystem config.network.* veya "
+    "DistributedVirtualSwitch property_read.\n"
+    "6 VM yaşam döngüsü (READ): snapshot tools, Tools durumu, template flag, "
+    "vcenter_list_vm_snapshots — power/clone/migrate YAPMA.\n"
+    "7 Migration: vcenter_live_tasks / event'lerde RelocateVM / MigrateVM; fail nedeni "
+    "task error mesajından.\n"
+    "8 Yedek/DR: snapshot yaşı/boyutu + alarm; SRM/Veeam entegrasyonu yoksa 'bu ortamda "
+    "SRM sync yok' de — uydurma lisans/DR durumu yazma.\n"
+    "11 Monitoring: virt_health_overview, db_virt_alarms, vcenter_live_alarms/tasks, "
+    "perf charts (ready/latency).\n"
+    "13 Troubleshooting: virt_bottleneck_diagnose + ready/latency/balloon; HA isolation "
+    "için db_list_clusters + event; APD/PDL için multipath + datastore accessible.\n\n"
     "VERİ DİSİPLİNİ — KRİTİK:\n"
     "- Ortamda vCenter/hypervisor bağlantısı vardır; cevapları SAĞLANAN CANLI VERİYE dayandır.\n"
     "- 'Bilinmiyor', 'bu veriye erişimim yok', 'collector yok', 'senkronize edilmiyor' deme — "
@@ -1157,6 +1168,37 @@ def h_powered_off_count(db: Session, question: str = "") -> str:
 
 
 def h_count_hosts(db: Session, question: str = "") -> str:
+    from app.services.virt_scope import resolve_scope
+    from app.services.virt_db_query import list_esx_hosts_db
+
+    scope = resolve_scope(db, question or "")
+    cluster = (scope.filters or {}).get("cluster")
+    if cluster:
+        pack = list_esx_hosts_db(
+            db,
+            cluster=cluster,
+            fields=["name", "connection_state", "vms_running", "vms_total", "cpu_pct", "mem_pct", "cluster"],
+        )
+        hosts = pack.get("hosts") or []
+        rows = [[
+            h.get("name"),
+            h.get("connection_state") or "-",
+            h.get("vms_running"),
+            h.get("vms_total"),
+            f"%{h.get('cpu_pct')}" if h.get("cpu_pct") is not None else "-",
+            f"%{h.get('mem_pct')}" if h.get("mem_pct") is not None else "-",
+            h.get("cluster") or cluster,
+        ] for h in hosts]
+        return (
+            f"### ESX Hostları — cluster={cluster}\n\n"
+            f"**Kapsamdaki host:** {len(hosts)}\n\n"
+            + _md_table(
+                ["Host", "Durum", "Çalışan VM", "Toplam VM", "CPU %", "RAM %", "Cluster"],
+                rows,
+                f"{cluster} altında host yok.",
+            )
+        )
+
     hosts = _get_esx_hosts(db)
     rows = [[
         h.get("host"),
@@ -1170,6 +1212,40 @@ def h_count_hosts(db: Session, question: str = "") -> str:
         f"### ESX / Hypervisor Host Sayısı\n\n"
         f"**Toplam host:** {len(hosts)}\n\n"
         + _md_table(["Host", "Durum", "Çalışan VM", "Toplam VM", "CPU %", "RAM %"], rows, "Host metriği bulunamadı.")
+    )
+
+
+def h_hosts_in_cluster(db: Session, question: str = "") -> str:
+    """Cluster kapsamlı host listesi — 'X cluster'daki hostlar'."""
+    return h_count_hosts(db, question)
+
+
+def h_vms_in_cluster(db: Session, question: str = "") -> str:
+    from app.services.virt_scope import resolve_scope
+    from app.services.virt_db_query import list_vms_db
+
+    scope = resolve_scope(db, question or "")
+    cluster = (scope.filters or {}).get("cluster")
+    if not cluster:
+        return h_count_vms(db, question)
+    pack = list_vms_db(db, cluster=cluster, fields=["name", "power_state", "esxi_host", "cluster", "vcpu", "memory_mb"])
+    vms = pack.get("vms") or []
+    rows = [[
+        v.get("name"),
+        v.get("power_state") or "-",
+        v.get("esxi_host") or v.get("host") or "-",
+        v.get("cluster") or cluster,
+        v.get("vcpu"),
+        v.get("memory_mb"),
+    ] for v in vms[:80]]
+    return (
+        f"### VM'ler — cluster={cluster}\n\n"
+        f"**Kapsamdaki VM:** {len(vms)}\n\n"
+        + _md_table(
+            ["VM", "Power", "Host", "Cluster", "vCPU", "RAM MB"],
+            rows,
+            f"{cluster} altında VM yok.",
+        )
     )
 
 
@@ -2102,59 +2178,31 @@ def h_cluster_not_available(db: Session, topic: str) -> str:
     return h_cluster_ha_drs(db, topic)
 
 
-def h_cluster_ha_drs(db: Session, question: str = "") -> str:
-    from app.services import vcenter_vm_performance as perf
-    r = perf.fetch_cluster_status(db)
-    if r["errors"] and not r["clusters"]:
-        return _na(
-            f"vCenter cluster sorgusu başarısız: {'; '.join(r['errors'][:2])}. "
-            "Bağlantı/credential kontrol edin."
-        )
-    if not r["clusters"]:
-        hosts = _get_esx_hosts(db)
-        host_rows = [[
-            h.get("host"),
-            h.get("cpu_cores"),
-            h.get("mem_total_gb"),
-            f"%{h.get('cpu_pct')}",
-            f"%{h.get('mem_pct')}",
-            "BAKIM" if h.get("maintenance") else "OK",
-        ] for h in hosts]
-        return (
-            "### Cluster HA/DRS (vCenter canlı)\n\n"
-            "vCenter'da **ClusterComputeResource** dönmedi — ortam tek host / cluster'sız "
-            "ESXi olabilir. Bu durumda HA/DRS cluster özelliği uygulanmaz.\n\n"
-            "#### Host özeti (canlı metrik)\n"
-            + _md_table(
-                ["Host", "CPU core", "RAM (GB)", "CPU %", "RAM %", "Durum"],
-                host_rows,
-                "Host metrik bulunamadı.",
-            )
-        )
+def _render_clusters_ha_drs_db(clusters: List[Dict[str, Any]], *, source: str = "db") -> str:
+    """virt_clusters + host metriklerinden HA/DRS / failover tablosu."""
     rows = []
-    for c in r["clusters"]:
+    fo_rows = []
+    verdict_lines = []
+    for c in clusters:
         ha = "Açık" if c.get("ha_enabled") else ("Kapalı" if c.get("ha_enabled") is False else "—")
         drs = "Açık" if c.get("drs_enabled") else ("Kapalı" if c.get("drs_enabled") is False else "—")
+        host_names = c.get("host_names") or []
+        host_n = len(host_names) if host_names else (c.get("hosts") if c.get("hosts") is not None else "—")
         rows.append([
             c.get("name"),
             ha,
             drs,
             c.get("drs_behavior") or "—",
-            c.get("hosts"),
-            c.get("cpu_cores"),
-            c.get("memory_gb"),
+            host_n,
+            ", ".join(host_names[:8]) if host_names else "—",
+            c.get("cpu_cores") if c.get("cpu_cores") is not None else "—",
+            c.get("memory_gb") if c.get("memory_gb") is not None else "—",
             c.get("overall_status") or "—",
-            c.get("hypervisor"),
+            c.get("hypervisor") or "—",
         ])
-    out = "### Cluster HA/DRS Durumu (vCenter canlı)\n\n" + _md_table(
-        ["Cluster", "HA", "DRS", "DRS davranışı", "Host", "CPU core", "RAM (GB)", "Status", "Hypervisor"],
-        rows,
-    )
-
-    # Failover kapasitesi — admission control politikası ve slot durumu
-    # ("bir host arızalanırsa VM'ler ayağa kalkar mı" sorusunun asıl cevabı)
-    fo_rows = []
-    for c in r["clusters"]:
+        verdict = (c.get("ha_verdict") or "").strip()
+        if verdict:
+            verdict_lines.append(f"- **{c.get('name')}:** {verdict}")
         if c.get("ha_enabled") is not True:
             continue
         ac = c.get("admission_control_enabled")
@@ -2169,15 +2217,31 @@ def h_cluster_ha_drs(db: Session, question: str = "") -> str:
             reserve.append(f"RAM %{c['mem_failover_pct']}")
         if c.get("failover_level") is not None:
             reserve.append(f"{c['failover_level']} host toleransı")
+        n_hosts = len(host_names) if host_names else (c.get("effective_hosts") or c.get("hosts"))
+        if isinstance(n_hosts, int) and n_hosts < 2:
+            reserve.append("yedek host yok (<2)")
         fo_rows.append([
             c.get("name"),
             "Açık" if ac else ("Kapalı" if ac is False else "—"),
-            c.get("policy_label") or c.get("policy_type") or "—",
+            c.get("policy") or "—",
             ", ".join(reserve) or "—",
             slots,
-            c.get("effective_hosts") if c.get("effective_hosts") is not None else "—",
+            n_hosts if n_hosts is not None else "—",
             c.get("host_monitoring") or "—",
         ])
+
+    title = (
+        "### Cluster HA/DRS Durumu (DB — virt_clusters)"
+        if source == "db"
+        else "### Cluster HA/DRS Durumu (vCenter canlı)"
+    )
+    out = title + "\n\n" + _md_table(
+        ["Cluster", "HA", "DRS", "DRS davranışı", "Host #", "Host adları",
+         "CPU core", "RAM (GB)", "Status", "Hypervisor"],
+        rows,
+    )
+    if verdict_lines:
+        out += "\n\n#### Failover değerlendirmesi (`ha_verdict`)\n\n" + "\n".join(verdict_lines)
     if fo_rows:
         out += "\n\n#### HA Failover Kapasitesi\n\n" + _md_table(
             ["Cluster", "Admission control", "Politika", "Ayrılan yedek",
@@ -2186,9 +2250,146 @@ def h_cluster_ha_drs(db: Session, question: str = "") -> str:
         )
         out += (
             "\n_Slot bilgisi yalnızca slot tabanlı politikada dolar; yüzde tabanlı "
-            "politikada 'Ayrılan yedek' kolonu geçerlidir._"
+            "politikada 'Ayrılan yedek' kolonu geçerlidir. Failover için en az 2 "
+            "host gerekir; host adları `hypervisor_host_metrics.cluster_name` "
+            "eşlemesinden gelir._"
         )
     return out
+
+
+def h_cluster_ha_drs(db: Session, question: str = "") -> str:
+    """Cluster HA/DRS — önce `virt_clusters` (db_list_clusters), yoksa vCenter canlı."""
+    from app.services.virt_db_query import list_clusters_db
+    from app.services.virt_scope import resolve_scope
+
+    scope = resolve_scope(db, question or "")
+    name_filter = (scope.filters or {}).get("cluster")
+    pack = list_clusters_db(db, name_filter=name_filter)
+    db_clusters = pack.get("clusters") or []
+    if db_clusters:
+        return _render_clusters_ha_drs_db(db_clusters, source="db")
+
+    from app.services import vcenter_vm_performance as perf
+    r = perf.fetch_cluster_status(db)
+    if r["errors"] and not r["clusters"]:
+        return _na(
+            f"virt_clusters boş ve vCenter cluster sorgusu başarısız: "
+            f"{'; '.join(r['errors'][:2])}. Bağlantı/credential veya ESX sync kontrol edin."
+        )
+    if not r["clusters"]:
+        note = (pack.get("note") or "").strip()
+        return _na(
+            "virt_clusters tablosu boş ve vCenter'da ClusterComputeResource dönmedi — "
+            "ortam tek host / cluster'sız ESXi olabilir; HA/DRS uygulanmaz."
+            + (f" ({note})" if note else "")
+        )
+    # Canlı satırları DB şemasına yakın hale getir (host_names yok)
+    live = []
+    for c in r["clusters"]:
+        live.append({
+            "name": c.get("name"),
+            "ha_enabled": c.get("ha_enabled"),
+            "drs_enabled": c.get("drs_enabled"),
+            "drs_behavior": c.get("drs_behavior"),
+            "hosts": c.get("hosts"),
+            "host_names": [],
+            "cpu_cores": c.get("cpu_cores"),
+            "memory_gb": c.get("memory_gb"),
+            "overall_status": c.get("overall_status"),
+            "hypervisor": c.get("hypervisor"),
+            "ha_verdict": None,
+            "admission_control_enabled": c.get("admission_control_enabled"),
+            "policy": c.get("policy_label") or c.get("policy_type"),
+            "cpu_failover_pct": c.get("cpu_failover_pct"),
+            "mem_failover_pct": c.get("mem_failover_pct"),
+            "failover_level": c.get("failover_level"),
+            "unreserved_slots": c.get("unreserved_slots"),
+            "total_slots": c.get("total_slots"),
+            "effective_hosts": c.get("effective_hosts"),
+            "host_monitoring": c.get("host_monitoring"),
+        })
+    return _render_clusters_ha_drs_db(live, source="live")
+
+
+def h_inventory_hierarchy(db: Session, question: str = "") -> str:
+    """Cluster → host → örnek VM hiyerarşisi — yalnızca DB (uydurma IP yok)."""
+    from app.services.virt_db_query import list_clusters_db, list_esx_hosts_db, list_vms_db
+    from app.services.virt_scope import resolve_scope
+
+    scope = resolve_scope(db, question or "")
+    name_filter = (scope.filters or {}).get("cluster")
+    pack = list_clusters_db(db, name_filter=name_filter)
+    clusters = pack.get("clusters") or []
+    hosts_pack = list_esx_hosts_db(
+        db,
+        cluster=name_filter,
+        fields=["name", "cluster", "connection_state", "vms_running", "vms_total"],
+    )
+    hosts = hosts_pack.get("hosts") or []
+    vms_pack = list_vms_db(
+        db,
+        cluster=name_filter,
+        fields=["name", "esxi_host", "cluster", "power_state"],
+    )
+    vms = vms_pack.get("vms") or []
+
+    by_cluster: Dict[str, Dict[str, Any]] = {}
+    for c in clusters:
+        by_cluster[c.get("name") or "?"] = {
+            "hosts": list(c.get("host_names") or []),
+            "vms": [],
+            "ha": c.get("ha_enabled"),
+        }
+    for h in hosts:
+        cl = (h.get("cluster") or "").strip() or "(cluster yok)"
+        bucket = by_cluster.setdefault(cl, {"hosts": [], "vms": [], "ha": None})
+        name = h.get("name")
+        if name and name not in bucket["hosts"]:
+            bucket["hosts"].append(name)
+    vms_by_host: Dict[str, List[str]] = defaultdict(list)
+    for v in vms:
+        host = (v.get("esxi_host") or v.get("host") or "").strip() or "(host yok)"
+        if len(vms_by_host[host]) < 3:
+            vms_by_host[host].append(v.get("name") or "?")
+        cl = (v.get("cluster") or "").strip() or "(cluster yok)"
+        by_cluster.setdefault(cl, {"hosts": [], "vms": [], "ha": None})
+
+    if not by_cluster and not hosts:
+        return _na(
+            "Hiyerarşi için cluster/host kaydı yok — ESX metrik sync veya "
+            "virt_clusters boş olabilir."
+        )
+
+    lines = ["### vSphere Hiyerarşi (cluster → host → örnek VM)", ""]
+    lines.append(
+        "_Yalnızca DB: `virt_clusters` + `hypervisor_host_metrics` + VM "
+        "`vm_cluster`/`vm_host_name`. Kanıtta olmayan IP/host uydurulmaz._"
+    )
+    lines.append("")
+    rows = []
+    for cl_name, data in sorted(by_cluster.items(), key=lambda x: x[0].lower()):
+        hlist = data.get("hosts") or []
+        if not hlist:
+            rows.append([cl_name, "—", "—"])
+            continue
+        for hn in hlist:
+            sample = ", ".join(vms_by_host.get(hn) or []) or "—"
+            rows.append([cl_name, hn, sample])
+    # Cluster'sız host'lar
+    known = {h for d in by_cluster.values() for h in (d.get("hosts") or [])}
+    for h in hosts:
+        hn = h.get("name")
+        if hn and hn not in known:
+            sample = ", ".join(vms_by_host.get(hn) or []) or "—"
+            rows.append([h.get("cluster") or "(cluster yok)", hn, sample])
+
+    lines.append(_md_table(["Cluster", "Host", "Örnek VM'ler"], rows, "Kayıt yok."))
+    lines.append("")
+    lines.append(
+        f"_Özet: {len(clusters)} cluster · {len(hosts)} host · {len(vms)} VM "
+        f"(kapsam{('=' + name_filter) if name_filter else ': tümü'})._"
+    )
+    return "\n".join(lines)
 
 
 def h_bottleneck_diagnose(db: Session, question: str = "") -> str:
@@ -3108,6 +3309,9 @@ def h_alarm_trend(db: Session, question: str = "") -> str:
 QA_RULES: List[Tuple[str, Any]] = [
     # ── Envanter / sayım (önce — LLM'e düşmesin; spesifik kurallar genelden önce) ──
     (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*restart|son.*hafta.*restart\s*edil", h_restart_week),
+    # Cluster kapsamı — genel "kaç host/vm" kurallarından ÖNCE
+    (r"cluster.?daki\s*(esx|esxi|host)|(?:yalnızca|yalnizca|yalnız|yalniz|sadece).{0,40}cluster.{0,40}(esx|esxi|host)|(esx|esxi|host).{0,40}cluster", h_hosts_in_cluster),
+    (r"cluster.?daki\s*vm|(?:yalnızca|yalnizca|yalnız|yalniz|sadece).{0,40}cluster.{0,40}vm|vm.?ler.{0,30}cluster", h_vms_in_cluster),
     (r"kaç\s*(adet\s*)?(esx|esxi|hypervisor)?\s*host|host\s*sayıs|esx\s*sayıs|how\s*many\s*(esx|host)|toplam\s*host|host\s*adedi|kaç\s*esx", h_count_hosts),
     # Tek VM QuickStats — genel "kaç VM" kuralından ÖNCE
     (r"(?:vm.?inin|sanal\s*makine.?nin).{0,30}(?:cpu|ram|bellek|hafıza|kullanım|durum|as_of)"
@@ -3231,8 +3435,16 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"en\s*fazla\s*vm\s*barındıran\s*host|en\s*kalabalık\s*host", h_host_most_vms),
     (r"reboot\s*olan\s*host|host\s*reboot", h_host_events_30d),
 
-    # Cluster
+    # Cluster / HA failover / hiyerarşi — LLM'e düşmeden DB (virt_clusters)
+    (r"hiyerar[şs]i|cluster\s*[→\-]+\s*>?\s*host|cluster\s*>\s*host|vcenter.{0,40}hiyerar"
+     r"|(?:özetle|g[öo]ster).{0,30}hiyerar|hiyerar.{0,30}(?:özet|cluster)",
+     h_inventory_hierarchy),
     (r"cluster\s*bazında\s*cpu|cluster\s*bazında\s*ram|cluster.*cpu.*ram", h_cluster_cpu_ram),
+    (r"(?:host\s*)?(?:ar[ıi]zalan|d[üu][şs]er|fail\s*over|failover|kurtar[ıi]r|yeniden\s*ba[şs]la).{0,40}(?:ha|vm|cluster)"
+     r"|(?:ha|cluster).{0,40}(?:host\s*)?(?:ar[ıi]zalan|d[üu][şs]er|fail\s*over|failover|kurtar[ıi]r)"
+     r"|bir\s*host\s*ar[ıi]zalan|host\s*ar[ıi]zas[ıi]|admission\s*control|ha_verdict"
+     r"|failover\s*kapasit|\bfailover\b|slot\s*(?:t[üu]ken|bilgi)",
+     h_cluster_ha_drs),
     (r"ha\s*aktif\s*olmayan\s*cluster|drs.*çalışıyor\s*mu|drs.*load\s*balancing|ha\s*/?\s*drs|cluster\s*ha|ha\s*drs\s*durum", h_cluster_ha_drs),
     (r"cluster\s*kapasitesi\s*ne\s*kadar\s*dolu|en\s*yoğun\s*cluster|kapasite\s*yetersizliği\s*riski", h_cluster_cpu_ram),
     (r"cluster\s*alarmı", h_critical_alarms_24h),
@@ -3307,7 +3519,7 @@ def _has_tool_evidence(question: str, min_chars: int = 80) -> bool:
     return len(_tool_evidence_block(question)) >= min_chars
 
 
-def _answer_ignores_evidence(answer: str, evidence: str, max_len: int = 400) -> bool:
+def _answer_ignores_evidence(answer: str, evidence: str, max_len: int = 900) -> bool:
     from app.services.chat_evidence import answer_ignores_evidence
     return answer_ignores_evidence(answer, evidence, max_len=max_len)
 

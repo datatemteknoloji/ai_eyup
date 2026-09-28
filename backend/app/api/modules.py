@@ -63,12 +63,40 @@ def _get_user_modules(user_id: int, db: Session) -> List[str]:
 
 def _ensure_modules_seeded(db: Session):
     """Seed DEFAULT_MODULES if table is empty or new entries added."""
+    newly: List[str] = []
     for m in DEFAULT_MODULES:
         existing = db.query(Module).filter(Module.id == m["id"]).first()
         if not existing:
             db.add(Module(**m))
+            newly.append(m["id"])
     db.commit()
+    if "monitoring" in newly:
+        _bootstrap_monitoring_grants(db)
     _cleanup_removed_modules(db)
+
+
+def _bootstrap_monitoring_grants(db: Session):
+    """Eski hub OR-gate (linux|windows|…) olan kullanıcılara monitoring ata — kırılma olmasın."""
+    legacy = ("linux", "windows", "openshift", "virtualization", "executive", "ai_automation")
+    user_ids = {
+        r.user_id
+        for r in db.query(UserModule).filter(UserModule.module_id.in_(legacy)).all()
+    }
+    if not user_ids:
+        return
+    granted = 0
+    for uid in user_ids:
+        has = db.query(UserModule).filter(
+            UserModule.user_id == uid, UserModule.module_id == "monitoring"
+        ).first()
+        if has:
+            continue
+        db.add(UserModule(user_id=uid, module_id="monitoring"))
+        granted += 1
+    if granted:
+        db.commit()
+        logger.info("monitoring modülü bootstrap: %s kullanıcıya atandı", granted)
+
 
 
 def _cleanup_removed_modules(db: Session):

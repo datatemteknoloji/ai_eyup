@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Network, RefreshCw, Layers, ExternalLink, Search, X, Boxes, Globe, Server } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import OcpResourceDetailDrawer from './OcpResourceDetailDrawer'
 
 const KIND_META: Record<string, { short: string; ring: string; text: string }> = {
   deployment: { short: 'D', ring: 'ring-sky-500/60', text: 'text-sky-300' },
@@ -21,6 +22,14 @@ const KIND_META: Record<string, { short: string; ring: string; text: string }> =
   Node: { short: 'N', ring: 'ring-slate-500/60', text: 'text-slate-300' },
 }
 
+const TOPO_TO_API: Record<string, string> = {
+  deployment: 'deployments',
+  pod: 'pods',
+  service: 'services',
+  route: 'routes',
+  node: 'nodes',
+}
+
 export default function OcpTopologyPanel({
   clusterId,
   project,
@@ -33,6 +42,7 @@ export default function OcpTopologyPanel({
   const t = useT()
   const [sel, setSel] = useState<any>(null)
   const [q, setQ] = useState('')
+  const [detail, setDetail] = useState<{ kind: string; name: string; namespace?: string } | null>(null)
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['openshift-topology', clusterId, project],
@@ -216,6 +226,19 @@ export default function OcpTopologyPanel({
                       <span className="text-slate-200 truncate text-right">{v}</span>
                     </div>
                   ))}
+                  {TOPO_TO_API[(sel.kind || '').toLowerCase()] && (
+                    <button
+                      type="button"
+                      onClick={() => setDetail({
+                        kind: TOPO_TO_API[(sel.kind || '').toLowerCase()],
+                        name: sel.name,
+                        namespace: project,
+                      })}
+                      className="w-full text-xs py-2 rounded-lg border border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
+                    >
+                      {t('ocp_open_detail')}
+                    </button>
+                  )}
                   <div>
                     <p className="text-[11px] font-medium text-slate-400 mb-1 flex items-center gap-1.5">
                       <Boxes size={14} className="text-emerald-400" /> {t('ocp_outgoing', { n: related.out.length })}
@@ -258,6 +281,17 @@ export default function OcpTopologyPanel({
             )}
           </div>
         </div>
+      )}
+
+      {detail && (
+        <OcpResourceDetailDrawer
+          clusterId={clusterId}
+          kind={detail.kind}
+          name={detail.name}
+          namespace={detail.kind === 'nodes' ? undefined : (detail.namespace || project)}
+          onClose={() => setDetail(null)}
+          onOpenPod={(pNs, pName) => setDetail({ kind: 'pods', name: pName, namespace: pNs })}
+        />
       )}
     </div>
   )

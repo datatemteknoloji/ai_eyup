@@ -173,7 +173,7 @@ def _bucket_counts(labels: Sequence[str]) -> Dict[str, int]:
 
 
 def _hv_scope(ids: Optional[Sequence[int]]) -> Optional[List[int]]:
-    """None = tüm vCenter. Boş liste = hiçbiri."""
+    """None = tüm (çağıran vmware kesişimini uygular). Boş liste = hiçbiri."""
     if ids is None:
         return None
     out: List[int] = []
@@ -188,6 +188,27 @@ def _hv_scope(ids: Optional[Sequence[int]]) -> Optional[List[int]]:
         seen.add(hid)
         out.append(hid)
     return out
+
+
+def _vmware_hypervisor_ids(db: Session) -> List[int]:
+    """Virt monitoring yalnız VMware vCenter — OpenShift Virt / OCP node karışmaz."""
+    rows = (
+        db.query(Hypervisor.id)
+        .filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
+        .all()
+    )
+    return [int(r[0]) for r in rows]
+
+
+def restrict_to_vmware(
+    db: Session, hypervisor_ids: Optional[Sequence[int]] = None,
+) -> List[int]:
+    """İstenen id'leri VMware ile kesiştir. None → tüm VMware. Sonuç boş olabilir."""
+    allowed = set(_vmware_hypervisor_ids(db))
+    scoped = _hv_scope(hypervisor_ids)
+    if scoped is None:
+        return sorted(allowed)
+    return [i for i in scoped if i in allowed]
 
 
 def _hv_sql(ids: Optional[Sequence[int]], column: str = "hypervisor_id") -> Tuple[str, Dict[str, Any]]:
@@ -593,12 +614,12 @@ def _latest_vm_top(
 
 def build_overview(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    scoped = _hv_scope(hypervisor_ids)
+    scoped = restrict_to_vmware(db, hypervisor_ids)
     hvs = db.query(Hypervisor).filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE).all()
-    if scoped is not None:
+    if hypervisor_ids is not None:
         wanted = set(scoped)
         hvs = [h for h in hvs if h.id in wanted]
-    hosts = _latest_hosts(db, scoped)
+    hosts = _latest_hosts(db, scoped if scoped else [-1])
     host_labels = [_classify_host(h) for h in hosts]
     host_buckets = _bucket_counts(host_labels)
 
@@ -828,6 +849,7 @@ def list_objects(
     kind: str,
     q: str = "",
     cluster: str = "",
+    host: str = "",
     hypervisor_ids: Optional[Sequence[int]] = None,
     limit: int = 80,
 ) -> Dict[str, Any]:
@@ -835,14 +857,20 @@ def list_objects(
     if kind not in _KIND_TABLE:
         raise ValueError("kind vm|host|datastore olmalı")
     limit = max(1, min(int(limit or 80), 200))
+    # Virt Monitoring = yalnız VMware (OCP master/worker buraya karışmaz)
+    hypervisor_ids = restrict_to_vmware(db, hypervisor_ids)
     needle = (q or "").strip()
     qn = f"%{needle}%" if needle else "%"
     q_empty = not needle
     cl = (cluster or "").strip()
     cl_empty = not cl
+    host_f = (host or "").strip()
+    host_empty = not host_f
     clause, hv_params = _hv_sql(hypervisor_ids, "m.hypervisor_id")
     params_base = {
         "q": qn, "q_empty": q_empty, "lim": limit,
+        "cl": f"%{cl}%", "cl_empty": cl_empty,
+        "host": f"%{host_f}%", "host_empty": host_empty,
         **hv_params,
     }
 
@@ -858,11 +886,12 @@ def list_objects(
         WHERE (:q_empty OR m.host_name ILIKE :q OR COALESCE(m.cluster_name,'') ILIKE :q
                OR COALESCE(h.name,'') ILIKE :q)
           AND (:cl_empty OR m.cluster_name ILIKE :cl)
+          AND (:host_empty OR m.host_name ILIKE :host)
           AND {clause}
         ORDER BY m.hypervisor_id, m.host_name, m.timestamp DESC
         LIMIT :lim
         """
-        rows = _top_sql(db, sql, {**params_base, "cl": f"%{cl}%", "cl_empty": cl_empty})
+        rows = _top_sql(db, sql, params_base)
         items = [_object_item(r, "host", f"CPU {_r(r.get('cpu_usage_pct'))}% · RAM {_r(r.get('mem_usage_pct'))}%") for r in rows]
         return {"ok": True, "kind": kind, "count": len(items), "items": items}
 
@@ -898,12 +927,13 @@ def list_objects(
       AND m.timestamp >= now() - interval '2 days'
       AND (:q_empty OR m.vm_name ILIKE :q OR COALESCE(m.host_name,'') ILIKE :q
            OR COALESCE(m.cluster_name,'') ILIKE :q OR COALESCE(h.name,'') ILIKE :q)
-      AND (:cl_empty OR m.cluster_name ILIKE :cl OR m.host_name ILIKE :cl)
+      AND (:cl_empty OR m.cluster_name ILIKE :cl)
+      AND (:host_empty OR m.host_name ILIKE :host)
       AND {clause}
     ORDER BY m.hypervisor_id, m.vm_name, m.timestamp DESC
     LIMIT :lim
     """
-    rows = _top_sql(db, sql, {**params_base, "cl": f"%{cl}%", "cl_empty": cl_empty})
+    rows = _top_sql(db, sql, params_base)
     items = []
     seen = set()
     for r in rows:

@@ -408,58 +408,887 @@ def storage_overview(client: OpenShiftClient) -> Dict[str, Any]:
     }
 
 
+
+def _cpu_millicores(val) -> float:
+    """K8s CPU quantity → millicore (Atlas)."""
+    s = str(val or "0").strip()
+    if not s:
+        return 0.0
+    try:
+        if s.endswith("n"):
+            return round(float(s[:-1]) / 1_000_000, 1)
+        if s.endswith("u"):
+            return round(float(s[:-1]) / 1000, 1)
+        if s.endswith("m"):
+            return float(s[:-1])
+        return float(s) * 1000
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _memory_mb(val) -> float:
+    """K8s memory quantity → MB (Atlas)."""
+    gb = OpenShiftClient._parse_quantity(val)
+    return round(gb * 1024, 1)
+
+
 def pod_detail(client: OpenShiftClient, namespace: str, pod: str) -> Optional[Dict[str, Any]]:
+    """
+    Pod tam ayrıntısı — Atlas PodDetail çekmecesini besler.
+
+    GÜVENLİK: Secret DEĞERLERİ çözümlenmez; yalnızca referans gösterilir.
+    """
     body = _get_json(client, f"/api/v1/namespaces/{namespace}/pods/{pod}", timeout=20)
     if not body:
         return None
-    meta = body.get("metadata") or {}
+    md = body.get("metadata") or {}
+    st = body.get("status") or {}
     spec = body.get("spec") or {}
-    status = body.get("status") or {}
-    containers = []
-    for cs in status.get("containerStatuses") or []:
+
+    all_status = {
+        cs["name"]: cs
+        for cs in (st.get("containerStatuses") or []) + (st.get("initContainerStatuses") or [])
+        if cs.get("name")
+    }
+
+    def _env(ct: dict) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for e in ct.get("env") or []:
+            if not isinstance(e, dict):
+                continue
+            src = e.get("valueFrom") or {}
+            if "secretKeyRef" in src:
+                ref = src["secretKeyRef"] or {}
+                out.append({
+                    "name": e.get("name"), "from": "secret",
+                    "ref": f"{ref.get('name')}/{ref.get('key')}", "value": None,
+                })
+            elif "configMapKeyRef" in src:
+                ref = src["configMapKeyRef"] or {}
+                out.append({
+                    "name": e.get("name"), "from": "configmap",
+                    "ref": f"{ref.get('name')}/{ref.get('key')}", "value": None,
+                })
+            elif "fieldRef" in src:
+                out.append({
+                    "name": e.get("name"), "from": "field",
+                    "ref": (src["fieldRef"] or {}).get("fieldPath"), "value": None,
+                })
+            elif "resourceFieldRef" in src:
+                out.append({
+                    "name": e.get("name"), "from": "resource",
+                    "ref": (src["resourceFieldRef"] or {}).get("resource"), "value": None,
+                })
+            else:
+                out.append({
+                    "name": e.get("name"), "from": "literal",
+                    "ref": None, "value": e.get("value", ""),
+                })
+        return out
+
+    def _build(ct: dict, is_init: bool = False) -> Dict[str, Any]:
+        cs = all_status.get(ct.get("name") or "", {}) or {}
         state = cs.get("state") or {}
-        waiting = state.get("waiting") or {}
-        terminated = state.get("terminated") or {}
-        running = state.get("running") or {}
-        containers.append({
-            "name": cs.get("name"),
-            "image": cs.get("image"),
-            "ready": cs.get("ready"),
-            "restart_count": cs.get("restartCount"),
-            "state": "waiting" if waiting else ("terminated" if terminated else ("running" if running else "unknown")),
-            "reason": waiting.get("reason") or terminated.get("reason"),
-            "message": (waiting.get("message") or terminated.get("message") or "")[:300],
+        if "running" in state:
+            state_str, since = "running", (state.get("running") or {}).get("startedAt")
+        elif "waiting" in state:
+            state_str, since = (state.get("waiting") or {}).get("reason", "waiting"), None
+        elif "terminated" in state:
+            t = state.get("terminated") or {}
+            state_str, since = t.get("reason", "terminated"), t.get("finishedAt")
+        else:
+            state_str, since = "?", None
+        last = (cs.get("lastState") or {}).get("terminated") or {}
+        res = ct.get("resources") or {}
+        return {
+            "name": ct.get("name"),
+            "image": ct.get("image"),
+            "init": is_init,
+            "ready": bool(cs.get("ready")),
+            "restarts": cs.get("restartCount") or 0,
+            "restart_count": cs.get("restartCount") or 0,
+            "state": state_str,
+            "reason": state_str if state_str not in ("running", "?", "terminated") else None,
+            "since": since,
+            "last_exit": (
+                {"reason": last.get("reason"), "code": last.get("exitCode"), "at": last.get("finishedAt")}
+                if last else None
+            ),
+            "ports": [
+                {"port": x.get("containerPort"), "protocol": x.get("protocol", "TCP"), "name": x.get("name")}
+                for x in (ct.get("ports") or [])
+            ],
+            "requests": res.get("requests") or {},
+            "limits": res.get("limits") or {},
+            "mounts": [
+                {"name": m.get("name"), "path": m.get("mountPath"), "readonly": bool(m.get("readOnly"))}
+                for m in (ct.get("volumeMounts") or [])
+            ],
+            "env": _env(ct),
+            "command": ct.get("command") or [],
+            "args": ct.get("args") or [],
+        }
+
+    containers = [_build(ct) for ct in (spec.get("containers") or [])]
+    init_containers = [_build(ct, True) for ct in (spec.get("initContainers") or [])]
+
+    owner = ""
+    owners = []
+    for o in md.get("ownerReferences") or []:
+        if not owner:
+            owner = f"{o.get('kind')}/{o.get('name')}"
+        owners.append({
+            "kind": o.get("kind"),
+            "name": o.get("name"),
+            "api_version": o.get("apiVersion"),
+            "controller": o.get("controller"),
         })
 
-    ev_body = _get_json(
+    volumes = []
+    for v in spec.get("volumes") or []:
+        if not isinstance(v, dict):
+            continue
+        vtype = next((k for k in v if k != "name"), "?")
+        detail = ""
+        raw = v.get(vtype) or {}
+        if isinstance(raw, dict):
+            if vtype == "persistentVolumeClaim":
+                detail = raw.get("claimName") or ""
+            elif vtype == "configMap":
+                detail = raw.get("name") or ""
+            elif vtype == "secret":
+                detail = raw.get("secretName") or raw.get("name") or ""
+            elif vtype == "hostPath":
+                detail = raw.get("path") or ""
+            elif vtype == "emptyDir":
+                detail = "emptyDir"
+        volumes.append({"name": v.get("name"), "type": vtype, "detail": detail})
+
+    usage: Dict[str, Any] = {}
+    m_body = _get_json(
+        client,
+        f"/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods/{pod}",
+        timeout=10,
+    )
+    metrics = None
+    if m_body:
+        cpu_sum = 0.0
+        mem_sum = 0.0
+        per_c = []
+        for ct in m_body.get("containers") or []:
+            u = ct.get("usage") or {}
+            mcores = _cpu_millicores(u.get("cpu", "0"))
+            mb = _memory_mb(u.get("memory", "0"))
+            usage[ct.get("name")] = {"cpu_millicores": mcores, "memory_mb": mb}
+            cpu_sum += mcores
+            mem_sum += mb
+            per_c.append({
+                "name": ct.get("name"),
+                "cpu_cores": round(mcores / 1000, 4),
+                "memory_gb": round(mb / 1024, 4),
+                "cpu_millicores": mcores,
+                "memory_mb": mb,
+            })
+        metrics = {
+            "cpu_cores": round(cpu_sum / 1000, 4),
+            "memory_gb": round(mem_sum / 1024, 4),
+            "containers": per_c,
+            "source": "metrics.k8s.io",
+        }
+
+    conds = [
+        {
+            "type": x.get("type"),
+            "status": x.get("status"),
+            "reason": x.get("reason") or "",
+            "message": (x.get("message") or "")[:200],
+        }
+        for x in (st.get("conditions") or [])
+    ]
+
+    ev = _get_json(
         client,
         f"/api/v1/namespaces/{namespace}/events",
-        params={"fieldSelector": f"involvedObject.name={pod},involvedObject.kind=Pod", "limit": 20},
+        params={"fieldSelector": f"involvedObject.name={pod}", "limit": 40},
         timeout=15,
+    ) or {}
+    events = sorted(
+        (
+            {
+                "type": e.get("type"),
+                "reason": e.get("reason"),
+                "message": (e.get("message") or "")[:300],
+                "count": e.get("count") or 1,
+                "age": _age(e.get("lastTimestamp") or e.get("eventTime")),
+                "last_timestamp": e.get("lastTimestamp") or e.get("eventTime"),
+                "warning": e.get("type") == "Warning",
+            }
+            for e in (ev.get("items") or [])
+        ),
+        key=lambda x: -(x["count"] or 0),
+    )[:25]
+
+    return {
+        "kind": "Pod",
+        "kind_id": "pods",
+        "name": pod,
+        "namespace": namespace,
+        "phase": st.get("phase"),
+        "status_badge": st.get("phase") or "—",
+        "node": spec.get("nodeName"),
+        "host_ip": st.get("hostIP"),
+        "pod_ip": st.get("podIP"),
+        "start_time": st.get("startTime"),
+        "created_at": md.get("creationTimestamp"),
+        "age": _age(md.get("creationTimestamp")),
+        "owner": owner,
+        "owner_refs": owners,
+        "qos": st.get("qosClass"),
+        "qos_class": st.get("qosClass"),
+        "service_account": spec.get("serviceAccountName") or "default",
+        "restart_policy": spec.get("restartPolicy") or "Always",
+        "node_selector": spec.get("nodeSelector") or {},
+        "labels": md.get("labels") or {},
+        "annotations": {
+            k: (str(v)[:120] + ("…" if len(str(v)) > 120 else ""))
+            for k, v in list((md.get("annotations") or {}).items())[:40]
+        },
+        "containers": containers,
+        "init_containers": init_containers,
+        "volumes": volumes,
+        "usage": usage,
+        "metrics": metrics,
+        "conditions": conds,
+        "events": events,
+    }
+
+
+
+def _events_for(
+    client: OpenShiftClient,
+    namespace: Optional[str],
+    *,
+    kind: str,
+    name: str,
+    limit: int = 40,
+) -> List[Dict[str, Any]]:
+    params = {
+        "fieldSelector": f"involvedObject.name={name},involvedObject.kind={kind}",
+        "limit": limit,
+    }
+    path = (
+        f"/api/v1/namespaces/{namespace}/events"
+        if namespace
+        else "/api/v1/events"
     )
+    body = _get_json(client, path, params=params, timeout=15)
     events = []
-    for ev in (ev_body or {}).get("items") or []:
+    for ev in (body or {}).get("items") or []:
         events.append({
             "type": ev.get("type"),
             "reason": ev.get("reason"),
-            "message": (ev.get("message") or "")[:300],
+            "message": (ev.get("message") or "")[:400],
             "count": ev.get("count"),
             "last_timestamp": ev.get("lastTimestamp") or ev.get("eventTime"),
         })
+    return events
+
+
+def _volume_summaries_from_pod_template(spec: dict) -> List[Dict[str, Any]]:
+    volumes = []
+    for v in ((spec.get("template") or {}).get("spec") or {}).get("volumes") or []:
+        if not isinstance(v, dict):
+            continue
+        vtype = next((k for k in v.keys() if k != "name"), "unknown")
+        detail = v.get(vtype) or {}
+        extra = ""
+        if isinstance(detail, dict):
+            if vtype == "persistentVolumeClaim":
+                extra = detail.get("claimName") or ""
+            elif vtype == "secret":
+                extra = detail.get("secretName") or ""
+            elif vtype == "configMap":
+                extra = detail.get("name") or ""
+        volumes.append({"name": v.get("name"), "type": vtype, "detail": extra})
+    return volumes
+
+
+def _containers_from_pod_template(spec: dict) -> List[Dict[str, Any]]:
+    out = []
+    pod_spec = (spec.get("template") or {}).get("spec") or {}
+    for c in pod_spec.get("containers") or []:
+        env = []
+        for e in c.get("env") or []:
+            if not isinstance(e, dict):
+                continue
+            if "value" in e:
+                val = str(e.get("value") or "")
+            elif e.get("valueFrom"):
+                vf = e["valueFrom"]
+                if "secretKeyRef" in vf:
+                    val = f"secret:{vf['secretKeyRef'].get('name')}/{vf['secretKeyRef'].get('key')}"
+                elif "configMapKeyRef" in vf:
+                    val = f"configmap:{vf['configMapKeyRef'].get('name')}/{vf['configMapKeyRef'].get('key')}"
+                else:
+                    val = "valueFrom"
+            else:
+                val = ""
+            env.append({"name": e.get("name"), "value": val[:200]})
+        res = c.get("resources") or {}
+        out.append({
+            "name": c.get("name"),
+            "image": c.get("image"),
+            "env": env,
+            "requests": res.get("requests") or {},
+            "limits": res.get("limits") or {},
+            "ports": c.get("ports") or [],
+        })
+    return out
+
+
+def _match_labels_selector(labels: dict, selector: dict) -> bool:
+    if not selector:
+        return False
+    for k, v in selector.items():
+        if labels.get(k) != v:
+            return False
+    return True
+
+
+def _related_pods(
+    client: OpenShiftClient,
+    namespace: str,
+    *,
+    selector: Optional[dict] = None,
+    owner_kind: Optional[str] = None,
+    owner_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    body = _get_json(
+        client,
+        f"/api/v1/namespaces/{namespace}/pods",
+        params={"limit": 500},
+        timeout=30,
+    )
+    pods = []
+    for it in (body or {}).get("items") or []:
+        meta = it.get("metadata") or {}
+        labels = meta.get("labels") or {}
+        if selector and not _match_labels_selector(labels, selector):
+            continue
+        if owner_kind and owner_name:
+            owners = meta.get("ownerReferences") or []
+            if not any(
+                o.get("kind") == owner_kind and o.get("name") == owner_name for o in owners
+            ):
+                continue
+        st = it.get("status") or {}
+        spec = it.get("spec") or {}
+        ready = 0
+        total = 0
+        restarts = 0
+        for cs in st.get("containerStatuses") or []:
+            total += 1
+            if cs.get("ready"):
+                ready += 1
+            restarts += cs.get("restartCount") or 0
+        pods.append({
+            "name": meta.get("name"),
+            "namespace": meta.get("namespace"),
+            "phase": st.get("phase"),
+            "ready": f"{ready}/{total}" if total else "0/0",
+            "restarts": restarts,
+            "node": spec.get("nodeName"),
+            "age": _age(meta.get("creationTimestamp")),
+            "pod_ip": st.get("podIP"),
+        })
+    return pods
+
+
+def workload_detail(
+    client: OpenShiftClient,
+    kind: str,
+    namespace: str,
+    name: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Deployment/StatefulSet/DaemonSet — Atlas WorkloadDetail şekli:
+    replicas, services, routes, containers (env/mounts/secret), pods, events.
+    """
+    meta = RESOURCE_KINDS.get(kind)
+    if not meta or not meta["ns"] or kind not in ("deployments", "statefulsets", "daemonsets"):
+        return None
+
+    def _sel_match(selector: Dict, labels: Dict) -> bool:
+        return bool(selector) and all(labels.get(k) == v for k, v in selector.items())
+
+    obj = _get_json(
+        client,
+        f"{meta['path']}/namespaces/{namespace}/{kind}/{name}",
+        timeout=30,
+    )
+    if not obj:
+        return None
+
+    md, spec, st = obj.get("metadata") or {}, obj.get("spec") or {}, obj.get("status") or {}
+    tmpl = ((spec.get("template") or {}).get("spec") or {})
+
+    containers: List[Dict[str, Any]] = []
+    init_list = tmpl.get("initContainers") or []
+    for cont in (tmpl.get("containers") or []) + init_list:
+        env = []
+        for e in cont.get("env") or []:
+            if not isinstance(e, dict):
+                continue
+            src = e.get("valueFrom") or {}
+            ref = (src.get("configMapKeyRef") or src.get("secretKeyRef") or {})
+            env.append({
+                "name": e.get("name"),
+                "value": e.get("value"),
+                "from": (
+                    "Secret" if "secretKeyRef" in src else
+                    "ConfigMap" if "configMapKeyRef" in src else
+                    "field" if "fieldRef" in src else
+                    "resource" if "resourceFieldRef" in src else None
+                ),
+                "ref": f"{ref.get('name')}/{ref.get('key')}" if ref.get("name") else (
+                    (src.get("fieldRef") or {}).get("fieldPath") if "fieldRef" in src else None
+                ),
+                "secret": "secretKeyRef" in src,
+            })
+        res = cont.get("resources") or {}
+        containers.append({
+            "name": cont.get("name"),
+            "image": cont.get("image"),
+            "init": cont in init_list,
+            "ports": [
+                f"{p.get('containerPort')}/{p.get('protocol', 'TCP')}"
+                for p in (cont.get("ports") or [])
+            ],
+            "requests": res.get("requests") or {},
+            "limits": res.get("limits") or {},
+            "env": env,
+            "mounts": [
+                {"name": m.get("name"), "path": m.get("mountPath"), "readonly": bool(m.get("readOnly"))}
+                for m in (cont.get("volumeMounts") or [])
+            ],
+        })
+
+    sel = ((spec.get("selector") or {}).get("matchLabels") or {})
+    pods_all = (_get_json(client, f"/api/v1/namespaces/{namespace}/pods", params={"limit": 500}, timeout=30) or {}).get("items") or []
+    my_pods = [p for p in pods_all if _sel_match(sel, (p.get("metadata") or {}).get("labels") or {})]
+    pods = []
+    for p in my_pods:
+        pst = p.get("status") or {}
+        cs = pst.get("containerStatuses") or []
+        pods.append({
+            "name": (p.get("metadata") or {}).get("name"),
+            "namespace": namespace,
+            "phase": pst.get("phase"),
+            "healthy": pst.get("phase") in ("Running", "Succeeded"),
+            "ready": f"{sum(1 for x in cs if x.get('ready'))}/{len(cs)}" if cs else "0/0",
+            "restarts": sum(x.get("restartCount", 0) for x in cs),
+            "node": (p.get("spec") or {}).get("nodeName"),
+            "age": _age(pst.get("startTime") or (p.get("metadata") or {}).get("creationTimestamp")),
+            "containers": [x.get("name") for x in ((p.get("spec") or {}).get("containers") or []) if x.get("name")],
+            "pod_ip": pst.get("podIP"),
+        })
+
+    pod_labels = (my_pods[0].get("metadata") or {}).get("labels") or {} if my_pods else {}
+    svcs_raw = (_get_json(client, f"/api/v1/namespaces/{namespace}/services", params={"limit": 500}, timeout=20) or {}).get("items") or []
+    svcs = [s for s in svcs_raw if _sel_match((s.get("spec") or {}).get("selector") or {}, pod_labels)]
+    svc_names = {(s.get("metadata") or {}).get("name") for s in svcs}
+    routes_raw = (_get_json(
+        client, f"/apis/route.openshift.io/v1/namespaces/{namespace}/routes",
+        params={"limit": 500}, timeout=20,
+    ) or {}).get("items") or []
+    routes = [
+        r for r in routes_raw
+        if ((r.get("spec") or {}).get("to") or {}).get("name") in svc_names
+    ]
+
+    events = []
+    names = {name} | {p["name"] for p in pods if p.get("name")}
+    data = _get_json(client, f"/api/v1/namespaces/{namespace}/events", params={"limit": 200}, timeout=20) or {}
+    for e in data.get("items") or []:
+        io = e.get("involvedObject") or {}
+        if io.get("name") not in names:
+            continue
+        events.append({
+            "time": e.get("lastTimestamp") or e.get("eventTime"),
+            "last_timestamp": e.get("lastTimestamp") or e.get("eventTime"),
+            "type": e.get("type"),
+            "warning": e.get("type") == "Warning",
+            "reason": e.get("reason"),
+            "message": (e.get("message") or "")[:200],
+            "kind": io.get("kind"),
+            "name": io.get("name"),
+            "count": e.get("count") or 1,
+        })
+    events.sort(key=lambda x: x.get("time") or "", reverse=True)
+
+    replicas = {
+        "desired": spec.get("replicas", st.get("desiredNumberScheduled")),
+        "ready": st.get("readyReplicas", st.get("numberReady", 0)) or 0,
+        "available": st.get("availableReplicas", st.get("numberAvailable")),
+        "updated": st.get("updatedReplicas", st.get("updatedNumberScheduled")),
+    }
+    strategy = ((spec.get("strategy") or {}) or (spec.get("updateStrategy") or {}) or {}).get("type")
+
+    volumes = []
+    for v in tmpl.get("volumes") or []:
+        if not isinstance(v, dict):
+            continue
+        vtype = (
+            "ConfigMap" if "configMap" in v else
+            "Secret" if "secret" in v else
+            "PVC" if "persistentVolumeClaim" in v else
+            "emptyDir" if "emptyDir" in v else
+            "diğer"
+        )
+        volumes.append({"name": v.get("name"), "type": vtype})
+
+    services = [
+        {
+            "name": (s.get("metadata") or {}).get("name"),
+            "type": (s.get("spec") or {}).get("type"),
+            "cluster_ip": (s.get("spec") or {}).get("clusterIP"),
+            "ports": [
+                f"{p.get('port')}→{p.get('targetPort')}/{p.get('protocol', 'TCP')}"
+                for p in ((s.get("spec") or {}).get("ports") or [])
+            ],
+        }
+        for s in svcs
+    ]
+    route_list = [
+        {
+            "name": (r.get("metadata") or {}).get("name"),
+            "host": (r.get("spec") or {}).get("host"),
+            "tls": bool((r.get("spec") or {}).get("tls")),
+        }
+        for r in routes
+    ]
+
+    # Flat env for older UI paths
+    env_flat = []
+    for c in containers:
+        for e in c.get("env") or []:
+            env_flat.append({
+                "container": c.get("name"),
+                "name": e.get("name"),
+                "value": e.get("value"),
+                "from": e.get("from"),
+                "ref": e.get("ref"),
+                "secret": e.get("secret"),
+            })
+
+    configuration = {
+        "Ad": name,
+        "Namespace": namespace,
+        "Tür": meta["label"],
+        "Oluşturulma": _age(md.get("creationTimestamp")),
+        "Güncelleme stratejisi": strategy or "—",
+        "Replika": f"{replicas['ready']}/{replicas['desired'] if replicas['desired'] is not None else '?'} hazır"
+                  + (f" · {replicas['available']} kullanılabilir" if replicas.get("available") is not None else ""),
+        "Selector": ", ".join(f"{k}={v}" for k, v in sel.items()) or "—",
+    }
 
     return {
+        "kind": meta["label"],
+        "kind_key": kind,
+        "kind_id": kind,
+        "name": name,
+        "namespace": namespace,
+        "status_badge": f"{replicas['ready']}/{replicas['desired'] if replicas['desired'] is not None else '?'} hazır",
+        "labels": md.get("labels") or {},
+        "annotations": {
+            k: v for k, v in (md.get("annotations") or {}).items()
+            if not k.startswith("kubectl.kubernetes.io/last-applied")
+        },
+        "created": md.get("creationTimestamp"),
+        "created_at": md.get("creationTimestamp"),
+        "age": _age(md.get("creationTimestamp")),
+        "replicas": replicas,
+        "strategy": strategy,
+        "selector": sel,
+        "containers": containers,
+        "volumes": volumes,
+        "pods": pods,
+        "related_pods": pods,
+        "services": services,
+        "routes": route_list,
+        "related_resources": (
+            [{"kind": "Service", "name": s["name"], "info": f"{s.get('type')} · {s.get('cluster_ip')}", "age": ""} for s in services]
+            + [{"kind": "Route", "name": r["name"], "info": r.get("host") or "", "age": ""} for r in route_list]
+        ),
+        "conditions": [
+            {
+                "type": x.get("type"),
+                "status": x.get("status"),
+                "reason": x.get("reason"),
+                "message": (x.get("message") or "")[:200],
+            }
+            for x in (st.get("conditions") or [])
+        ],
+        "events": events[:30],
+        "env": env_flat,
+        "configuration": configuration,
+        "metrics": None,
+        "owner_refs": [],
+    }
+
+
+def resource_detail(
+    client: OpenShiftClient,
+    kind: str,
+    name: str,
+    namespace: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Deployment/DS/STS/Service/PVC/… için Atlas tarzı detay paketi."""
+    if kind == "pods":
+        if not namespace:
+            return None
+        return pod_detail(client, namespace, name)
+
+    if kind in ("deployments", "statefulsets", "daemonsets"):
+        if not namespace:
+            return None
+        return workload_detail(client, kind, namespace, name)
+
+    meta_kind = RESOURCE_KINDS.get(kind)
+    if not meta_kind:
+        return None
+    if meta_kind["ns"] and not namespace:
+        return None
+    path = (
+        f"{meta_kind['path']}/namespaces/{namespace}/{meta_kind['resource']}/{name}"
+        if meta_kind["ns"]
+        else f"{meta_kind['path']}/{meta_kind['resource']}/{name}"
+    )
+    body = _get_json(client, path, timeout=30)
+    if not body:
+        return None
+
+    meta = body.get("metadata") or {}
+    spec = body.get("spec") or {}
+    status = body.get("status") or {}
+    k8s_kind = meta_kind["label"]
+
+    conditions = []
+    for c in status.get("conditions") or []:
+        conditions.append({
+            "type": c.get("type"),
+            "status": c.get("status"),
+            "reason": c.get("reason") or "",
+            "message": (c.get("message") or "")[:400],
+            "last_transition": c.get("lastTransitionTime"),
+        })
+
+    configuration: Dict[str, Any] = {
+        "Ad": meta.get("name"),
+        "Namespace": meta.get("namespace") or "—",
+        "Tür": k8s_kind,
+        "Oluşturulma": _age(meta.get("creationTimestamp")),
+    }
+
+    related_resources: List[Dict[str, Any]] = []
+    related_pods: List[Dict[str, Any]] = []
+    volumes = _volume_summaries_from_pod_template(spec) if kind in (
+        "deployments", "statefulsets", "daemonsets",
+    ) else []
+    containers = _containers_from_pod_template(spec) if kind in (
+        "deployments", "statefulsets", "daemonsets",
+    ) else []
+    status_badge = _resource_info(kind, body) or "—"
+
+    if kind == "deployments":
+        strategy = (spec.get("strategy") or {}).get("type") or "—"
+        ready = status.get("readyReplicas") or 0
+        desired = spec.get("replicas") if spec.get("replicas") is not None else 0
+        avail = status.get("availableReplicas")
+        updated = status.get("updatedReplicas")
+        configuration["Güncelleme stratejisi"] = strategy
+        configuration["Replika"] = (
+            f"{ready}/{desired} hazır"
+            + (f" · {avail} kullanılabilir" if avail is not None else "")
+            + (f" · {updated} güncel" if updated is not None else "")
+        )
+        sel = (spec.get("selector") or {}).get("matchLabels") or {}
+        configuration["Selector"] = ", ".join(f"{k}={v}" for k, v in sel.items()) or "—"
+        status_badge = f"{ready}/{desired} hazır"
+        # ReplicaSets
+        rs_body = _get_json(
+            client,
+            f"/apis/apps/v1/namespaces/{namespace}/replicasets",
+            params={"limit": 200},
+            timeout=25,
+        )
+        for rs in (rs_body or {}).get("items") or []:
+            owners = (rs.get("metadata") or {}).get("ownerReferences") or []
+            if any(o.get("kind") == "Deployment" and o.get("name") == name for o in owners):
+                rs_st = rs.get("status") or {}
+                rs_spec = rs.get("spec") or {}
+                related_resources.append({
+                    "kind": "ReplicaSet",
+                    "name": (rs.get("metadata") or {}).get("name"),
+                    "info": f"{rs_st.get('readyReplicas') or 0}/{rs_spec.get('replicas') or 0}",
+                    "age": _age((rs.get("metadata") or {}).get("creationTimestamp")),
+                })
+        related_pods = _related_pods(client, namespace or "", selector=sel)
+
+    elif kind == "statefulsets":
+        ready = status.get("readyReplicas") or 0
+        desired = spec.get("replicas") if spec.get("replicas") is not None else 0
+        configuration["Replika"] = f"{ready}/{desired} hazır"
+        configuration["Servis adı"] = spec.get("serviceName") or "—"
+        sel = (spec.get("selector") or {}).get("matchLabels") or {}
+        configuration["Selector"] = ", ".join(f"{k}={v}" for k, v in sel.items()) or "—"
+        status_badge = f"{ready}/{desired} hazır"
+        related_pods = _related_pods(client, namespace or "", selector=sel)
+
+    elif kind == "daemonsets":
+        desired = status.get("desiredNumberScheduled") or 0
+        ready = status.get("numberReady") or 0
+        configuration["Replika"] = f"{ready}/{desired} hazır (node)"
+        configuration["Güncel"] = status.get("currentNumberScheduled")
+        configuration["Kullanılabilir"] = status.get("numberAvailable")
+        sel = (spec.get("selector") or {}).get("matchLabels") or {}
+        configuration["Selector"] = ", ".join(f"{k}={v}" for k, v in sel.items()) or "—"
+        status_badge = f"{ready}/{desired} hazır"
+        related_pods = _related_pods(client, namespace or "", selector=sel)
+
+    elif kind == "services":
+        configuration["Tür"] = f"Service / {spec.get('type') or 'ClusterIP'}"
+        configuration["Cluster IP"] = spec.get("clusterIP") or "—"
+        configuration["External IP"] = ", ".join(spec.get("externalIPs") or []) or "—"
+        ports = []
+        for p in spec.get("ports") or []:
+            ports.append(
+                f"{p.get('port')}"
+                + (f":{p.get('targetPort')}" if p.get("targetPort") is not None else "")
+                + f"/{p.get('protocol') or 'TCP'}"
+                + (f" ({p.get('name')})" if p.get("name") else "")
+            )
+        configuration["Portlar"] = ", ".join(ports) or "—"
+        sel = spec.get("selector") or {}
+        configuration["Selector"] = ", ".join(f"{k}={v}" for k, v in sel.items()) or "—"
+        status_badge = spec.get("type") or "ClusterIP"
+        if sel:
+            related_pods = _related_pods(client, namespace or "", selector=sel)
+
+    elif kind == "routes":
+        configuration["Host"] = spec.get("host") or "—"
+        configuration["Path"] = spec.get("path") or "/"
+        to = spec.get("to") or {}
+        configuration["Hedef"] = f"{to.get('kind')}/{to.get('name')}" if to else "—"
+        tls = spec.get("tls") or {}
+        configuration["TLS"] = tls.get("termination") or "yok"
+        status_badge = (status.get("ingress") or [{}])[0].get("host") or spec.get("host") or "—"
+
+    elif kind == "persistentvolumeclaims":
+        configuration["Faz"] = status.get("phase") or "—"
+        configuration["Erişim"] = ", ".join(spec.get("accessModes") or []) or "—"
+        configuration["StorageClass"] = (
+            spec.get("storageClassName")
+            or (meta.get("annotations") or {}).get("volume.beta.kubernetes.io/storage-class")
+            or "—"
+        )
+        req = ((spec.get("resources") or {}).get("requests") or {}).get("storage")
+        configuration["İstek"] = req or "—"
+        configuration["Kapasite"] = ((status.get("capacity") or {}).get("storage")) or "—"
+        configuration["Volume"] = spec.get("volumeName") or status.get("phase") or "—"
+        status_badge = status.get("phase") or "—"
+        volumes = [{
+            "name": spec.get("volumeName") or name,
+            "type": "PersistentVolume",
+            "detail": req or "",
+        }]
+
+    elif kind == "persistentvolumes":
+        configuration["Faz"] = status.get("phase") or "—"
+        configuration["Kapasite"] = ((spec.get("capacity") or {}).get("storage")) or "—"
+        configuration["Erişim"] = ", ".join(spec.get("accessModes") or []) or "—"
+        configuration["Reclaim"] = spec.get("persistentVolumeReclaimPolicy") or "—"
+        configuration["StorageClass"] = spec.get("storageClassName") or "—"
+        claim = (spec.get("claimRef") or {})
+        configuration["Claim"] = (
+            f"{claim.get('namespace')}/{claim.get('name')}" if claim.get("name") else "—"
+        )
+        status_badge = status.get("phase") or "—"
+
+    elif kind == "configmaps":
+        data = body.get("data") or {}
+        binary = body.get("binaryData") or {}
+        configuration["Anahtar sayısı"] = len(data) + len(binary)
+        configuration["Anahtarlar"] = ", ".join(list(data.keys())[:20]) or "—"
+        status_badge = f"{len(data)} key"
+        related_resources = [
+            {"kind": "Key", "name": k, "info": f"{len(str(v))} karakter", "age": ""}
+            for k, v in list(data.items())[:50]
+        ]
+
+    elif kind == "nodes":
+        configuration["Tür"] = "Node"
+        addr = {a.get("type"): a.get("address") for a in status.get("addresses") or []}
+        configuration["Internal IP"] = addr.get("InternalIP") or "—"
+        configuration["Hostname"] = addr.get("Hostname") or meta.get("name")
+        configuration["OS"] = (status.get("nodeInfo") or {}).get("osImage") or "—"
+        configuration["Kernel"] = (status.get("nodeInfo") or {}).get("kernelVersion") or "—"
+        configuration["Kubelet"] = (status.get("nodeInfo") or {}).get("kubeletVersion") or "—"
+        cap = status.get("capacity") or {}
+        configuration["CPU / RAM"] = f"{cap.get('cpu', '—')} / {cap.get('memory', '—')}"
+        ready = next((c for c in conditions if c.get("type") == "Ready"), None)
+        status_badge = "Ready" if ready and ready.get("status") == "True" else "NotReady"
+
+    owners = []
+    for o in meta.get("ownerReferences") or []:
+        owners.append({
+            "kind": o.get("kind"),
+            "name": o.get("name"),
+            "api_version": o.get("apiVersion"),
+            "controller": o.get("controller"),
+        })
+
+    events = _events_for(
+        client,
+        namespace if meta_kind["ns"] else None,
+        kind=k8s_kind,
+        name=name,
+    )
+
+    env_flat = []
+    for c in containers:
+        for e in c.get("env") or []:
+            env_flat.append({
+                "container": c.get("name"),
+                "name": e.get("name"),
+                "value": e.get("value"),
+            })
+
+    return {
+        "kind": k8s_kind,
+        "kind_id": kind,
         "name": meta.get("name"),
         "namespace": meta.get("namespace"),
-        "phase": status.get("phase"),
-        "node": spec.get("nodeName"),
-        "pod_ip": status.get("podIP"),
-        "start_time": status.get("startTime"),
-        "labels": meta.get("labels") or {},
-        "containers": containers,
-        "conditions": status.get("conditions") or [],
-        "events": events[:15],
+        "status_badge": status_badge,
         "age": _age(meta.get("creationTimestamp")),
+        "created_at": meta.get("creationTimestamp"),
+        "labels": meta.get("labels") or {},
+        "annotations": {
+            k: (str(v)[:120] + ("…" if len(str(v)) > 120 else ""))
+            for k, v in list((meta.get("annotations") or {}).items())[:40]
+        },
+        "owner_refs": owners,
+        "conditions": conditions,
+        "configuration": configuration,
+        "volumes": volumes,
+        "containers": containers,
+        "env": env_flat,
+        "related_pods": related_pods,
+        "related_resources": related_resources,
+        "events": events[:30],
+        "metrics": None,
     }
+
 
 
 def pod_logs(
@@ -470,9 +1299,13 @@ def pod_logs(
     container: Optional[str] = None,
     tail: int = 300,
     previous: bool = False,
+    timestamps: bool = True,
 ) -> Dict[str, Any]:
     tail = max(1, min(int(tail or 300), 5000))
-    params: Dict[str, Any] = {"tailLines": tail, "timestamps": "true"}
+    params: Dict[str, Any] = {
+        "tailLines": tail,
+        "timestamps": "true" if timestamps else "false",
+    }
     if container:
         params["container"] = container
     if previous:
@@ -483,9 +1316,41 @@ def pod_logs(
             return {"ok": False, "logs": "", "error": "Log okuma yetkisi yok (RBAC)"}
         if r.status_code == 404:
             return {"ok": False, "logs": "", "error": "Pod veya container bulunamadı"}
+        # Multi-container: API 400 "choose one of: [a b c]" — ilk app container'ı dene
+        if r.status_code == 400 and not container:
+            import re
+            msg = (r.text or "")
+            m = re.search(r"choose one of:\s*\[([^\]]+)\]", msg)
+            if m:
+                names = [x.strip() for x in m.group(1).split() if x.strip()]
+                # init-* / *-init tercih etme
+                preferred = next(
+                    (n for n in names if not n.startswith("init-") and "init-" not in n),
+                    names[0] if names else None,
+                )
+                if preferred:
+                    retry = pod_logs(
+                        client, namespace, pod,
+                        container=preferred, tail=tail, previous=previous, timestamps=timestamps,
+                    )
+                    if retry.get("ok"):
+                        retry["container"] = preferred
+                        retry["containers"] = names
+                        retry["auto_container"] = True
+                    else:
+                        retry["containers"] = names
+                    return retry
+                return {
+                    "ok": False, "logs": "",
+                    "error": "Pod çok container’lı; container seçin",
+                    "containers": names,
+                }
         if r.status_code != 200:
             return {"ok": False, "logs": "", "error": f"HTTP {r.status_code}: {(r.text or '')[:200]}"}
-        return {"ok": True, "logs": r.text or "", "error": None}
+        out = {"ok": True, "logs": r.text or "", "error": None}
+        if container:
+            out["container"] = container
+        return out
     except Exception as exc:
         return {"ok": False, "logs": "", "error": str(exc)[:300]}
 

@@ -105,3 +105,26 @@ def test_list_esx_hosts_db_name_filter(db_session):
     result = list_esx_hosts_db(db_session, name_filter="esx03")
     assert result["count"] == 1
     assert result["hosts"][0]["name"] == "esx03"
+
+
+def test_list_esx_hosts_db_filters_by_cluster(db_session):
+    hv = _make_hv(db_session)
+    now = datetime.now(timezone.utc)
+    db_session.add_all([
+        HypervisorHostMetric(
+            hypervisor_id=hv.id, host_name="esx-a", cluster_name="Prod-Cluster", timestamp=now,
+        ),
+        HypervisorHostMetric(
+            hypervisor_id=hv.id, host_name="esx-b", cluster_name="Prod-Cluster", timestamp=now,
+        ),
+        HypervisorHostMetric(
+            hypervisor_id=hv.id, host_name="esx-c", cluster_name="Dev-Cluster", timestamp=now,
+        ),
+    ])
+    db_session.commit()
+
+    result = list_esx_hosts_db(db_session, cluster="Prod-Cluster")
+    assert result["ok"] is True
+    assert result["count"] == 2
+    names = {h["name"] for h in result["hosts"]}
+    assert names == {"esx-a", "esx-b"}

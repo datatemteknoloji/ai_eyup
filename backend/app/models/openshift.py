@@ -1,7 +1,7 @@
 """
 OpenShift Container Platform envanter modelleri — cluster, node, proje (namespace) ve workload (pod/deployment/route).
 """
-from sqlalchemy import Column, Integer, String, JSON, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, JSON, DateTime, Float, ForeignKey, Index
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -90,3 +90,47 @@ class OpenShiftWorkload(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     cluster = relationship("OpenShiftCluster", back_populates="workloads")
+
+
+class OcpResourceMetric(Base):
+    """OCP Monitoring zaman serisi — metrics.k8s.io örnekleri (Timescale hypertable).
+
+    Prometheus / kubevirt_vmi_* yok. Kimlik: (cluster_id, kind, object_key).
+    kind = node | pod | vm. object_key = node adı veya namespace/name.
+    """
+    __tablename__ = "ocp_resource_metrics"
+
+    timestamp = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        primary_key=True,
+    )
+    cluster_id = Column(
+        Integer,
+        ForeignKey("openshift_clusters.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+        index=True,
+    )
+    kind = Column(String(16), nullable=False, primary_key=True)  # node|pod|vm
+    object_key = Column(String(512), nullable=False, primary_key=True)  # name veya ns/name
+
+    name = Column(String(255), nullable=False)
+    namespace = Column(String(255), nullable=True)
+    role = Column(String(32), nullable=True)  # master|worker|infra
+    status = Column(String(64), nullable=True)
+    node_name = Column(String(255), nullable=True)
+
+    cpu_used_cores = Column(Float)
+    memory_used_gb = Column(Float)
+    cpu_allocatable = Column(Float)
+    memory_allocatable_gb = Column(Float)
+    cpu_pct = Column(Float)
+    memory_pct = Column(Float)
+    restarts = Column(Integer)
+
+    __table_args__ = (
+        Index("idx_ocp_rm_cluster_kind_key_ts", "cluster_id", "kind", "object_key", "timestamp"),
+        Index("idx_ocp_rm_ts", "timestamp"),
+    )

@@ -28,12 +28,15 @@ export const SECTION_HELP: Partial<Record<OcpSection, string>> = {
   topoloji:
     'Seçili projedeki uygulamaların görsel haritası. Node’a tıklayınca ilişkiler sağda açılır.',
   depolama: 'StorageClass, PVC, PV ve Multus ağ tanımları.',
-  vms: 'OpenShift Virtualization (KubeVirt) — VNC konsol, güç, snapshot/klon (admin) ve canlı CPU/bellek.',
+  vms: 'KubeVirt VM listesi ayrı sayfada (/openshift/vms). Bu Explorer pod/deploy odaklıdır.',
   tasima: 'VMware → OpenShift taşıma (MTV) hazırlığı ve operatör durumu.',
   kaynaklar: 'Kubernetes nesnelerini listeleyip YAML görüntüleyin; Deployment’larda ölçek ±.',
   projeler: 'Proje seçin; Workload / Pod / Route listeleri bu bağlamda çalışır.',
   riskler: 'CrashLoop / ImagePull / yüksek restart riskli Pod’lar.',
-  pods: 'Pod durumu, container’lar, events ve log — satırı genişletin.',
+  pods: 'Pod satırına tıklayın — sağ çekmecede Genel, Container, Log, Terminal, Metrik, Olay ve YAML sekmeleri açılır.',
+  deployments: 'Deployment satırına tıklayın — ayrıntı, ReplicaSet, pod’lar, ortam, log, olay ve YAML.',
+  daemonsets: 'DaemonSet satırına tıklayınca koşullar, pod’lar, ortam değişkenleri ve olaylar görünür.',
+  pvc: 'PVC satırına tıklayınca faz, kapasite, StorageClass ve olaylar görünür.',
 }
 
 export const NEEDS_PROJECT: OcpSection[] = [

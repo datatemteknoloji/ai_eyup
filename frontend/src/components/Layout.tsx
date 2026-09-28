@@ -248,6 +248,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
     {
+      type: 'link',
+      path: '/monitoring',
+      name: t('nav_monitoring'),
+      icon: <Activity size={18} />,
+      moduleId: 'monitoring',
+    },
+    {
       type: 'group', key: 'linux', name: t('nav_linux'), icon: <Server size={18} />, moduleId: 'linux',
       children: [
         { type: 'link', path: '/linux/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} />, moduleId: 'linux' },
@@ -328,6 +335,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         },
         { type: 'link', path: '/openshift', name: t('nav_inventory'), icon: <LayoutDashboard size={15} /> },
         { type: 'link', path: '/openshift/vms', name: t('nav_virtual_machines'), icon: <Monitor size={15} /> },
+        { type: 'link', path: '/openshift/monitoring', name: t('nav_ocp_monitoring'), icon: <Activity size={15} /> },
+        { type: 'link', path: '/openshift/access', name: t('nav_ocp_access'), icon: <Users size={15} /> },
         {
           type: 'link', path: '/openshift/events', name: t('nav_events'), icon: <ClipboardList size={15} />,
           badge: () => {
@@ -628,7 +637,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
         >
           <div className="flex min-w-0 flex-1 items-center gap-3 pr-4">
+            {(
+              location.pathname === '/monitoring'
+              || location.pathname === '/monitoring/'
+              || location.pathname === '/openshift/monitoring'
+              || location.pathname === '/virt/monitoring'
+            ) && (
+              <Activity size={18} className="shrink-0 text-blue-400" aria-hidden />
+            )}
             <h1 className="shrink-0 text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{pageTitle}</h1>
+            {(location.pathname === '/monitoring' || location.pathname === '/monitoring/') && (
+              <div id="monitoring-arch-header-slot" className="flex shrink-0 items-center" />
+            )}
             {/* Level 1 Operasyon Merkezi: Sunucular / envanter / yenile buraya portal ile gelir */}
             {(location.pathname === '/level1' || location.pathname === '/level1/') && (
               <div id="level1-ops-header-slot" className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1 overflow-hidden" />

@@ -1,11 +1,11 @@
-import React, { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import React, { useEffect, useState } from 'react'
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge, StatusBadge,
-  SearchInput, Select, ActionMenu, Section, EmptyState, sevColor,
+  SearchInput, Select, ActionMenu, Section, EmptyState, sevColor, Pagination,
 } from '../components/aiops/ui'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
@@ -28,6 +28,8 @@ interface Incident {
 }
 interface IncidentStats { total: number; open: number; investigating: number; resolved: number; critical: number }
 
+const PAGE_SIZE = 50
+
 function fmt(d: string | null, locale: string, short = true) {
   if (!d) return '—'
   const loc = locale === 'en' ? 'en-GB' : 'tr-TR'
@@ -39,7 +41,10 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const { locale } = useLocale()
   const [statusFilter, setStatusFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
+  const [serverFilter, setServerFilter] = useState('')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -49,17 +54,32 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   const queryClient = useQueryClient()
 
   const { data: incidentsData, isLoading } = useQuery<{ total: number; incidents: Incident[] }>({
-    queryKey: ['incidents', platform, statusFilter, severityFilter, search],
+    queryKey: ['incidents', platform, statusFilter, severityFilter, serverFilter, search, page],
     queryFn: async () => {
       const params = appendPlatform(new URLSearchParams(), platform)
       if (statusFilter) params.set('status', statusFilter)
       if (severityFilter) params.set('severity', severityFilter)
+      if (serverFilter) params.set('server_id', serverFilter)
       if (search) params.set('search', search)
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(page * PAGE_SIZE))
       const res = await fetch(`${API_BASE_URL}/incidents/?${params}`)
       if (!res.ok) return { total: 0, incidents: [] }
       return res.json()
     },
-    refetchInterval: 45_000,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+
+  const { data: serverOptions = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['incident-servers', platform],
+    queryFn: async () => {
+      const params = appendPlatform(new URLSearchParams(), platform)
+      const res = await fetch(`${API_BASE_URL}/incidents/servers?${params}`)
+      if (!res.ok) return []
+      return res.json()
+    },
+    staleTime: 60_000,
   })
 
   const { data: stats } = useQuery<IncidentStats>({
@@ -70,7 +90,8 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       if (!res.ok) return { total: 0, open: 0, investigating: 0, resolved: 0, critical: 0 }
       return res.json()
     },
-    refetchInterval: 45_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 
   const invalidate = () => {
@@ -112,7 +133,19 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
   const deleteIncident = useMutation({
     mutationFn: async (id: number) => { const r = await fetch(`${API_BASE_URL}/incidents/${id}`, { method: 'DELETE' }); if (!r.ok) throw new Error() },
-    onSuccess: () => { invalidate(); setSelectedIncident(null) }
+    onSuccess: () => { invalidate(); setSelectedIncident(null); setSelectedIds(new Set()) }
+  })
+
+  const bulkAction = useMutation({
+    mutationFn: async ({ action, ids }: { action: string; ids: number[] }) => {
+      const res = await fetch(`${API_BASE_URL}/incidents/bulk-action`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, incident_ids: ids }),
+      })
+      if (!res.ok) throw new Error()
+      return res.json()
+    },
+    onSuccess: () => { invalidate(); setSelectedIds(new Set()); setSelectedIncident(null) },
   })
 
   const runRCA = useMutation({
@@ -163,7 +196,33 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
   }
 
   const incidents = incidentsData?.incidents || []
+  const total = incidentsData?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const rcaCount = incidents.filter(i => i.has_rca || i.rca_result?.analysis).length
+  const pageIds = incidents.map(i => i.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))
+
+  useEffect(() => {
+    if (incidentsData && page > totalPages - 1) setPage(totalPages - 1)
+  }, [incidentsData, page, totalPages])
+
+  const resetList = () => { setPage(0); setSelectedIds(new Set()) }
+  const toggleOne = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const togglePage = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allPageSelected) pageIds.forEach(id => next.delete(id))
+      else pageIds.forEach(id => next.add(id))
+      return next
+    })
+  }
   const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
   const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
 
@@ -185,11 +244,11 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
         {/* KPI */}
         <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-          <Kpi label={t('total')} value={stats?.total ?? 0} accent={NEON.cyan} active={!statusFilter && !severityFilter} onClick={() => { setStatusFilter(''); setSeverityFilter('') }} />
-          <Kpi label={t('inc_kpi_open')} value={stats?.open ?? 0} accent={NEON.red} active={statusFilter === 'open'} onClick={() => { setStatusFilter('open'); setSeverityFilter('') }} />
-          <Kpi label={t('inc_kpi_investigating')} value={stats?.investigating ?? 0} accent={NEON.orange} active={statusFilter === 'investigating'} onClick={() => { setStatusFilter('investigating'); setSeverityFilter('') }} />
-          <Kpi label={t('inc_kpi_resolved')} value={stats?.resolved ?? 0} accent={NEON.green} active={statusFilter === 'resolved'} onClick={() => { setStatusFilter('resolved'); setSeverityFilter('') }} />
-          <Kpi label={t('inc_kpi_crit_open')} value={stats?.critical ?? 0} accent={NEON.red} active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setStatusFilter('') }} />
+          <Kpi label={t('total')} value={stats?.total ?? 0} accent={NEON.cyan} active={!statusFilter && !severityFilter} onClick={() => { setStatusFilter(''); setSeverityFilter(''); resetList() }} />
+          <Kpi label={t('inc_kpi_open')} value={stats?.open ?? 0} accent={NEON.red} active={statusFilter === 'open'} onClick={() => { setStatusFilter('open'); setSeverityFilter(''); resetList() }} />
+          <Kpi label={t('inc_kpi_investigating')} value={stats?.investigating ?? 0} accent={NEON.orange} active={statusFilter === 'investigating'} onClick={() => { setStatusFilter('investigating'); setSeverityFilter(''); resetList() }} />
+          <Kpi label={t('inc_kpi_resolved')} value={stats?.resolved ?? 0} accent={NEON.green} active={statusFilter === 'resolved'} onClick={() => { setStatusFilter('resolved'); setSeverityFilter(''); resetList() }} />
+          <Kpi label={t('inc_kpi_crit_open')} value={stats?.critical ?? 0} accent={NEON.red} active={severityFilter === 'critical'} onClick={() => { setSeverityFilter('critical'); setStatusFilter(''); resetList() }} />
         </div>
 
         {showCreateForm && (
@@ -224,20 +283,40 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
 
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder={t('ev_search_title')} width="w-48" />
-          <Select value={statusFilter} onChange={setStatusFilter}>
+          <SearchInput value={search} onChange={v => { setSearch(v); resetList() }} placeholder={t('ev_search_title')} width="w-48" />
+          <Select value={statusFilter} onChange={v => { setStatusFilter(v); resetList() }}>
             <option value="">{t('inc_all_status')}</option><option value="open">{t('inc_kpi_open')}</option><option value="investigating">{t('inc_kpi_investigating')}</option><option value="resolved">{t('inc_kpi_resolved')}</option><option value="closed">{t('inc_closed')}</option>
           </Select>
-          <Select value={severityFilter} onChange={setSeverityFilter}>
+          <Select value={severityFilter} onChange={v => { setSeverityFilter(v); resetList() }}>
             <option value="">{t('inc_all_sev')}</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+          </Select>
+          <Select value={serverFilter} onChange={v => { setServerFilter(v); resetList() }}>
+            <option value="">{t('inc_all_servers')}</option>
+            {serverOptions.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
           </Select>
           {rcaCount > 0 && (
             <GhostButton accent={NEON.blue} onClick={downloadAllRcaPdf}>
               {t('inc_all_rca_pdf', { n: rcaCount })}
             </GhostButton>
           )}
-          <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('inc_n_results', { n: incidentsData?.total ?? 0 })}</span>
+          <span className="ml-auto text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('inc_n_results', { n: total })}</span>
         </div>
+
+        {selectedIds.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium" style={{ color: NEON.cyan }}>{t('inc_n_selected', { n: selectedIds.size })}</span>
+            <GhostButton accent={NEON.orange} disabled={bulkAction.isPending} onClick={() => bulkAction.mutate({ action: 'investigating', ids: [...selectedIds] })}>{t('inc_investigate')}</GhostButton>
+            <GhostButton accent={NEON.green} disabled={bulkAction.isPending} onClick={() => {
+              if (confirm(t('inc_bulk_resolve_confirm', { n: selectedIds.size }))) bulkAction.mutate({ action: 'resolved', ids: [...selectedIds] })
+            }}>{t('inc_mark_resolved')}</GhostButton>
+            <GhostButton accent={NEON.slate} disabled={bulkAction.isPending} onClick={() => {
+              if (confirm(t('inc_bulk_close_confirm', { n: selectedIds.size }))) bulkAction.mutate({ action: 'closed', ids: [...selectedIds] })
+            }}>{t('close')}</GhostButton>
+            <GhostButton accent={NEON.red} disabled={bulkAction.isPending} onClick={() => {
+              if (confirm(t('inc_bulk_delete_confirm', { n: selectedIds.size }))) bulkAction.mutate({ action: 'delete', ids: [...selectedIds] })
+            }}>{t('delete')}</GhostButton>
+          </div>
+        )}
 
         {/* List */}
         {isLoading ? (
@@ -246,6 +325,12 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
           <Section><EmptyState icon="" text={t('inc_empty')} /></Section>
         ) : (
           <div className="space-y-2.5">
+            {incidents.length > 0 && (
+              <label className="flex items-center gap-2 text-xs px-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                <input type="checkbox" checked={allPageSelected} onChange={togglePage} />
+                {selectedIds.size > 0 ? t('inc_n_selected', { n: selectedIds.size }) : t('inc_unit')}
+              </label>
+            )}
             {incidents.map(inc => {
               const c = sevColor(inc.severity)
               const sel = selectedIncident?.id === inc.id
@@ -254,6 +339,13 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                   className="cyber-card p-4 cursor-pointer transition-all"
                   style={{ borderColor: sel ? `rgba(${rgb(NEON.cyan)},0.5)` : undefined, borderLeft: `3px solid ${c}` }}>
                   <div className="flex items-start justify-between gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selectedIds.has(inc.id)}
+                      onClick={e => e.stopPropagation()}
+                      onChange={() => toggleOne(inc.id)}
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         <SeverityBadge severity={inc.severity} />
@@ -277,6 +369,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
             })}
           </div>
         )}
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} unit={t('inc_unit')} onPage={setPage} />
       </div>
 
       {/* Right: detail — kaydırılabilir (cyber-card overflow:hidden engelini aşar) */}

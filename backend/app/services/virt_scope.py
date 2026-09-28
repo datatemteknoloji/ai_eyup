@@ -68,7 +68,10 @@ SCOPE_TOOL_ARGS: Dict[str, Dict[str, str]] = {
         "datastore": "datastore",
     },
     "datastore": {"datastore": "name_filter"},
-    "host": {"host_name": "name_filter"},
+    "host": {
+        "host_name": "name_filter",
+        "cluster": "cluster",
+    },
 }
 
 # Not satırındaki gösterim sırası ve etiketleri (geriye dönük uyumlu).
@@ -322,6 +325,16 @@ def system_addendum(scope: Optional[Scope]) -> str:
         f"- Soru şu kapsama işaret ediyor: {scope_note(scope)}.",
         "- Cevabı YALNIZ bu kapsamdaki satırlardan kur; kapsam dışı varlık listeleme.",
     ]
+    if scope.filters.get("cluster"):
+        cl = scope.filters["cluster"]
+        lines.append(
+            f"- CLUSTER KAPSAMI: db_list_esx_hosts(cluster={cl!r}) ve "
+            f"db_list_vms(cluster={cl!r}) ZORUNLU — cluster argümansız TÜM filo yasak."
+        )
+        lines.append(
+            "- Önce db_list_clusters(name_filter=...) ile cluster adını doğrula; "
+            "sonra host/VM listesini aynı cluster ile daralt."
+        )
     if scope.locked:
         lines.append(
             "- Kullanıcı kapsamı AÇIKÇA sınırladı ('sadece/yalnızca'): kapsam dışı "

@@ -7,7 +7,8 @@ import re
 import time
 from typing import List, Optional, Set
 
-from sqlalchemy import func as sa_func, or_, and_
+from sqlalchemy import Integer, String, bindparam, func as sa_func, or_, and_, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Query, Session
 
 from app.models.event import SystemEvent
@@ -360,6 +361,138 @@ def filter_incidents_for_platform(incidents: list, platform: Optional[str], db: 
         return False
 
     return [inc for inc in incidents if matches(inc)]
+
+
+def incident_platform_clause(platform: Optional[str], db: Session):
+    """`filter_incidents_for_platform` ile aynı kural, SQL criterion.
+
+    Liste sayfalaması LIMIT/OFFSET ile kalır; tüm incident satırları Python'a
+    çekilmez. None → ek filtre yok.
+    """
+    if not platform or platform not in VALID_PLATFORMS:
+        return None
+
+    linux_ids = list(get_linux_module_server_ids(db))
+    windows_ids = list(get_windows_server_ids(db))
+    exadata_ids = list(get_exadata_server_id_set(db))
+
+    # infer_event_platform sırası: raw platform, virt, exadata, openshift, windows, server_id, linux, default linux
+    event_plat = """
+      CASE
+        WHEN json_extract_path_text(e.raw_data, 'platform') IN ('linux','windows','virt','exadata','openshift')
+          THEN json_extract_path_text(e.raw_data, 'platform')
+        WHEN lower(coalesce(e.source, '')) ~ '^vcenter_'
+          OR lower(coalesce(e.source, '')) = ANY(:virt_sources)
+          OR lower(coalesce(e.source, '')) ~ '^virt_'
+          OR lower(coalesce(e.source, '')) LIKE '%vcenter%'
+          OR lower(coalesce(e.source, '')) ~ '^auto_virt'
+          OR lower(coalesce(e.source, '')) ~ '^auto_vcenter'
+          THEN 'virt'
+        WHEN lower(coalesce(e.source, '')) = ANY(:exa_sources)
+          OR lower(coalesce(e.source, '')) LIKE '%exadata%'
+          THEN 'exadata'
+        WHEN lower(coalesce(e.source, '')) = ANY(:ocp_sources)
+          OR (lower(coalesce(e.source, '')) ~ '^openshift_' AND lower(coalesce(e.source, '')) NOT LIKE '%virt%')
+          THEN 'openshift'
+        WHEN lower(coalesce(e.source, '')) = ANY(:win_sources)
+          OR lower(coalesce(e.source, '')) ~ '^windows_'
+          OR lower(coalesce(e.source, '')) ~ '^auto_windows'
+          THEN 'windows'
+        WHEN e.server_id IS NOT NULL AND e.server_id = ANY(:exadata_ids) THEN 'exadata'
+        WHEN e.server_id IS NOT NULL AND e.server_id = ANY(:windows_ids) THEN 'windows'
+        WHEN e.server_id IS NOT NULL AND e.server_id = ANY(:linux_ids) THEN 'linux'
+        WHEN lower(coalesce(e.source, '')) = ANY(:linux_sources)
+          OR lower(coalesce(e.source, '')) ~ '^auto_log'
+          THEN 'linux'
+        ELSE 'linux'
+      END
+    """
+    has_related = """
+      EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(incidents.related_events::jsonb, '[]'::jsonb)) AS rel(eid)
+        JOIN system_events e ON e.id = (CASE WHEN rel.eid ~ '^[0-9]+$' THEN rel.eid::int END)
+      )
+    """
+    has_plat = f"""
+      EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(incidents.related_events::jsonb, '[]'::jsonb)) AS rel(eid)
+        JOIN system_events e ON e.id = (CASE WHEN rel.eid ~ '^[0-9]+$' THEN rel.eid::int END)
+        WHERE ({event_plat}) = :want_plat
+      )
+    """
+    src = "lower(coalesce(incidents.source, ''))"
+    is_virt_src = f"(({src} LIKE '%virt%' OR {src} LIKE '%hypervisor%' OR {src} LIKE '%vcenter%') AND {src} NOT LIKE '%openshift%')"
+    is_exa_src = f"({src} LIKE '%exadata%')"
+    is_win_src = f"({src} LIKE '%windows%')"
+    is_ocp_src = f"({src} LIKE '%openshift%' AND {src} NOT LIKE '%virt%')"
+    no_aff = """(
+      incidents.affected_servers IS NULL
+      OR jsonb_typeof(COALESCE(incidents.affected_servers::jsonb, 'null'::jsonb)) <> 'array'
+      OR jsonb_array_length(COALESCE(incidents.affected_servers::jsonb, '[]'::jsonb)) = 0
+    )"""
+
+    def aff_any(bind: str) -> str:
+        return f"""
+          EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(incidents.affected_servers::jsonb, '[]'::jsonb)) AS aff(sid)
+            WHERE aff.sid ~ '^[0-9]+$' AND aff.sid::int = ANY(:{bind})
+          )
+        """
+
+    if platform == "virt":
+        body = f"({is_virt_src} OR {has_plat})"
+    elif platform == "exadata":
+        body = f"({is_exa_src} OR {has_plat})"
+    elif platform == "openshift":
+        body = f"({is_ocp_src} OR {has_plat})"
+    elif platform == "windows":
+        body = f"""
+          (NOT {is_virt_src} AND NOT {is_ocp_src} AND NOT {is_exa_src} AND (
+            ({has_related} AND {has_plat})
+            OR (NOT {has_related} AND ({aff_any("windows_ids_aff")} OR ({no_aff} AND {is_win_src})))
+          ))
+        """
+    else:
+        fallback = f"({src} LIKE '%log_collector%' OR {src} LIKE '%aiops%' OR {src} LIKE '%storm_detector%' OR {src} LIKE '%manual%' OR {src} LIKE '%metric_anomaly%')"
+        body = f"""
+          (NOT {is_virt_src} AND NOT {is_ocp_src} AND NOT {is_win_src} AND NOT {is_exa_src} AND (
+            ({has_related} AND {has_plat})
+            OR (NOT {has_related} AND ({aff_any("linux_ids_aff")} OR ({no_aff} AND {fallback})))
+          ))
+        """
+
+    int_array = ARRAY(Integer)
+    text_array = ARRAY(String)
+    binds = [
+        bindparam("want_plat", value=platform),
+        bindparam("virt_sources", value=list(_VIRT_SOURCES), type_=text_array),
+        bindparam("exa_sources", value=list(_EXADATA_SOURCES), type_=text_array),
+        bindparam("ocp_sources", value=list(_OPENSHIFT_SOURCES), type_=text_array),
+        bindparam("win_sources", value=list(_WINDOWS_SOURCES), type_=text_array),
+        bindparam("linux_sources", value=list(_LINUX_SOURCES), type_=text_array),
+        bindparam("linux_ids", value=linux_ids, type_=int_array),
+        bindparam("windows_ids", value=windows_ids, type_=int_array),
+        bindparam("exadata_ids", value=exadata_ids, type_=int_array),
+    ]
+    if platform == "linux":
+        binds.append(bindparam("linux_ids_aff", value=linux_ids, type_=int_array))
+    elif platform == "windows":
+        binds.append(bindparam("windows_ids_aff", value=windows_ids, type_=int_array))
+    return text(body).bindparams(*binds)
+
+
+def incident_affected_server_clause(server_id: int):
+    """Incident.affected_servers JSON listesinde bu sunucu var mı."""
+    return text("""
+      EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(incidents.affected_servers::jsonb, '[]'::jsonb)) AS aff(sid)
+        WHERE aff.sid ~ '^[0-9]+$' AND aff.sid::int = :aff_server_id
+      )
+    """).bindparams(bindparam("aff_server_id", value=int(server_id)))
 
 
 def infer_event_platform(

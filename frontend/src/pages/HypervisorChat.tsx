@@ -339,6 +339,23 @@ export default function HypervisorChat({
   const t = useT()
   const { locale } = useLocale()
   const queryClient = useQueryClient()
+  const [monScopeLabel, setMonScopeLabel] = useState('')
+  useEffect(() => {
+    const read = () => {
+      try {
+        const raw = localStorage.getItem('ainew.virt.monitoring.scope')
+        if (!raw) { setMonScopeLabel(''); return }
+        const s = JSON.parse(raw) as { cluster?: string; host?: string; kind?: string }
+        const bits = [s.cluster && `cluster=${s.cluster}`, s.host && `esxi=${s.host}`].filter(Boolean)
+        setMonScopeLabel(bits.length ? bits.join(' · ') : '')
+      } catch { setMonScopeLabel('') }
+    }
+    read()
+    window.addEventListener('storage', read)
+    const id = window.setInterval(read, 2000)
+    return () => { window.removeEventListener('storage', read); window.clearInterval(id) }
+  }, [])
+
   const stream = useChatStream('hypervisor')
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -522,6 +539,12 @@ export default function HypervisorChat({
     setMessages(prev => [...prev, userMsg])
     setInput('')
 
+    let monitoring_scope: Record<string, unknown> | undefined
+    try {
+      const raw = localStorage.getItem('ainew.virt.monitoring.scope')
+      if (raw) monitoring_scope = JSON.parse(raw)
+    } catch { /* ignore */ }
+
     try {
       await startChatStream({
         channel: 'hypervisor',
@@ -530,6 +553,7 @@ export default function HypervisorChat({
           question: q.trim(),
           session_id: activeSessionId,
           model: selectedModel,
+          ...(monitoring_scope ? { monitoring_scope } : {}),
         },
         sessionId: activeSessionId,
         message: q.trim(),
@@ -576,6 +600,11 @@ export default function HypervisorChat({
             <div>
               <h1 className="text-white font-semibold text-sm leading-tight">{t('chat_hv_title')}</h1>
               <p className="text-slate-400 text-[11px]">{t('chat_hv_sub')}</p>
+              {monScopeLabel && (
+                <p className="text-[10px] text-cyan-400/90 mt-0.5 font-mono truncate max-w-[280px]" title={monScopeLabel}>
+                  Monitoring: {monScopeLabel}
+                </p>
+              )}
             </div>
           </div>
         )}

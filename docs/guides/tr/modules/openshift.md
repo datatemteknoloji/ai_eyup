@@ -27,7 +27,7 @@ VMware-only kapasite raporunun derinliği Sanallaştırma GUIDE’dadır; OCP/OL
                               /infra-reports
 ```
 
-OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/vms` + virt envanter.
+OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/vms` + virt/Linux `servers` envanteri (cluster sync otomatik köprüler). VM adı (`vm_name`) ile OS hostname uyuşmazlığı VMware ile aynı filtredir (guest agent veya SSH OS yenileme).
 
 ---
 
@@ -38,6 +38,7 @@ OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/v
 | Komuta merkezi | `/openshift/ops` | Kritik iş yükü / cluster (kırmızı rozet) |
 | Envanter | `/openshift` | Cluster, node, proje, workload |
 | Virtual Machines | `/openshift/vms` | KubeVirt / OCP VM |
+| Monitoring | `/openshift/monitoring` | API: Node/Pod/VM + `metrics.k8s.io` → Timescale. Prometheus: DCGM + kubevirt (Settings binding). Hub `/monitoring` |
 | Events | `/openshift/events` | Cluster olayları |
 | Incidents | `/openshift/incidents` | Incident |
 | Asistan | `/openshift/chat` | Pod, node, proje, PVC, CrashLoop |
@@ -51,7 +52,7 @@ OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/v
      kube API (token / OAuth)
            │
            ▼
-  /openshift/ops ── /openshift ── /openshift/vms
+  /openshift/ops ── /openshift ── /openshift/vms ── /openshift/monitoring
            │
            ▼
      /openshift/chat  →  tool  →  API / DB  →  LLM
@@ -87,7 +88,12 @@ vCenter (`vmware`) aynı entegrasyon sayfasındadır; protokol SOAP’tır. Bu G
 
 ## OpenShift Virtualization
 
-Tip `openshift_virt`: kube API + token veya OAuth. VM’ler virt senkronu + `/openshift/vms`. Proje/pod soruları OCP asistanında; datastore/host kapasitesi virt rapor/sohbette olabilir.
+KubeVirt VM'ler iki yerde görünür:
+
+1. **OpenShift → Virtual Machines** (`/openshift/vms`) — canlı API listesi  
+2. **Linux Sunucular / Sanallaştırma envanteri** (`/servers`, hypervisor sync) — `servers` tablosu  
+
+OpenShift cluster sync (`/integrations/openshift` → Sync) otomatik olarak yönetilen bir `openshift_virt` hypervisor kaydı oluşturur/günceller ve KubeVirt VM'leri `servers`'a yazar. Ayrı manuel hypervisor kaydı **gerekmez**. Linux guest'ler **Linux Yönetimi → Linux Sunucular** listesine düşer.
 
 ---
 
@@ -104,7 +110,7 @@ Tip `openshift_virt`: kube API + token veya OAuth. VM’ler virt senkronu + `/op
                  LLM + tool
 ```
 
-PromQL yazmaz; scrape değişmez.
+PromQL scrape yazılmaz. Monitoring **API modu** `metrics.k8s.io` anlık CPU/bellek kullanır; **Prometheus modu** Ayarlar’daki OpenShift Prometheus kaynağından DCGM / kubevirt okur. Other kaynaklar hub’da label ile; Unified chat’te tam label gerekir.
 
 ---
 

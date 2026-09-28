@@ -505,7 +505,7 @@ function escapePrometheusRegex(s: string): string {
   return s
 }
 
-const LiveMetrics: React.FC = () => {
+const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const t = useT()
   const pageVisible = usePageVisible()
   const [selectedInstances, setSelectedInstances] = useState<string[]>([])
@@ -889,7 +889,7 @@ const LiveMetrics: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-white">{t('lm_title')}</h2>
+          {!embedded && <h2 className="text-xl font-semibold text-white">{t('lm_title')}</h2>}
           <p className="text-sm text-slate-400">
             {metricsOverview ? (
               <>

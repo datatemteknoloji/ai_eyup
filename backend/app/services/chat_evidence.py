@@ -3,22 +3,37 @@
 Araç/collect çıktısı varken modelin 'canlı veri yok' demesini yakalar.
 Virt yolu bunu hypervisor_intelligence içinde kullanır; Unified final
 stream aynı kararı `maybe_fix_no_data_answer` ile uygular.
+
+Ayrıca kanıtta olmayan IP uydurmayı ve host/cluster adlarını yok saymayı
+yakalar (hiyerarşi / HA failover gibi uzun cevaplarda).
 """
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 _ANCHOR_RE = re.compile(r"\d+[\.,]?\d*|\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+# ESXi / FQDN / Prod-Cluster tarzı envanter adları
+_NAME_TOKEN_RE = re.compile(
+    r"\b(?:esx[-_][\w.-]+|[\w.-]+\.(?:local|lan|internal|corp)|"
+    r"[\w]+-[Cc]luster|Prod-[Cc]luster|Lab-[Cc]luster)\b",
+    re.IGNORECASE,
+)
+# Yaygın uydurma / gürültü IP'leri — envanter sayılmaz
+_IGNORE_IPS = frozenset({
+    "0.0.0.0", "127.0.0.1", "255.255.255.255",
+    "192.168.0.0", "10.0.0.0", "172.16.0.0",
+})
 
 RETRY_ADDENDUM = (
     "\n\nUYARI: Yukarıdaki BAĞLAM / ARAÇ SONUÇLARI bölümü DOLU ve geçerli. "
     "'Veri yok / kayıt dönmedi / bağlantı sağlanamadı / canlı veri mevcut değil' "
     "demen yasak. O bölümdeki sayısal değerleri (host adı, yüzdeler, sayaçlar) "
-    "cevabında AYNEN kullan."
+    "cevabında AYNEN kullan. Kanıtta olmayan IP veya host adı UYDURMA."
 )
 
 GenerateFn = Callable[..., Any]
@@ -43,10 +58,44 @@ def collect_unified_live_evidence(
     return "\n\n".join(chunks)
 
 
-def answer_ignores_evidence(answer: str, evidence: str, max_len: int = 400) -> bool:
-    """Kısa cevap, kanıttaki hiçbir somut değeri içermiyor mu?"""
-    if not answer or not evidence or len(answer) > max_len:
+def _ips_in(text: str) -> Set[str]:
+    return {ip for ip in _IP_RE.findall(text or "") if ip not in _IGNORE_IPS}
+
+
+def _name_tokens(text: str) -> Set[str]:
+    return {t.lower() for t in _NAME_TOKEN_RE.findall(text or "")}
+
+
+def answer_invents_ips(answer: str, evidence: str) -> bool:
+    """Cevaptaki IP'ler kanıtta yoksa (envanter/hiyerarşi uydurması)."""
+    invented = _ips_in(answer) - _ips_in(evidence)
+    return bool(invented)
+
+
+def answer_ignores_evidence(answer: str, evidence: str, max_len: int = 900) -> bool:
+    """Cevap kanıtı yok sayıyor veya kanıtta olmayan IP uyduruyor mu?
+
+    - Kısa/orta cevapta kanıttaki sayısal çapa yoksa → ignore
+    - Kanıtta olmayan IP varsa (uzun cevap dahil) → ignore
+    - Kanıtta ≥2 host/cluster adı varken cevap hiçini kullanmıyorsa → ignore
+    """
+    if not answer or not evidence:
         return False
+
+    if answer_invents_ips(answer, evidence):
+        return True
+
+    ev_names = _name_tokens(evidence)
+    ans_names = _name_tokens(answer)
+    if len(ev_names) >= 2 and not (ev_names & ans_names):
+        # Host/cluster envanteri varken hiç ad kullanmamak (ör. "tek host" uydurması)
+        lower = answer.lower()
+        if any(k in lower for k in ("host", "cluster", "esx", "ha", "failover", "hiyerar")):
+            return True
+
+    if len(answer) > max_len:
+        return False
+
     anchors = {a for a in _ANCHOR_RE.findall(evidence) if len(a) >= 2}
     if len(anchors) < 3:
         return False
@@ -94,7 +143,7 @@ def maybe_fix_no_data_answer(
     generate_sync: Optional[GenerateFn] = None,
     timeout: float = 120.0,
 ) -> tuple[str, str]:
-    """Kanıt varken 'veri yok' cevabını düzelt.
+    """Kanıt varken 'veri yok' / uydurma cevabını düzelt.
 
     Döner: (yeni_cevap, reason) — reason: '' | 'retry' | 'fallback'
     generate_sync verilmezse llm_gateway.generate_sync kullanılır.
@@ -102,7 +151,7 @@ def maybe_fix_no_data_answer(
     if not needs_evidence_retry(answer, evidence):
         return answer, ""
     logger.warning(
-        "[ChatEvidence] kanıt varken 'veri yok' — yeniden deneniyor (q_len=%s ev_len=%s)",
+        "[ChatEvidence] kanıt varken kötü cevap — yeniden deneniyor (q_len=%s ev_len=%s)",
         len(prompt or ""),
         len(evidence or ""),
     )

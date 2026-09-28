@@ -83,10 +83,19 @@ def test_answer_quoting_evidence_values_is_accepted():
     )
 
 
-def test_long_narrative_answers_are_not_second_guessed():
+def test_long_narrative_answers_without_inventory_talk_are_not_second_guessed():
+    """Uzun genel anlatım (host/cluster kelimesi yok) ikinci kez yargılanmaz."""
     evidence = _tool_evidence_block(EVIDENCE)
-    long_answer = "Ortam değerlendirmesi. " * 40
+    long_answer = "Ortam değerlendirmesi genel notlar. " * 40
     assert not _answer_ignores_evidence(long_answer, evidence)
+
+
+def test_long_answer_inventing_ips_is_rejected():
+    evidence = _tool_evidence_block(EVIDENCE)
+    long_answer = (
+        "192.168.1.101 yanında esx-prod-01 (192.168.1.102) hostu da var. " * 20
+    )
+    assert _answer_ignores_evidence(long_answer, evidence)
 
 
 def test_guard_needs_enough_anchors_to_judge():

@@ -36,6 +36,12 @@ SYSTEM_PROMPT = (
     "- OpenShift/OCP/Kubernetes soruları (pod, namespace, proje, CrashLoopBackOff, "
     "Deployment, Route, node NotReady, oc/kubectl) → openshift_ask / list_ocp_pods / "
     "list_ocp_events. Linux SSH/systemd araçlarını KULLANMA.\n"
+    "- OpenShift ACCESS / RBAC (kullanıcı, grup, identity, Role/ClusterRole, "
+    "RoleBinding/ClusterRoleBinding, ServiceAccount, OAuth IdP, 'kim neye yetkili', "
+    "token can-i) → ocp_access_query (READ-ONLY; oluşturma/silme yok).\n"
+    "- OpenShift POD LOG / YAML teşhisi (CrashLoop, ImagePull, config hatası) → "
+    "önce list_ocp_pods / list_ocp_events; sonra ocp_pod_logs (namespace+pod) ve "
+    "ocp_resource_yaml (kind+name[+namespace]). Apply/patch YOK — düzeltmeyi metin öner.\n"
     "- OpenShift CLUSTER SAĞLIK/OPERATÖR/SÜRÜM soruları (cluster operator, degraded, "
     "ClusterVersion, API server adresi, genel sağlık) → ocp_cluster_status.\n"
     "- OpenShift STORAGE soruları (PV, PVC, StorageClass, kota/kapasite) → "
@@ -43,6 +49,18 @@ SYSTEM_PROMPT = (
     "(namespace ZORUNLU).\n"
     "- OpenShift NETWORK soruları (NetworkAttachmentDefinition, Multus, SR-IOV, bridge, "
     "ek ağ/VLAN) → ocp_network_overview.\n"
+    "- OpenShift MONITORING — iki SoT, karıştırma:\n"
+    "  (A) ocp_monitoring_query = Timescale (metrics.k8s.io sync) → node/pod/VM CPU·RAM "
+    "Top-N / trend / series / cross. Disk/net/OOM/QoS YOK.\n"
+    "  (B) ocp_prometheus_query = Ayarlar’daki OpenShift-bound Prometheus (Thanos) → "
+    "Kubernetes Views (mode=views, view=global|namespaces|nodes|pods; Grafana panelleri), "
+    "GPU/DCGM (family=gpu), kubevirt_vmi_* (family=kubevirt / metric=vmi_*). "
+    "Namespace/node bazlı CPU·mem·net·OOM·restart·throttle için Views kullan.\n"
+    "  Other (binding=none) → istediğiniz kadar kaynak; collector_type= "
+    "prometheus|telegraf|opentelemetry|zabbix. Hub’da Other değil label görünür. "
+    "Unified chat: mesajda tam label → custom_prometheus_query "
+    "(Prom uyumlu: keşif/PromQL; Zabbix adaptörü sonraki faz). "
+    "Views şablonu yok. prometheus_query (Linux node-exporter) OpenShift için KULLANMA. Grafik için /grafik.\n"
     "- KubeVirt VM DataVolume/import/clone durumu → list_datavolumes; CANLI LIVE MIGRATION "
     "(hangi node'a taşınıyor, transfer hızı/ilerleme) → list_ocp_migrations.\n"
     "- KubeVirt VM detayı → kubevirt_vm_detail: fields=[...] veya question ile "
@@ -190,9 +208,22 @@ _PLATFORM_HINTS = {
         "Storage (PV/PVC/StorageClass) → ocp_storage_overview. Namespace ResourceQuota/"
         "LimitRange (CPU/bellek/obje kotası) → ocp_resource_quota (namespace ZORUNLU). "
         "Network (NetworkAttachmentDefinition/Multus/SR-IOV) → ocp_network_overview. "
+        "Node/pod/VM CPU-Memory (anlık Top-N, trend, zaman serisi, node⋈pod çapraz) → "
+        "ocp_monitoring_query (Timescale / metrics.k8s.io). "
+        "Kubernetes Views / Thanos / namespace·node CPU·mem·net·OOM·restart·QoS / "
+        "GPU DCGM / kubevirt_vmi_* → ocp_prometheus_query "
+        "(mode=views|catalog|series|allocation; view=global|namespaces|nodes|pods). "
+        "Disk/net Prometheus’ta Views ile gelir; Timescale’de yok — uydurma. "
+        "Other (binding=none): hub’da label listesi; Unified + tam label → "
+        "custom_prometheus_query (prometheus/telegraf/otel→Prom; Zabbix sonraki faz). "
         "VM detayı → kubevirt_vm_detail(fields=[...] veya question=...); kullanıcı "
         "sormadığı alanları DÖKME. Snapshot/Restore → kubevirt_snapshots. DataVolume → "
-        "list_datavolumes. Live Migration → list_ocp_migrations. Hepsi READ_ONLY.\n"
+        "list_datavolumes. Live Migration → list_ocp_migrations. "
+        "Users/Groups/Roles/Bindings/IdP/can-i → ocp_access_query "
+        "(mode=overview|list|get|subject|group_members|can_i|identity_providers). "
+        "CrashLoop/ImagePull/config teşhisi → ocp_pod_logs + ocp_resource_yaml "
+        "(READ-ONLY; apply yok — düzeltme YAML’ını metin öner). "
+        "Hepsi READ_ONLY.\n"
         "infra_overview yalnızca OCP cluster özeti döner."
     ),
     "windows": (
@@ -311,6 +342,13 @@ def run_read_only_tool_loop(
     except Exception as e:
         yield {"type": "skipped", "reason": f"tool şemaları alınamadı: {e}"}
         return
+    # Other Prometheus yalnız Unified chat
+    plat0 = (platform or "").strip().lower()
+    if plat0 not in ("unified", ""):
+        specs = [
+            s for s in specs
+            if ((s.get("function") or {}).get("name") or "") != "custom_prometheus_query"
+        ]
     if not specs:
         yield {"type": "skipped", "reason": "kullanılabilir araç yok"}
         return

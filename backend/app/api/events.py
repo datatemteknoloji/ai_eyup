@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _touch_stats() -> None:
+    try:
+        from app.services.dashboard_stats_cache import invalidate_dashboard_stats
+        invalidate_dashboard_stats()
+    except Exception:
+        pass
+
+
 class EventCreate(BaseModel):
     server_id: Optional[int] = None
     event_type: str
@@ -105,13 +113,8 @@ def _event_to_dict(
     }
 
 
-@router.get("/stats")
-async def event_stats(
-    platform: Optional[str] = None,
-    show_routine: bool = Query(default=False),
-    db: Session = Depends(get_db),
-):
-    """Event istatistikleri — kritik/uyarı/acil sayaçları Komuta Merkezi ile tutarlı."""
+def compute_event_stats(db: Session, platform: Optional[str], show_routine: bool) -> dict:
+    """Event sayaçları. Dashboard önbelleği bunu arka planda çağırır."""
     from datetime import timedelta
     since = datetime.utcnow() - timedelta(hours=24)
 
@@ -138,7 +141,6 @@ async def event_stats(
     critical = actionable.filter(SystemEvent.severity == "critical").count()
     warning = actionable.filter(SystemEvent.severity == "warning").count()
     emergency = actionable.filter(SystemEvent.severity == "emergency").count()
-    # Navbar / Komuta Merkezi ile aynı: critical rozeti = critical + emergency
     critical_badge = critical + emergency
 
     return {
@@ -150,8 +152,28 @@ async def event_stats(
         "emergency": emergency,
         "actionable_total": critical_badge + warning,
         "acknowledged": acknowledged,
-        "known": known
+        "known": known,
     }
+
+
+@router.get("/stats")
+async def event_stats(
+    platform: Optional[str] = None,
+    show_routine: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """Event istatistikleri — kritik/uyarı/acil sayaçları Komuta Merkezi ile tutarlı.
+
+    Sonuç kısa süre önbellekte tutulur; arka plan periyodik yeniler.
+    """
+    from app.services.dashboard_stats_cache import get_or_compute
+
+    return get_or_compute(
+        "events",
+        platform,
+        "1" if show_routine else "0",
+        lambda: compute_event_stats(db, platform, show_routine),
+    )
 
 
 @router.get("/types")
@@ -256,6 +278,7 @@ async def create_event(data: EventCreate, db: Session = Depends(get_db)):
     )
     db.add(event)
     db.commit()
+    _touch_stats()
     db.refresh(event)
     # Critical/emergency event -> otomatik incident
     incident_id = auto_create_or_link_incident(db, event)
@@ -319,6 +342,7 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
             event.known_at = None
             count += 1
     db.commit()
+    _touch_stats()
     return {"success": True, "affected": count, "message": f"{count} event güncellendi"}
 
 
@@ -341,6 +365,7 @@ async def mark_event_known(
     event.is_known = True
     event.known_at = datetime.utcnow()
     db.commit()
+    _touch_stats()
 
     suppression_created = False
     if suppress and event.event_type == "metric_anomaly":
@@ -377,6 +402,7 @@ async def acknowledge_event(event_id: int, db: Session = Depends(get_db)):
     event.is_acknowledged = True
     event.acknowledged_at = datetime.utcnow()
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Event onaylandı"}
 
 
@@ -389,6 +415,7 @@ async def unacknowledge_event(event_id: int, db: Session = Depends(get_db)):
     event.is_acknowledged = False
     event.acknowledged_at = None
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Onay kaldırıldı — event yeniden aktif"}
 
 
@@ -401,6 +428,7 @@ async def unmark_event_known(event_id: int, db: Session = Depends(get_db)):
     event.is_known = False
     event.known_at = None
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Bilinen işareti kaldırıldı"}
 
 
@@ -413,6 +441,7 @@ async def resolve_event(event_id: int, db: Session = Depends(get_db)):
     event.resolved = True
     event.resolved_at = datetime.utcnow()
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Event çözüldü olarak işaretlendi"}
 
 
@@ -425,6 +454,7 @@ async def unresolve_event(event_id: int, db: Session = Depends(get_db)):
     event.resolved = False
     event.resolved_at = None
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Event yeniden açıldı"}
 
 
@@ -436,6 +466,7 @@ async def delete_event(event_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Event bulunamadı")
     db.delete(event)
     db.commit()
+    _touch_stats()
     return {"success": True, "message": "Event silindi"}
 
 
@@ -444,6 +475,7 @@ async def bulk_delete(data: BulkActionRequest, db: Session = Depends(get_db)):
     """Toplu event silme"""
     count = db.query(SystemEvent).filter(SystemEvent.id.in_(data.event_ids)).delete(synchronize_session=False)
     db.commit()
+    _touch_stats()
     return {"success": True, "deleted": count}
 
 

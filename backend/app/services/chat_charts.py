@@ -4,6 +4,7 @@ Linux/Windows: Timescale `metric_data` (Prom scrape kopyası); boşsa salt okunu
 Prometheus query_range. Linux: envanterde olmayan scrape hedefleri de
 `up` map + instance etiketi ile çizilir (Canlı Metrikler ile aynı çözümleme).
 Virt: vCenter Timescale (`query_series`) — Prometheus karışmaz.
+OpenShift: `ocp_resource_metrics` (`metrics.k8s.io` örnekleri) — PromQL / kubevirt_vmi_* yok.
 Aynı birim = tek grafik, çok seri (çapraz overlay, en fazla 8 nesne).
 Farklı birim (CPU % × bellek %) = ayrı grafikler.
 """
@@ -45,6 +46,12 @@ _VIRT_KIND_HINTS = {
     "datastore": ("datastore", "datastores", "depolama", "ds "),
     "host": ("esxi", "esx ", "esx-", "host ", "hypervisor", "hipervizör"),
     "vm": (" vm", "sanal", "virtual machine", "virtualmachine"),
+}
+
+_OCP_KIND_HINTS = {
+    "vm": (" kubevirt", " virtualmachine", " ov vm", " ocp vm", "openshift vm"),
+    "pod": (" pod", "pods", "workload", "deployment", "container"),
+    "node": (" node", "nodes", "worker", "master", "infra node"),
 }
 
 # grup → (kind → metrik id listesi). Aynı birimdekiler tek overlay grafikte.
@@ -117,6 +124,32 @@ _VIRT_METRIC_LABEL = {
     "write_latency_ms": "Yazma gecikme",
 }
 
+_OCP_GROUP_METRICS: Dict[str, Dict[str, List[str]]] = {
+    "cpu": {
+        "node": ["cpu_pct"],
+        "pod": ["cpu_used_cores"],
+        "vm": ["cpu_used_cores"],
+    },
+    "memory": {
+        "node": ["memory_pct"],
+        "pod": ["memory_used_gb"],
+        "vm": ["memory_used_gb"],
+    },
+    "load": {
+        "node": ["cpu_pct"],
+        "pod": ["cpu_used_cores"],
+        "vm": ["cpu_used_cores"],
+    },
+}
+
+_OCP_METRIC_LABEL = {
+    "cpu_pct": "CPU %",
+    "memory_pct": "Memory %",
+    "cpu_used_cores": "CPU (cores)",
+    "memory_used_gb": "Memory (GB)",
+    "restarts": "Restarts",
+}
+
 _OS_GROUP_TITLE = {
     "cpu": "CPU Kullanımı",
     "memory": "RAM Kullanımı",
@@ -172,7 +205,8 @@ def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict
     if hours is None and not groups and not explicit:
         return None
     if hours is None:
-        hours = 1.0 if explicit else None
+        # /grafik ve süre yoksa Monitoring ile aynı varsayılan: son 24 saat
+        hours = 24.0 if explicit else None
     if not groups:
         if explicit:
             groups = ["cpu", "memory"]
@@ -183,12 +217,214 @@ def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict
     return {"hours": hours, "groups": groups, "explicit": explicit}
 
 
+_RANK_HIGHEST_RE = re.compile(
+    r"en\s+y[uü]ksek|en\s+[cç]ok|highest|\btop\b|en\s+k[oö]t[uü]|worst",
+    re.IGNORECASE,
+)
+_RANK_LOWEST_RE = re.compile(
+    r"en\s+d[uü][sş][uü]k|en\s+az\b|lowest|least",
+    re.IGNORECASE,
+)
+_RANK_N_RE = re.compile(
+    r"(?:top|ilk)\s*[-\s]*(\d+)"
+    r"|(?:en\s+y[uü]ksek|en\s+d[uü][sş][uü]k|en\s+[cç]ok|highest|lowest)\s*(\d+)"
+    r"|(\d+)\s*(?:(?:adet|tane)\s+)?(?:en\s+)?(?:y[uü]ksek|d[uü][sş][uü]k|[cç]ok)"
+    r"|(\d+)\s*(?:vm|vms|sunucu|server|host|node|pod|esxi)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_rank_intent(message: str) -> Optional[Dict[str, Any]]:
+    """'en yüksek 5' / 'top 3' → {top_n, order}. Yoksa None (isimli hedef yolu bozulmaz)."""
+    ml = (message or "").lower()
+    lowest = bool(_RANK_LOWEST_RE.search(ml))
+    highest = bool(_RANK_HIGHEST_RE.search(ml))
+    if not highest and not lowest:
+        if not re.search(r"(?:top|ilk)\s*[-\s]*\d+", ml):
+            return None
+        highest = True
+    n: Optional[int] = None
+    m = _RANK_N_RE.search(ml)
+    if m:
+        for g in m.groups():
+            if g:
+                n = int(g)
+                break
+    top_n = max(1, min(int(n or 5), MAX_CHART_OBJECTS))
+    order = "lowest" if lowest and not highest else "highest"
+    return {"top_n": top_n, "order": order}
+
+
+def _normalize_virt_chart_groups(groups: Sequence[str]) -> List[str]:
+    """Linux disk_io ↔ Virt iops; bilinmeyen gruplar düşmez (chart builder atlar)."""
+    out: List[str] = []
+    for g in groups:
+        key = "iops" if g == "disk_io" else g
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def _rank_metric_virt(kind: str, groups: Sequence[str]) -> str:
+    gnorm = _normalize_virt_chart_groups(groups)
+    for g in gnorm:
+        metrics = (_VIRT_GROUP_METRICS.get(g) or {}).get(kind) or []
+        if metrics:
+            return metrics[0]
+    return {"vm": "cpu_pct", "host": "cpu_pct", "datastore": "usage_pct"}.get(kind, "cpu_pct")
+
+
+def _rank_metric_linux(groups: Sequence[str]) -> str:
+    for g in groups:
+        specs = METRIC_GROUPS.get(g) or []
+        if specs:
+            return str(specs[0][0])
+    return "cpu_usage_percent"
+
+
+def _rank_metric_ocp(kind: str, groups: Sequence[str]) -> str:
+    for g in groups:
+        metrics = (_OCP_GROUP_METRICS.get(g) or {}).get(kind) or []
+        if metrics:
+            return metrics[0]
+    return "cpu_pct" if kind == "node" else "cpu_used_cores"
+
+
+def _rank_virt_names(
+    db: Session,
+    *,
+    kind: str,
+    groups: Sequence[str],
+    hours: float,
+    top_n: int,
+    order: str,
+) -> Tuple[List[str], str]:
+    """Timescale filo sıralama → görünen ad listesi + kısa not."""
+    from app.services.virt_trend_query import run_metric_trend
+
+    metric = _rank_metric_virt(kind, groups)
+    days = max(0.05, min(float(hours) / 24.0, 30.0))
+    out = run_metric_trend(
+        db,
+        entity_type=kind,
+        metric=metric,
+        days=days,
+        top_n=top_n,
+        order=order if order in ("highest", "lowest") else "highest",
+        value_basis="last",
+    )
+    names = [str(i["name"]) for i in (out.get("items") or []) if i.get("name")]
+    label = "en düşük" if order == "lowest" else "en yüksek"
+    note = f"_Top-{len(names)} ({label} {metric}, son {days:g}g): {', '.join(names)}_"
+    return names[:top_n], note
+
+
+def _rank_linux_hosts(
+    db: Session,
+    *,
+    pool: Sequence[Server],
+    groups: Sequence[str],
+    hours: float,
+    top_n: int,
+    order: str,
+) -> Tuple[List["ChartHost"], str]:
+    """metric_data son değer → ChartHost listesi."""
+    if not pool:
+        return [], ""
+    metric = _rank_metric_linux(groups)
+    ids = [int(s.id) for s in pool if getattr(s, "id", None) is not None]
+    if not ids:
+        return [], ""
+    mins = max(15, int(round(float(hours) * 60)))
+    desc = order != "lowest"
+    try:
+        rows = db.execute(
+            text(
+                f"""
+                SELECT server_id, value FROM (
+                  SELECT DISTINCT ON (server_id) server_id, value
+                  FROM metric_data
+                  WHERE metric_name = :m
+                    AND server_id = ANY(:ids)
+                    AND timestamp >= now() - (:mins * interval '1 minute')
+                    AND value IS NOT NULL
+                  ORDER BY server_id, timestamp DESC
+                ) t
+                ORDER BY value {"DESC" if desc else "ASC"} NULLS LAST
+                LIMIT :lim
+                """
+            ),
+            {"m": metric, "ids": ids, "mins": mins, "lim": top_n},
+        ).mappings().all()
+    except Exception as exc:
+        logger.warning("chat_charts linux rank: %s", exc)
+        return [], ""
+    by_id = {int(s.id): s for s in pool if getattr(s, "id", None) is not None}
+    hosts: List[ChartHost] = []
+    names: List[str] = []
+    for r in rows:
+        s = by_id.get(int(r["server_id"]))
+        if not s:
+            continue
+        hosts.append(ChartHost(name=s.name, server=s))
+        names.append(s.name)
+        if len(hosts) >= top_n:
+            break
+    label = "en düşük" if order == "lowest" else "en yüksek"
+    note = f"_Top-{len(hosts)} ({label} {metric}): {', '.join(names)}_"
+    return hosts, note
+
+
+def _rank_ocp_refs(
+    db: Session,
+    *,
+    cluster_id: int,
+    kind: str,
+    groups: Sequence[str],
+    top_n: int,
+    order: str,
+) -> Tuple[List[str], List[str], str]:
+    """→ (refs, display_names, note)."""
+    from app.services.ocp_chat_metrics import query_top
+
+    metric = _rank_metric_ocp(kind, groups)
+    out = query_top(
+        db,
+        cluster_id=cluster_id,
+        kind=kind,
+        metric=metric,
+        top_n=top_n,
+        order=order if order in ("highest", "lowest") else "highest",
+    )
+    refs: List[str] = []
+    displays: List[str] = []
+    for it in out.get("items") or []:
+        ref = it.get("ref") or it.get("name")
+        if not ref:
+            continue
+        refs.append(str(ref))
+        displays.append(str(it.get("name") or ref))
+        if len(refs) >= top_n:
+            break
+    label = "en düşük" if order == "lowest" else "en yüksek"
+    note = f"_Top-{len(refs)} ({label} {metric}): {', '.join(displays)}_"
+    return refs, displays, note
+
+
 def detect_virt_kind(message: str) -> str:
     ml = f" {(message or '').lower()} "
     for kind, hints in _VIRT_KIND_HINTS.items():
         if any(h in ml for h in hints):
             return kind
     return "vm"
+
+
+def detect_ocp_kind(message: str) -> str:
+    ml = f" {(message or '').lower()} "
+    for kind, hints in _OCP_KIND_HINTS.items():
+        if any(h in ml for h in hints):
+            return kind
+    return "node"
 
 
 def match_named_entities(message: str, inventory: Sequence[str]) -> List[str]:
@@ -397,6 +633,148 @@ def _virt_inventory_refs(db: Session, kind: str) -> List[tuple]:
     except Exception as exc:
         logger.warning("chat_charts virt inventory: %s", exc)
         return []
+
+
+def _ocp_resolve_cluster(db: Session, message: str = ""):
+    from app.models.openshift import OpenShiftCluster
+
+    clusters = db.query(OpenShiftCluster).all()
+    if not clusters:
+        return None
+    ml = (message or "").lower()
+    for c in clusters:
+        if c.name and c.name.lower() in ml:
+            return c
+    return clusters[0]
+
+
+def _ocp_inventory_refs(db: Session, kind: str, *, cluster_id: Optional[int] = None) -> List[tuple]:
+    """(görünen ad, object_ref) — pod/vm için ns/name."""
+    from app.services.openshift.ocp_monitoring import object_ref
+
+    kind = (kind or "node").strip().lower()
+    if kind not in ("node", "pod", "vm"):
+        kind = "node"
+    try:
+        params: Dict[str, Any] = {"kind": kind}
+        cid_sql = ""
+        if cluster_id is not None:
+            params["cid"] = int(cluster_id)
+            cid_sql = "AND cluster_id = :cid"
+        rows = db.execute(
+            text(
+                f"""
+                SELECT DISTINCT ON (cluster_id, object_key)
+                       cluster_id, object_key, name, namespace
+                FROM ocp_resource_metrics
+                WHERE kind = :kind
+                  AND timestamp >= now() - interval '45 minutes'
+                  {cid_sql}
+                ORDER BY cluster_id, object_key, timestamp DESC
+                """
+            ),
+            params,
+        ).mappings().all()
+        out = []
+        seen = set()
+        for r in rows:
+            display = f"{r['namespace']}/{r['name']}" if r.get("namespace") else str(r["name"])
+            ref = object_ref(int(r["cluster_id"]), kind, r["name"], r.get("namespace"))
+            if ref in seen:
+                continue
+            seen.add(ref)
+            out.append((display, ref))
+            # kısa ad da eşleşsin (tek namespace çakışması riski kabul)
+            if r.get("namespace") and str(r["name"]) not in seen:
+                out.append((str(r["name"]), ref))
+        return out
+    except Exception as exc:
+        logger.warning("chat_charts ocp inventory: %s", exc)
+        return []
+
+
+def _build_ocp_charts(
+    db: Session,
+    *,
+    cluster_id: int,
+    kind: str,
+    names: Sequence[str],
+    hours: float,
+    groups: Sequence[str],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    from app.services.openshift.ocp_monitoring import query_series
+
+    range_key = hours_to_range_key(hours)
+    hours_label = _format_duration_label(hours)
+    charts: List[Dict[str, Any]] = []
+    sources: List[str] = []
+    multi = len(names) > 1
+    for group in groups:
+        metrics = (_OCP_GROUP_METRICS.get(group) or {}).get(kind) or []
+        if not metrics:
+            continue
+        by_unit: Dict[str, List[Dict[str, Any]]] = {}
+        for metric in metrics:
+            try:
+                raw = query_series(
+                    db,
+                    cluster_id=cluster_id,
+                    kind=kind,
+                    names=names,
+                    metric=metric,
+                    range_key=range_key,
+                )
+            except Exception as exc:
+                logger.warning("chat_charts ocp series: %s", exc)
+                continue
+            if not any(len((s.get("points") or [])) >= 2 for s in (raw.get("series") or [])):
+                if range_key not in ("24h", "7d", "30d"):
+                    try:
+                        raw = query_series(
+                            db,
+                            cluster_id=cluster_id,
+                            kind=kind,
+                            names=names,
+                            metric=metric,
+                            range_key="24h",
+                        )
+                    except Exception:
+                        continue
+            if raw.get("source") and raw["source"] not in sources:
+                sources.append(str(raw["source"]))
+            unit = raw.get("unit") or ""
+            mlabel = _OCP_METRIC_LABEL.get(metric, metric)
+            for s in raw.get("series") or []:
+                pts = [
+                    {"t": p["t"], "v": p["v"]}
+                    for p in (s.get("points") or [])
+                    if p.get("t") is not None and p.get("v") is not None
+                ]
+                if len(pts) < 2:
+                    continue
+                obj = s.get("name") or "?"
+                label = f"{obj} — {mlabel}" if (multi or len(metrics) > 1) else mlabel
+                by_unit.setdefault(unit, []).append({
+                    "metric_name": f"{obj}:{metric}",
+                    "label": label,
+                    "points": pts,
+                })
+        for unit, series in by_unit.items():
+            if not series:
+                continue
+            gtitle = _OS_GROUP_TITLE.get(group) or _OCP_METRIC_LABEL.get(metrics[0], group)
+            title = f"{gtitle} — Son {hours_label}"
+            if multi:
+                title = f"{title} ({len(names)} nesne)"
+            charts.append({
+                "type": "timeseries",
+                "title": title,
+                "unit": unit,
+                "server_id": None,
+                "server_name": None,
+                "series": series,
+            })
+    return charts, sources or ["ocp_resource_metrics"]
 
 
 def _prom_query_range_instance(
@@ -730,6 +1108,7 @@ def try_build_chat_charts(
     servers: Optional[Sequence[Server]] = None,
     pool: Optional[Sequence[Server]] = None,
     explicit: bool = False,
+    monitoring_scope: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Grafik turu ise {summary_text, charts, intents}; değilse None.
 
@@ -758,6 +1137,16 @@ def try_build_chat_charts(
 
     if virt_like or plat == "virt":
         kind = detect_virt_kind(message)
+        # Monitoring UI ekseni (vm/host/datastore) öncelikli
+        mon = monitoring_scope if isinstance(monitoring_scope, dict) else {}
+        mon_kind = str(mon.get("kind") or "").strip().lower()
+        if mon_kind in ("vm", "host", "datastore") and detect_virt_kind(message) == "vm":
+            # Mesajda açık host/ds ipucu yoksa UI eksenini kullan
+            if not any(h in f" {(message or '').lower()} " for h in (
+                " esxi", " host", " datastore", " depolama",
+            )):
+                kind = mon_kind
+        chart_groups = _normalize_virt_chart_groups(groups)
         inventory_refs = _virt_inventory_refs(db, kind)
         names = match_named_entities(message, [n for n, _r in inventory_refs])
         if not names and kind == "vm":
@@ -767,6 +1156,69 @@ def try_build_chat_charts(
                 if alt_names:
                     kind, names, inventory_refs = alt, alt_names, alt_refs
                     break
+
+        mon_cluster = str(mon.get("cluster") or "").strip()
+        mon_host = str(mon.get("host") or "").strip()
+        mon_hv = mon.get("hypervisor_ids")
+        hv_ids = None
+        if isinstance(mon_hv, (list, tuple)):
+            try:
+                hv_ids = [int(x) for x in mon_hv if str(x).strip().isdigit()]
+            except Exception:
+                hv_ids = None
+        elif isinstance(mon_hv, str) and mon_hv.strip():
+            hv_ids = [int(x) for x in mon_hv.split(",") if x.strip().isdigit()]
+
+        scope_candidates: Optional[set] = None
+        if mon_cluster or mon_host or hv_ids:
+            try:
+                from app.services.virt_monitoring import list_objects as _vmn_list
+                scoped = _vmn_list(
+                    db, kind=kind, cluster=mon_cluster, host=mon_host,
+                    hypervisor_ids=hv_ids, limit=200,
+                )
+                scope_candidates = {
+                    str(it.get("name")) for it in (scoped.get("items") or []) if it.get("name")
+                }
+                if scope_candidates:
+                    notes.append(
+                        "_Monitoring kapsamı: "
+                        + ", ".join(
+                            p for p in (
+                                f"cluster={mon_cluster}" if mon_cluster else "",
+                                f"esxi={mon_host}" if mon_host else "",
+                                f"vCenter={len(hv_ids)} seçili" if hv_ids else "",
+                            ) if p
+                        )
+                        + "_"
+                    )
+            except Exception as exc:
+                logger.warning("chat_charts monitoring_scope list: %s", exc)
+
+        if names and scope_candidates is not None:
+            names = [n for n in names if n in scope_candidates]
+
+        rank = parse_rank_intent(message) if not names else None
+        # İsim yok + kapsam var → Top-N (varsayılan 5) kapsam içinde
+        if not names and not rank and (scope_candidates is not None) and explicit:
+            rank = {"top_n": min(5, MAX_CHART_OBJECTS), "order": "highest"}
+        if rank and not names:
+            ranked_names, rank_note = _rank_virt_names(
+                db,
+                kind=kind,
+                groups=chart_groups,
+                hours=hours,
+                top_n=int(rank["top_n"]),
+                order=str(rank["order"]),
+            )
+            if scope_candidates is not None:
+                ranked_names = [n for n in ranked_names if n in scope_candidates]
+                # Rank filo genelinden geldiyse kapsam adaylarından doldur
+                if not ranked_names and scope_candidates:
+                    ranked_names = list(scope_candidates)[: int(rank["top_n"])]
+            names = ranked_names
+            if rank_note:
+                notes.append(rank_note)
         refs = [ref for n, ref in inventory_refs if n in set(names)]
         names = refs or names
         if not names:
@@ -774,34 +1226,108 @@ def try_build_chat_charts(
                 return {
                     "summary_text": (
                         "Grafik için VM / ESXi / datastore adı yazın "
-                        f"(en fazla {MAX_CHART_OBJECTS}). Örnek: "
-                        "`vm-a ve vm-b son 8 saat CPU ve bellek /grafik`."
+                        f"(en fazla {MAX_CHART_OBJECTS}), veya "
+                        "`en yüksek I/O yapan 5 VM /grafik` gibi Top-N sorun. "
+                        "Monitoring'de cluster/ESXi seçiliyse kapsam otomatik uygulanır. "
+                        "Örnek: `vm-a ve vm-b son 24 saat CPU ve bellek /grafik`."
                     ),
                     "charts": [],
                     "intents": ["chart", "virt"],
                 }
             return None
         charts, sources = _build_virt_charts(
-            db, kind=kind, names=names, hours=hours, groups=groups,
+            db, kind=kind, names=names, hours=hours, groups=chart_groups,
         )
         display = [n for n, ref in inventory_refs if ref in set(names)]
+        if not display:
+            display = list(names)
         titled = ", ".join(dict.fromkeys(display or names))
         title = titled
         if not charts:
             missing = list(names)
         notes.append("_Hipervizör metrikleri vCenter sync; guest OS / Prometheus karışmaz._")
-    else:
-        if plat in ("openshift",) and not servers and not pool:
+    elif plat in ("openshift", "ocp", "kubernetes", "k8s"):
+        cluster = _ocp_resolve_cluster(db, message)
+        if not cluster:
             if explicit:
                 return {
                     "summary_text": (
-                        "OpenShift cluster için sohbet zaman serisi yok. "
-                        "Node guest metrikleri için Linux sohbetinde sunucu adı + `/grafik` kullanın."
+                        "Grafik için tanımlı OpenShift cluster yok. "
+                        "Integrations → OpenShift ile küme ekleyin."
                     ),
                     "charts": [],
                     "intents": ["chart", "openshift"],
                 }
             return None
+        kind = detect_ocp_kind(message)
+        inventory_refs = _ocp_inventory_refs(db, kind, cluster_id=int(cluster.id))
+        names = match_named_entities(message, [n for n, _r in inventory_refs])
+        if not names:
+            for alt in ("node", "pod", "vm"):
+                if alt == kind:
+                    continue
+                alt_refs = _ocp_inventory_refs(db, alt, cluster_id=int(cluster.id))
+                alt_names = match_named_entities(message, [n for n, _r in alt_refs])
+                if alt_names:
+                    kind, names, inventory_refs = alt, alt_names, alt_refs
+                    break
+        rank = parse_rank_intent(message) if not names else None
+        # display ad → ref
+        name_set = set(names)
+        refs = []
+        seen_ref = set()
+        for n, ref in inventory_refs:
+            if n in name_set and ref not in seen_ref:
+                refs.append(ref)
+                seen_ref.add(ref)
+        chart_names = refs or names
+        display_for_title: List[str] = [
+            n for n, ref in inventory_refs if ref in set(chart_names)
+        ]
+        if rank and not chart_names:
+            chart_names, display_for_title, rank_note = _rank_ocp_refs(
+                db,
+                cluster_id=int(cluster.id),
+                kind=kind,
+                groups=groups,
+                top_n=int(rank["top_n"]),
+                order=str(rank["order"]),
+            )
+            if rank_note:
+                notes.append(rank_note)
+        if not chart_names:
+            if explicit:
+                return {
+                    "summary_text": (
+                        "Grafik için node / pod / VM adı yazın "
+                        f"(en fazla {MAX_CHART_OBJECTS}), veya "
+                        "`en yüksek CPU 5 node /grafik` gibi Top-N sorun. "
+                        "Örnek: `worker-1 son 8 saat CPU Memory /grafik`."
+                    ),
+                    "charts": [],
+                    "intents": ["chart", "openshift"],
+                }
+            return None
+        usable = [g for g in groups if (_OCP_GROUP_METRICS.get(g) or {}).get(kind)]
+        if not usable:
+            usable = ["cpu", "memory"]
+        charts, sources = _build_ocp_charts(
+            db,
+            cluster_id=int(cluster.id),
+            kind=kind,
+            names=chart_names,
+            hours=hours,
+            groups=usable,
+        )
+        titled = ", ".join(dict.fromkeys(display_for_title or chart_names))
+        title = f"{cluster.name}: {titled}"
+        if not charts:
+            missing = list(chart_names)
+        notes.append(
+            "_OCP metrikleri metrics.k8s.io → Timescale; Prometheus / kubevirt_vmi_* yok. "
+            "Saklama 30 gün._"
+        )
+    else:
         use_prom_hosts = plat in ("linux", "unified", "")
         if use_prom_hosts:
             hosts = resolve_linux_chart_hosts(
@@ -809,13 +1335,27 @@ def try_build_chat_charts(
                 selected=servers if servers else None,
                 pool=pool,
             )
+            rank = parse_rank_intent(message) if not hosts else None
+            if rank and not hosts:
+                ranked_pool = list(servers or []) or list(pool or [])
+                hosts, rank_note = _rank_linux_hosts(
+                    db,
+                    pool=ranked_pool,
+                    groups=groups,
+                    hours=hours,
+                    top_n=int(rank["top_n"]),
+                    order=str(rank["order"]),
+                )
+                if rank_note:
+                    notes.append(rank_note)
             if not hosts:
                 if explicit:
                     return {
                         "summary_text": (
                             "Grafik için sunucu adı yazın (Linux envanteri veya "
                             "Prometheus'ta scrape edilen hostname) "
-                            f"(en fazla {MAX_CHART_OBJECTS}). "
+                            f"(en fazla {MAX_CHART_OBJECTS}), veya "
+                            "`en yüksek I/O 5 sunucu /grafik` gibi Top-N sorun. "
                             "Örnek: `web01 ve web02 son 1 saat CPU /grafik`."
                         ),
                         "charts": [],
@@ -830,12 +1370,27 @@ def try_build_chat_charts(
                 notes.append("_Kaynak: Prometheus scrape (envanter kaydı gerekmez)._")
         else:
             targets = resolve_os_targets(message, selected=servers, pool=pool)
+            rank = parse_rank_intent(message) if not targets else None
+            if rank and not targets:
+                ranked_pool = list(servers or []) or list(pool or [])
+                ranked_hosts, rank_note = _rank_linux_hosts(
+                    db,
+                    pool=ranked_pool,
+                    groups=groups,
+                    hours=hours,
+                    top_n=int(rank["top_n"]),
+                    order=str(rank["order"]),
+                )
+                targets = [h.server for h in ranked_hosts if h.server is not None]
+                if rank_note:
+                    notes.append(rank_note)
             if not targets:
                 if explicit:
                     return {
                         "summary_text": (
                             "Grafik için sunucu adı yazın veya listeden seçin "
-                            f"(en fazla {MAX_CHART_OBJECTS}). "
+                            f"(en fazla {MAX_CHART_OBJECTS}), veya "
+                            "`en yüksek CPU 5 sunucu /grafik` gibi Top-N sorun. "
                             "Örnek: `web01 ve web02 son 1 saat CPU /grafik`."
                         ),
                         "charts": [],

@@ -25,6 +25,18 @@ _PERF = (
     "network", "ağ", "ag", "throughput", "kullanım", "usage",
     "metrik", "metrics", "uptime", "kaynak", "detay", "kapsamlı", "kapsamli",
 )
+_GPU = (
+    "gpu", "dcgm", "nvidia", "vram", "framebuffer", "tensor", "mig",
+    "kubevirt_vmi", "vmi cpu", "vmi memory", "vmi_",
+)
+_OCP_PROM = (
+    "thanos", "ocp prometheus", "openshift prometheus", "kubernetes views",
+    "k8s views", "views global", "pods view", "nodes view", "namespaces view",
+    "cadvisor", "node-exporter", "container_cpu", "container_memory",
+    "oom", "cpu throttl", "qos class", "kube_pod", "promql", "dcgm",
+    "kubevirt_vmi", "restart", "throttl", "filesystem", "packet drop",
+    "resource count", "requests vs usage",
+)
 _INVENTORY = (
     "listele", "kaç", "kac", "how many", "envanter", "inventory", "özet", "ozet",
     "hangi sunucu", "hangi vm", "kapalı vm", "kapali vm", "çalışan", "calisan",
@@ -145,6 +157,19 @@ def plan_sources(
 
     if need_prom:
         sources.append("prometheus")
+    # OpenShift Prometheus (Views / GPU / VMI) — linux node_exporter değil
+    if "openshift" in domains and (
+        any(k in ml for k in _GPU) or any(k in ml for k in _OCP_PROM)
+        or (any(k in ml for k in _PERF) and any(k in ml for k in (
+            "namespace", "pod", "node", "cluster", "openshift", "ocp", "k8s", "kube",
+        )))
+    ):
+        if "ocp_prometheus" not in sources:
+            sources.append("ocp_prometheus")
+        intent = "performance" if intent in ("live", "inventory") else intent
+    if "vcenter" in domains and any(k in ml for k in ("vmware_", "vmware exporter", "prom vmware")):
+        if "virt_prometheus" not in sources:
+            sources.append("virt_prometheus")
     if need_live:
         if "linux" in domains or "exadata" in domains:
             sources.append("ssh")

@@ -37,6 +37,7 @@ interface EsxHostMetricsResponse {
 interface EventStats {
   total: number; unresolved: number; critical: number; warning: number
   emergency: number; acknowledged: number; known: number
+  critical_only?: number
 }
 interface IncidentStats {
   total: number; open: number; investigating: number; resolved: number; critical: number
@@ -477,19 +478,44 @@ function formatRelativeTime(iso: string | undefined, t: (k: TranslationKey, vars
   return t('days_ago', { n: Math.floor(h / 24) })
 }
 
+/** Yük 0 → 100. Yük 1 (diz eşiği) → 50. Kuyruk büyüdükçe 0'a yaklaşır, düz çıkarma gibi sıfırlanmaz. */
+function saturatingScore(load: number): number {
+  if (load <= 0) return 100
+  return 100 / (1 + load)
+}
+
+/**
+ * Kurumsal sağlık: üç alt skorun ağırlıklı ortalaması.
+ * Çevrimiçi / izleme / AI Ready kapsama ölçüsüdür, skora girmez.
+ * Açık incident kuyruğu skoru kritik banda çeker ama tek başına 0 yapmaz;
+ * 0, sunucuların kendisi de critical/warning durumdayken ve alarmlar doluyken oluşur.
+ */
 function calcHealthScore(
-  onlinePct: number, monitorPct: number, aiReadyPct: number,
-  problemServers: number, eventStats?: EventStats, incidentStats?: IncidentStats,
+  criticalServers: number,
+  warningServers: number,
+  totalServers: number,
+  eventStats?: EventStats,
+  incidentStats?: IncidentStats,
 ): number {
-  const base = onlinePct * 0.45 + monitorPct * 0.25 + aiReadyPct * 0.15
-  const stability = Math.max(0, 15 - problemServers * 3)
-  const aiops = Math.max(0, 15
-    - (eventStats?.critical ?? 0) * 4
-    - (eventStats?.emergency ?? 0) * 5
-    - (eventStats?.warning ?? 0)
-    - (incidentStats?.open ?? 0) * 3
-    - (incidentStats?.critical ?? 0) * 5)
-  return Math.round(Math.min(100, Math.max(0, base + stability + aiops)))
+  const emergency = eventStats?.emergency ?? 0
+  const criticalOnly = eventStats?.critical_only ?? Math.max(0, (eventStats?.critical ?? 0) - emergency)
+  const warningEvents = eventStats?.warning ?? 0
+  const openInc = incidentStats?.open ?? 0
+  const critInc = incidentStats?.critical ?? 0
+  const otherOpen = Math.max(0, openInc - critInc)
+
+  // 4 açık critical incident bu alt skoru 50'ye indirir. Diğer açık incident'ler bunun üçte biri.
+  const incidentScore = saturatingScore((critInc + otherOpen / 3) / 4)
+  // 6 critical event (veya eşdeğeri) alarm alt skorunu 50 yapar.
+  // Emergency bir kez ve critical'den ağır. 20 uyarı ≈ 1 critical event.
+  const alarmScore = saturatingScore((criticalOnly + emergency * 1.5 + warningEvents * 0.05) / 6)
+  // Erişilebilirlik değil: CRITICAL sunucu tam, WARNING dörtte bir. Filonun yarısı critical ise 0.
+  const fleet = Math.max(totalServers, 1)
+  const assetLoad = (criticalServers + warningServers * 0.25) / fleet
+  const assetScore = Math.max(0, 100 * (1 - Math.min(1, assetLoad * 2)))
+
+  const score = incidentScore * 0.55 + alarmScore * 0.25 + assetScore * 0.20
+  return Math.round(Math.min(100, Math.max(0, score)))
 }
 
 function healthColor(score: number): string {
@@ -731,7 +757,7 @@ function AiOpsOverview({
   const t = useT()
   const items = [
     { label: t('dash_open_event'), value: eventStats?.unresolved ?? 0, color: NEON.orange, to: eventsPath },
-    { label: t('dash_crit_event'), value: (eventStats?.critical ?? 0) + (eventStats?.emergency ?? 0), color: NEON.red, to: eventsPath },
+    { label: t('dash_crit_event'), value: eventStats?.critical ?? 0, color: NEON.red, to: eventsPath },
     { label: t('dash_open_incident'), value: incidentStats?.open ?? 0, color: NEON.blue, to: incidentsPath },
     { label: t('dash_rca_pending'), value: incidentStats?.investigating ?? 0, color: NEON.cyan, to: incidentsPath },
   ]
@@ -1298,6 +1324,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showAiops,
+    staleTime: 60_000,
     refetchInterval: 60_000,
   })
 
@@ -1310,6 +1337,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showAiops,
+    staleTime: 60_000,
     refetchInterval: 60_000,
   })
 
@@ -1434,7 +1462,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const aiReadyPct  = totalServers > 0 ? (aiReadyServers / totalServers) * 100 : 0
   const problemSrv  = warningServers + criticalServers + offlineServers
 
-  const healthScore = calcHealthScore(onlinePct, monitorPct, aiReadyPct, problemSrv, eventStats, incidentStats)
+  const healthScore = calcHealthScore(criticalServers, warningServers, totalServers, eventStats, incidentStats)
   const lastRefresh = now.toLocaleTimeString(dateLoc, { hour: '2-digit', minute: '2-digit' })
 
   const secondaryStats = [

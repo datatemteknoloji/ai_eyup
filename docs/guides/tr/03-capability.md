@@ -69,6 +69,7 @@ OpenShift menüsü:
 | Komuta merkezi | `/openshift/ops` | Kritik özet |
 | Envanter | `/openshift` | Cluster / node / proje |
 | Sanal makineler | `/openshift/vms` | KubeVirt / OCP VM |
+| Monitoring | `/openshift/monitoring` | Anlık CPU/bellek (`metrics.k8s.io`); Cluster seçici |
 | Olaylar / incident | `/openshift/events`, `/incidents` | Cluster ops |
 | Asistan | `/openshift/chat` | Pod, node, PVC |
 

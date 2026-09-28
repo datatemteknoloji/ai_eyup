@@ -13,6 +13,7 @@ import { useAuth } from '../auth/AuthContext'
 import { useT } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 import OcpVmDetailDrawer from '../components/openshift/OcpVmDetailDrawer'
+import OcpResourceDetailDrawer from '../components/openshift/OcpResourceDetailDrawer'
 
 type DashTab = 'overview' | 'clusters' | 'vms' | 'nodes' | 'projects' | 'workloads' | 'risks' | 'storage' | 'resources'
 
@@ -179,106 +180,6 @@ function CapacityBar({ pct, label }: { pct?: number | null; label: string }) {
       </div>
       <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
         <div className={`h-full ${tone}`} style={{ width: `${pct == null ? 0 : v}%` }} />
-      </div>
-    </div>
-  )
-}
-
-function PodDetailDrawer({
-  clusterId, namespace, pod, onClose,
-}: { clusterId: number; namespace: string; pod: string; onClose: () => void }) {
-  const t = useT()
-  const [prev, setPrev] = useState(false)
-  const { data: detail, isLoading } = useQuery({
-    queryKey: ['ocp-pod-detail', clusterId, namespace, pod],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}`)
-      if (!r.ok) throw new Error((await r.json()).detail || t('ocp_pod_detail_fail'))
-      return r.json()
-    },
-  })
-  const { data: logs, isFetching: logsLoading, refetch: refetchLogs } = useQuery({
-    queryKey: ['ocp-pod-logs', clusterId, namespace, pod, prev],
-    queryFn: async () => {
-      const params = new URLSearchParams({ tail: '400', previous: String(prev) })
-      const r = await fetch(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?${params}`)
-      if (!r.ok) throw new Error(t('ocp_log_fail'))
-      return r.json()
-    },
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-2xl h-full bg-cyber-card border-l border-white/[0.08] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card">
-          <div>
-            <div className="text-white font-medium">{namespace} / {pod}</div>
-            <div className="text-xs text-slate-500">{t('ocp_pod_detail_sub')}</div>
-          </div>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          {isLoading && <div className="text-sm text-slate-400 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('loading')}</div>}
-          {detail && (
-            <>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
-                  <div className="text-slate-500">Phase</div>
-                  <div className={`font-medium ${statusColor(detail.phase)}`}>{detail.phase}</div>
-                </div>
-                <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/50 px-3 py-2">
-                  <div className="text-slate-500">Node</div>
-                  <div className="text-white truncate">{detail.node || '—'}</div>
-                </div>
-              </div>
-              <div>
-                <div className="text-xs uppercase text-slate-500 mb-2">Containers</div>
-                <div className="space-y-1.5">
-                  {(detail.containers || []).map((c: any) => (
-                    <div key={c.name} className="rounded-lg border border-white/[0.06] px-3 py-2 text-xs">
-                      <div className="flex justify-between gap-2">
-                        <span className="text-white">{c.name}</span>
-                        <span className={statusColor(c.reason || c.state)}>{c.reason || c.state}</span>
-                      </div>
-                      <div className="text-slate-500 mt-0.5 truncate">{t('ocp_restart_n', { n: c.restart_count })} · {c.image}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              {(detail.events || []).length > 0 && (
-                <div>
-                  <div className="text-xs uppercase text-slate-500 mb-2">Events</div>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {(detail.events || []).map((e: any, i: number) => (
-                      <div key={i} className="text-[11px] text-slate-400 border-b border-white/[0.04] py-1">
-                        <span className={e.type === 'Warning' ? 'text-amber-400' : 'text-slate-500'}>{e.reason}</span>
-                        {' — '}{e.message}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs uppercase text-slate-500">Logs</div>
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-slate-400 flex items-center gap-1">
-                  <input type="checkbox" checked={prev} onChange={e => setPrev(e.target.checked)} />
-                  {t('ocp_previous')}
-                </label>
-                <button type="button" onClick={() => refetchLogs()} className="text-[11px] text-rose-300 flex items-center gap-1">
-                  <RefreshCw size={11} className={logsLoading ? 'animate-spin' : ''} /> {t('refresh_action')}
-                </button>
-              </div>
-            </div>
-            {logs?.error && <div className="text-xs text-amber-400 mb-2">{logs.error}</div>}
-            <pre className="bg-black/40 rounded-lg p-3 text-[10px] text-cyan-100/90 overflow-auto max-h-80 whitespace-pre-wrap font-mono">
-              {logsLoading ? '…' : (logs?.logs || t('ocp_empty_paren'))}
-            </pre>
-          </div>
-        </div>
       </div>
     </div>
   )
@@ -557,8 +458,20 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildPayload()),
       })
-      const data = await r.json()
-      setTestResult({ success: data.success, message: data.message })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setTestResult({
+          success: false,
+          message: data.detail || data.message || t('conn_error'),
+        })
+        return
+      }
+      setTestResult({
+        success: Boolean(data.success),
+        message: data.success
+          ? (data.message || 'Bağlantı başarılı')
+          : ([data.message, data.details].filter(Boolean).join(' — ') || t('conn_error')),
+      })
     } catch {
       setTestResult({ success: false, message: t('conn_error') })
     } finally {
@@ -1001,11 +914,13 @@ export default function OpenShiftDashboard({
       )}
       {topo && <TopologyDrawer clusterId={topo.clusterId} project={topo.project} onClose={() => setTopo(null)} />}
       {podView && (
-        <PodDetailDrawer
+        <OcpResourceDetailDrawer
           clusterId={podView.clusterId}
+          kind="pods"
+          name={podView.pod}
           namespace={podView.namespace}
-          pod={podView.pod}
           onClose={() => setPodView(null)}
+          onOpenPod={(ns, pod) => setPodView({ clusterId: podView.clusterId, namespace: ns, pod })}
         />
       )}
       {vmView && (

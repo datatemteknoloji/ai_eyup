@@ -732,6 +732,7 @@ async def get_settings(db: Session = Depends(get_db)):
         "pushgateway_url": settings.PUSHGATEWAY_URL,
         "prometheus_linux_jobs": list(settings.PROMETHEUS_LINUX_JOBS) or ["node-exporter"],
         "prometheus_windows_jobs": list(settings.PROMETHEUS_WINDOWS_JOBS) or ["windows-exporter"],
+        "monitoring_sources": _public_monitoring_sources(db),
         "metric_retention_days": metric_retention_days,
         "management_server_ip": management_server_ip,
         "detected_management_ip": detected_ip,
@@ -770,6 +771,11 @@ async def set_management_server_ip(payload: dict, db: Session = Depends(get_db))
     return {"success": True, "ip": ip}
 
 
+def _public_monitoring_sources(db: Session) -> list:
+    from app.services.monitoring_sources import load_sources_from_db
+    return [s.public_dict() for s in load_sources_from_db(db)]
+
+
 @router.put("/prometheus")
 async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
     """Prometheus URL + job adlarını kaydet. Restart gerekmez.
@@ -780,8 +786,16 @@ async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
       prometheus_linux_jobs?: string[],   # örn. ["node-exporter","prometheus"]
       prometheus_windows_jobs?: string[],
     }
+    Linux URL registry’deki linux binding ile senkron tutulur.
     """
     from app.core.config import settings, _parse_job_list
+    from app.services.monitoring_sources import (
+        load_sources_from_db,
+        save_sources,
+        MonitoringSource,
+        LINUX_SEED_ID,
+    )
+    from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
     import json
     import re
 
@@ -828,12 +842,55 @@ async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
     _save("pushgateway_url", pg_url)
     _save("prometheus_linux_jobs", json.dumps(linux_jobs, ensure_ascii=False))
     _save("prometheus_windows_jobs", json.dumps(windows_jobs, ensure_ascii=False))
+
+    # Registry: linux binding URL senkron
+    previous = load_sources_from_db(db)
+    updated: list = []
+    linux_done = False
+    for s in previous:
+        if s.binding == "linux" and not linux_done:
+            updated.append(
+                MonitoringSource(
+                    id=s.id,
+                    label=s.label or "Linux Prometheus",
+                    url=prom_url,
+                    binding="linux",
+                    token=s.token,
+                    token_set=s.token_set,
+                    collector_type="prometheus",
+                    username=s.username,
+                    password=s.password,
+                    password_set=s.password_set,
+                    verify_ssl=s.verify_ssl,
+                )
+            )
+            linux_done = True
+        else:
+            updated.append(s)
+    if not linux_done:
+        updated.insert(
+            0,
+            MonitoringSource(
+                id=LINUX_SEED_ID,
+                label="Linux Prometheus",
+                url=prom_url,
+                binding="linux",
+                collector_type="prometheus",
+            ),
+        )
+    save_sources(db, updated, previous=previous)
+
     db.commit()
 
     settings.PROMETHEUS_URL = prom_url
     settings.PUSHGATEWAY_URL = pg_url
     settings.PROMETHEUS_LINUX_JOBS = linux_jobs
     settings.PROMETHEUS_WINDOWS_JOBS = windows_jobs
+    try:
+        reload_runtime_settings_from_db()
+        broadcast_settings_reload()
+    except Exception as e:
+        logger.debug("prometheus settings broadcast: %s", e)
     logger.info(
         f"Prometheus URL güncellendi: {prom_url} "
         f"(pushgateway={pg_url or 'unset'}, linux_jobs={linux_jobs}, windows_jobs={windows_jobs})"
@@ -844,7 +901,321 @@ async def set_prometheus_urls(payload: dict, db: Session = Depends(get_db)):
         "pushgateway_url": pg_url,
         "prometheus_linux_jobs": linux_jobs,
         "prometheus_windows_jobs": windows_jobs,
+        "monitoring_sources": _public_monitoring_sources(db),
     }
+
+
+@router.get("/monitoring-sources")
+async def get_monitoring_sources(db: Session = Depends(get_db)):
+    """Prometheus kaynak registry (token gizlenir)."""
+    return {"sources": _public_monitoring_sources(db)}
+
+
+@router.put("/monitoring-sources")
+async def put_monitoring_sources(payload: dict, db: Session = Depends(get_db)):
+    """Tüm registry’yi değiştir.
+
+    Body: { sources: [{ id?, label, url, binding, collector_type?, token?,
+            username?, password?, verify_ssl? }], pushgateway_url?,
+            prometheus_linux_jobs?, prometheus_windows_jobs? }
+    token/password boş bırakılırsa mevcut korunur; token_clear/password_clear:true ile silinir.
+    """
+    from app.core.config import settings, _parse_job_list
+    from app.services.monitoring_sources import (
+        load_sources_from_db,
+        save_sources,
+        validate_sources_payload,
+        normalize_collector_type,
+        MonitoringSource,
+    )
+    from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
+    import json
+    import re
+
+    raw_sources = payload.get("sources")
+    if not isinstance(raw_sources, list):
+        raise HTTPException(status_code=400, detail="sources listesi zorunlu")
+
+    previous = load_sources_from_db(db)
+    prev_by_id = {s.id: s for s in previous}
+
+    prepared = []
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="Geçersiz kaynak nesnesi")
+        sid = str(item.get("id") or "").strip()
+        prev = prev_by_id.get(sid) if sid else None
+        token = item.get("token")
+        token_clear = bool(item.get("token_clear"))
+        if token_clear:
+            token_val = ""
+        elif token is None or token == "":
+            token_val = prev.token if prev else ""
+        else:
+            token_val = str(token)
+        password = item.get("password")
+        password_clear = bool(item.get("password_clear"))
+        if password_clear:
+            password_val = ""
+        elif password is None or password == "":
+            password_val = prev.password if prev else ""
+        else:
+            password_val = str(password)
+        binding = item.get("binding")
+        collector_type = normalize_collector_type(
+            item.get("collector_type") or (prev.collector_type if prev else None),
+            str(binding or (prev.binding if prev else "none")),
+        )
+        verify_ssl = item.get("verify_ssl")
+        if verify_ssl is None:
+            verify_ssl = prev.verify_ssl if prev else True
+        username = item.get("username")
+        if username is None:
+            username = prev.username if prev else ""
+        if "jobs" in item:
+            jobs_val = item.get("jobs")
+        elif prev:
+            jobs_val = list(prev.jobs or [])
+        else:
+            jobs_val = []
+        if "extra_selectors" in item:
+            extra_val = item.get("extra_selectors")
+        elif prev:
+            extra_val = prev.extra_selectors or ""
+        else:
+            extra_val = ""
+        prepared.append({
+            "id": sid or None,
+            "label": item.get("label"),
+            "url": item.get("url"),
+            "binding": binding,
+            "collector_type": collector_type,
+            "token": token_val,
+            "username": username,
+            "password": password_val,
+            "verify_ssl": bool(verify_ssl),
+            "jobs": jobs_val,
+            "extra_selectors": extra_val,
+        })
+
+    try:
+        sources, warnings = validate_sources_payload(prepared)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Secrets already resolved in prepared
+    merged = []
+    for s, prep in zip(sources, prepared):
+        merged.append(
+            MonitoringSource(
+                id=s.id,
+                label=s.label,
+                url=s.url,
+                binding=s.binding,
+                token=str(prep.get("token") or ""),
+                token_set=bool(prep.get("token")),
+                collector_type=normalize_collector_type(
+                    prep.get("collector_type"), s.binding,
+                ),
+                username=str(prep.get("username") or ""),
+                password=str(prep.get("password") or ""),
+                password_set=bool(prep.get("password")),
+                verify_ssl=bool(prep.get("verify_ssl", True)),
+                jobs=list(s.jobs or []),
+                extra_selectors=(s.extra_selectors or "").strip(),
+            )
+        )
+
+    save_sources(db, merged, previous=[])  # tokens already resolved in merged
+
+    def _save(key: str, value: str):
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(AppSettings(key=key, value=value))
+
+    pg_raw = payload.get("pushgateway_url")
+    if pg_raw is not None:
+        pg_url = (pg_raw or "").strip().rstrip("/")
+        if pg_url and not re.match(r"^https?://", pg_url, re.I):
+            raise HTTPException(status_code=400, detail="Pushgateway URL http:// veya https:// ile başlamalı")
+        _save("pushgateway_url", pg_url)
+        settings.PUSHGATEWAY_URL = pg_url
+
+    def _normalize_jobs(raw, default: list) -> list:
+        if raw is None:
+            return list(default)
+        if isinstance(raw, list):
+            jobs = [str(x).strip() for x in raw if str(x).strip()]
+            return jobs or list(default)
+        return _parse_job_list(str(raw), default)
+
+    if "prometheus_linux_jobs" in payload:
+        linux_jobs = _normalize_jobs(
+            payload.get("prometheus_linux_jobs"),
+            list(settings.PROMETHEUS_LINUX_JOBS) or ["node-exporter"],
+        )
+        _save("prometheus_linux_jobs", json.dumps(linux_jobs, ensure_ascii=False))
+        settings.PROMETHEUS_LINUX_JOBS = linux_jobs
+    if "prometheus_windows_jobs" in payload:
+        windows_jobs = _normalize_jobs(
+            payload.get("prometheus_windows_jobs"),
+            list(settings.PROMETHEUS_WINDOWS_JOBS) or ["windows-exporter"],
+        )
+        _save("prometheus_windows_jobs", json.dumps(windows_jobs, ensure_ascii=False))
+        settings.PROMETHEUS_WINDOWS_JOBS = windows_jobs
+
+    db.commit()
+    try:
+        reload_runtime_settings_from_db()
+        broadcast_settings_reload()
+    except Exception as e:
+        logger.debug("monitoring-sources broadcast: %s", e)
+
+    return {
+        "success": True,
+        "sources": _public_monitoring_sources(db),
+        "warnings": warnings,
+        "prometheus_url": settings.PROMETHEUS_URL,
+    }
+
+
+@router.post("/monitoring-sources/test")
+async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
+    """Kaynak bağlantı testi — source_id veya url (+token/collector_type).
+
+    Prom uyumlu (prometheus/telegraf/opentelemetry): /api/v1/query?query=up
+    Zabbix: api_jsonrpc.php apiinfo.version (auth gerekmez)
+    """
+    import httpx
+    from app.services.monitoring_sources import (
+        load_sources_from_db,
+        resolve,
+        prom_base_url,
+        prom_headers,
+        validate_url,
+        normalize_collector_type,
+        is_prom_compatible,
+        zabbix_api_url,
+        MonitoringSource,
+    )
+
+    source_id = (payload.get("source_id") or "").strip()
+    url = (payload.get("url") or "").strip().rstrip("/")
+    token = (payload.get("token") or "").strip()
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+    collector_raw = payload.get("collector_type")
+    verify_ssl = payload.get("verify_ssl")
+    if verify_ssl is None:
+        verify_ssl = True
+
+    sources = load_sources_from_db(db)
+    src = None
+    if source_id and url:
+        existing = resolve(sources, source_id=source_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Kaynak bulunamadı")
+        err = validate_url(url)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        binding = existing.binding
+        ct = normalize_collector_type(collector_raw or existing.collector_type, binding)
+        src = MonitoringSource(
+            id=existing.id,
+            label=existing.label,
+            url=url,
+            binding=binding,
+            token=token or existing.token,
+            collector_type=ct,
+            username=username or existing.username,
+            password=password or existing.password,
+            verify_ssl=bool(verify_ssl if payload.get("verify_ssl") is not None else existing.verify_ssl),
+        )
+    elif source_id:
+        src = resolve(sources, source_id=source_id)
+        if not src:
+            raise HTTPException(status_code=404, detail="Kaynak bulunamadı")
+    elif url:
+        err = validate_url(url)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        binding = str(payload.get("binding") or "none")
+        ct = normalize_collector_type(collector_raw, binding)
+        src = MonitoringSource(
+            id="tmp",
+            label="tmp",
+            url=url,
+            binding="none" if binding == "none" else binding,  # type: ignore[arg-type]
+            token=token,
+            collector_type=ct,
+            username=username,
+            password=password,
+            verify_ssl=bool(verify_ssl),
+        )
+    else:
+        raise HTTPException(status_code=400, detail="source_id veya url gerekli")
+
+    verify = bool(src.verify_ssl)
+
+    # Zabbix JSON-RPC
+    if src.collector_type == "zabbix" or (
+        src.binding == "none" and normalize_collector_type(src.collector_type, src.binding) == "zabbix"
+    ):
+        api = zabbix_api_url(src)
+        body = {
+            "jsonrpc": "2.0",
+            "method": "apiinfo.version",
+            "params": [],
+            "id": 1,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=verify) as client:
+                resp = await client.post(api, json=body, headers={"Content-Type": "application/json"})
+            data = {}
+            try:
+                data = resp.json()
+            except Exception:
+                pass
+            ok = resp.status_code == 200 and isinstance(data, dict) and "result" in data
+            return {
+                "ok": ok,
+                "status_code": resp.status_code,
+                "url": api,
+                "collector_type": "zabbix",
+                "zabbix_version": data.get("result") if ok else None,
+                "error": (data.get("error") or {}).get("data") if not ok else None,
+            }
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Zabbix bağlantı hatası: {e}")
+
+    if not is_prom_compatible(src):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bu collector tipi için test henüz yok: {src.collector_type}",
+        )
+
+    base = prom_base_url(src)
+    headers = prom_headers(src)
+    try:
+        async with httpx.AsyncClient(timeout=8.0, verify=verify) as client:
+            resp = await client.get(f"{base}/api/v1/query", params={"query": "up"}, headers=headers)
+        ok = resp.status_code == 200
+        body = {}
+        try:
+            body = resp.json()
+        except Exception:
+            pass
+        return {
+            "ok": ok,
+            "status_code": resp.status_code,
+            "url": base,
+            "collector_type": src.collector_type,
+            "prometheus_status": body.get("status"),
+        }
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Bağlantı hatası: {e}")
 
 
 @router.put("/ollama-model")

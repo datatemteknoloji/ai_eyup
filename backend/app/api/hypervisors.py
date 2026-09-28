@@ -277,16 +277,17 @@ def virt_monitoring_objects(
     kind: str = "host",
     q: str = "",
     cluster: str = "",
+    host: str = "",
     hypervisor_id: Optional[int] = None,
     hypervisor_ids: Optional[str] = None,
     limit: int = 80,
     db: Session = Depends(get_db),
 ):
-    """VM / ESXi / datastore seçici (arama, vCenter, max 200)."""
+    """VM / ESXi / datastore seçici (arama, vCenter, cluster/host filtre, max 200)."""
     from app.services.virt_monitoring import list_objects, parse_hypervisor_ids
     try:
         return list_objects(
-            db, kind=kind, q=q, cluster=cluster,
+            db, kind=kind, q=q, cluster=cluster, host=host,
             hypervisor_ids=parse_hypervisor_ids(hypervisor_id, hypervisor_ids), limit=limit,
         )
     except ValueError as e:
@@ -328,6 +329,41 @@ def virt_monitoring_series(
     except Exception as e:
         logger.exception("virt monitoring series")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Prometheus mode (vmware_exporter) ───────────────────────────────────────
+
+@router.get("/monitoring/prom/overview")
+def virt_prom_overview(source_id: Optional[str] = None, db: Session = Depends(get_db)):
+    from app.services.virt_prom_monitoring import overview
+    return overview(db, source_id=source_id)
+
+
+@router.get("/monitoring/prom/catalog")
+def virt_prom_catalog():
+    from app.services.virt_prom_monitoring import catalog
+    return {"ok": True, "metrics": catalog()}
+
+
+@router.get("/monitoring/prom/discover")
+def virt_prom_discover(source_id: Optional[str] = None, prefix: str = "vmware_", db: Session = Depends(get_db)):
+    from app.services.virt_prom_monitoring import discover_metrics
+    return discover_metrics(db, source_id=source_id, prefix=prefix)
+
+
+@router.get("/monitoring/prom/series")
+def virt_prom_series(
+    metric: str = "vm_cpu",
+    range_sec: int = 900,
+    source_id: Optional[str] = None,
+    top_n: int = 8,
+    raw_query: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.virt_prom_monitoring import series
+    return series(
+        metric, range_sec=range_sec, source_id=source_id, db=db, top_n=top_n, raw_query=raw_query,
+    )
 
 
 @router.get("/host-metrics")
@@ -990,6 +1026,8 @@ class HypervisorAskRequest(BaseModel):
     model: Optional[str] = None
     history: Optional[List[dict]] = None  # [{role, content}]
     session_id: Optional[int] = None
+    # Virt Monitoring UI kapsamı — cluster/ESXi filtresi sohbete taşınır
+    monitoring_scope: Optional[dict] = None
 
 
 @router.get("/ask/sessions")
@@ -1196,6 +1234,19 @@ def ask_hypervisor_question(
         full_scan_this_turn = bool(_fs.get("full_scan"))
         ask_user_q = _fs.get("work_message") or question
 
+        # Virt Monitoring UI kapsamı → sohbet (entity resolver + LLM bağlamı)
+        _mon = getattr(req, "monitoring_scope", None) or {}
+        if isinstance(_mon, dict):
+            _bits = []
+            _cl = str(_mon.get("cluster") or "").strip()
+            _esx = str(_mon.get("host") or "").strip()
+            if _cl:
+                _bits.append(f"{_cl} cluster")
+            if _esx:
+                _bits.append(f"{_esx} ESXi")
+            if _bits:
+                ask_user_q = f"{ask_user_q} ({' · '.join(_bits)} kapsamında)"
+
         if _fs.get("action") == "decline":
             decline = _fs.get("decline_text") or "İptal edildi."
             result = {
@@ -1269,6 +1320,7 @@ def ask_hypervisor_question(
             message=ask_user_q,
             platform="virt",
             explicit=output_directive == OutputDirective.GRAPH,
+            monitoring_scope=getattr(req, "monitoring_scope", None),
         )
         if _chart:
             answer = _chart["summary_text"]
@@ -1537,6 +1589,7 @@ async def ask_hypervisor_stream(
             model=payload.get("model"),
             history=payload.get("history"),
             session_id=payload.get("session_id"),
+            monitoring_scope=payload.get("monitoring_scope"),
         )
 
         def _sse(obj: dict) -> str:

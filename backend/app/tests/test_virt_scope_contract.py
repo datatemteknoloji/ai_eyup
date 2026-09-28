@@ -167,6 +167,12 @@ def test_tool_args_derive_from_registry():
     assert vs.tool_args("host", scope) == {"name_filter": "esx02"}
 
 
+def test_tool_args_host_includes_cluster():
+    scope = vs.Scope(filters={"cluster": "Prod-Cluster"})
+    assert vs.tool_args("host", scope) == {"cluster": "Prod-Cluster"}
+    assert vs.tool_args("vm", scope) == {"cluster": "Prod-Cluster"}
+
+
 # ── 5) Kilit ("sadece/yalnızca") ────────────────────────────────────────────
 @pytest.mark.parametrize(
     "message,expected",

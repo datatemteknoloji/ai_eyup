@@ -102,7 +102,7 @@ function displayVmLabel(s: Server): string | null {
 function hasNameMismatch(s: Server): boolean {
   const vm = (s.vm_name || '').trim()
   if (!vm) return false
-  const hn = (s.hostname || '').trim()
+  const hn = (s.hostname || s.vm_guest_hostname || '').trim()
   if (!hn) return true
   const shortHn = hn.split('.')[0] || hn
   return _normNameToken(shortHn) !== _normNameToken(vm)

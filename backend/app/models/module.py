@@ -62,6 +62,8 @@ DEFAULT_MODULES = [
      "icon": "Brain",    "color": "pink",    "sort_order": 10},
     {"id": "custom_reports", "name": "Özel Raporlar",    "description": "Sohbet üzerinden keşfedilen sorguları deterministik, tekrar çalıştırılabilir özel rapor olarak kaydetme — varsayılan yalnız Admin, ayrı atama gerektirir",
      "icon": "FileBarChart2", "color": "lime", "sort_order": 11},
+    {"id": "monitoring",     "name": "Monitoring",       "description": "Ana Monitoring hub — Linux / Windows / OpenShift / Sanallaştırma metrikleri (API veya Prometheus)",
+     "icon": "Activity", "color": "sky",     "sort_order": 12},
 ]
 
 # 'aiops' kaldırıldı (2026-07) — Komuta Merkezi/Events özellikleri 'linux' kapsamında.
