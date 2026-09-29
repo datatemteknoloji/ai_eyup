@@ -61,7 +61,9 @@ Tag sayfasından veya Release içindeki “Source code (zip)” ile:
 
 > **Not:** `images/*.tar.gz` dosyalarından 90MB'ı aşanlar (GitHub'ın Git LFS'siz 100MB
 > sınırı nedeniyle) `.part01`, `.part02`, ... şeklinde parçalara bölünmüş olarak depoda
-> tutulur. `install-rhel.sh` bunları kurulumdan önce otomatik olarak birleştirir — elle bir
+> tutulur. `install-rhel.sh` / `update-rhel.sh` bunları kurulum/güncelleme öncesi
+> **her zaman** part’lardan yeniden birleştirir (eski birleşmiş `.tar.gz` atlanmaz —
+> aksi halde önceki sürüm imajı load edilebilirdi). Elle bir
 > işlem yapmanıza gerek yoktur. B/D yöntemleri Git LFS **gerektirmez**. Release asset (C)
 > tek `.tar.gz` dosyasıdır (parçalar paket içinde birleştirilmiş halde gelir).
 

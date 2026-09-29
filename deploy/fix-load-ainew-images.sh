@@ -79,16 +79,9 @@ if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/nu
     target="${part1%.part01}"
     mapfile -t sorted < <(ls -1 "${target}".part* 2>/dev/null | sort -V)
     [[ ${#sorted[@]} -eq 0 ]] && continue
-    parts_size=0
-    for p in "${sorted[@]}"; do
-      parts_size=$((parts_size + $(stat -c%s "$p" 2>/dev/null || echo 0)))
-    done
-    target_size=0
-    [[ -e "$target" ]] && target_size="$(stat -c%s "$target" 2>/dev/null || echo 0)"
-    if [[ ! -e "$target" || "$target_size" -lt "$parts_size" ]]; then
-      cat "${sorted[@]}" > "$target"
-      c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
-    fi
+    # Her zaman part'lardan yeniden üret (eski birleşmiş .tar.gz atlanmasın)
+    cat "${sorted[@]}" > "$target"
+    c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
   done
 else
   c_yellow "Birleştirilecek .part* yok (veya images/ yok)."
@@ -106,23 +99,22 @@ for f in "$IMAGES_DIR"/ainew-backend.tar.gz "$IMAGES_DIR"/ainew-frontend.tar.gz;
   gunzip -c "$f" | docker load
 done
 
-# Hedef etiket yoksa mevcut ainew etiketinden retag
+# Hedef etiket docker load ile gelmiş olmalı. Eski sürümü yeni etikete
+# retag etme — update'te .env 1.0.9.N iken içerik eski kalırdı.
+_missing=0
 for img in "$BE_TARGET" "$FE_TARGET"; do
   if docker image inspect "$img" >/dev/null 2>&1; then
     c_green "  ✓ $img"
-    continue
-  fi
-  repo="${img%%:*}"
-  any="$(docker images --format '{{.Repository}}:{{.Tag}}' "$repo" 2>/dev/null | grep -v '<none>' | head -1 || true)"
-  if [[ -n "$any" ]]; then
-    c_yellow "  retag: $any → $img"
-    docker tag "$any" "$img"
-    docker tag "$any" "${repo}:latest" 2>/dev/null || true
   else
-    c_red "  $img yok ve retag kaynağı da yok"
-    exit 1
+    c_red "  eksik: $img (load sonrası beklenen etiket yok)"
+    _missing=1
   fi
 done
+if [[ "$_missing" -ne 0 ]]; then
+  c_red "ainew imaj etiketleri eksik. images/ainew-*.tar.gz(.part*) içeriğini kontrol edin."
+  docker images 'ainew-*' || true
+  exit 1
+fi
 
 c_green "İmajlar hazır."
 docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' | grep -E 'REPOSITORY|ainew-' || true

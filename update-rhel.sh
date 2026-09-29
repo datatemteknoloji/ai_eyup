@@ -489,16 +489,11 @@ if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
     target="${part1%.part01}"
     mapfile -t sorted < <(ls -1 "${target}".part* 2>/dev/null | sort -V)
     [[ ${#sorted[@]} -eq 0 ]] && continue
-    parts_size=0
-    for p in "${sorted[@]}"; do
-      parts_size=$((parts_size + $(stat -c%s "$p" 2>/dev/null || echo 0)))
-    done
-    target_size=0
-    [[ -e "$target" ]] && target_size="$(stat -c%s "$target" 2>/dev/null || echo 0)"
-    if [[ ! -e "$target" || "$target_size" -lt "$parts_size" ]]; then
-      cat "${sorted[@]}" > "$target"
-      c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
-    fi
+    # Her zaman part'lardan yeniden üret. Eski birleşmiş .tar.gz (önceki sürüm)
+    # boyutu ≥ part toplamı olsa bile atlanırsa update eski imajı load eder
+    # (ainew-backend:1.0.9.38 etiketi varken içerik .37 kalırdı).
+    cat "${sorted[@]}" > "$target"
+    c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
   done
 fi
 
@@ -540,6 +535,22 @@ if [[ -d "$IMAGES_DIR" ]] && compgen -G "${IMAGES_DIR}/*.tar*" > /dev/null; then
     fi
   done
   c_green "İmajlar yüklendi."
+
+  # ainew sürüm etiketleri zorunlu — yoksa .env 1.0.9.N iken eski imaj kalır
+  _ainew_missing=0
+  for img in "$NEW_BACKEND" "$NEW_FRONTEND"; do
+    if ! docker image inspect "$img" >/dev/null 2>&1; then
+      c_red "  eksik imaj (ainew): $img"
+      _ainew_missing=1
+    else
+      c_green "  ✓ $img  ($(docker image inspect "$img" --format '{{.Id}}' 2>/dev/null | cut -c8-19))"
+    fi
+  done
+  if [[ "$_ainew_missing" -ne 0 ]]; then
+    c_red "Beklenen ainew imaj etiketleri yok. images/ainew-*.tar.gz(.part*) birleştirme/load'u kontrol edin."
+    c_yellow "Onarım: cd $INSTALL_DIR && sudo ./fix-load-ainew-images.sh"
+    exit 1
+  fi
 
   # Dropt compose varsa zorunlu imajları doğrula
   if grep -q 'docker-compose.dropt.yml' "$INSTALL_DIR/$COMPOSE_FILE" 2>/dev/null; then

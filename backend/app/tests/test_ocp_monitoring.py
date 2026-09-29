@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from app.services.openshift.ocp_monitoring import (
     _pct,
     collect_live_rows,
+    dedupe_metric_rows,
     is_system_namespace,
     metric_catalog,
     object_ref,
@@ -131,3 +132,87 @@ def test_collect_live_rows_identity():
     vm = next(r for r in rows if r["kind"] == "vm")
     assert vm["object_key"] == "vmns/rhel9"
     assert vm["name"] == "rhel9"
+
+
+def test_dedupe_metric_rows_merges_duplicate_vm_keys():
+    """Aynı VM için iki virt-launcher → tek satır; UniqueViolation önlenir."""
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    base = {
+        "timestamp": now,
+        "cluster_id": 1,
+        "kind": "vm",
+        "object_key": "vmns/pay",
+        "name": "pay",
+        "namespace": "vmns",
+        "role": None,
+        "status": "Running",
+        "node_name": "w1",
+        "cpu_allocatable": 2.0,
+        "memory_allocatable_gb": 4.0,
+        "cpu_pct": None,
+        "memory_pct": None,
+        "restarts": 1,
+    }
+    a = {**base, "cpu_used_cores": 0.5, "memory_used_gb": 1.0}
+    b = {**base, "cpu_used_cores": 0.7, "memory_used_gb": 1.5, "restarts": 2, "node_name": "w2"}
+    out = dedupe_metric_rows([a, b, {**base, "kind": "pod", "object_key": "vmns/other", "name": "other"}])
+    vms = [r for r in out if r["kind"] == "vm"]
+    assert len(vms) == 1
+    assert vms[0]["cpu_used_cores"] == 1.2
+    assert vms[0]["memory_used_gb"] == 2.5
+    assert vms[0]["restarts"] == 3
+    assert len(out) == 2
+
+
+def test_collect_live_rows_dedupes_twin_virt_launchers():
+    cluster = SimpleNamespace(
+        id=7, name="prod", api_url="https://api.example:6443", connection_config={},
+    )
+    client = MagicMock()
+    client.list_nodes.return_value = []
+    client.list_pods.return_value = [
+        {
+            "namespace": "vmns",
+            "name": "virt-launcher-pay-aaa",
+            "status": "Running",
+            "phase": "Running",
+            "node_name": "w1",
+            "restart_count": 0,
+            "cpu_request": 1,
+            "memory_request_gb": 2,
+            "labels": {"vm.kubevirt.io/name": "pay"},
+        },
+        {
+            "namespace": "vmns",
+            "name": "virt-launcher-pay-bbb",
+            "status": "Running",
+            "phase": "Running",
+            "node_name": "w2",
+            "restart_count": 0,
+            "cpu_request": 1,
+            "memory_request_gb": 2,
+            "labels": {"vm.kubevirt.io/name": "pay"},
+        },
+    ]
+    client.logout.return_value = None
+
+    def _get(path, params=None, timeout=None):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"items": []}
+        return resp
+
+    client._get.side_effect = _get
+    with patch(
+        "app.services.openshift.ocp_monitoring.client_from_cluster",
+        return_value=client,
+    ):
+        rows, _ok = collect_live_rows(cluster)
+    vm_rows = [r for r in rows if r["kind"] == "vm"]
+    assert len(vm_rows) == 1
+    assert vm_rows[0]["object_key"] == "vmns/pay"
+    # İki launcher pod satırı da aynı ns altında non-system → 2 pod + 1 vm
+    pod_rows = [r for r in rows if r["kind"] == "pod"]
+    assert len(pod_rows) == 2
+    keys = [(r["kind"], r["object_key"]) for r in rows]
+    assert len(keys) == len(set(keys))

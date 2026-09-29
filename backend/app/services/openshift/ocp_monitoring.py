@@ -135,6 +135,56 @@ def _r(v: Any, n: int = 3) -> Optional[float]:
         return None
 
 
+def _merge_metric_row(prev: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """Aynı (kind, object_key) çakışınca birleştir — virt-launcher çoğulları vb."""
+    out = dict(prev)
+    for col in ("cpu_used_cores", "memory_used_gb", "cpu_allocatable", "memory_allocatable_gb"):
+        a, b = prev.get(col), new.get(col)
+        if a is None and b is None:
+            out[col] = None
+        elif a is None:
+            out[col] = b
+        elif b is None:
+            out[col] = a
+        else:
+            try:
+                out[col] = round(float(a) + float(b), 4)
+            except (TypeError, ValueError):
+                out[col] = b
+    ra, rb = prev.get("restarts"), new.get("restarts")
+    if ra is None and rb is None:
+        out["restarts"] = None
+    else:
+        out["restarts"] = int(ra or 0) + int(rb or 0)
+    # Son gelen status/node bilgisi
+    for col in ("status", "node_name", "role", "name", "namespace"):
+        if new.get(col) not in (None, ""):
+            out[col] = new.get(col)
+    out["cpu_pct"] = _pct(out.get("cpu_used_cores"), out.get("cpu_allocatable"))
+    out["memory_pct"] = _pct(out.get("memory_used_gb"), out.get("memory_allocatable_gb"))
+    return out
+
+
+def dedupe_metric_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """PK (timestamp, cluster_id, kind, object_key) çakışmasını önle — aynı örnek anında tek satır.
+
+    Özellikle aynı VM için birden fazla virt-launcher pod'u (migration/eski+yeni)
+    aynı object_key ile iki INSERT üretip UniqueViolation + boş tabloya yol açıyordu.
+    """
+    by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for r in rows or []:
+        kind = (r.get("kind") or "").strip()
+        ok = (r.get("object_key") or "").strip()
+        if not kind or not ok:
+            continue
+        key = (kind, ok)
+        if key not in by_key:
+            by_key[key] = dict(r)
+        else:
+            by_key[key] = _merge_metric_row(by_key[key], r)
+    return list(by_key.values())
+
+
 def _sum_container_usage(containers: Iterable[Dict[str, Any]]) -> Tuple[float, float]:
     cpu = 0.0
     mem_gb = 0.0
@@ -321,17 +371,24 @@ def collect_live_rows(cluster: OpenShiftCluster) -> Tuple[List[Dict[str, Any]], 
                 "name": vm_name,
             })
 
-    return rows, metrics_available
+    return dedupe_metric_rows(rows), metrics_available
 
 
 def sync_cluster_metrics(db: Session, cluster: OpenShiftCluster) -> Dict[str, Any]:
     rows, metrics_available = collect_live_rows(cluster)
     n = 0
-    for r in rows:
-        db.add(OcpResourceMetric(**r))
-        n += 1
-    if n:
-        db.commit()
+    try:
+        for r in rows:
+            db.add(OcpResourceMetric(**r))
+            n += 1
+        if n:
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     return {
         "cluster_id": cluster.id,
         "rows": n,

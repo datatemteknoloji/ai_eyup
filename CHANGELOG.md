@@ -11,6 +11,13 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Kurulum / güncelleme
+- `update-rhel.sh` / `install-rhel.sh` / `fix-load-ainew-images.sh`: parçalı imaj arşivleri (`.part*`) varken birleşmiş `.tar.gz` **her zaman** yeniden üretilir. Eski birleşmiş backend tar’ı boyuta bakılarak atlanıp yeni sürüm etiketinin eski imajı göstermesi engellendi.
+- Update sonrası `ainew-backend` / `ainew-frontend` sürüm etiketleri yoksa işlem durur (Dropt doğrulaması gibi).
+
+### OpenShift Monitoring
+- `ocp_resource_metrics` sync: aynı örnek anında mükerrer `(kind, object_key)` (özellikle birden fazla virt-launcher → aynı VM) UniqueViolation ile tüm commit’i düşürüp tabloyu boş bırakıyordu; satırlar birleştirilerek tekilleştirildi.
+
 ## [1.0.9.38] - 2026-09-29
 
 ### OpenShift Access / RBAC

@@ -434,27 +434,16 @@ step "İmajlar hazırlanıyor"
 merge_image_parts() {
   if compgen -G "${IMAGES_DIR}/*.tar.gz.part*" > /dev/null 2>&1; then
     c_yellow "Parçalanmış imaj arşivleri birleştiriliyor..."
-    local part1 target parts_size target_size sorted
+    local part1 target sorted
     for part1 in "${IMAGES_DIR}"/*.tar.gz.part01; do
       [[ -e "$part1" ]] || continue
       target="${part1%.part01}"
       # Lexical değil versiyon sıralı birleştir (part01…part10)
       mapfile -t sorted < <(ls -1 "${target}".part* 2>/dev/null | sort -V)
       [[ ${#sorted[@]} -eq 0 ]] && continue
-      parts_size=0
-      local p
-      for p in "${sorted[@]}"; do
-        parts_size=$((parts_size + $(stat -c%s "$p" 2>/dev/null || echo 0)))
-      done
-      target_size=0
-      [[ -e "$target" ]] && target_size="$(stat -c%s "$target" 2>/dev/null || echo 0)"
-      # Eksik/bozuk birleşik dosyayı yeniden üret
-      if [[ ! -e "$target" || "$target_size" -lt "$parts_size" ]]; then
-        cat "${sorted[@]}" > "$target"
-        c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
-      else
-        c_yellow "  · $(basename "$target") zaten var — atlandı"
-      fi
+      # Her zaman part'lardan yeniden üret (eski birleşmiş .tar.gz atlanmasın)
+      cat "${sorted[@]}" > "$target"
+      c_green "  ✓ $(basename "$target") ($(du -h "$target" | awk '{print $1}'))"
     done
   fi
 }
@@ -500,9 +489,9 @@ load_all_images() {
   [[ "$loaded" -gt 0 ]]
 }
 
-# Paketten yüklenen ainew etiketini .env ile hizala; başka tag varsa retag et
+# Paketten yüklenen ainew etiketini .env ile hizala; yalnız :latest → sürüm retag
 ensure_ainew_tags() {
-  local be fe repo tag any
+  local be fe repo
   be="$(grep '^BACKEND_IMAGE=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
   fe="$(grep '^FRONTEND_IMAGE=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
   be="${be:-ainew-backend:${APP_VERSION:-latest}}"
@@ -512,12 +501,13 @@ ensure_ainew_tags() {
       continue
     fi
     repo="${img%%:*}"
-    tag="${img##*:}"
-    any="$(docker images --format '{{.Repository}}:{{.Tag}}' "$repo" 2>/dev/null | grep -v '<none>' | head -1 || true)"
-    if [[ -n "$any" ]]; then
-      c_yellow "  retag: $any → $img"
-      docker tag "$any" "$img"
-      docker tag "$any" "${repo}:latest" 2>/dev/null || true
+    # Eski sürüm etiketini (örn. 1.0.9.37) yeni sürüme (1.0.9.38) yapıştırma —
+    # yalnız :latest kabul (paket docker save hem sürüm hem latest yazar).
+    if docker image inspect "${repo}:latest" >/dev/null 2>&1; then
+      c_yellow "  retag: ${repo}:latest → $img"
+      docker tag "${repo}:latest" "$img"
+    else
+      c_red "  eksik: $img (${repo}:latest de yok)"
     fi
   done
 }
